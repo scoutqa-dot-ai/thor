@@ -2,7 +2,6 @@ import {
   createLogger,
   ExecResultSchema,
   hasSessionForCorrelationKey,
-  logInfo,
   logWarn,
   logError,
   resolveCorrelationKeys,

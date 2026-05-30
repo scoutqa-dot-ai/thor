@@ -31,9 +31,7 @@ type TrimStep = {
   maxStringLength: number;
 };
 
-export type SlackTextObject =
-  | { type: "mrkdwn"; text: string }
-  | { type: "plain_text"; text: string };
+type SlackTextObject = { type: "mrkdwn"; text: string } | { type: "plain_text"; text: string };
 
 export type SlackBlock =
   | { type: "divider" }

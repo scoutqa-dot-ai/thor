@@ -12,7 +12,7 @@ import { withKeyLock } from "./key-lock.ts";
 const SLACK_THREAD_PREFIX = "slack:thread:";
 const GIT_BRANCH_PREFIX = "git:branch:";
 const GITHUB_ISSUE_PREFIX = "github:issue:";
-export const ANCHOR_LOCK_PREFIX = "anchor:";
+const ANCHOR_LOCK_PREFIX = "anchor:";
 export const SESSION_LOCK_PREFIX = "session:";
 
 const SlackPostMessageInput = z.object({

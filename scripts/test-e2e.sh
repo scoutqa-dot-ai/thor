@@ -117,32 +117,12 @@ exec_stdout_field() {
   " 2>/dev/null || echo ""
 }
 
-json_string() {
-  node -e "console.log(JSON.stringify(process.argv[1]))" "$1"
-}
-
-exec_payload() {
-  local cwd="$1"
-  shift
-  node -e "
-    console.log(JSON.stringify({
-      args: process.argv.slice(2),
-      cwd: process.argv[1]
-    }));
-  " "$cwd" "$@"
-}
-
 mcp_payload() {
-  local directory="$1"
-  shift
   node -e "
-    const directory = process.argv[1];
     console.log(JSON.stringify({
-      args: process.argv.slice(2),
-      cwd: directory,
-      directory
+      args: process.argv.slice(1)
     }));
-  " "$directory" "$@"
+  " "$@"
 }
 
 jira_api_base() {
@@ -537,7 +517,7 @@ else
       mcp_tools_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/mcp" \
         -H 'Content-Type: application/json' \
         -H "x-thor-session-id: $E2E_MCP_SESSION_ID" \
-        -d "$(mcp_payload "$REMOTE_CLI_GIT_REPO_DIR" "$mcp_upstream")" \
+        -d "$(mcp_payload "$mcp_upstream")" \
         2>/dev/null || echo '{}')
       mcp_tools_exit=$(json_field "$mcp_tools_raw" "exitCode")
       mcp_first_tool=$(json_field "$mcp_tools_raw" "stdout" | awk 'NF { print; exit }')
@@ -553,7 +533,7 @@ else
         mcp_help_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/mcp" \
           -H 'Content-Type: application/json' \
           -H "x-thor-session-id: $E2E_MCP_SESSION_ID" \
-          -d "$(mcp_payload "$REMOTE_CLI_GIT_REPO_DIR" "$mcp_upstream" "$mcp_first_tool" "--help")" \
+          -d "$(mcp_payload "$mcp_upstream" "$mcp_first_tool" "--help")" \
           2>/dev/null || echo '{}')
         mcp_help_exit=$(json_field "$mcp_help_raw" "exitCode")
         mcp_help_name=$(exec_stdout_field "$mcp_help_raw" "name")
@@ -860,7 +840,7 @@ else
   call_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
     -H 'Content-Type: application/json' \
     -H "x-thor-session-id: $E2E_THOR_SESSION_ID" \
-    -d "{\"args\":[\"$APPROVAL_UPSTREAM\",\"$APPROVAL_TOOL\",$escaped_approval_args],\"cwd\":\"$APPROVAL_DIR\",\"directory\":\"$APPROVAL_DIR\"}" \
+    -d "{\"args\":[\"$APPROVAL_UPSTREAM\",\"$APPROVAL_TOOL\",$escaped_approval_args]}" \
     2>/dev/null || echo '{}')
 
   # Parse action ID from the remote-cli approval-required response.

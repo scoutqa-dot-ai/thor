@@ -24,7 +24,6 @@ import {
   listAnchorSessionStates,
   listSessionAliases,
   mintAnchor,
-  mintTriggerId,
   readTriggerSlice,
   resolveAlias,
   resolveSessionAnchorId,
@@ -742,10 +741,10 @@ describe("session event log", () => {
     expect(rows.find((r) => r.anchorId === anchorDashF)?.idleMs).toBeUndefined();
   });
 
-  it("mints UUIDv7 anchors and trigger ids that sort lexicographically by mint time", async () => {
+  it("mints UUIDv7 anchors that sort lexicographically by mint time", async () => {
     const a = mintAnchor();
     await new Promise((resolve) => setTimeout(resolve, 5));
-    const b = mintTriggerId();
+    const b = mintAnchor();
     expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(b).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(a < b).toBe(true);

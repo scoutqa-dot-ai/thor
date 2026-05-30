@@ -310,7 +310,7 @@ else
   e2e_call_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
     -H 'Content-Type: application/json' \
     -H "x-thor-session-id: $e2e_session_id" \
-    -d "{\"args\":[\"$APPROVAL_UPSTREAM\",\"$APPROVAL_TOOL\",$escaped_approval_args],\"cwd\":\"$APPROVAL_DIR\",\"directory\":\"$APPROVAL_DIR\"}" \
+    -d "{\"args\":[\"$APPROVAL_UPSTREAM\",\"$APPROVAL_TOOL\",$escaped_approval_args]}" \
     2>/dev/null || echo '{}')
   e2e_action_id=$(echo "$e2e_call_raw" | extract_action_id)
 

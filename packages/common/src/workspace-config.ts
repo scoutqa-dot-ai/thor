@@ -247,14 +247,7 @@ export function isSlackChannelInProfile(config: WorkspaceConfig, channelId: stri
   return getProfileForSlackChannel(config, channelId) !== undefined;
 }
 
-export type ProfileResolution =
-  | { ok: true; profile: string | undefined }
-  | { ok: false; error: string };
-
-export interface StrictProfileOptions {
-  /** Session whose anchor bindings (channels, repo alias) drive resolution. */
-  sessionId: string;
-}
+type ProfileResolution = { ok: true; profile: string | undefined } | { ok: false; error: string };
 
 /**
  * Strict profile resolver. Resolves a session to at most one profile by
@@ -272,9 +265,8 @@ export interface StrictProfileOptions {
  */
 export function resolveStrictProfileForSession(
   config: WorkspaceConfig,
-  options: StrictProfileOptions,
+  sessionId: string,
 ): ProfileResolution {
-  const { sessionId } = options;
   const anchorId = resolveSessionAnchorId(sessionId);
   if (!anchorId) {
     return { ok: true, profile: undefined };

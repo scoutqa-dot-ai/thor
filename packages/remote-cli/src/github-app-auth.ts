@@ -171,7 +171,7 @@ function base64url(str: string): string {
 
 // ── Token minting ────────────────────────────────────────────────────────────
 
-export async function mintInstallationToken(
+async function mintInstallationToken(
   installationId: number,
   appJwt: string,
   apiUrl: string,

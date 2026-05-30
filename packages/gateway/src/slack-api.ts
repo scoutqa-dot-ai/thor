@@ -41,22 +41,6 @@ export function createSlackClient(token: string, slackApiUrl?: string): WebClien
   });
 }
 
-export async function postMessage(
-  channel: string,
-  text: string,
-  threadTs: string | undefined,
-  deps: SlackDeps,
-  blocks?: SlackBlock[],
-): Promise<{ ts: string; channel: string }> {
-  const result = await deps.client.chat.postMessage({
-    channel,
-    text,
-    ...(threadTs ? { thread_ts: threadTs } : {}),
-    ...(blocks ? { blocks } : {}),
-  });
-  return { ts: result.ts ?? "", channel: result.channel ?? channel };
-}
-
 export async function updateMessage(
   channel: string,
   ts: string,
@@ -70,10 +54,6 @@ export async function updateMessage(
     text,
     ...(blocks ? { blocks } : {}),
   });
-}
-
-export async function deleteMessage(channel: string, ts: string, deps: SlackDeps): Promise<void> {
-  await deps.client.chat.delete({ channel, ts });
 }
 
 export async function addReaction(

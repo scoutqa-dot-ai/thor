@@ -22,7 +22,6 @@ import {
   truncate,
   isAllowedDirectory,
   extractRepoFromCwd,
-  ANCHOR_LOCK_PREFIX,
   SESSION_LOCK_PREFIX,
   appendSessionEvent,
   appendAlias,
@@ -32,14 +31,12 @@ import {
   ensureAnchorForCorrelationKey,
   isUuidV7,
   mintAnchor,
-  mintTriggerId,
   reverseLookupAnchor,
   resolveAlias,
   resolveAnchorForCorrelationKey,
   resolveCorrelationLockKey,
   readTriggerSlice,
   sessionLogPath,
-  getWorklogDir,
   SessionEventLogRecordSchema,
   loadRunnerEnv,
   matchesInternalSecret,
@@ -431,7 +428,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         }
 
         const sessionId = parsed.data.sessionId ?? `e2e-${randomUUID()}`;
-        const triggerId = mintTriggerId();
+        const triggerId = mintAnchor();
         const anchorId = mintAnchor();
         bindSessionToAnchor({
           anchorId,
@@ -562,8 +559,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
      *  text and status from the trigger call. */
     stream: z.boolean().optional(),
   });
-
-  type TriggerRequest = z.infer<typeof TriggerRequestSchema>;
 
   // ---------------------------------------------------------------------------
   // Event filtering — what gets a JSON file, what gets a stdout log, what's ignored
@@ -953,7 +948,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       // Subscribe to event bus BEFORE sending the prompt
       const subscription = await eventBuses.subscribe([sessionId]);
 
-      const triggerId = mintTriggerId();
+      const triggerId = mintAnchor();
       inflightTriggerId = triggerId;
       startTrigger(sessionId, triggerId, {
         correlationKey,

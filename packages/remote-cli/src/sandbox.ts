@@ -127,8 +127,8 @@ export async function syncSandbox(
   });
 }
 
-export const DIRTY_FILE_LIMIT = 100;
-export const FILE_SIZE_LIMIT = 100 * 1024 * 1024; // 100 MB
+const DIRTY_FILE_LIMIT = 100;
+const FILE_SIZE_LIMIT = 100 * 1024 * 1024; // 100 MB
 
 export interface OverlayResult {
   pushed: string[];

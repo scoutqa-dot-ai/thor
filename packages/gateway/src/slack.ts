@@ -117,12 +117,8 @@ export const SlackInteractivityPayloadSchema = z.object({
     .optional(),
 });
 
-export type SlackAppMentionEvent = z.infer<typeof SlackAppMentionEventSchema>;
+type SlackAppMentionEvent = z.infer<typeof SlackAppMentionEventSchema>;
 export type SlackMessageEvent = z.infer<typeof SlackMessageEventSchema>;
-export type SlackReactionEvent = z.infer<typeof SlackReactionEventSchema>;
-export type SlackBotEvent = z.infer<typeof SlackBotEventSchema>;
-export type SlackEventEnvelope = z.infer<typeof SlackEventEnvelopeSchema>;
-export type SlackUrlVerification = z.infer<typeof SlackUrlVerificationSchema>;
 export type SlackInteractivityPayload = z.infer<typeof SlackInteractivityPayloadSchema>;
 export type SlackInteractivityAction = NonNullable<SlackInteractivityPayload["actions"]>[number];
 
@@ -165,7 +161,7 @@ export function verifySlackSignature(input: {
 
 export type SlackThreadEvent = SlackAppMentionEvent | SlackMessageEvent;
 
-export function getSlackThreadTs(event: SlackThreadEvent): string {
+function getSlackThreadTs(event: SlackThreadEvent): string {
   return event.thread_ts || event.ts;
 }
 
@@ -188,10 +184,6 @@ export function isForwardableSlackMessage(event: SlackMessageEvent): boolean {
 
 export function parseSlackTs(ts: string): number {
   return Math.floor(parseFloat(ts) * 1000);
-}
-
-export function isSupportedSlackBotEvent(event: unknown): event is SlackBotEvent {
-  return SlackBotEventSchema.safeParse(event).success;
 }
 
 const PENDING_SLACK_PRIVACY_PREFIX = "pending:slack-privacy:";

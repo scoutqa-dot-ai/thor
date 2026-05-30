@@ -18,7 +18,6 @@ export {
   isSlackChannelInProfile,
   resolveStrictProfileForSession,
 } from "./workspace-config.ts";
-export type { ProfileResolution, StrictProfileOptions } from "./workspace-config.ts";
 export { PROXY_NAMES, isProxyName, resolveProxyConfig, getAvailableProxyNames } from "./proxies.ts";
 export {
   APPROVAL_TOOL_NAMES,
@@ -68,7 +67,7 @@ export type {
   ValidationResult,
 } from "./workspace-config.ts";
 export type { ProxyName } from "./proxies.ts";
-export { writeToolCallLog, appendJsonlWorklog, getWorklogDir } from "./worklog.ts";
+export { writeToolCallLog, appendJsonlWorklog } from "./worklog.ts";
 export type { ToolCallLogEntry, InboundWebhookHistoryEntry } from "./worklog.ts";
 export {
   SessionEventLogRecordSchema,
@@ -89,7 +88,6 @@ export {
   currentSessionForAnchor,
   listSessionAliases,
   mintAnchor,
-  mintTriggerId,
   sessionLogPath,
   iterateJsonlFileLinesSync,
   isUuidV7,
@@ -162,7 +160,6 @@ export {
   computeSlackCorrelationKey,
   resolveAnchorForCorrelationKey,
   resolveSessionForCorrelationKey,
-  ANCHOR_LOCK_PREFIX,
   SESSION_LOCK_PREFIX,
 } from "./correlation.ts";
 export type { EnsureAnchorResult } from "./correlation.ts";

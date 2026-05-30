@@ -18,7 +18,7 @@ import { parseOpencodeEvent, projectOpencodeEvent } from "./opencode-event.ts";
 const log = createLogger("event-log");
 const SLOW_READ_THRESHOLD_MS = 50;
 
-export const ALIAS_TYPES = [
+const ALIAS_TYPES = [
   "slack.thread",
   "repo",
   "git.branch",
@@ -26,7 +26,7 @@ export const ALIAS_TYPES = [
   "opencode.session",
   "opencode.subsession",
 ] as const;
-export const AliasTypeSchema = z.enum(ALIAS_TYPES);
+const AliasTypeSchema = z.enum(ALIAS_TYPES);
 
 /**
  * Alias value safety: rejects empty values, oversized values, and any control
@@ -53,7 +53,7 @@ const BaseRecordSchema = z.object({
   _truncated: z.literal(true).optional(),
 });
 
-export const TriggerStartRecordSchema = BaseRecordSchema.extend({
+const TriggerStartRecordSchema = BaseRecordSchema.extend({
   type: z.literal("trigger_start"),
   triggerId: z.string().regex(UUID_V7_RE, { message: "triggerId must be a UUIDv7" }),
   correlationKey: z.string().optional(),
@@ -61,7 +61,7 @@ export const TriggerStartRecordSchema = BaseRecordSchema.extend({
   triggerGithubLogin: z.string().min(1).optional(),
 });
 
-export const TriggerEndRecordSchema = BaseRecordSchema.extend({
+const TriggerEndRecordSchema = BaseRecordSchema.extend({
   type: z.literal("trigger_end"),
   triggerId: z.string().regex(UUID_V7_RE, { message: "triggerId must be a UUIDv7" }),
   status: z.enum(["completed", "error", "aborted"]),
@@ -70,12 +70,12 @@ export const TriggerEndRecordSchema = BaseRecordSchema.extend({
   reason: z.string().optional(),
 });
 
-export const OpencodeEventRecordSchema = BaseRecordSchema.extend({
+const OpencodeEventRecordSchema = BaseRecordSchema.extend({
   type: z.literal("opencode_event"),
   event: z.unknown(),
 });
 
-export const AliasEventRecordSchema = BaseRecordSchema.extend({
+const AliasEventRecordSchema = BaseRecordSchema.extend({
   type: z.literal("alias"),
   aliasType: AliasTypeSchema,
   aliasValue: AliasValueSchema,
@@ -83,7 +83,7 @@ export const AliasEventRecordSchema = BaseRecordSchema.extend({
   source: z.string().optional(),
 });
 
-export const ToolCallRecordSchema = BaseRecordSchema.extend({
+const ToolCallRecordSchema = BaseRecordSchema.extend({
   type: z.literal("tool_call"),
   callId: z.string().optional(),
   tool: z.string(),
@@ -109,7 +109,7 @@ export const AliasRecordSchema = z.object({
 
 export type AliasRecord = z.infer<typeof AliasRecordSchema>;
 
-export type TriggerSliceStatus = "completed" | "error" | "aborted" | "crashed" | "in_flight";
+type TriggerSliceStatus = "completed" | "error" | "aborted" | "crashed" | "in_flight";
 
 export interface TriggerSlice {
   records: SessionEventLogRecord[];
@@ -258,8 +258,6 @@ export function mintAnchor(): string {
   const hex = buf.toString("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
-
-export const mintTriggerId = mintAnchor;
 
 /**
  * Detects opencode_event records whose part is `text` or `reasoning` — the

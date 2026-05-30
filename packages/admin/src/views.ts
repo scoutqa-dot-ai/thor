@@ -23,7 +23,7 @@ interface DecodedExternalKey {
 const GIT_BRANCH_PREFIX = "git:branch:";
 const GITHUB_ISSUE_PREFIX = "github:issue:";
 
-export function decodeExternalKey(
+function decodeExternalKey(
   key: { aliasType: AliasRecord["aliasType"]; aliasValue: string },
   opts: { slackTeamId: string | null },
 ): DecodedExternalKey | null {

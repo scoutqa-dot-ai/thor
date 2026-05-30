@@ -149,11 +149,7 @@ describe("loadWorkspaceConfig", () => {
 
     it("returns undefined when the session has no anchor binding", () => {
       const config = makeConfig();
-      expect(
-        resolveStrictProfileForSession(config, {
-          sessionId: "unknown-session",
-        }),
-      ).toEqual({
+      expect(resolveStrictProfileForSession(config, "unknown-session")).toEqual({
         ok: true,
         profile: undefined,
       });
@@ -162,7 +158,7 @@ describe("loadWorkspaceConfig", () => {
     it("returns undefined when the anchor has no slack.thread aliases", () => {
       appendAlias({ aliasType: "opencode.session", aliasValue: "s1", anchorId: anchor });
       const config = makeConfig();
-      expect(resolveStrictProfileForSession(config, { sessionId: "s1" })).toEqual({
+      expect(resolveStrictProfileForSession(config, "s1")).toEqual({
         ok: true,
         profile: undefined,
       });
@@ -181,7 +177,7 @@ describe("loadWorkspaceConfig", () => {
         anchorId: anchor,
       });
       const config = makeConfig();
-      expect(resolveStrictProfileForSession(config, { sessionId: "s2" })).toEqual({
+      expect(resolveStrictProfileForSession(config, "s2")).toEqual({
         ok: true,
         profile: "QA",
       });
@@ -200,9 +196,7 @@ describe("loadWorkspaceConfig", () => {
         anchorId: anchor,
       });
       const config = makeConfig();
-      const result = resolveStrictProfileForSession(config, {
-        sessionId: "s3",
-      });
+      const result = resolveStrictProfileForSession(config, "s3");
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toMatch(/multiple profiles/);
     });
@@ -220,9 +214,7 @@ describe("loadWorkspaceConfig", () => {
         anchorId: anchor,
       });
       const config = makeConfig();
-      const result = resolveStrictProfileForSession(config, {
-        sessionId: "s4",
-      });
+      const result = resolveStrictProfileForSession(config, "s4");
       expect(result.ok).toBe(false);
     });
 
@@ -241,7 +233,7 @@ describe("loadWorkspaceConfig", () => {
       appendAlias({ aliasType: "opencode.session", aliasValue: "rs1", anchorId: anchor });
       appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: anchor });
       const config = makeRepoConfig();
-      expect(resolveStrictProfileForSession(config, { sessionId: "rs1" })).toEqual({
+      expect(resolveStrictProfileForSession(config, "rs1")).toEqual({
         ok: true,
         profile: "QA",
       });
@@ -256,7 +248,7 @@ describe("loadWorkspaceConfig", () => {
       });
       appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: anchor });
       const config = makeRepoConfig();
-      expect(resolveStrictProfileForSession(config, { sessionId: "rs2" })).toEqual({
+      expect(resolveStrictProfileForSession(config, "rs2")).toEqual({
         ok: true,
         profile: "QA",
       });
@@ -271,9 +263,7 @@ describe("loadWorkspaceConfig", () => {
       });
       appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: anchor });
       const config = makeRepoConfig();
-      const result = resolveStrictProfileForSession(config, {
-        sessionId: "rs3",
-      });
+      const result = resolveStrictProfileForSession(config, "rs3");
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toMatch(/conflicting profiles/);
     });
@@ -283,9 +273,7 @@ describe("loadWorkspaceConfig", () => {
       appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: anchor });
       appendAlias({ aliasType: "repo", aliasValue: "repo-labs", anchorId: anchor });
       const config = makeRepoConfig();
-      const result = resolveStrictProfileForSession(config, {
-        sessionId: "rs4",
-      });
+      const result = resolveStrictProfileForSession(config, "rs4");
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toMatch(/repos in multiple profiles/);
     });

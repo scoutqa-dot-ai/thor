@@ -111,13 +111,13 @@ interface ProxyInstance {
   approvalStore: ApprovalStore;
 }
 
-export interface McpExecResult {
+interface McpExecResult {
   stdout: string;
   stderr: string;
   exitCode: number;
 }
 
-export interface McpCommandContext {
+interface McpCommandContext {
   sessionId?: string;
   callId?: string;
 }
@@ -197,7 +197,7 @@ function requireBoundSessionId(input: {
   return input.sessionId;
 }
 
-export interface McpService {
+interface McpService {
   getHealth(): Record<string, unknown>;
   warmUpstreams(): Promise<void>;
   closeAll(): Promise<void>;
@@ -281,7 +281,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     });
 
     const config = getConfig();
-    const resolved = resolveStrictProfileForSession(config, { sessionId });
+    const resolved = resolveStrictProfileForSession(config, sessionId);
     if (!resolved.ok) throw new Error(resolved.error);
     return { profile: resolved.profile };
   }
@@ -419,7 +419,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     });
 
     const config = getConfig();
-    const resolved = resolveStrictProfileForSession(config, { sessionId });
+    const resolved = resolveStrictProfileForSession(config, sessionId);
     if (!resolved.ok) throw new Error(resolved.error);
     return { profile: resolved.profile };
   }

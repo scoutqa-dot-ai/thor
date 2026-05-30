@@ -134,17 +134,15 @@ export const applySearchDefinitionGuidance = (tool, definition) => {
 };
 
 /**
- * Thor OpenCode plugin — injects trusted env vars into every shell execution
+ * Thor OpenCode plugin — injects session env vars into every shell execution
  * and scopes built-in search tools away from broad filesystem roots.
  *
  * Hooks into `shell.env` so that CLI wrappers (mcp, approval, git, gh) receive
- * THOR_OPENCODE_DIRECTORY and THOR_OPENCODE_SESSION_ID from OpenCode's own
- * context rather than trusting process.cwd() which the LLM can change via `cd`.
+ * OpenCode's session/call context.
  */
 export const ThorPlugin = async (plugin) => {
   return {
     "shell.env": async (hook, output) => {
-      output.env.THOR_OPENCODE_DIRECTORY = plugin.directory;
       if (hook.sessionID) {
         output.env.THOR_OPENCODE_SESSION_ID = hook.sessionID;
       }

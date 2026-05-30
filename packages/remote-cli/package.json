@@ -19,7 +19,6 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@scoutqa/cli": "0.10.4-alpha.1",
     "@types/express": "^5.0.2",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^24.0.0",
