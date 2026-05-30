@@ -1,0 +1,27 @@
+packages/common/src/workspace-config.test.ts
+  52ffa6f63a3dd498 153-154,156,191,208-209,211,229-230,232,250,256,271,284,299-301,316-317,319,330
+packages/remote-cli/src/mcp-handler.ts
+  52ffa6f63a3dd498 290,428-431
+packages/common/src/workspace-config.ts
+  52ffa6f63a3dd498 255-256,259,261-263,265,284,286,290
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "68be4f19a8fe259ce61fbd55e60d5c77fba07e81",
+  "prompts": {
+    "52ffa6f63a3dd498": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5c8df29e-1c14-4193-b6af-1dbc989fdecf",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 47,
+      "total_deletions": 22,
+      "accepted_lines": 36,
+      "overriden_lines": 7
+    }
+  }
+}
