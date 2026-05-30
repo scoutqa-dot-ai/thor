@@ -1,7 +1,6 @@
 import {
   createLogger,
   ExecResultSchema,
-  extractApprovalFailureCategory,
   hasSessionForCorrelationKey,
   logInfo,
   logWarn,
@@ -1042,7 +1041,7 @@ export async function resolveApproval(
           `remote-cli returned ${response.status}: ${body.stderr || body.stdout || "unknown error"}`,
           { remoteCliUrl, attempt },
         );
-        return isResolvedApprovalExecutionFailure(body) ? body : undefined;
+        return body;
       }
       return body;
     } catch (err) {
@@ -1060,10 +1059,6 @@ export async function resolveApproval(
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isResolvedApprovalExecutionFailure(body: ExecResult): boolean {
-  return body.exitCode !== 0 && extractApprovalFailureCategory(body.stderr) !== undefined;
 }
 
 export async function updateSlackMessage(

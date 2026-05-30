@@ -3540,7 +3540,12 @@ describe("gateway", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            stdout: "",
+            stdout: JSON.stringify({
+              status: "error",
+              tool: "merge_pull_request",
+              upstream: "github",
+              reason: "categorized failure",
+            }),
             stderr: 'Error calling "merge_pull_request": upstream unavailable\n',
             exitCode: 1,
           }),
@@ -3597,15 +3602,19 @@ describe("gateway", () => {
     expect(capturedSlack!.update).toHaveBeenCalled();
     const updateArg = capturedSlack!.update.mock.calls[0][0] as { text: string };
     expect(updateArg.text).toContain("Approved, resolution failed");
+    expect(updateArg.text).toContain("categorized failure");
+    expect(updateArg.text).toContain("remote-cli stderr:");
     expect(updateArg.text).toContain('Error calling "merge_pull_request"');
-    expect(updateArg.text).not.toContain("upstream unavailable");
+    expect(updateArg.text).toContain("upstream unavailable");
 
     const runnerCall = fetchImpl.mock.calls.find(
       ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
     );
     expect(runnerCall).toBeDefined();
     const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
+    expect(runnerBody.prompt).toContain("categorized failure");
+    expect(runnerBody.prompt).toContain("remote-cli stderr:");
     expect(runnerBody.prompt).toContain('Error calling "merge_pull_request"');
-    expect(runnerBody.prompt).not.toContain("upstream unavailable");
+    expect(runnerBody.prompt).toContain("upstream unavailable");
   });
 });

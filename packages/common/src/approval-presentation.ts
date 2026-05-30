@@ -82,22 +82,6 @@ export function buildApprovalButtonValue(input: {
   return actionId;
 }
 
-const SAFE_APPROVAL_FAILURE_PATTERNS = [
-  /^Error calling "[^"]+"/m,
-  /^Unknown upstream "[^"]+"/m,
-  /^session [^\n]+ is bound to channels in multiple profiles[^\n]*/m,
-  /^partial grafana profile bundle for "[A-Z_]+": missing [^\n]*/m,
-  /^Upstream "[^"]+" is not configured for the resolved profile\./m,
-] as const;
-
-export function extractApprovalFailureCategory(stderr: string): string | undefined {
-  for (const pattern of SAFE_APPROVAL_FAILURE_PATTERNS) {
-    const match = stderr.match(pattern)?.[0];
-    if (match) return match;
-  }
-  return undefined;
-}
-
 export function parseApprovalButtonValue(value: string): ApprovalButtonRoute | undefined {
   const parts = value.split(":");
 

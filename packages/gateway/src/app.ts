@@ -4,7 +4,6 @@ import {
   buildSlackCorrelationKey,
   createLogger,
   errorToMetadata,
-  extractApprovalFailureCategory,
   getWorkspaceWorktreesRoot,
   hasSessionForCorrelationKey,
   logError,
@@ -16,7 +15,6 @@ import {
   resolveSafeRepoDirectory,
   resolveSlackChannelRepoDirectory,
   SLACK_CHANNEL_REPO_MEMORY_ROOT,
-  truncate,
   resolveRepoDirectory,
   type ApprovalButtonRoute,
   type InboundWebhookHistoryEntry,
@@ -151,9 +149,6 @@ function summarizeResolutionOutput(
   let tool: string | undefined;
   let upstream: string | undefined;
 
-  // Avoid echoing raw stdout/stderr — both can contain upstream tool response
-  // data, which the approval card must not leak. Only surface structured fields
-  // and a sanitized failure category.
   try {
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
     if (typeof parsed.status === "string") status = parsed.status;
@@ -168,8 +163,12 @@ function summarizeResolutionOutput(
     // non-JSON stdout: drop, do not surface
   }
 
-  if (!summary) {
-    summary = extractApprovalFailureCategory(stderr);
+  const trimmedStderr = stderr.trim();
+  if (trimmedStderr) {
+    summary =
+      summary && summary !== trimmedStderr
+        ? `${summary}\nremote-cli stderr: ${trimmedStderr}`
+        : trimmedStderr;
   }
 
   return { status, summary, tool, upstream };
@@ -644,7 +643,7 @@ async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<v
   const target = [route.upstreamName ?? resolution.upstream, resolution.tool]
     .filter(Boolean)
     .join("/");
-  const summarySuffix = resolution.summary ? `\n>${truncate(resolution.summary, 180)}` : "";
+  const summarySuffix = resolution.summary ? `\n>${resolution.summary}` : "";
   const text = `${statusEmoji} *${decisionLabel}* by <@${reviewer}> · \`${route.actionId}\`${target ? ` (${target})` : ""}${summarySuffix}`;
 
   if (!channel) {
