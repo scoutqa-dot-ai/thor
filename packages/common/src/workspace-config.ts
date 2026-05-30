@@ -254,22 +254,13 @@ export type ProfileResolution =
 export interface StrictProfileOptions {
   /** Session whose anchor bindings (channels, repo alias) drive resolution. */
   sessionId: string;
-  /**
-   * Repo the session is operating in right now, from the trusted OpenCode
-   * session directory on the live MCP path. When a string it is the sole repo
-   * signal and overrides any `repo` alias stamped on the anchor. The
-   * approval-click path passes `undefined` (no live directory) so the repo
-   * dimension falls back to the anchor's `repo` alias recorded at trigger time.
-   * Required (string | undefined) so every call site declares which it is.
-   */
-  liveRepo: string | undefined;
 }
 
 /**
  * Strict profile resolver. Resolves a session to at most one profile by
  * combining two dimensions, each failing fast on internal ambiguity:
  *   - channels: every `slack.thread` alias on the anchor → its profile,
- *   - repos: the live repo (if provided) else the anchor's `repo` alias.
+ *   - repos: every `repo` alias stamped on the anchor at trigger time.
  *
  * The result is `channelProfile ?? repoProfile`: the channel is authoritative,
  * the repo fills in when the channel maps to no profile (e.g. cron sessions
@@ -283,14 +274,12 @@ export function resolveStrictProfileForSession(
   config: WorkspaceConfig,
   options: StrictProfileOptions,
 ): ProfileResolution {
-  const { sessionId, liveRepo } = options;
+  const { sessionId } = options;
   const anchorId = resolveSessionAnchorId(sessionId);
   if (!anchorId) {
-    // No anchor: only a live repo can carry a profile (no channel/alias signal).
-    const profile = liveRepo ? getProfileForRepo(config, liveRepo) : undefined;
-    return { ok: true, profile };
+    return { ok: true, profile: undefined };
   }
-  return resolveStrictProfileForAnchor(config, anchorId, options, sessionId);
+  return resolveStrictProfileForAnchor(config, anchorId, sessionId);
 }
 
 function collapseDimension(
@@ -312,7 +301,6 @@ function collapseDimension(
 function resolveStrictProfileForAnchor(
   config: WorkspaceConfig,
   anchorId: string,
-  options: StrictProfileOptions,
   label = anchorId,
 ): ProfileResolution {
   const externalKeys = reverseLookupAnchor(anchorId).externalKeys;
@@ -331,9 +319,7 @@ function resolveStrictProfileForAnchor(
   if (!channel.ok) return channel;
 
   const repoProfiles = new Set<string | undefined>();
-  const repos = options.liveRepo
-    ? [options.liveRepo]
-    : externalKeys.filter((key) => key.aliasType === "repo").map((key) => key.aliasValue);
+  const repos = externalKeys.filter((key) => key.aliasType === "repo").map((key) => key.aliasValue);
   for (const repo of repos) repoProfiles.add(getProfileForRepo(config, repo));
   const repo = collapseDimension(repoProfiles, repos, "repos", label);
   if (!repo.ok) return repo;

@@ -1117,10 +1117,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         }
       }
 
-      const result = await mcpService.executeMcp(args, {
-        directory: typeof req.body?.directory === "string" ? req.body.directory : undefined,
-        ...thorIds(req),
-      });
+      const result = await mcpService.executeMcp(args, thorIds(req));
 
       res.json(result);
     } catch (err) {

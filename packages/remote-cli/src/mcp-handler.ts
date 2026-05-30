@@ -9,7 +9,6 @@ import {
   computeSlackCorrelationKey,
   createLogger,
   ExecResultSchema,
-  extractRepoFromCwd,
   findAnchorContext,
   getAvailableProxyNames,
   injectApprovalDisclaimer,
@@ -119,7 +118,6 @@ export interface McpExecResult {
 }
 
 export interface McpCommandContext {
-  directory?: string;
   sessionId?: string;
   callId?: string;
 }
@@ -283,11 +281,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     });
 
     const config = getConfig();
-    // The live MCP path carries the trusted OpenCode session directory, so the
-    // repo dimension resolves from where the agent is operating right now; the
-    // anchor's `repo` alias is the fallback used only by the approval-click path.
-    const liveRepo = context.directory ? extractRepoFromCwd(context.directory) : undefined;
-    const resolved = resolveStrictProfileForSession(config, { sessionId, liveRepo });
+    const resolved = resolveStrictProfileForSession(config, { sessionId });
     if (!resolved.ok) throw new Error(resolved.error);
     return { profile: resolved.profile };
   }
@@ -425,10 +419,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     });
 
     const config = getConfig();
-    // The approval-click path has no live OpenCode exec, so there is no live
-    // directory; the repo dimension comes from the `repo` alias stamped on the
-    // anchor at trigger time. Pass liveRepo explicitly to declare that intent.
-    const resolved = resolveStrictProfileForSession(config, { sessionId, liveRepo: undefined });
+    const resolved = resolveStrictProfileForSession(config, { sessionId });
     if (!resolved.ok) throw new Error(resolved.error);
     return { profile: resolved.profile };
   }
@@ -452,18 +443,6 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return { ok: false, reason: "upstream_disconnected" };
     }
     return parseJiraAccountLookupStdout(result.stdout);
-  }
-
-  function validateRepoDirectory(directory?: string): McpExecResult | undefined {
-    if (!directory) {
-      return fail("Missing required field: directory");
-    }
-    if (!extractRepoFromCwd(directory)) {
-      return fail(
-        `Cannot determine repo from directory: ${directory}. Expected /workspace/repos/<repo> (worktrees are not allowed for MCP authz)`,
-      );
-    }
-    return undefined;
   }
 
   async function listVisibleTools(
@@ -524,10 +503,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     );
   }
 
-  async function listUpstreams(directory?: string, profile?: string): Promise<McpExecResult> {
-    const failure = validateRepoDirectory(directory);
-    if (failure) return failure;
-
+  async function listUpstreams(profile?: string): Promise<McpExecResult> {
     try {
       const upstreams = getAvailableProxyNames(profile).map((name) => {
         const resolved = resolveProxyConfig(name, profile)!;
@@ -1053,14 +1029,11 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
         try {
           const { profile } = resolveProfileForContext(context);
-          return listUpstreams(context.directory, profile);
+          return listUpstreams(profile);
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
         }
       }
-
-      const failure = validateRepoDirectory(context.directory);
-      if (failure) return failure;
 
       const upstreamName = args[0];
       if (!isProxyName(upstreamName)) {

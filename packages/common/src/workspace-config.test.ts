@@ -152,7 +152,6 @@ describe("loadWorkspaceConfig", () => {
       expect(
         resolveStrictProfileForSession(config, {
           sessionId: "unknown-session",
-          liveRepo: undefined,
         }),
       ).toEqual({
         ok: true,
@@ -163,9 +162,7 @@ describe("loadWorkspaceConfig", () => {
     it("returns undefined when the anchor has no slack.thread aliases", () => {
       appendAlias({ aliasType: "opencode.session", aliasValue: "s1", anchorId: anchor });
       const config = makeConfig();
-      expect(
-        resolveStrictProfileForSession(config, { sessionId: "s1", liveRepo: undefined }),
-      ).toEqual({
+      expect(resolveStrictProfileForSession(config, { sessionId: "s1" })).toEqual({
         ok: true,
         profile: undefined,
       });
@@ -184,9 +181,7 @@ describe("loadWorkspaceConfig", () => {
         anchorId: anchor,
       });
       const config = makeConfig();
-      expect(
-        resolveStrictProfileForSession(config, { sessionId: "s2", liveRepo: undefined }),
-      ).toEqual({
+      expect(resolveStrictProfileForSession(config, { sessionId: "s2" })).toEqual({
         ok: true,
         profile: "QA",
       });
@@ -207,7 +202,6 @@ describe("loadWorkspaceConfig", () => {
       const config = makeConfig();
       const result = resolveStrictProfileForSession(config, {
         sessionId: "s3",
-        liveRepo: undefined,
       });
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toMatch(/multiple profiles/);
@@ -228,7 +222,6 @@ describe("loadWorkspaceConfig", () => {
       const config = makeConfig();
       const result = resolveStrictProfileForSession(config, {
         sessionId: "s4",
-        liveRepo: undefined,
       });
       expect(result.ok).toBe(false);
     });
@@ -244,94 +237,57 @@ describe("loadWorkspaceConfig", () => {
       );
     }
 
-    it("resolves a profile from the live repo when the session has no anchor", () => {
-      const config = makeRepoConfig();
-      expect(
-        resolveStrictProfileForSession(config, { sessionId: "no-anchor", liveRepo: "repo-qa" }),
-      ).toEqual({
-        ok: true,
-        profile: "QA",
-      });
-      expect(
-        resolveStrictProfileForSession(config, { sessionId: "no-anchor", liveRepo: "repo-x" }),
-      ).toEqual({
-        ok: true,
-        profile: undefined,
-      });
-    });
-
     it("resolves a profile from the anchor repo alias when there is no Slack binding", () => {
       appendAlias({ aliasType: "opencode.session", aliasValue: "rs1", anchorId: anchor });
       appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: anchor });
       const config = makeRepoConfig();
-      expect(
-        resolveStrictProfileForSession(config, { sessionId: "rs1", liveRepo: undefined }),
-      ).toEqual({
+      expect(resolveStrictProfileForSession(config, { sessionId: "rs1" })).toEqual({
         ok: true,
         profile: "QA",
       });
     });
 
-    it("lets a live repo upgrade a channel that maps to no profile", () => {
+    it("lets an anchor repo alias upgrade a channel that maps to no profile", () => {
       appendAlias({ aliasType: "opencode.session", aliasValue: "rs2", anchorId: anchor });
       appendAlias({
         aliasType: "slack.thread",
         aliasValue: "C999/1710000000.001",
         anchorId: anchor,
       });
+      appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: anchor });
       const config = makeRepoConfig();
-      expect(
-        resolveStrictProfileForSession(config, { sessionId: "rs2", liveRepo: "repo-qa" }),
-      ).toEqual({
+      expect(resolveStrictProfileForSession(config, { sessionId: "rs2" })).toEqual({
         ok: true,
         profile: "QA",
       });
     });
 
-    it("fails when the channel profile and live repo profile disagree", () => {
+    it("fails when the channel profile and anchor repo alias disagree", () => {
       appendAlias({ aliasType: "opencode.session", aliasValue: "rs3", anchorId: anchor });
       appendAlias({
         aliasType: "slack.thread",
         aliasValue: "C456/1710000000.001",
         anchorId: anchor,
       });
+      appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: anchor });
       const config = makeRepoConfig();
       const result = resolveStrictProfileForSession(config, {
         sessionId: "rs3",
-        liveRepo: "repo-qa",
       });
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toMatch(/conflicting profiles/);
     });
 
-    it("fails when the channel profile and anchor repo alias disagree", () => {
+    it("fails when repo aliases map to different profiles", () => {
       appendAlias({ aliasType: "opencode.session", aliasValue: "rs4", anchorId: anchor });
-      appendAlias({
-        aliasType: "slack.thread",
-        aliasValue: "C456/1710000000.001",
-        anchorId: anchor,
-      });
       appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: anchor });
+      appendAlias({ aliasType: "repo", aliasValue: "repo-labs", anchorId: anchor });
       const config = makeRepoConfig();
       const result = resolveStrictProfileForSession(config, {
         sessionId: "rs4",
-        liveRepo: undefined,
       });
       expect(result.ok).toBe(false);
-    });
-
-    it("uses the live repo in place of the anchor repo alias", () => {
-      appendAlias({ aliasType: "opencode.session", aliasValue: "rs5", anchorId: anchor });
-      appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: anchor });
-      const config = makeRepoConfig();
-      // The agent is now operating in repo-labs; the live repo overrides the
-      // trigger-time alias, so this resolves to LABS with no false ambiguity.
-      expect(
-        resolveStrictProfileForSession(config, { sessionId: "rs5", liveRepo: "repo-labs" }),
-      ).toEqual({
-        ok: true,
-        profile: "LABS",
-      });
+      if (!result.ok) expect(result.error).toMatch(/repos in multiple profiles/);
     });
   });
 

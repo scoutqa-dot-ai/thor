@@ -268,8 +268,6 @@ describe("remote-cli MCP endpoints", () => {
       "/exec/mcp",
       {
         args: ["atlassian", "createJiraIssue", argsJson],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -291,8 +289,6 @@ describe("remote-cli MCP endpoints", () => {
       "/exec/mcp",
       {
         args: [],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -311,8 +307,6 @@ describe("remote-cli MCP endpoints", () => {
       "/exec/mcp",
       {
         args: ["atlassian"],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -333,8 +327,6 @@ describe("remote-cli MCP endpoints", () => {
           "lookupJiraAccountId",
           '{"cloudId":"cloud-1","searchString":"alice@example.com"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -352,8 +344,6 @@ describe("remote-cli MCP endpoints", () => {
       "/exec/mcp",
       {
         args: ["atlassian", "getJiraIssue", "{}"],
-        cwd: "/workspace/worktrees/acme/feature-branch",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -395,8 +385,6 @@ describe("remote-cli MCP endpoints", () => {
       "/exec/mcp",
       {
         args: ["atlassian", "getJiraIssue", "{}"],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -448,8 +436,6 @@ describe("remote-cli MCP endpoints", () => {
       "/exec/mcp",
       {
         args: ["atlassian", "getJiraIssue", "{}"],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -484,8 +470,6 @@ describe("remote-cli MCP endpoints", () => {
       "/exec/mcp",
       {
         args: ["atlassian", "getJiraIssue", "{}"],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -514,8 +498,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -544,8 +526,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -588,8 +568,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -653,8 +631,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -731,8 +707,6 @@ describe("remote-cli MCP endpoints", () => {
       "/exec/mcp",
       {
         args: ["atlassian", "getJiraIssue", "{}"],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -740,8 +714,6 @@ describe("remote-cli MCP endpoints", () => {
       "/exec/mcp",
       {
         args: ["atlassian", "getJiraIssue", "{}"],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "labs-session" },
     );
@@ -757,36 +729,43 @@ describe("remote-cli MCP endpoints", () => {
     expect(healthBody.mcp.connectedTargets).toBe(2);
   });
 
-  it("rejects worktree session directories for MCP authz", async () => {
-    const response = await postJson(
+  it("uses the session repo alias instead of a forged request directory for profile routing", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    vi.stubEnv("ATLASSIAN_AUTH_LABS", "Basic labs-token");
+    workspaceConfig = {
+      ...workspaceConfig,
+      profiles: {
+        QA: { repos: ["repo-qa"] },
+        LABS: { repos: ["repo-labs"] },
+      },
+    };
+    appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: activeAnchorId });
+
+    const call = await postJson(
       "/exec/mcp",
       {
-        args: [],
-        cwd: "/workspace/worktrees/acme/feature-branch",
-        directory: "/workspace/worktrees/acme/feature-branch",
+        args: ["atlassian", "getJiraIssue", "{}"],
+        directory: "/workspace/repos/repo-labs",
       },
       { "x-thor-session-id": "parent-session" },
     );
-    const body = (await response.json()) as {
+    const body = (await call.json()) as {
       stdout: string;
       stderr: string;
       exitCode: number;
     };
 
-    expect(response.status).toBe(200);
-    expect(body).toMatchObject({
-      stdout: "",
-      stderr:
-        "Cannot determine repo from directory: /workspace/worktrees/acme/feature-branch. Expected /workspace/repos/<repo> (worktrees are not allowed for MCP authz)",
-      exitCode: 1,
+    expect(call.status).toBe(200);
+    expect(body).toMatchObject({ stdout: "THOR-123", stderr: "", exitCode: 0 });
+    expect(upstreamConfigs.find((config) => config.name === "atlassian")?.headers).toEqual({
+      Authorization: "Basic qa-token",
     });
   });
 
   it("fails closed for MCP calls when Thor session context is missing", async () => {
     const allowed = await postJson("/exec/mcp", {
       args: ["atlassian", "getJiraIssue", "{}"],
-      cwd: "/workspace/repos/acme",
-      directory: "/workspace/repos/acme",
     });
     const allowedBody = (await allowed.json()) as {
       stdout: string;
@@ -803,8 +782,6 @@ describe("remote-cli MCP endpoints", () => {
       "/exec/mcp",
       {
         args: ["atlassian", "getJiraIssue", "{}"],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "fake-session" },
     );
@@ -825,8 +802,6 @@ describe("remote-cli MCP endpoints", () => {
         "createJiraIssue",
         '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
       ],
-      cwd: "/workspace/repos/acme",
-      directory: "/workspace/repos/acme",
     });
     const pendingBody = (await pending.json()) as {
       stdout: string;
@@ -855,8 +830,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"projectKey":"THOR","summary":"Fix it","description":"body"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -887,8 +860,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -1011,8 +982,6 @@ describe("remote-cli MCP endpoints", () => {
       "/exec/mcp",
       {
         args: ["atlassian", "createIssueLink", JSON.stringify(cleanArgs)],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -1044,8 +1013,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -1094,8 +1061,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -1134,8 +1099,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "session-without-slack-thread" },
     );
@@ -1161,8 +1124,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -1290,8 +1251,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body","contentFormat":"adf"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -1327,8 +1286,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -1394,8 +1351,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -1455,8 +1410,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
