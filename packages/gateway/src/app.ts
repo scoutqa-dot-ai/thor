@@ -1352,45 +1352,44 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    const enqueueSlackEvent = (
+    const enqueueSlackEvent = async (
       payload: SlackThreadEvent,
       correlationKey: string,
       options: { delayMs: number; interrupt?: boolean },
-    ) =>
-      queue.enqueue({
-        id: eventId,
-        source: "slack",
-        correlationKey,
-        payload,
-        receivedAt: new Date().toISOString(),
-        sourceTs: parseSlackTs(payload.ts),
-        readyAt: Date.now() + options.delayMs,
-        delayMs: options.delayMs,
-        ...(options.interrupt !== undefined ? { interrupt: options.interrupt } : {}),
-      });
+    ): Promise<void> => {
+      try {
+        await queue.enqueue({
+          id: eventId,
+          source: "slack",
+          correlationKey,
+          payload,
+          receivedAt: new Date().toISOString(),
+          sourceTs: parseSlackTs(payload.ts),
+          readyAt: Date.now() + options.delayMs,
+          delayMs: options.delayMs,
+          ...(options.interrupt !== undefined ? { interrupt: options.interrupt } : {}),
+        });
+      } catch (error) {
+        history.reason = "enqueue_failed";
+        history.metadata = {
+          ...(history.metadata ?? {}),
+          channel: payload.channel,
+          correlationKey,
+        };
+        throw error;
+      }
+    };
 
     const deferForPendingPrivacy = async (
       target: SlackThreadEvent,
       options: { delayMs: number; interrupt?: boolean },
     ): Promise<void> => {
       const correlationKey = buildPendingSlackPrivacyKey(target.channel, eventId);
-      try {
-        await enqueueSlackEvent(target, correlationKey, options);
-      } catch (error) {
-        history.reason = "enqueue_failed";
-        history.metadata = {
-          ...(history.metadata ?? {}),
-          channel: target.channel,
-          attemptedCorrelationKey: correlationKey,
-          enqueueStatus: "failed",
-        };
-        throw error;
-      }
+      await enqueueSlackEvent(target, correlationKey, options);
       history.metadata = {
         ...(history.metadata ?? {}),
         channel: target.channel,
         correlationKey,
-        enqueueStatus: "succeeded",
       };
       logInfo(log, "event_deferred_pending_privacy", {
         eventId,
@@ -1409,23 +1408,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       correlationKey: string,
       options: { delayMs: number; interrupt?: boolean },
     ): Promise<void> => {
-      try {
-        await enqueueSlackEvent(target, correlationKey, options);
-      } catch (error) {
-        history.reason = "enqueue_failed";
-        history.metadata = {
-          ...(history.metadata ?? {}),
-          channel: target.channel,
-          attemptedCorrelationKey: correlationKey,
-          enqueueStatus: "failed",
-        };
-        throw error;
-      }
+      await enqueueSlackEvent(target, correlationKey, options);
       history.metadata = {
         ...(history.metadata ?? {}),
         channel: target.channel,
         correlationKey,
-        enqueueStatus: "succeeded",
       };
       logInfo(log, "event_accepted", {
         eventId,

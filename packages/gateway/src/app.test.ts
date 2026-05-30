@@ -2656,10 +2656,8 @@ describe("gateway", () => {
             eventId: "EvDeferredHistory",
             channel: "CLOOKUP",
             correlationKey: "pending:slack-privacy:CLOOKUP:EvDeferredHistory",
-            enqueueStatus: "succeeded",
           },
         });
-        expect(entries[0]?.metadata).not.toHaveProperty("attemptedCorrelationKey");
       });
     });
   });
@@ -2694,13 +2692,11 @@ describe("gateway", () => {
           metadata: {
             eventId: "EvDeferredEnqueueFail",
             channel: "CFAIL",
-            attemptedCorrelationKey: "pending:slack-privacy:CFAIL:EvDeferredEnqueueFail",
-            enqueueStatus: "failed",
+            correlationKey: "pending:slack-privacy:CFAIL:EvDeferredEnqueueFail",
             errorName: "Error",
             errorMessage: "queue disk full",
           },
         });
-        expect(entries[0]?.metadata).not.toHaveProperty("correlationKey");
       });
     });
   });
@@ -2792,12 +2788,10 @@ describe("gateway", () => {
           metadata: {
             eventId: "EvAcceptEnqueueFail",
             channel: "CACCEPTFAIL",
-            attemptedCorrelationKey: "slack:thread:CACCEPTFAIL/1710000000.209",
-            enqueueStatus: "failed",
+            correlationKey: "slack:thread:CACCEPTFAIL/1710000000.209",
             errorMessage: "queue unavailable",
           },
         });
-        expect(entries[1]?.metadata).not.toHaveProperty("correlationKey");
       });
     });
   });
