@@ -861,9 +861,14 @@ describe("runner /trigger orchestration", () => {
       const sessionAlias = aliases.find(
         (a) => a.aliasType === "opencode.session" && a.aliasValue === "session-1",
       );
+      const repoAlias = aliases.find(
+        (a) => a.aliasType === "repo" && a.aliasValue === "runner-trigger-test",
+      );
       expect(slackAlias).toBeDefined();
       expect(sessionAlias).toBeDefined();
+      expect(repoAlias).toBeDefined();
       expect(slackAlias.anchorId).toBe(sessionAlias.anchorId);
+      expect(repoAlias.anchorId).toBe(sessionAlias.anchorId);
       expect(aliases).not.toContainEqual(expect.objectContaining({ aliasValue: correlationKey }));
 
       const second = await trigger(url, { prompt: "second", correlationKey });
@@ -875,6 +880,13 @@ describe("runner /trigger orchestration", () => {
         resumed: true,
         status: "completed",
       });
+      // The repo alias is stamped once at anchor creation; resuming must not add a second.
+      const repoAliasesAfterResume = readFileSync(`${worklogDir}/aliases.jsonl`, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+        .filter((a) => a.aliasType === "repo");
+      expect(repoAliasesAfterResume).toHaveLength(1);
     });
   });
 

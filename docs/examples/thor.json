@@ -14,7 +14,11 @@
   ],
   "profiles": {
     "QA": {
-      "channels": ["C0123456789"]
+      "channels": ["C0123456789"],
+      "repos": ["qa-sandbox"]
+    },
+    "LABS": {
+      "repos": ["labs-playground"]
     }
   },
   "mitmproxy": [

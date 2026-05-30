@@ -10,6 +10,7 @@ import {
   findUserBySlack,
   findUserByGithub,
   getProfileForSlackChannel,
+  getProfileForRepo,
   isSlackChannelInProfile,
   resolveSafeRepoDirectory,
   resolveSlackChannelRepoDirectory,
@@ -213,6 +214,88 @@ describe("loadWorkspaceConfig", () => {
       const result = resolveStrictProfileForSession(config, "s4");
       expect(result.ok).toBe(false);
     });
+
+    function makeRepoConfig() {
+      return loadWorkspaceConfig(
+        writeConfig("repo-profiles.json", {
+          profiles: {
+            QA: { repos: ["repo-qa"] },
+            LABS: { channels: ["C456"], repos: ["repo-labs"] },
+          },
+        }),
+      );
+    }
+
+    it("resolves a profile from the live repo when the session has no anchor", () => {
+      const config = makeRepoConfig();
+      expect(resolveStrictProfileForSession(config, "no-anchor", { liveRepo: "repo-qa" })).toEqual({
+        ok: true,
+        profile: "QA",
+      });
+      expect(resolveStrictProfileForSession(config, "no-anchor", { liveRepo: "repo-x" })).toEqual({
+        ok: true,
+        profile: undefined,
+      });
+    });
+
+    it("resolves a profile from the anchor repo alias when there is no Slack binding", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "rs1", anchorId: anchor });
+      appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: anchor });
+      const config = makeRepoConfig();
+      expect(resolveStrictProfileForSession(config, "rs1")).toEqual({ ok: true, profile: "QA" });
+    });
+
+    it("lets a live repo upgrade a channel that maps to no profile", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "rs2", anchorId: anchor });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C999/1710000000.001",
+        anchorId: anchor,
+      });
+      const config = makeRepoConfig();
+      expect(resolveStrictProfileForSession(config, "rs2", { liveRepo: "repo-qa" })).toEqual({
+        ok: true,
+        profile: "QA",
+      });
+    });
+
+    it("fails when the channel profile and live repo profile disagree", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "rs3", anchorId: anchor });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C456/1710000000.001",
+        anchorId: anchor,
+      });
+      const config = makeRepoConfig();
+      const result = resolveStrictProfileForSession(config, "rs3", { liveRepo: "repo-qa" });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/conflicting profiles/);
+    });
+
+    it("fails when the channel profile and anchor repo alias disagree", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "rs4", anchorId: anchor });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C456/1710000000.001",
+        anchorId: anchor,
+      });
+      appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: anchor });
+      const config = makeRepoConfig();
+      const result = resolveStrictProfileForSession(config, "rs4");
+      expect(result.ok).toBe(false);
+    });
+
+    it("uses the live repo in place of the anchor repo alias", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "rs5", anchorId: anchor });
+      appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: anchor });
+      const config = makeRepoConfig();
+      // The agent is now operating in repo-labs; the live repo overrides the
+      // trigger-time alias, so this resolves to LABS with no false ambiguity.
+      expect(resolveStrictProfileForSession(config, "rs5", { liveRepo: "repo-labs" })).toEqual({
+        ok: true,
+        profile: "LABS",
+      });
+    });
   });
 
   it("rejects invalid or duplicate profile channel entries", () => {
@@ -256,6 +339,41 @@ describe("loadWorkspaceConfig", () => {
         }),
       ),
     ).toThrow("uppercase ASCII letters and underscores");
+  });
+
+  it("accepts repo-only and mixed profiles and exposes repo lookup", () => {
+    const path = writeConfig("repos.json", {
+      profiles: {
+        QA: { repos: ["repo-qa"] },
+        LABS: { channels: ["C789"], repos: ["repo-labs"] },
+      },
+    });
+    const config = loadWorkspaceConfig(path);
+    expect(getProfileForRepo(config, "repo-qa")).toBe("QA");
+    expect(getProfileForRepo(config, "repo-labs")).toBe("LABS");
+    expect(getProfileForRepo(config, "repo-none")).toBeUndefined();
+    expect(getProfileForSlackChannel(config, "C789")).toBe("LABS");
+  });
+
+  it("rejects a profile with neither channels nor repos", () => {
+    expect(() =>
+      loadWorkspaceConfig(writeConfig("empty-profile.json", { profiles: { QA: {} } })),
+    ).toThrow("at least one channel or repo");
+  });
+
+  it("rejects duplicate repos within and across profiles", () => {
+    expect(() =>
+      loadWorkspaceConfig(
+        writeConfig("dup-repo.json", { profiles: { QA: { repos: ["r", "r"] } } }),
+      ),
+    ).toThrow("Profile repos must not contain duplicates");
+    expect(() =>
+      loadWorkspaceConfig(
+        writeConfig("dup-repo-across.json", {
+          profiles: { QA: { repos: ["r"] }, LABS: { repos: ["r"] } },
+        }),
+      ),
+    ).toThrow("Repo r is assigned to both profiles QA and LABS");
   });
 
   it("rejects mitmproxy rule without host selector", () => {

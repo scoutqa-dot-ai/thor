@@ -52,13 +52,19 @@ const UserRecordSchema = z.object({
   github: z.string().min(1).optional(),
 });
 
-const ProfileConfigSchema = z.object({
-  channels: z
-    .array(z.string().min(1))
-    .refine((channels) => new Set(channels).size === channels.length, {
-      message: "Profile channels must not contain duplicates",
-    }),
-});
+const uniqueStringArray = (label: string) =>
+  z.array(z.string().min(1)).refine((items) => new Set(items).size === items.length, {
+    message: `Profile ${label} must not contain duplicates`,
+  });
+
+const ProfileConfigSchema = z
+  .object({
+    channels: uniqueStringArray("channels").optional(),
+    repos: uniqueStringArray("repos").optional(),
+  })
+  .refine((profile) => (profile.channels?.length ?? 0) > 0 || (profile.repos?.length ?? 0) > 0, {
+    message: "Profile must define at least one channel or repo",
+  });
 
 export const WorkspaceConfigSchema = z
   .object({
@@ -69,7 +75,8 @@ export const WorkspaceConfigSchema = z
     mitmproxy_passthrough: z.array(MitmproxyPassthroughHostSchema).optional(),
   })
   .superRefine((config, ctx) => {
-    const seen = new Map<string, string>();
+    const seenChannels = new Map<string, string>();
+    const seenRepos = new Map<string, string>();
     for (const [profileName, profile] of Object.entries(config.profiles ?? {})) {
       if (!/^[A-Z_]+$/.test(profileName)) {
         ctx.addIssue({
@@ -78,9 +85,8 @@ export const WorkspaceConfigSchema = z
           path: ["profiles", profileName],
         });
       }
-      for (let index = 0; index < profile.channels.length; index += 1) {
-        const channel = profile.channels[index]!;
-        const previous = seen.get(channel);
+      (profile.channels ?? []).forEach((channel, index) => {
+        const previous = seenChannels.get(channel);
         if (previous) {
           ctx.addIssue({
             code: "custom",
@@ -88,9 +94,21 @@ export const WorkspaceConfigSchema = z
             path: ["profiles", profileName, "channels", index],
           });
         } else {
-          seen.set(channel, profileName);
+          seenChannels.set(channel, profileName);
         }
-      }
+      });
+      (profile.repos ?? []).forEach((repo, index) => {
+        const previous = seenRepos.get(repo);
+        if (previous) {
+          ctx.addIssue({
+            code: "custom",
+            message: `Repo ${repo} is assigned to both profiles ${previous} and ${profileName}`,
+            path: ["profiles", profileName, "repos", index],
+          });
+        } else {
+          seenRepos.set(repo, profileName);
+        }
+      });
     }
   });
 
@@ -213,7 +231,14 @@ export function getProfileForSlackChannel(
   channelId: string,
 ): string | undefined {
   for (const [profileName, profile] of Object.entries(config.profiles ?? {})) {
-    if (profile.channels.includes(channelId)) return profileName;
+    if (profile.channels?.includes(channelId)) return profileName;
+  }
+  return undefined;
+}
+
+export function getProfileForRepo(config: WorkspaceConfig, repoName: string): string | undefined {
+  for (const [profileName, profile] of Object.entries(config.profiles ?? {})) {
+    if (profile.repos?.includes(repoName)) return profileName;
   }
   return undefined;
 }
@@ -226,56 +251,102 @@ export type ProfileResolution =
   | { ok: true; profile: string | undefined }
   | { ok: false; error: string };
 
+export interface StrictProfileOptions {
+  /**
+   * Repo the session is operating in right now, from the trusted OpenCode
+   * session directory on the live MCP path. When provided it is the sole repo
+   * signal and overrides any `repo` alias stamped on the anchor. The
+   * approval-click path omits it (no live directory) and falls back to the
+   * anchor's `repo` alias recorded at trigger time.
+   */
+  liveRepo?: string;
+}
+
 /**
- * Strict profile resolver. Enumerates every `slack.thread` alias bound to the
- * session's anchor, maps each channel to a profile, and:
- *   - returns `{ profile: undefined }` if there are no Slack bindings,
- *   - returns `{ profile: name }` if every binding maps to the same profile,
- *   - returns an error otherwise (multiple profiles, or a mix of "in profile"
- *     + "not in any profile" channels).
+ * Strict profile resolver. Resolves a session to at most one profile by
+ * combining two dimensions, each failing fast on internal ambiguity:
+ *   - channels: every `slack.thread` alias on the anchor → its profile,
+ *   - repos: the live repo (if provided) else the anchor's `repo` alias.
  *
- * Failing fast on multi-profile sessions defends against silent credential
- * flips when one anchor accumulates triggers from different channels.
+ * The result is `channelProfile ?? repoProfile`: the channel is authoritative,
+ * the repo fills in when the channel maps to no profile (e.g. cron sessions
+ * with no Slack binding, or a public channel left out of every profile). A
+ * channel and repo that map to *different* profiles is a conflict and fails.
+ *
+ * Failing fast defends against silent credential flips when one anchor
+ * accumulates bindings that disagree about which credentials apply.
  */
 export function resolveStrictProfileForSession(
   config: WorkspaceConfig,
   sessionId: string,
+  options: StrictProfileOptions = {},
 ): ProfileResolution {
   const anchorId = resolveSessionAnchorId(sessionId);
-  if (!anchorId) return { ok: true, profile: undefined };
+  if (!anchorId) {
+    // No anchor: only a live repo can carry a profile (no channel/alias signal).
+    const profile = options.liveRepo ? getProfileForRepo(config, options.liveRepo) : undefined;
+    return { ok: true, profile };
+  }
+  return resolveStrictProfileForAnchor(config, anchorId, options, sessionId);
+}
 
-  return resolveStrictProfileForAnchor(config, anchorId, sessionId);
+function collapseDimension(
+  profiles: Set<string | undefined>,
+  values: string[],
+  dimension: string,
+  label: string,
+): ProfileResolution {
+  if (profiles.size <= 1) {
+    return { ok: true, profile: profiles.size === 1 ? [...profiles][0] : undefined };
+  }
+  const labels = [...profiles].map((p) => p ?? "<none>").sort();
+  return {
+    ok: false,
+    error: `session ${label} is bound to ${dimension} in multiple profiles (${labels.join(", ")}): ${values.join(", ")}`,
+  };
 }
 
 function resolveStrictProfileForAnchor(
   config: WorkspaceConfig,
   anchorId: string,
+  options: StrictProfileOptions,
   label = anchorId,
 ): ProfileResolution {
-  const slackKeys = reverseLookupAnchor(anchorId).externalKeys.filter(
-    (key) => key.aliasType === "slack.thread",
-  );
-  if (slackKeys.length === 0) return { ok: true, profile: undefined };
+  const externalKeys = reverseLookupAnchor(anchorId).externalKeys;
 
-  const profiles = new Set<string | undefined>();
+  const channelProfiles = new Set<string | undefined>();
   const channels: string[] = [];
-  for (const key of slackKeys) {
+  for (const key of externalKeys) {
+    if (key.aliasType !== "slack.thread") continue;
     const slash = key.aliasValue.indexOf("/");
     if (slash <= 0) continue;
     const channel = key.aliasValue.slice(0, slash);
     channels.push(channel);
-    profiles.add(getProfileForSlackChannel(config, channel));
+    channelProfiles.add(getProfileForSlackChannel(config, channel));
   }
-  if (profiles.size === 0) return { ok: true, profile: undefined };
-  if (profiles.size === 1) {
-    const only = [...profiles][0];
-    return { ok: true, profile: only };
+  const channel = collapseDimension(channelProfiles, channels, "channels", label);
+  if (!channel.ok) return channel;
+
+  const repoProfiles = new Set<string | undefined>();
+  const repos = options.liveRepo
+    ? [options.liveRepo]
+    : externalKeys.filter((key) => key.aliasType === "repo").map((key) => key.aliasValue);
+  for (const repo of repos) repoProfiles.add(getProfileForRepo(config, repo));
+  const repo = collapseDimension(repoProfiles, repos, "repos", label);
+  if (!repo.ok) return repo;
+
+  if (
+    channel.profile !== undefined &&
+    repo.profile !== undefined &&
+    channel.profile !== repo.profile
+  ) {
+    return {
+      ok: false,
+      error: `session ${label} resolves to conflicting profiles (channel→${channel.profile}, repo→${repo.profile})`,
+    };
   }
-  const labels = [...profiles].map((p) => p ?? "<none>").sort();
-  return {
-    ok: false,
-    error: `session ${label} is bound to channels in multiple profiles (${labels.join(", ")}): ${channels.join(", ")}`,
-  };
+
+  return { ok: true, profile: channel.profile ?? repo.profile };
 }
 
 /**

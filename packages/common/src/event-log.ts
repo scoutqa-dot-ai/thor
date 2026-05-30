@@ -20,6 +20,7 @@ const SLOW_READ_THRESHOLD_MS = 50;
 
 export const ALIAS_TYPES = [
   "slack.thread",
+  "repo",
   "git.branch",
   "github.issue",
   "opencode.session",

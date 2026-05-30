@@ -283,7 +283,11 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     });
 
     const config = getConfig();
-    const resolved = resolveStrictProfileForSession(config, sessionId);
+    // The live MCP path carries the trusted OpenCode session directory, so the
+    // repo dimension resolves from where the agent is operating right now; the
+    // anchor's `repo` alias is the fallback used only by the approval-click path.
+    const liveRepo = context.directory ? extractRepoFromCwd(context.directory) : undefined;
+    const resolved = resolveStrictProfileForSession(config, sessionId, { liveRepo });
     if (!resolved.ok) throw new Error(resolved.error);
     return { profile: resolved.profile };
   }

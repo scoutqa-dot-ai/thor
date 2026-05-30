@@ -63,13 +63,16 @@ Public, non-shared channels can trigger Thor without configuration. Private chan
 {
   "profiles": {
     "QA": {
-      "channels": ["C0123456789", "C9876543210"]
+      "channels": ["C0123456789", "C9876543210"],
+      "repos": ["qa-sandbox"]
     }
   }
 }
 ```
 
 Profile edits hot-reload — no service restart needed. Events from gated channels that are not listed in any profile are dropped with `private_channel_not_allowlisted` (§10). The profile also selects profile-scoped MCP credentials when present; public channels outside profiles use unsuffixed global credentials.
+
+A profile may also list `repos[]`. Channel membership stays authoritative for credential routing; a repo fills in when the channel maps to no profile (e.g. a session in a profiled repo from a public channel, or a non-Slack/cron session whose only signal is the repo it runs in). A channel and a repo that map to _different_ profiles is a conflict and fails closed. `repos[]` plays **no part in channel admission** — gated channels are admitted by `channels[]` only. A profile must define at least one of `channels` or `repos`; each repo may belong to only one profile.
 
 ## 6) Per-channel repo override
 

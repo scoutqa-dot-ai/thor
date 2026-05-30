@@ -226,6 +226,7 @@ function bindSessionToAnchor(args: {
   anchorId: string;
   sessionId: string;
   correlationKey?: string;
+  repoDirectory?: string;
 }): void {
   if (
     resolveAlias({ aliasType: "opencode.session", aliasValue: args.sessionId }) !== args.anchorId
@@ -241,6 +242,20 @@ function bindSessionToAnchor(args: {
     resolveAnchorForCorrelationKey(args.correlationKey) !== args.anchorId
   ) {
     appendCorrelationAliasForAnchor(args.anchorId, args.correlationKey);
+  }
+  // Stamp the anchor's repo once, from the trusted trigger-time directory. This
+  // lets non-Slack/cron sessions (which carry no slack.thread alias) resolve a
+  // profile, and lets the approval-click path re-resolve without a live
+  // directory. Stamp only when the anchor has no repo yet so a resumed session
+  // keeps its original repo even if a later trigger's directory differs.
+  if (args.repoDirectory) {
+    const repo = extractRepoFromCwd(args.repoDirectory);
+    if (
+      repo &&
+      !reverseLookupAnchor(args.anchorId).externalKeys.some((key) => key.aliasType === "repo")
+    ) {
+      appendAlias({ aliasType: "repo", aliasValue: repo, anchorId: args.anchorId });
+    }
   }
 }
 
@@ -829,7 +844,12 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
         // session_stale recreate appends a fresh opencode.session alongside
         // the old; original Slack/git aliases keep pointing at the same anchor.
-        bindSessionToAnchor({ anchorId, sessionId: id, correlationKey });
+        bindSessionToAnchor({
+          anchorId,
+          sessionId: id,
+          correlationKey,
+          repoDirectory: sessionDirectory,
+        });
 
         return { sessionId: id, resumed: didResume, anchorId };
       };

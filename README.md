@@ -134,10 +134,11 @@ The file carries four operator-maintained registries:
 
 - `owners.<owner>.github_app_installation_id` — GitHub App installation IDs. See [`docs/github.md`](docs/github.md) §2.
 - `profiles.<name>.channels[]` — Slack conversation ids assigned to a routing profile. Private channels, DMs, group DMs, and Slack Connect surfaces must appear in a profile to be admitted. See [`docs/slack.md`](docs/slack.md) §5.
+- `profiles.<name>.repos[]` — repo names assigned to the profile. The channel is authoritative for credential routing; the repo fills in when the channel maps to no profile (including non-Slack/cron sessions, whose only profile signal is the repo they run in). A channel/repo profile conflict fails closed. Repos never admit a gated channel. A profile must define at least one of `channels` or `repos`; each channel and each repo belongs to only one profile.
 - `mitmproxy[]` / `mitmproxy_passthrough[]` — outbound credential rules and passthrough hosts. See [`docs/feat/security-model.md`](docs/feat/security-model.md) Layer 1a.
 - `users[]` — human attribution (see below).
 
-Profile names must contain only uppercase ASCII letters and underscores. The profile name is used directly as the env suffix: profile `QA_LABS` checks `POSTHOG_API_KEY_QA_LABS` before `POSTHOG_API_KEY`, and the Grafana bundle `GRAFANA_URL_QA_LABS` + `GRAFANA_SERVICE_ACCOUNT_TOKEN_QA_LABS` before the unsuffixed bundle. Profile-only Grafana bundles are valid; the unsuffixed Grafana vars are optional. Non-Slack triggers use unsuffixed globals only.
+Profile names must contain only uppercase ASCII letters and underscores. The profile name is used directly as the env suffix: profile `QA_LABS` checks `POSTHOG_API_KEY_QA_LABS` before `POSTHOG_API_KEY`, and the Grafana bundle `GRAFANA_URL_QA_LABS` + `GRAFANA_SERVICE_ACCOUNT_TOKEN_QA_LABS` before the unsuffixed bundle. Profile-only Grafana bundles are valid; the unsuffixed Grafana vars are optional. Non-Slack triggers (e.g. cron) resolve a profile only via the repo they run in (`profiles.<name>.repos[]`); with no profiled repo they use unsuffixed globals. Profile selection is entirely harness-side — there is no agent-facing profile argument.
 
 ### Human attribution (`users[]`)
 

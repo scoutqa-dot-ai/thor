@@ -14,10 +14,11 @@ export {
   findUserBySlack,
   findUserByGithub,
   getProfileForSlackChannel,
+  getProfileForRepo,
   isSlackChannelInProfile,
   resolveStrictProfileForSession,
 } from "./workspace-config.ts";
-export type { ProfileResolution } from "./workspace-config.ts";
+export type { ProfileResolution, StrictProfileOptions } from "./workspace-config.ts";
 export { PROXY_NAMES, isProxyName, resolveProxyConfig, getAvailableProxyNames } from "./proxies.ts";
 export {
   APPROVAL_TOOL_NAMES,
