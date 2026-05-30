@@ -252,14 +252,17 @@ export type ProfileResolution =
   | { ok: false; error: string };
 
 export interface StrictProfileOptions {
+  /** Session whose anchor bindings (channels, repo alias) drive resolution. */
+  sessionId: string;
   /**
    * Repo the session is operating in right now, from the trusted OpenCode
-   * session directory on the live MCP path. When provided it is the sole repo
+   * session directory on the live MCP path. When a string it is the sole repo
    * signal and overrides any `repo` alias stamped on the anchor. The
-   * approval-click path omits it (no live directory) and falls back to the
-   * anchor's `repo` alias recorded at trigger time.
+   * approval-click path passes `undefined` (no live directory) so the repo
+   * dimension falls back to the anchor's `repo` alias recorded at trigger time.
+   * Required (string | undefined) so every call site declares which it is.
    */
-  liveRepo?: string;
+  liveRepo: string | undefined;
 }
 
 /**
@@ -278,13 +281,13 @@ export interface StrictProfileOptions {
  */
 export function resolveStrictProfileForSession(
   config: WorkspaceConfig,
-  sessionId: string,
-  options: StrictProfileOptions = {},
+  options: StrictProfileOptions,
 ): ProfileResolution {
+  const { sessionId, liveRepo } = options;
   const anchorId = resolveSessionAnchorId(sessionId);
   if (!anchorId) {
     // No anchor: only a live repo can carry a profile (no channel/alias signal).
-    const profile = options.liveRepo ? getProfileForRepo(config, options.liveRepo) : undefined;
+    const profile = liveRepo ? getProfileForRepo(config, liveRepo) : undefined;
     return { ok: true, profile };
   }
   return resolveStrictProfileForAnchor(config, anchorId, options, sessionId);

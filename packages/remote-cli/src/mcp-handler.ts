@@ -287,7 +287,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     // repo dimension resolves from where the agent is operating right now; the
     // anchor's `repo` alias is the fallback used only by the approval-click path.
     const liveRepo = context.directory ? extractRepoFromCwd(context.directory) : undefined;
-    const resolved = resolveStrictProfileForSession(config, sessionId, { liveRepo });
+    const resolved = resolveStrictProfileForSession(config, { sessionId, liveRepo });
     if (!resolved.ok) throw new Error(resolved.error);
     return { profile: resolved.profile };
   }
@@ -425,7 +425,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     });
 
     const config = getConfig();
-    const resolved = resolveStrictProfileForSession(config, sessionId);
+    // The approval-click path has no live OpenCode exec, so there is no live
+    // directory; the repo dimension comes from the `repo` alias stamped on the
+    // anchor at trigger time. Pass liveRepo explicitly to declare that intent.
+    const resolved = resolveStrictProfileForSession(config, { sessionId, liveRepo: undefined });
     if (!resolved.ok) throw new Error(resolved.error);
     return { profile: resolved.profile };
   }
