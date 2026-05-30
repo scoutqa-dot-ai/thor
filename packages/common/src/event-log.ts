@@ -186,6 +186,14 @@ const aliasCache: AliasCacheState = { forward: new Map(), reverse: new Map() };
 /** Last observed file signature for aliases.jsonl. */
 let aliasCacheLastSignature: string | null = null;
 
+// Anchor metadata, not a routing key: many anchors share a repo, so it must
+// never enter the forward (value→anchor) map. That map assumes one anchor per
+// value, so a second anchor stamping the same repo would evict the first
+// anchor's binding — silently breaking profile resolution for the non-Slack /
+// cron sessions repo-stamping exists for. These types are recorded in the
+// reverse index only.
+const ANCHOR_METADATA_ALIAS_TYPES = new Set<AliasRecord["aliasType"]>(["repo"]);
+
 interface SessionRecordsCacheEntry {
   signature: string;
   records: SessionEventLogRecord[];
@@ -615,16 +623,19 @@ function externalKeyEncoded(aliasType: AliasRecord["aliasType"], aliasValue: str
 
 function applyAliasRecord(r: AliasRecord): void {
   const aliasKey = externalKeyEncoded(r.aliasType, r.aliasValue);
-  const previousAnchorId = aliasCache.forward.get(aliasKey);
-  aliasCache.forward.set(aliasKey, r.anchorId);
 
-  if (previousAnchorId && previousAnchorId !== r.anchorId) {
-    const old = aliasCache.reverse.get(previousAnchorId);
-    if (old) {
-      if (r.aliasType === "opencode.session") old.sessions.delete(r.aliasValue);
-      else if (r.aliasType === "opencode.subsession") old.subsessions.delete(r.aliasValue);
-      else old.externalKeys.delete(aliasKey);
-      if (isReverseEntryEmpty(old)) aliasCache.reverse.delete(previousAnchorId);
+  if (!ANCHOR_METADATA_ALIAS_TYPES.has(r.aliasType)) {
+    const previousAnchorId = aliasCache.forward.get(aliasKey);
+    aliasCache.forward.set(aliasKey, r.anchorId);
+
+    if (previousAnchorId && previousAnchorId !== r.anchorId) {
+      const old = aliasCache.reverse.get(previousAnchorId);
+      if (old) {
+        if (r.aliasType === "opencode.session") old.sessions.delete(r.aliasValue);
+        else if (r.aliasType === "opencode.subsession") old.subsessions.delete(r.aliasValue);
+        else old.externalKeys.delete(aliasKey);
+        if (isReverseEntryEmpty(old)) aliasCache.reverse.delete(previousAnchorId);
+      }
     }
   }
 
@@ -709,6 +720,24 @@ export function resolveSessionAnchorId(sessionId: string): string | undefined {
     resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId }) ??
     resolveAlias({ aliasType: "opencode.subsession", aliasValue: sessionId })
   );
+}
+
+/**
+ * Cheap membership check: does the anchor carry any external key of the given
+ * type? Reads the in-memory reverse index directly, allocating nothing — used
+ * to enforce stamp-once semantics without materializing a full
+ * `ReverseAnchorEntry`.
+ */
+export function anchorHasExternalKeyType(
+  anchorId: string,
+  aliasType: AliasRecord["aliasType"],
+): boolean {
+  loadAliasCacheIfChanged();
+  const entry = aliasCache.reverse.get(anchorId);
+  if (!entry) return false;
+  const prefix = `${aliasType}\0`;
+  for (const key of entry.externalKeys) if (key.startsWith(prefix)) return true;
+  return false;
 }
 
 export function reverseLookupAnchor(anchorId: string): ReverseAnchorEntry {

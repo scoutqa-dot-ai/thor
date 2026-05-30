@@ -26,6 +26,7 @@ import {
   SESSION_LOCK_PREFIX,
   appendSessionEvent,
   appendAlias,
+  anchorHasExternalKeyType,
   appendCorrelationAliasForAnchor,
   currentSessionForAnchor,
   ensureAnchorForCorrelationKey,
@@ -250,10 +251,7 @@ function bindSessionToAnchor(args: {
   // keeps its original repo even if a later trigger's directory differs.
   if (args.repoDirectory) {
     const repo = extractRepoFromCwd(args.repoDirectory);
-    if (
-      repo &&
-      !reverseLookupAnchor(args.anchorId).externalKeys.some((key) => key.aliasType === "repo")
-    ) {
+    if (repo && !anchorHasExternalKeyType(args.anchorId, "repo")) {
       appendAlias({ aliasType: "repo", aliasValue: repo, anchorId: args.anchorId });
     }
   }

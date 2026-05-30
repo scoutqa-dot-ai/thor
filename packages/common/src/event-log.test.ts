@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { fork } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
+  anchorHasExternalKeyType,
   appendAlias,
   appendSessionEvent,
   findActiveTrigger,
@@ -382,6 +383,26 @@ describe("session event log", () => {
     expect(listSessionAliases("s1")).toMatchObject([
       { aliasType: "slack.thread", aliasValue: "1.2", anchorId: anchorA },
     ]);
+  });
+
+  it("keeps the repo metadata binding on every anchor that shares a repo", () => {
+    // repo is anchor metadata, not a routing key: two anchors working the same
+    // repo must each retain their own binding. A routing alias (slack.thread)
+    // would let the second stamp evict the first; repo must not.
+    appendAlias({ aliasType: "repo", aliasValue: "dubai", anchorId: anchorA });
+    appendAlias({ aliasType: "repo", aliasValue: "dubai", anchorId: anchorB });
+
+    expect(reverseLookupAnchor(anchorA).externalKeys).toContainEqual({
+      aliasType: "repo",
+      aliasValue: "dubai",
+    });
+    expect(reverseLookupAnchor(anchorB).externalKeys).toContainEqual({
+      aliasType: "repo",
+      aliasValue: "dubai",
+    });
+    expect(anchorHasExternalKeyType(anchorA, "repo")).toBe(true);
+    expect(anchorHasExternalKeyType(anchorB, "repo")).toBe(true);
+    expect(anchorHasExternalKeyType(anchorParent, "repo")).toBe(false);
   });
 
   it("invalidates alias cache when the worklog directory changes", () => {

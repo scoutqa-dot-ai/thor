@@ -83,6 +83,7 @@ export {
   resolveAlias,
   resolveSessionAnchorId,
   reverseLookupAnchor,
+  anchorHasExternalKeyType,
   listAnchors,
   listAnchorSessionStates,
   currentSessionForAnchor,
