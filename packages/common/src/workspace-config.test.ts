@@ -239,7 +239,7 @@ describe("loadWorkspaceConfig", () => {
       });
     });
 
-    it("lets an anchor repo alias upgrade a channel that maps to no profile", () => {
+    it("lets an anchor repo alias upgrade a channel that maps to no profile when the profile is repo-only", () => {
       appendAlias({ aliasType: "opencode.session", aliasValue: "rs2", anchorId: anchor });
       appendAlias({
         aliasType: "slack.thread",
@@ -252,6 +252,30 @@ describe("loadWorkspaceConfig", () => {
         ok: true,
         profile: "QA",
       });
+    });
+
+    it("resolves a mixed profile from the anchor repo alias when there is no Slack binding", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "rs5", anchorId: anchor });
+      appendAlias({ aliasType: "repo", aliasValue: "repo-labs", anchorId: anchor });
+      const config = makeRepoConfig();
+      expect(resolveStrictProfileForSession(config, "rs5")).toEqual({
+        ok: true,
+        profile: "LABS",
+      });
+    });
+
+    it("blocks unlisted Slack channels from adopting a mixed channel+repo profile", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "rs6", anchorId: anchor });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C999/1710000000.001",
+        anchorId: anchor,
+      });
+      appendAlias({ aliasType: "repo", aliasValue: "repo-labs", anchorId: anchor });
+      const config = makeRepoConfig();
+      const result = resolveStrictProfileForSession(config, "rs6");
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/mixed channel\+repo profile/);
     });
 
     it("fails when the channel profile and anchor repo alias disagree", () => {

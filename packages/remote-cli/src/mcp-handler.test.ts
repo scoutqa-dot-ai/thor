@@ -763,6 +763,109 @@ describe("remote-cli MCP endpoints", () => {
     });
   });
 
+  it("allows a Slack session to use a mixed profile when its channel is in the profile", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    workspaceConfig = {
+      ...workspaceConfig,
+      profiles: {
+        QA: { channels: ["C123"], repos: ["repo-qa"] },
+      },
+    };
+    appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: activeAnchorId });
+
+    const call = await postJson(
+      "/exec/mcp",
+      { args: ["atlassian", "getJiraIssue", "{}"] },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const body = (await call.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(call.status).toBe(200);
+    expect(body).toMatchObject({ stdout: "THOR-123", stderr: "", exitCode: 0 });
+    expect(upstreamConfigs.find((config) => config.name === "atlassian")?.headers).toEqual({
+      Authorization: "Basic qa-token",
+    });
+  });
+
+  it("blocks an unlisted Slack session from adopting a mixed channel+repo profile", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    workspaceConfig = {
+      ...workspaceConfig,
+      profiles: {
+        QA: { channels: ["C123"], repos: ["repo-qa"] },
+      },
+    };
+    const unlistedAnchorId = "00000000-0000-7000-8000-0000000004c1";
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "unlisted-session",
+      anchorId: unlistedAnchorId,
+    });
+    appendAlias({
+      aliasType: "slack.thread",
+      aliasValue: "C999/1710000000.001",
+      anchorId: unlistedAnchorId,
+    });
+    appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: unlistedAnchorId });
+
+    const call = await postJson(
+      "/exec/mcp",
+      { args: ["atlassian", "getJiraIssue", "{}"] },
+      { "x-thor-session-id": "unlisted-session" },
+    );
+    const body = (await call.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(call.status).toBe(200);
+    expect(body.exitCode).toBe(1);
+    expect(body.stderr).toMatch(/mixed channel\+repo profile/);
+    expect(toolCalls).toEqual([]);
+  });
+
+  it("allows a non-Slack session to use a mixed profile through its repo alias", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    workspaceConfig = {
+      ...workspaceConfig,
+      profiles: {
+        QA: { channels: ["C123"], repos: ["repo-qa"] },
+      },
+    };
+    const repoAnchorId = "00000000-0000-7000-8000-0000000004d1";
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "repo-session",
+      anchorId: repoAnchorId,
+    });
+    appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: repoAnchorId });
+
+    const call = await postJson(
+      "/exec/mcp",
+      { args: ["atlassian", "getJiraIssue", "{}"] },
+      { "x-thor-session-id": "repo-session" },
+    );
+    const body = (await call.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(call.status).toBe(200);
+    expect(body).toMatchObject({ stdout: "THOR-123", stderr: "", exitCode: 0 });
+    expect(upstreamConfigs.find((config) => config.name === "atlassian")?.headers).toEqual({
+      Authorization: "Basic qa-token",
+    });
+  });
+
   it("fails closed for MCP calls when Thor session context is missing", async () => {
     const allowed = await postJson("/exec/mcp", {
       args: ["atlassian", "getJiraIssue", "{}"],

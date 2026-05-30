@@ -1,6 +1,6 @@
 # Security Model
 
-How Thor contains untrusted input through layered controls. For integration-specific details, see [`slack.md`](../slack.md), [`github.md`](../github.md), and [`daytona.md`](../daytona.md).
+How Thor contains untrusted input through layered controls. For integration-specific details, see [`slack.md`](../slack.md), [`github.md`](../github.md), [`daytona.md`](../daytona.md), and [`profile.md`](./profile.md).
 
 ## Threat model
 
@@ -83,7 +83,7 @@ Every external request that reaches the gateway must prove origin before any wor
 
 After authentication, events still face content-aware gates before they wake the agent:
 
-- **Slack routing profiles** — public non-shared channels admit by default; private channels, DMs, group DMs, and Slack Connect channels must appear in `profiles.<name>.channels[]` in `thor.json`. Fail-closed on lookup error. See `slack.md` §5.
+- **Slack routing profiles** — public non-shared channels admit by default; private channels, DMs, group DMs, and Slack Connect channels must appear in `profiles.<name>.channels[]` in `thor.json`. `repos[]` never admits Slack surfaces. Fail-closed on lookup error. See [`profile.md`](./profile.md) and [`slack.md`](../slack.md) §5.
 - **GitHub mention-required for first contact** — pure issue comments require `@${GITHUB_APP_SLUG}`. Once a session exists for the issue, later follow-ups can wake without a mention. See `github.md` §4.
 - **Self-loop guards** — events whose sender matches `SLACK_BOT_USER_ID` or `GITHUB_APP_BOT_ID` are dropped. Without these, every Thor-authored reply would re-trigger Thor.
 - **CI wake gate.** `check_suite.completed` only wakes Thor when the head commit's author email matches the derived GitHub App bot email and an alias-backed session for that branch already exists. See `github.md` §4a.
@@ -94,7 +94,7 @@ remote-cli is the _only_ place tool-level policy is enforced. OpenCode-side wrap
 
 ### MCP tool tiers
 
-- **Session-bound routing.** Normal MCP list/call requests require `x-thor-session-id` to resolve to a bound OpenCode session or sub-session before any upstream credentials are selected. This is enforced in `remote-cli`, not just the OpenCode-side `mcp` wrapper, so wrapper bypass fails closed instead of falling back to unsuffixed globals. Profile selection reads only the session anchor's `slack.thread` and trigger-stamped `repo` aliases; MCP request bodies do not carry a trusted directory/profile signal. Bound non-Slack sessions with no Slack thread or repo aliases still resolve to unsuffixed globals. Internal approval resolution uses `THOR_INTERNAL_SECRET` on the `mcp resolve` path instead.
+- **Session-bound routing.** Normal MCP list/call requests require `x-thor-session-id` to resolve to a bound OpenCode session or sub-session before any upstream credentials are selected. This is enforced in `remote-cli`, not just the OpenCode-side `mcp` wrapper, so wrapper bypass fails closed instead of falling back to unsuffixed globals. Profile selection reads only the session anchor's `slack.thread` and trigger-stamped `repo` aliases; MCP request bodies do not carry a trusted directory/profile signal. Bound non-Slack sessions with no Slack thread or repo aliases still resolve to unsuffixed globals. Mixed channel+repo profile fallback rules live in [`profile.md`](./profile.md). Internal approval resolution uses `THOR_INTERNAL_SECRET` on the `mcp resolve` path instead.
 - **Allow-listed tools** execute immediately.
 - **Approved tools** create an approval record, post an approval card to the triggering Slack thread, and return an action id. Status is available through `POST /exec/approval`.
 - **Hidden tools** are never listed to the agent.

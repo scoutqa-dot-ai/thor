@@ -247,6 +247,10 @@ export function isSlackChannelInProfile(config: WorkspaceConfig, channelId: stri
   return getProfileForSlackChannel(config, channelId) !== undefined;
 }
 
+function profileHasSlackChannels(config: WorkspaceConfig, profileName: string): boolean {
+  return (config.profiles?.[profileName]?.channels?.length ?? 0) > 0;
+}
+
 type ProfileResolution = { ok: true; profile: string | undefined } | { ok: false; error: string };
 
 /**
@@ -255,10 +259,11 @@ type ProfileResolution = { ok: true; profile: string | undefined } | { ok: false
  *   - channels: every `slack.thread` alias on the anchor → its profile,
  *   - repos: every `repo` alias stamped on the anchor at trigger time.
  *
- * The result is `channelProfile ?? repoProfile`: the channel is authoritative,
- * the repo fills in when the channel maps to no profile (e.g. cron sessions
- * with no Slack binding, or a public channel left out of every profile). A
- * channel and repo that map to *different* profiles is a conflict and fails.
+ * The channel is authoritative. The repo fills in when there is no Slack
+ * binding, or when Slack is present but unprofiled and the repo resolves to a
+ * repo-only profile. Unprofiled Slack channels cannot adopt a mixed
+ * channel+repo profile through repo fallback. A channel and repo that map to
+ * different profiles is a conflict and fails.
  *
  * Failing fast defends against silent credential flips when one anchor
  * accumulates bindings that disagree about which credentials apply.
@@ -327,7 +332,19 @@ function resolveStrictProfileForAnchor(
     };
   }
 
-  return { ok: true, profile: channel.profile ?? repo.profile };
+  if (channel.profile !== undefined || repo.profile === undefined) {
+    return { ok: true, profile: channel.profile };
+  }
+
+  if (channels.length === 0 || !profileHasSlackChannels(config, repo.profile)) {
+    return { ok: true, profile: repo.profile };
+  }
+
+  const uniqueChannels = [...new Set(channels)].sort();
+  return {
+    ok: false,
+    error: `session ${label} has Slack channel(s) outside profile ${repo.profile}; repo fallback into a mixed channel+repo profile is not allowed: ${uniqueChannels.join(", ")}`,
+  };
 }
 
 /**
