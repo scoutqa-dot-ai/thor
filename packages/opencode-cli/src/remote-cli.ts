@@ -26,7 +26,7 @@ const url = `${baseUrl}/exec/${endpoint}`;
 const cwd = process.cwd();
 const sessionId = process.env.THOR_OPENCODE_SESSION_ID || "";
 const callId = process.env.THOR_OPENCODE_CALL_ID || "";
-const body: Record<string, unknown> = endpoint === "mcp" ? { args } : { args, cwd };
+const body: Record<string, unknown> = { args, cwd };
 
 if (endpoint === "slack-post-message") {
   const chunks: Buffer[] = [];
