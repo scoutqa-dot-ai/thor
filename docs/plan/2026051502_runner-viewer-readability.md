@@ -217,3 +217,6 @@ After all five phases:
 | 2026-05-15 | Subagent model read from parent task `metadata.model` | OpenCode tags spawn with child's model.                                           |
 | 2026-05-16 | Diff rows emit real newline separators                | Consecutive `apply_patch` context lines must not visually concatenate in `<pre>`. |
 | 2026-05-16 | No app-level regex redaction in viewer snippets       | Redaction belongs at the LLM/infrastructure boundary; regex redaction is brittle. |
+| 2026-05-31 | Trust persisted OpenCode `step-finish.cost` for viewer cost display; remove token-price estimation and model plumbing | Real cost is now present in normal session logs, so the viewer should use the authoritative persisted field instead of recomputing prices from token counts and inferred model ids. |
+| 2026-05-31 | Keep totals-table handling simple for now; do not add partial-total logic when some token-bearing rows lack persisted cost | Original requester explicitly chose simplicity over extra viewer logic. Revisit only if mixed cost/missing-cost rows become a real operator problem. |
+| 2026-05-31 | Never truncate `step-finish` session-log records      | `step-finish` carries authoritative cost/token accounting used by the viewer; preserving the full event is more important than enforcing the generic per-record cap on this part type. |
