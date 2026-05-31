@@ -389,6 +389,21 @@ async function withNdjsonHeartbeat<T>(
   }
 }
 
+export function createSafeNdjsonWriter(
+  res: Pick<express.Response, "write" | "writableEnded" | "destroyed">,
+): (chunk: ExecStreamEvent) => void {
+  return (chunk: ExecStreamEvent) => {
+    if (res.writableEnded || res.destroyed) return;
+    try {
+      res.write(JSON.stringify(chunk) + "\n");
+    } catch {
+      // Best-effort only: disconnected clients can race with heartbeat/tool
+      // writes. Swallow write-after-end/destroyed stream errors so the route
+      // does not crash after the caller has already gone away.
+    }
+  };
+}
+
 function parseArgs(body: unknown): string[] | undefined {
   if (!body || typeof body !== "object" || !("args" in body)) return undefined;
   const args = (body as { args?: unknown }).args;
@@ -757,9 +772,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       res.setHeader("Content-Type", "application/x-ndjson");
       res.setHeader("Transfer-Encoding", "chunked");
 
-      const write = (chunk: ExecStreamEvent) => {
-        res.write(JSON.stringify(chunk) + "\n");
-      };
+      const write = createSafeNdjsonWriter(res);
 
       await withNdjsonHeartbeat(write, async () => {
         const exitCode = await execCommandStream("scoutqa", args, "/workspace", {
@@ -786,9 +799,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   });
 
   app.post("/exec/docker", async (req, res) => {
-    const writeNdjson = (chunk: ExecStreamEvent) => {
-      res.write(JSON.stringify(chunk) + "\n");
-    };
+    const writeNdjson = createSafeNdjsonWriter(res);
 
     try {
       const { args } = req.body ?? {};
@@ -884,9 +895,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   });
 
   app.post("/exec/sandbox", async (req, res) => {
-    const writeNdjson = (chunk: ExecStreamEvent) => {
-      res.write(JSON.stringify(chunk) + "\n");
-    };
+    const writeNdjson = createSafeNdjsonWriter(res);
 
     try {
       const { args, cwd, mode: rawMode } = req.body ?? {};

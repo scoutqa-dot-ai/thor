@@ -12,7 +12,7 @@ vi.mock("./exec.ts", () => ({
   execCommandStream: execCommandStreamMock,
 }));
 
-import { createRemoteCliApp } from "./index.ts";
+import { createRemoteCliApp, createSafeNdjsonWriter } from "./index.ts";
 
 describe("remote-cli docker endpoint", () => {
   let server: Server;
@@ -128,6 +128,36 @@ describe("remote-cli docker endpoint", () => {
     expect(response.status).toBe(400);
     expect(body.stderr).toContain('flag "--host" is not allowed for docker');
     expect(execCommandStreamMock).not.toHaveBeenCalled();
+  });
+
+  it("safe NDJSON writer no-ops after end or destroy and swallows write errors", () => {
+    const write = vi.fn();
+    const writer = createSafeNdjsonWriter({
+      write,
+      writableEnded: false,
+      destroyed: false,
+    });
+
+    writer({ type: "stdout", data: "ok\n" });
+    expect(write).toHaveBeenCalledWith(JSON.stringify({ type: "stdout", data: "ok\n" }) + "\n");
+
+    const endedWriter = createSafeNdjsonWriter({
+      write: vi.fn(() => {
+        throw new Error("should not write");
+      }),
+      writableEnded: true,
+      destroyed: false,
+    });
+    expect(() => endedWriter({ type: "heartbeat" })).not.toThrow();
+
+    const throwingWriter = createSafeNdjsonWriter({
+      write: vi.fn(() => {
+        throw new Error("write after end");
+      }),
+      writableEnded: false,
+      destroyed: false,
+    });
+    expect(() => throwingWriter({ type: "heartbeat" })).not.toThrow();
   });
 
   async function postJson(path: string, body: Record<string, unknown>): Promise<Response> {
