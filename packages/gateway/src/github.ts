@@ -156,7 +156,7 @@ export const CheckSuiteCompletedEventSchema = z.object({
   }),
 });
 
-export const PushEventSchema = z.object({
+const PushEventSchema = z.object({
   event_type: z.literal("push"),
   ref: z.string(),
   before: z.string(),

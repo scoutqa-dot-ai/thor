@@ -11,7 +11,11 @@ import type {
   ToolStateCompleted,
   ToolStateError,
 } from "@opencode-ai/sdk";
+<<<<<<< HEAD
 import { EventBusRegistry } from "./event-bus.js";
+=======
+import { EventBusRegistry, waitForSessionSettled } from "./event-bus.ts";
+>>>>>>> origin/main
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
@@ -22,23 +26,21 @@ import {
   truncate,
   isAllowedDirectory,
   extractRepoFromCwd,
-  ANCHOR_LOCK_PREFIX,
   SESSION_LOCK_PREFIX,
   appendSessionEvent,
   appendAlias,
+  anchorHasExternalKeyType,
   appendCorrelationAliasForAnchor,
   currentSessionForAnchor,
   ensureAnchorForCorrelationKey,
   isUuidV7,
   mintAnchor,
-  mintTriggerId,
   reverseLookupAnchor,
   resolveAlias,
   resolveAnchorForCorrelationKey,
   resolveCorrelationLockKey,
   readTriggerSlice,
   sessionLogPath,
-  getWorklogDir,
   SessionEventLogRecordSchema,
   loadRunnerEnv,
   matchesInternalSecret,
@@ -68,14 +70,13 @@ import type {
 } from "@thor/common";
 import type { ReverseAnchorEntry, SessionEventLogRecord } from "@thor/common";
 import type { ProgressEvent, ProgressTarget, ProgressTransport } from "@thor/common";
-import { buildToolInstructions } from "./tool-instructions.js";
-import { getMemoryProgressEvents } from "./memory-progress.js";
+import { getMemoryProgressEvents } from "./memory-progress.ts";
 import { pathToFileURL } from "node:url";
 import {
   createSlackProgressTransport,
   resolveSlackProgressTarget,
   type SlackProgressTransportTarget,
-} from "./slack-progress.js";
+} from "./slack-progress.ts";
 
 const log = createLogger("runner");
 
@@ -131,14 +132,6 @@ function readRepoMemory(directory: string, memoryDir = MEMORY_DIR): string | und
   const repo = extractRepoFromCwd(directory);
   if (!repo) return undefined;
   return readMemoryFile(`${memoryDir}/${repo}/README.md`);
-}
-
-function getToolInstructions(directory: string): string | undefined {
-  try {
-    return buildToolInstructions(directory);
-  } catch {
-    return undefined;
-  }
 }
 
 const defaultWorkspaceConfigLoader = createConfigLoader(WORKSPACE_CONFIG_PATH);
@@ -224,6 +217,7 @@ function bindSessionToAnchor(args: {
   anchorId: string;
   sessionId: string;
   correlationKey?: string;
+  repoDirectory?: string;
 }): void {
   if (
     resolveAlias({ aliasType: "opencode.session", aliasValue: args.sessionId }) !== args.anchorId
@@ -239,6 +233,17 @@ function bindSessionToAnchor(args: {
     resolveAnchorForCorrelationKey(args.correlationKey) !== args.anchorId
   ) {
     appendCorrelationAliasForAnchor(args.anchorId, args.correlationKey);
+  }
+  // Stamp the anchor's repo once, from the trusted trigger-time directory. This
+  // lets non-Slack/cron sessions (which carry no slack.thread alias) resolve a
+  // profile, and lets the approval-click path re-resolve without a live
+  // directory. Stamp only when the anchor has no repo yet so a resumed session
+  // keeps its original repo even if a later trigger's directory differs.
+  if (args.repoDirectory) {
+    const repo = extractRepoFromCwd(args.repoDirectory);
+    if (repo && !anchorHasExternalKeyType(args.anchorId, "repo")) {
+      appendAlias({ aliasType: "repo", aliasValue: repo, anchorId: args.anchorId });
+    }
   }
 }
 
@@ -416,7 +421,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         }
 
         const sessionId = parsed.data.sessionId ?? `e2e-${randomUUID()}`;
-        const triggerId = mintTriggerId();
+        const triggerId = mintAnchor();
         const anchorId = mintAnchor();
         bindSessionToAnchor({
           anchorId,
@@ -546,8 +551,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
      *  text and status from the trigger call. */
     stream: z.boolean().optional(),
   });
-
-  type TriggerRequest = z.infer<typeof TriggerRequestSchema>;
 
   // ---------------------------------------------------------------------------
   // Event filtering — what gets a JSON file, what gets a stdout log, what's ignored
@@ -826,7 +829,12 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
         // session_stale recreate appends a fresh opencode.session alongside
         // the old; original Slack/git aliases keep pointing at the same anchor.
-        bindSessionToAnchor({ anchorId, sessionId: id, correlationKey });
+        bindSessionToAnchor({
+          anchorId,
+          sessionId: id,
+          correlationKey,
+          repoDirectory: sessionDirectory,
+        });
 
         return { sessionId: id, resumed: didResume, anchorId };
       };
@@ -882,13 +890,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           }
         }
 
-        // Tool instructions: inject MCP tool list from config
-        const toolInstructions = getToolInstructions(sessionDirectory);
-        if (toolInstructions) {
-          prompt = `${toolInstructions}\n\n${prompt}`;
-          logInfo(log, "tool_instructions_injected", { directory: sessionDirectory });
-        }
-
         const triggeringUserBlock = buildTriggeringUserPromptBlock(workspaceConfigLoader, {
           triggerSlackId: parsed.data.triggerSlackId,
           triggerGithubLogin: parsed.data.triggerGithubLogin,
@@ -908,7 +909,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       // Subscribe to event bus BEFORE sending the prompt
       const subscription = await eventBuses.subscribe([sessionId]);
 
-      const triggerId = mintTriggerId();
+      const triggerId = mintAnchor();
       inflightTriggerId = triggerId;
       startTrigger(sessionId, triggerId, {
         correlationKey,
@@ -1378,7 +1379,7 @@ const KNOWN_BINS: Record<string, number> = {
   perl: 1,
   pip3: 2,
   prettier: 1,
-  python3: 2,
+  python3: 1,
   rg: 1,
   ruff: 2,
   shfmt: 1,

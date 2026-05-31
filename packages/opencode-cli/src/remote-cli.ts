@@ -24,10 +24,9 @@ if (!baseUrl) {
 
 const url = `${baseUrl}/exec/${endpoint}`;
 const cwd = process.cwd();
-const sessionDirectory = process.env.THOR_OPENCODE_DIRECTORY || cwd;
 const sessionId = process.env.THOR_OPENCODE_SESSION_ID || "";
 const callId = process.env.THOR_OPENCODE_CALL_ID || "";
-const body: Record<string, unknown> = { args, cwd, directory: sessionDirectory };
+const body: Record<string, unknown> = { args, cwd };
 
 if (endpoint === "slack-post-message") {
   const chunks: Buffer[] = [];

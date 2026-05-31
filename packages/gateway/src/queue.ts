@@ -84,7 +84,7 @@ export interface EventQueueOptions {
   disableInterval?: boolean;
 }
 
-export interface PendingQueueEventSnapshot {
+interface PendingQueueEventSnapshot {
   id: string;
   source: string;
   correlationKey: string;

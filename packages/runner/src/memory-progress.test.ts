@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getMemoryProgressEvents } from "./memory-progress.js";
+import { getMemoryProgressEvents } from "./memory-progress.ts";
 
 describe("getMemoryProgressEvents", () => {
   it("emits memory events for completed read/write tools", () => {

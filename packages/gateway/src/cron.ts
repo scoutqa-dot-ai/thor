@@ -7,8 +7,6 @@ export const CronRequestSchema = z.object({
   directory: z.string().min(1),
 });
 
-export type CronRequest = z.infer<typeof CronRequestSchema>;
-
 export interface CronPayload {
   prompt: string;
   directory: string;

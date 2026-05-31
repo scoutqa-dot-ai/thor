@@ -1,6 +1,6 @@
-import { deriveGitHubAppBotIdentity } from "./github-identity.js";
-import { envBaseUrl, envCsv, envInt, envOptionalString, envString, type EnvSource } from "./env.js";
-import { WORKSPACE_CONFIG_PATH } from "./workspace-config.js";
+import { deriveGitHubAppBotIdentity } from "./github-identity.ts";
+import { envBaseUrl, envCsv, envInt, envOptionalString, envString, type EnvSource } from "./env.ts";
+import { WORKSPACE_CONFIG_PATH } from "./workspace-config.ts";
 
 export const ADMIN_AUDIT_LOG_PATH = "/workspace/config/thor.audit.log";
 
