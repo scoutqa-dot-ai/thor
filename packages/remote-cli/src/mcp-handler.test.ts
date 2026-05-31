@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { appendAlias, appendSessionEvent, formatThorContextFooter } from "@thor/common";
 import type { WorkspaceConfig } from "@thor/common";
+import type { ToolCallLogEntry } from "@thor/common";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { createRemoteCliApp } from "./index.ts";
 import type { UpstreamConnection } from "./upstream.ts";
@@ -105,6 +106,7 @@ describe("remote-cli MCP endpoints", () => {
   let slackFetch: ReturnType<typeof vi.fn<typeof fetch>>;
   let workspaceConfig: WorkspaceConfig;
   let configLoadFailure: Error | undefined;
+  let toolCallLogs: ToolCallLogEntry[];
 
   beforeEach(async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic dGVzdA==");
@@ -125,6 +127,7 @@ describe("remote-cli MCP endpoints", () => {
     jiraLookupResultText = JSON.stringify(jiraLookupResponse([{ accountId: "jira-account-1" }]));
     jiraLookupFailure = undefined;
     configLoadFailure = undefined;
+    toolCallLogs = [];
     slackFetch = vi
       .fn<typeof fetch>()
       .mockResolvedValue(
@@ -166,7 +169,9 @@ describe("remote-cli MCP endpoints", () => {
         approvalsDir,
         isProduction: true,
         fetchImpl: slackFetch,
-        writeToolCallLogFn: () => {},
+        writeToolCallLogFn: (entry) => {
+          toolCallLogs.push(entry);
+        },
         configLoader: () => {
           if (configLoadFailure) throw configLoadFailure;
           return workspaceConfig;
@@ -295,13 +300,7 @@ describe("remote-cli MCP endpoints", () => {
     const upstreamBody = (await upstreams.json()) as { stdout: string };
 
     expect(upstreams.status).toBe(200);
-    expect(JSON.parse(upstreamBody.stdout)).toEqual({
-      upstreams: [
-        { name: "atlassian", toolCount: 0, connected: false },
-        { name: "grafana", toolCount: 0, connected: false },
-        { name: "posthog", toolCount: 0, connected: false },
-      ],
-    });
+    expect(upstreamBody.stdout.trim().split("\n")).toEqual(["atlassian", "grafana", "posthog"]);
 
     const listedTools = await postJson(
       "/exec/mcp",
@@ -360,6 +359,14 @@ describe("remote-cli MCP endpoints", () => {
       exitCode: 0,
     });
     expect(toolCalls).toEqual([{ name: "getJiraIssue", arguments: {} }]);
+    expect(toolCallLogs).toContainEqual(
+      expect.objectContaining({
+        tool: "getJiraIssue",
+        decision: "allowed",
+        targetKey: "atlassian:GLOBAL",
+        profile: undefined,
+      }),
+    );
 
     const health = await fetch(`${baseUrl}/health`);
     const healthBody = (await health.json()) as {
@@ -445,6 +452,43 @@ describe("remote-cli MCP endpoints", () => {
     expect(upstreamConfigs.find((config) => config.name === "atlassian")?.headers).toEqual({
       Authorization: "Basic qa-token",
     });
+    expect(toolCallLogs).toContainEqual(
+      expect.objectContaining({
+        tool: "getJiraIssue",
+        decision: "allowed",
+        targetKey: "atlassian:QA",
+        profile: "QA",
+      }),
+    );
+  });
+
+  it("logs the resolved profile even when a profiled session falls back to global credentials", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "");
+    vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
+    workspaceConfig = {
+      ...workspaceConfig,
+      profiles: { QA: { channels: ["C123"] } },
+    };
+    appendActiveTrigger();
+
+    const call = await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian", "getJiraIssue", "{}"],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const body = (await call.json()) as { stdout: string; exitCode: number };
+
+    expect(body).toMatchObject({ stdout: "THOR-123", exitCode: 0 });
+    expect(toolCallLogs).toContainEqual(
+      expect.objectContaining({
+        tool: "getJiraIssue",
+        decision: "allowed",
+        targetKey: "atlassian:GLOBAL",
+        profile: "QA",
+      }),
+    );
   });
 
   it("honors the Slack channel's profile even after a subsequent non-Slack trigger fires", async () => {
