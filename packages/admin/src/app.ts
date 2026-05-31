@@ -16,7 +16,7 @@ import {
   renderStatusFragment,
   type Issue,
   type SessionsProps,
-} from "./views.js";
+} from "./views.ts";
 
 const log = createLogger("admin");
 const STUCK_AFTER_MS = 5 * 60 * 1000;

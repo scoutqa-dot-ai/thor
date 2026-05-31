@@ -101,12 +101,12 @@ export const ViewerStepFinishPartSchema = BasePartSchema.extend({
   tokens: TokensSchema.optional(),
 });
 
-export const ViewerRetryPartSchema = BasePartSchema.extend({
+const ViewerRetryPartSchema = BasePartSchema.extend({
   type: z.literal("retry"),
   reason: z.string().optional(),
 });
 
-export const ViewerSubtaskPartSchema = BasePartSchema.extend({
+const ViewerSubtaskPartSchema = BasePartSchema.extend({
   type: z.literal("subtask"),
 });
 

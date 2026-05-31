@@ -99,13 +99,12 @@ describe("Thor OpenCode search scope policy", () => {
     expect(thorPluginExport).toEqual({ id: "thor", server: ThorPlugin });
   });
 
-  it("wires real hook signatures without changing shell.env behavior", async () => {
+  it("wires real hook signatures and injects session env", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const hooks = await ThorPlugin({ directory: "/workspace/repos/thor" });
     const envOutput = { env: {} as Record<string, string> };
     await hooks["shell.env"]({ sessionID: "s1", callID: "c1" }, envOutput);
     expect(envOutput.env).toEqual({
-      THOR_OPENCODE_DIRECTORY: "/workspace/repos/thor",
       THOR_OPENCODE_SESSION_ID: "s1",
       THOR_OPENCODE_CALL_ID: "c1",
     });

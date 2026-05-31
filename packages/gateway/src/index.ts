@@ -1,6 +1,6 @@
 import { createConfigLoader, createLogger, logError, logInfo, loadGatewayEnv } from "@thor/common";
-import { createGatewayApp } from "./app.js";
-import { buildMentionLogins } from "./github.js";
+import { createGatewayApp } from "./app.ts";
+import { buildMentionLogins } from "./github.ts";
 
 const log = createLogger("gateway");
 

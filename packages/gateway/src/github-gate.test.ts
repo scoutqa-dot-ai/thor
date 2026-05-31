@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { verifyThorAuthoredSha } from "./github-gate.js";
-import type { InternalExecClient } from "./service.js";
+import { verifyThorAuthoredSha } from "./github-gate.ts";
+import type { InternalExecClient } from "./service.ts";
 
 function ok(stdout = "") {
   return { stdout, stderr: "", exitCode: 0 };

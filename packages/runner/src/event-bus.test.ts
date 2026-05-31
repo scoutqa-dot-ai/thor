@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Event, GlobalEvent, TextPart } from "@opencode-ai/sdk";
-import { EventBusRegistry, SessionSubscription, waitForSessionSettled } from "./event-bus.js";
+import { EventBusRegistry, SessionSubscription, waitForSessionSettled } from "./event-bus.ts";
 
 vi.mock("@opencode-ai/sdk", () => {
   return {

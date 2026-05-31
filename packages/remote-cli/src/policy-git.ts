@@ -11,7 +11,7 @@ import {
   scanPolicyArgs,
   valueFlagValues,
   type PolicyArgFlag,
-} from "./policy-args.js";
+} from "./policy-args.ts";
 import {
   WORKSPACE_REPOS_ROOT,
   WORKSPACE_WORKTREES_ROOT,
@@ -38,7 +38,7 @@ const LS_REMOTE_FLAGS: readonly PolicyArgFlag[] = [
   { name: "sort", kind: "value", aliases: ["--sort"] },
 ];
 
-export interface GitPolicyOptions {
+interface GitPolicyOptions {
   gitCloneAllowedOwners?: readonly string[];
 }
 
@@ -52,7 +52,7 @@ interface ResolvedGitArgsSuccess {
 interface ResolvedGitArgsFailure {
   error: string;
 }
-export type ResolvedGitArgs = ResolvedGitArgsSuccess | ResolvedGitArgsFailure;
+type ResolvedGitArgs = ResolvedGitArgsSuccess | ResolvedGitArgsFailure;
 
 interface DenyGuidance {
   reason: string;

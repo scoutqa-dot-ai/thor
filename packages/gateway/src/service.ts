@@ -1,9 +1,7 @@
 import {
   createLogger,
   ExecResultSchema,
-  extractApprovalFailureCategory,
   hasSessionForCorrelationKey,
-  logInfo,
   logWarn,
   logError,
   resolveCorrelationKeys,
@@ -12,11 +10,11 @@ import {
 } from "@thor/common";
 import type { ExecResult } from "@thor/common";
 import {
-  getSlackCorrelationKeys,
+  getSlackCorrelationKey,
   isPendingSlackPrivacyKey,
   type SlackThreadEvent,
-} from "./slack.js";
-import type { CronPayload } from "./cron.js";
+} from "./slack.ts";
+import type { CronPayload } from "./cron.ts";
 import {
   buildCorrelationKey,
   getGitHubEventLocalRepo,
@@ -24,13 +22,13 @@ import {
   isPendingBranchResolveKey,
   type GitHubWebhookEvent,
   type IssueCommentEvent,
-} from "./github.js";
-import { addReaction, updateMessage, type SlackDeps } from "./slack-api.js";
+} from "./github.ts";
+import { addReaction, updateMessage, type SlackDeps } from "./slack-api.ts";
 import {
   addSlackGateRejectedReaction,
   evaluateSlackChannelGate,
   SLACK_GATE_DROP_REASON,
-} from "./slack-channel-gate.js";
+} from "./slack-channel-gate.ts";
 
 const log = createLogger("gateway-service");
 const INTERNAL_EXEC_TIMEOUT_MS = 5000;
@@ -159,11 +157,10 @@ export type InternalExecClient = (request: InternalExecRequest) => Promise<{
 type TerminalGitHubRejectReason = "installation_gone" | "branch_not_found" | "branch_lookup_failed";
 
 class TerminalGitHubDispatchError extends Error {
-  constructor(
-    readonly reason: TerminalGitHubRejectReason,
-    message: string,
-  ) {
+  readonly reason: TerminalGitHubRejectReason;
+  constructor(reason: TerminalGitHubRejectReason, message: string) {
     super(message);
+    this.reason = reason;
     this.name = "TerminalGitHubDispatchError";
   }
 }
@@ -598,7 +595,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
       });
       return { kind: "drop", logPrefix: "slack", reason: decision.reason };
     }
-    const resolvedKey = resolveCorrelationKeys(getSlackCorrelationKeys(event));
+    const resolvedKey = resolveCorrelationKeys([getSlackCorrelationKey(event)]);
     return {
       kind: "reroute",
       logPrefix: "slack",
@@ -1043,7 +1040,7 @@ export async function resolveApproval(
           `remote-cli returned ${response.status}: ${body.stderr || body.stdout || "unknown error"}`,
           { remoteCliUrl, attempt },
         );
-        return isResolvedApprovalExecutionFailure(body) ? body : undefined;
+        return body;
       }
       return body;
     } catch (err) {
@@ -1061,10 +1058,6 @@ export async function resolveApproval(
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isResolvedApprovalExecutionFailure(body: ExecResult): boolean {
-  return body.exitCode !== 0 && extractApprovalFailureCategory(body.stderr) !== undefined;
 }
 
 export async function updateSlackMessage(

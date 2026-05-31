@@ -21,8 +21,8 @@ import {
   parseOwnerFromRemoteUrl,
   resolveOwner,
   resolveOwnerFromRemote,
-} from "./github-app-auth.js";
-import { formatAuthHelperError } from "./auth-helper-format.js";
+} from "./github-app-auth.ts";
+import { formatAuthHelperError } from "./auth-helper-format.ts";
 
 const TAG = "[thor-github-app]";
 

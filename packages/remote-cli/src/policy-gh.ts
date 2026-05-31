@@ -7,8 +7,8 @@
  */
 
 import { normalize as normalizePosix } from "node:path/posix";
-import { resolveOwnerRepoFromRemote } from "./github-app-auth.js";
-import { booleanFlagCount, scanPolicyArgs, valueFlagValues } from "./policy-args.js";
+import { resolveOwnerRepoFromRemote } from "./github-app-auth.ts";
+import { booleanFlagCount, scanPolicyArgs, valueFlagValues } from "./policy-args.ts";
 
 interface DenyGuidance {
   reason: string;

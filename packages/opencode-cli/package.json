@@ -4,17 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsup",
+    "build": "tsdown",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@thor/common": "workspace:*",
-    "zod": "^4.3.6"
+    "@thor/common": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "tsup": "^8.5.1",
+    "tsdown": "^0.22.1",
     "typescript": "^6.0.0"
   }
 }

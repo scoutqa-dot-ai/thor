@@ -1,6 +1,6 @@
-import { createLogger, logInfo, logError } from "./logger.js";
-import { formatDuration, formatTokens } from "./format.js";
-import type { ProgressEvent } from "./progress-events.js";
+import { createLogger, logInfo, logError } from "./logger.ts";
+import { formatDuration, formatTokens } from "./format.ts";
+import type { ProgressEvent } from "./progress-events.ts";
 
 const log = createLogger("progress");
 
@@ -91,20 +91,6 @@ function formatMemoryActivities(activities: MemoryActivity[]): string {
   if (readCount > 0) summaries.push(`read x${readCount}`);
   if (writeCount > 0) summaries.push(`write x${writeCount}`);
   return summaries.join(", ");
-}
-
-function formatDelegates(activities: DelegateActivity[]): string {
-  const groups: DelegateGroup[] = [];
-  for (const activity of activities) {
-    const last = groups[groups.length - 1];
-    if (last && last.name === activity.agent) {
-      last.count++;
-      continue;
-    }
-    groups.push({ name: activity.agent, count: 1 });
-  }
-
-  return groups.map((g) => (g.count > 1 ? `${g.name} x${g.count}` : g.name)).join(", ");
 }
 
 function shouldRenderContext(context: ContextStatus | undefined): context is ContextStatus {
@@ -370,12 +356,12 @@ class ProgressSession {
 
   private messageTs?: string;
   private toolCallCount = 0;
-  /** Last 3 groups of consecutive identical tool calls. */
+  /** Last 5 groups of consecutive identical tool calls. */
   private lastToolGroups: ToolGroup[] = [];
   /** Recent memory activity from bootstrap/tool file access. */
   private recentMemory: MemoryActivity[] = [];
-  /** Recent delegated agents from subtask parts. */
-  private recentDelegates: DelegateActivity[] = [];
+  /** Last 5 groups of consecutive identical delegated agents. */
+  private lastDelegateGroups: DelegateGroup[] = [];
   /** Latest context-window usage update from the runner. */
   private latestContext?: ContextStatus;
   private startTime: number;
@@ -383,12 +369,12 @@ class ProgressSession {
   private thresholdMet = false;
   private finished = false;
   private tickTimer?: ReturnType<typeof setTimeout>;
+  private progressTarget: ProgressTarget;
+  private transport: ProgressTransport;
 
-  constructor(
-    private progressTarget: ProgressTarget,
-    private transport: ProgressTransport,
-    sessionId?: string,
-  ) {
+  constructor(progressTarget: ProgressTarget, transport: ProgressTransport, sessionId?: string) {
+    this.progressTarget = progressTarget;
+    this.transport = transport;
     this.channel = progressTarget.key;
     this.threadTs = progressTarget.key;
     this.sourceTs = progressTarget.sourceTs;
@@ -492,9 +478,14 @@ class ProgressSession {
   async onDelegate(activity: DelegateActivity): Promise<void> {
     if (this.finished) return;
 
-    this.recentDelegates.push(activity);
-    if (this.recentDelegates.length > 4) {
-      this.recentDelegates = this.recentDelegates.slice(-4);
+    const last = this.lastDelegateGroups[this.lastDelegateGroups.length - 1];
+    if (last && last.name === activity.agent) {
+      last.count++;
+    } else {
+      this.lastDelegateGroups.push({ name: activity.agent, count: 1 });
+    }
+    if (this.lastDelegateGroups.length > 5) {
+      this.lastDelegateGroups = this.lastDelegateGroups.slice(-5);
     }
 
     if (this.thresholdMet) {
@@ -591,9 +582,11 @@ class ProgressSession {
   private async flush(): Promise<void> {
     const elapsed = formatDuration(Date.now() - this.startTime);
     const context = shouldRenderContext(this.latestContext) ? this.latestContext : undefined;
-    const hasExtras = this.recentMemory.length > 0 || this.recentDelegates.length > 0 || !!context;
-    const toolLimit = hasExtras ? 5 : 3;
-    const toolGroups = this.lastToolGroups.slice(-toolLimit);
+    const hasExtras =
+      this.recentMemory.length > 0 || this.lastDelegateGroups.length > 0 || !!context;
+    const recentActivityLimit = hasExtras ? 5 : 3;
+    const toolGroups = this.lastToolGroups.slice(-recentActivityLimit);
+    const delegateGroups = this.lastDelegateGroups.slice(-recentActivityLimit);
 
     const header = `⏳ Working... ${this.toolCallCount} tool calls | ${elapsed} elapsed`;
     const lines: string[] = [];
@@ -610,8 +603,8 @@ class ProgressSession {
     if (this.recentMemory.length > 0) {
       lines.push(`• memory: ${formatMemoryActivities(this.recentMemory)}`);
     }
-    if (this.recentDelegates.length > 0) {
-      lines.push(`• agents: ${formatDelegates(this.recentDelegates)}`);
+    if (delegateGroups.length > 0) {
+      lines.push(`• agents: ${formatToolGroups(delegateGroups)}`);
     }
     if (context) {
       lines.push(`• context: ${formatContextStatus(context)}`);

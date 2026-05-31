@@ -28,7 +28,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 
 # --- Package-scoped build stages ---
 FROM deps AS common-source
-COPY tsconfig.base.json tsup.config.ts ./
+COPY tsconfig.base.json ./
 COPY packages/common/ packages/common/
 
 FROM common-source AS gateway-build
@@ -53,7 +53,7 @@ RUN pnpm --filter @thor/opencode-cli build
 
 # Backward-compatible full build target for manual verification/debugging.
 FROM deps AS build
-COPY tsconfig.base.json tsup.config.ts ./
+COPY tsconfig.base.json ./
 COPY packages/ packages/
 RUN pnpm -r build
 
