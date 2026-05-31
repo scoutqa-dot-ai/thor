@@ -158,22 +158,9 @@ function readChannelMemoryTarget(
   return { channelId: slackThread.channelId, path, content: readMemoryFile(path) };
 }
 
-function sanitizePersonSlugPart(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^[._-]+|[._-]+$/g, "")
-    .replace(/[-_.]{2,}/g, (match) => match[0] ?? "-");
-}
-
 function personSlug(user: UserRecord): string | undefined {
-  const emailLocalPart = user.email.split("@")[0];
-  return (
-    sanitizePersonSlugPart(emailLocalPart ?? "") ||
-    sanitizePersonSlugPart(user.github ?? "") ||
-    sanitizePersonSlugPart(user.name)
-  );
+  const emailLocalPart = user.email.split("@")[0]?.trim().toLowerCase();
+  return emailLocalPart || undefined;
 }
 
 function resolveTriggeringUser(

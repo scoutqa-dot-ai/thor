@@ -9,24 +9,21 @@ repo-specific context stays in repo-local docs and agent instructions.
 | ------------ | --------------------------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | Global       | `/workspace/memory/README.md`                 | Yes, on new or stale sessions                                              | Rare cross-cutting Thor context, durable corrections, workspace-wide operating notes.          |
 | Channel      | `/workspace/memory/channels/<channel-id>.md`  | Yes, when `correlationKey` is `slack:thread:<channel>/<ts>`                | Durable team/channel preferences, recurring channel workflows, channel-specific norms.         |
-| Person       | `/workspace/memory/people/<person-slug>.md`   | Yes, when the trigger actor resolves through `/workspace/config/thor.json` | Durable user preferences, identity context, preferred follow-up style, stable ownership hints. |
+| Person       | `/workspace/memory/people/<email-local-part>.md` | Yes, when the trigger actor resolves through `/workspace/config/thor.json` | Durable user preferences, identity context, preferred follow-up style, stable ownership hints. |
 | Repo context | Repo-local `AGENTS.md`, `CLAUDE.md`, and docs | Delegated to OpenCode/repo files                                           | Product facts, codebase conventions, runbooks, and anything humans should review in git.       |
 
-The runner no longer injects `/workspace/memory/<repo>/README.md`. Keep
-repo-scoped context in the repo so humans and agents share the same source of
-truth.
+## Person Files
 
-## Person Slugs
+Person memory filenames are deterministic and simple:
 
-Person memory filenames are deterministic:
+1. take the email local-part from `users[].email`
+2. lowercase it
+3. use that directly as the filename
 
-1. email local-part from `users[].email`, lowercased and sanitized (for example
-   `Son.Dao@example.com` → `people/son.dao.md`)
-2. else `users[].github`, sanitized
-3. else `users[].name`, sanitized
+Examples:
 
-Sanitization lowercases and keeps letters, digits, `.`, `_`, and `-`; other
-runs become `-`, with leading/trailing separators removed.
+- `john.doe@example.com` → `people/john.doe.md`
+- `acme@example.com` → `people/acme.md`
 
 ## Read Policy
 
@@ -39,16 +36,17 @@ events list only files actually read, not suggested paths.
 Normal resumed sessions do not receive memory bootstrap again. The correlation
 key is still added to every prompt.
 
+For non-trivial recurring work, prefer searching `/workspace/runs/` before
+`/workspace/worklog/` because run directories usually have denser reusable task
+context. Use worklog for prior-session continuity and audit/execution history.
+
 ## Write Policy
 
 - Write global memory only for rare workspace-wide context that would help future
   unrelated tasks.
 - Write channel memory for durable context tied to how a Slack channel/team works.
 - Write person memory for stable preferences or identity context about a resolved user.
-- Do not write repo facts, implementation decisions, or product runbooks to
-  `/workspace/memory/<repo>/README.md`; add or update repo-local docs instead.
+- Do not write repo facts, implementation decisions, or product runbooks to Thor
+  memory; add or update repo-local docs instead.
 - Do not store ephemeral task state, raw tool output, secrets, or personal data
   beyond what is already appropriate in `users[]`-backed operational context.
-
-Legacy per-repo memory files may remain on disk for manual migration, but new
-runner sessions ignore them.
