@@ -7,9 +7,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { appendAlias, appendSessionEvent, formatThorContextFooter } from "@thor/common";
+import type { WorkspaceConfig } from "@thor/common";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { createRemoteCliApp } from "./index.js";
-import type { UpstreamConnection } from "./upstream.js";
+import { createRemoteCliApp } from "./index.ts";
+import type { UpstreamConnection } from "./upstream.ts";
 
 const tools: Tool[] = [
   {
@@ -97,15 +98,20 @@ describe("remote-cli MCP endpoints", () => {
   let createJiraIssueDelay: Promise<void> | undefined;
   let createJiraIssueFailure: Error | undefined;
   let connectedUpstreams: string[];
+  let upstreamConfigs: Array<{ name: string; headers?: Record<string, string> }>;
   let closeRemoteCli: () => Promise<void>;
   let jiraLookups: Array<Record<string, unknown> | undefined>;
   let jiraLookupResultText: string;
   let jiraLookupFailure: Error | undefined;
   let slackPostMessage: ReturnType<typeof vi.fn>;
+  let workspaceConfig: WorkspaceConfig;
+  let configLoadFailure: Error | undefined;
 
   beforeEach(async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic dGVzdA==");
     vi.stubEnv("POSTHOG_API_KEY", "test-posthog-key");
+    vi.stubEnv("GRAFANA_URL", "https://grafana.example.com");
+    vi.stubEnv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "grafana-token");
     vi.stubEnv("THOR_INTERNAL_SECRET", "resolve-secret");
     vi.stubEnv("WORKLOG_DIR", worklogDir);
     vi.stubEnv("RUNNER_BASE_URL", "https://thor.example.com/");
@@ -115,6 +121,7 @@ describe("remote-cli MCP endpoints", () => {
     createJiraIssueDelay = undefined;
     createJiraIssueFailure = undefined;
     connectedUpstreams = [];
+    upstreamConfigs = [];
     jiraLookups = [];
     jiraLookupResultText = JSON.stringify(jiraLookupResponse([{ accountId: "jira-account-1" }]));
     jiraLookupFailure = undefined;
@@ -124,6 +131,10 @@ describe("remote-cli MCP endpoints", () => {
       ts: "1710000000.100",
       message: { thread_ts: "1710000000.001" },
     });
+    configLoadFailure = undefined;
+    workspaceConfig = {
+      users: [{ email: "alice@example.com", name: "Alice", slack: "UABCDEF1", github: "alice" }],
+    };
     appendAlias({
       aliasType: "opencode.session",
       aliasValue: "parent-session",
@@ -135,6 +146,10 @@ describe("remote-cli MCP endpoints", () => {
       anchorId: activeAnchorId,
     });
 
+    await startRemoteCliServer();
+  });
+
+  async function startRemoteCliServer(): Promise<void> {
     const remoteCli = createRemoteCliApp({
       env: {
         port: 3004,
@@ -154,13 +169,16 @@ describe("remote-cli MCP endpoints", () => {
         isProduction: true,
         slackClient: { chat: { postMessage: slackPostMessage } } as unknown as WebClient,
         writeToolCallLogFn: () => {},
-        configLoader: () => ({
-          users: [
-            { email: "alice@example.com", name: "Alice", slack: "UABCDEF1", github: "alice" },
-          ],
-        }),
-        connectUpstreamFn: async (name: string): Promise<UpstreamConnection> => {
+        configLoader: () => {
+          if (configLoadFailure) throw configLoadFailure;
+          return workspaceConfig;
+        },
+        connectUpstreamFn: async (
+          name: string,
+          upstreamConfig: { headers?: Record<string, string> },
+        ): Promise<UpstreamConnection> => {
           connectedUpstreams.push(name);
+          upstreamConfigs.push({ name, headers: upstreamConfig.headers });
           return {
             tools,
             client: {
@@ -214,9 +232,9 @@ describe("remote-cli MCP endpoints", () => {
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  });
+  }
 
-  afterEach(async () => {
+  async function stopRemoteCliServer(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       server.close((err) => {
         if (err) {
@@ -227,6 +245,10 @@ describe("remote-cli MCP endpoints", () => {
       });
     });
     await closeRemoteCli();
+  }
+
+  afterEach(async () => {
+    await stopRemoteCliServer();
     rmSync(approvalsDir, { recursive: true, force: true });
     rmSync("/tmp/thor-remote-cli-mcp-test", { recursive: true, force: true });
     vi.unstubAllEnvs();
@@ -248,8 +270,6 @@ describe("remote-cli MCP endpoints", () => {
       "/exec/mcp",
       {
         args: ["atlassian", "createJiraIssue", argsJson],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -267,11 +287,13 @@ describe("remote-cli MCP endpoints", () => {
   }
 
   it("lists allowed upstreams and visible tools, then calls an allowed tool", async () => {
-    const upstreams = await postJson("/exec/mcp", {
-      args: [],
-      cwd: "/workspace/repos/acme",
-      directory: "/workspace/repos/acme",
-    });
+    const upstreams = await postJson(
+      "/exec/mcp",
+      {
+        args: [],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
     const upstreamBody = (await upstreams.json()) as { stdout: string };
 
     expect(upstreams.status).toBe(200);
@@ -283,11 +305,13 @@ describe("remote-cli MCP endpoints", () => {
       ],
     });
 
-    const listedTools = await postJson("/exec/mcp", {
-      args: ["atlassian"],
-      cwd: "/workspace/repos/acme",
-      directory: "/workspace/repos/acme",
-    });
+    const listedTools = await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian"],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
     const toolsBody = (await listedTools.json()) as { stdout: string };
 
     expect(listedTools.status).toBe(200);
@@ -297,15 +321,17 @@ describe("remote-cli MCP endpoints", () => {
       "createIssueLink",
     ]);
 
-    const hiddenLookup = await postJson("/exec/mcp", {
-      args: [
-        "atlassian",
-        "lookupJiraAccountId",
-        '{"cloudId":"cloud-1","searchString":"alice@example.com"}',
-      ],
-      cwd: "/workspace/repos/acme",
-      directory: "/workspace/repos/acme",
-    });
+    const hiddenLookup = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "lookupJiraAccountId",
+          '{"cloudId":"cloud-1","searchString":"alice@example.com"}',
+        ],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
     const hiddenLookupBody = (await hiddenLookup.json()) as {
       stdout: string;
       stderr: string;
@@ -316,11 +342,13 @@ describe("remote-cli MCP endpoints", () => {
     expect(hiddenLookupBody.exitCode).toBe(1);
     expect(hiddenLookupBody.stderr).toContain('Unknown tool "lookupJiraAccountId"');
 
-    const call = await postJson("/exec/mcp", {
-      args: ["atlassian", "getJiraIssue", "{}"],
-      cwd: "/workspace/worktrees/acme/feature-branch",
-      directory: "/workspace/repos/acme",
-    });
+    const call = await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian", "getJiraIssue", "{}"],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
     const callBody = (await call.json()) as {
       stdout: string;
       stderr: string;
@@ -337,12 +365,38 @@ describe("remote-cli MCP endpoints", () => {
 
     const health = await fetch(`${baseUrl}/health`);
     const healthBody = (await health.json()) as {
-      mcp: { configured: number; instances: { atlassian: { connected: boolean; tools: number } } };
+      mcp: {
+        configured: number;
+        connected: number;
+        connectedTargets: number;
+        instances: { atlassian: { connected: boolean; tools: number } };
+      };
     };
 
     expect(health.status).toBe(200);
     expect(healthBody.mcp.configured).toBe(3);
+    expect(healthBody.mcp.connected).toBe(1);
+    expect(healthBody.mcp.connectedTargets).toBe(1);
     expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 5 });
+  });
+
+  it("fails live MCP calls when profile config cannot be loaded", async () => {
+    configLoadFailure = new Error("workspace config unavailable");
+
+    const call = await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian", "getJiraIssue", "{}"],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const body = (await call.json()) as { stdout: string; stderr: string; exitCode: number };
+
+    expect(call.status).toBe(200);
+    expect(body).toMatchObject({ stdout: "", exitCode: 1 });
+    expect(body.stderr).toContain("workspace config unavailable");
+    expect(connectedUpstreams).toEqual([]);
+    expect(toolCalls).toEqual([]);
   });
 
   it("warms every registered upstream", async () => {
@@ -372,36 +426,487 @@ describe("remote-cli MCP endpoints", () => {
     expect(connectedUpstreams.sort()).toEqual(["atlassian", "grafana", "posthog"]);
   });
 
-  it("rejects worktree session directories for MCP authz", async () => {
-    const response = await postJson("/exec/mcp", {
-      args: [],
-      cwd: "/workspace/worktrees/acme/feature-branch",
-      directory: "/workspace/worktrees/acme/feature-branch",
+  it("routes Slack-triggered MCP calls through the channel profile credential target", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    workspaceConfig = {
+      ...workspaceConfig,
+      profiles: { QA: { channels: ["C123"] } },
+    };
+    appendActiveTrigger();
+
+    const call = await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian", "getJiraIssue", "{}"],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const body = (await call.json()) as { stdout: string; exitCode: number };
+
+    expect(body).toMatchObject({ stdout: "THOR-123", exitCode: 0 });
+    expect(upstreamConfigs.find((config) => config.name === "atlassian")?.headers).toEqual({
+      Authorization: "Basic qa-token",
     });
-    const body = (await response.json()) as {
+  });
+
+  it("honors the Slack channel's profile even after a subsequent non-Slack trigger fires", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    workspaceConfig = { ...workspaceConfig, profiles: { QA: { channels: ["C123"] } } };
+    appendActiveTrigger({ ts: "2026-05-21T00:00:01.000Z" });
+    appendSessionEvent("parent-session", {
+      type: "trigger_end",
+      triggerId: activeTriggerId,
+      status: "completed",
+      ts: "2026-05-21T00:00:02.000Z",
+    });
+    appendSessionEvent("parent-session", {
+      type: "trigger_start",
+      triggerId: githubTriggerId,
+      correlationKey: "github:issue:acme:acme/repo#42",
+      triggerGithubLogin: "octocat",
+      ts: "2026-05-21T00:00:03.000Z",
+    });
+
+    const call = await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian", "getJiraIssue", "{}"],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const body = (await call.json()) as { stdout: string; exitCode: number };
+
+    // The Slack alias on the anchor pins the profile to QA for the lifetime of
+    // the anchor. A newer non-Slack trigger does not flip credentials back to
+    // globals — once a session is in a profile, all its MCP calls go through
+    // that profile.
+    expect(body).toMatchObject({ stdout: "THOR-123", exitCode: 0 });
+    expect(upstreamConfigs.find((config) => config.name === "atlassian")?.headers).toEqual({
+      Authorization: "Basic qa-token",
+    });
+  });
+
+  it("does not store profile/routing snapshot on approval actions", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    workspaceConfig = { ...workspaceConfig, profiles: { QA: { channels: ["C123"] } } };
+    appendActiveTrigger();
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it"}',
+        ],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { stdout: string };
+    const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
+
+    const status = await postJson("/exec/approval", { args: ["status", actionId] });
+    const stored = JSON.parse(((await status.json()) as { stdout: string }).stdout) as Record<
+      string,
+      unknown
+    >;
+    expect(stored).not.toHaveProperty("routing");
+  });
+
+  it("re-resolves approval routing at click time using fresh env and config", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "");
+    vi.stubEnv("ATLASSIAN_AUTH", "Basic global-before-approval");
+    workspaceConfig = { ...workspaceConfig, profiles: { QA: { channels: ["C123"] } } };
+    appendActiveTrigger();
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it"}',
+        ],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { stdout: string };
+    const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
+
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-after-approval");
+    vi.stubEnv("ATLASSIAN_AUTH", "Basic global-after-approval");
+    await stopRemoteCliServer();
+    upstreamConfigs = [];
+    await startRemoteCliServer();
+    const resolved = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    const resolvedBody = (await resolved.json()) as { stdout: string; exitCode: number };
+
+    // Channel C123 maps to QA, and ATLASSIAN_AUTH_QA is now set, so the
+    // approval should fire against the freshly resolved profile credential,
+    // not the global fallback that was active when the approval card was
+    // posted.
+    expect(resolvedBody).toMatchObject({ stdout: "created", exitCode: 0 });
+    expect(upstreamConfigs.find((config) => config.name === "atlassian")?.headers).toEqual({
+      Authorization: "Basic qa-after-approval",
+    });
+  });
+
+  it("rejects an approval when its stored session id no longer resolves to an anchor", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    workspaceConfig = { ...workspaceConfig, profiles: { QA: { channels: ["C123"] } } };
+    appendActiveTrigger();
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it"}',
+        ],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { stdout: string };
+    const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
+
+    const status = await postJson("/exec/approval", { args: ["status", actionId] });
+    const stored = JSON.parse(((await status.json()) as { stdout: string }).stdout) as Record<
+      string,
+      unknown
+    >;
+    const dateSegment = String(stored.dateSegment);
+    writeFileSync(
+      join(approvalsDir, "atlassian", dateSegment, `${actionId}.json`),
+      JSON.stringify(
+        {
+          ...stored,
+          origin: { ...(stored.origin as Record<string, unknown>), sessionId: "stale-session" },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const resolved = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    const resolvedBody = (await resolved.json()) as { exitCode: number; stderr: string };
+
+    expect(resolvedBody.exitCode).toBe(1);
+    expect(resolvedBody.stderr).toContain("invalid Thor session id for approval routing");
+    expect(toolCalls).toEqual([]);
+
+    const rejectedStatus = await postJson("/exec/approval", { args: ["status", actionId] });
+    const rejected = JSON.parse(((await rejectedStatus.json()) as { stdout: string }).stdout) as {
+      status: string;
+      reviewer?: string;
+      reason?: string;
+    };
+    expect(rejected.status).toBe("rejected");
+    expect(rejected.reviewer).toBe("system");
+    expect(rejected.reason).toMatch(/profile re-resolution failed/);
+  });
+
+  it("rejects an approval when the session's channels are bound to multiple profiles", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    vi.stubEnv("ATLASSIAN_AUTH_LABS", "Basic labs-token");
+    workspaceConfig = {
+      ...workspaceConfig,
+      profiles: { QA: { channels: ["C123"] }, LABS: { channels: ["C456"] } },
+    };
+    appendActiveTrigger();
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it"}',
+        ],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { stdout: string };
+    const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
+
+    // Bind a second Slack thread on the same anchor in a different profile.
+    appendAlias({
+      aliasType: "slack.thread",
+      aliasValue: "C456/1710000099.001",
+      anchorId: activeAnchorId,
+    });
+
+    const resolved = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    const resolvedBody = (await resolved.json()) as { exitCode: number; stderr: string };
+    expect(resolvedBody.exitCode).toBe(1);
+    expect(resolvedBody.stderr).toMatch(/multiple profiles/);
+
+    const status = await postJson("/exec/approval", { args: ["status", actionId] });
+    const stored = JSON.parse(((await status.json()) as { stdout: string }).stdout) as {
+      status: string;
+      reviewer?: string;
+      reason?: string;
+    };
+    expect(stored.status).toBe("rejected");
+    expect(stored.reviewer).toBe("system");
+    expect(stored.reason).toMatch(/profile re-resolution failed/);
+  });
+
+  it("counts profile-only upstreams in health configured total", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH", "");
+    vi.stubEnv("POSTHOG_API_KEY", "");
+    vi.stubEnv("GRAFANA_URL", "");
+    vi.stubEnv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "");
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    workspaceConfig = { ...workspaceConfig, profiles: { QA: { channels: ["C123"] } } };
+
+    const health = await fetch(`${baseUrl}/health`);
+    const healthBody = (await health.json()) as { mcp: { configured: number } };
+
+    expect(health.status).toBe(200);
+    expect(healthBody.mcp.configured).toBe(1);
+  });
+
+  it("reports connected upstream names separately from connected credential targets in health", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    vi.stubEnv("ATLASSIAN_AUTH_LABS", "Basic labs-token");
+    workspaceConfig = {
+      ...workspaceConfig,
+      profiles: { QA: { channels: ["C123"] }, LABS: { channels: ["C999"] } },
+    };
+
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "labs-session",
+      anchorId: "00000000-0000-7000-8000-0000000004b1",
+    });
+    appendAlias({
+      aliasType: "slack.thread",
+      aliasValue: "C999/1710000000.002",
+      anchorId: "00000000-0000-7000-8000-0000000004b1",
+    });
+    appendSessionEvent("labs-session", {
+      type: "trigger_start",
+      triggerId: "00000000-0000-7000-8000-000000000103",
+      correlationKey: "slack:thread:C999/1710000000.002",
+    });
+
+    await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian", "getJiraIssue", "{}"],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian", "getJiraIssue", "{}"],
+      },
+      { "x-thor-session-id": "labs-session" },
+    );
+
+    const health = await fetch(`${baseUrl}/health`);
+    const healthBody = (await health.json()) as {
+      mcp: { configured: number; connected: number; connectedTargets: number };
+    };
+
+    expect(health.status).toBe(200);
+    expect(healthBody.mcp.configured).toBeGreaterThanOrEqual(1);
+    expect(healthBody.mcp.connected).toBe(1);
+    expect(healthBody.mcp.connectedTargets).toBe(2);
+  });
+
+  it("uses the session repo alias instead of a forged request directory for profile routing", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    vi.stubEnv("ATLASSIAN_AUTH_LABS", "Basic labs-token");
+    workspaceConfig = {
+      ...workspaceConfig,
+      profiles: {
+        QA: { repos: ["repo-qa"] },
+        LABS: { repos: ["repo-labs"] },
+      },
+    };
+    appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: activeAnchorId });
+
+    const call = await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian", "getJiraIssue", "{}"],
+        directory: "/workspace/repos/repo-labs",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const body = (await call.json()) as {
       stdout: string;
       stderr: string;
       exitCode: number;
     };
 
-    expect(response.status).toBe(200);
-    expect(body).toMatchObject({
-      stdout: "",
-      stderr:
-        "Cannot determine repo from directory: /workspace/worktrees/acme/feature-branch. Expected /workspace/repos/<repo> (worktrees are not allowed for MCP authz)",
-      exitCode: 1,
+    expect(call.status).toBe(200);
+    expect(body).toMatchObject({ stdout: "THOR-123", stderr: "", exitCode: 0 });
+    expect(upstreamConfigs.find((config) => config.name === "atlassian")?.headers).toEqual({
+      Authorization: "Basic qa-token",
     });
   });
 
-  it("fails closed for Jira approvals when Thor session context is missing", async () => {
+  it("allows a Slack session to use a mixed profile when its channel is in the profile", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    workspaceConfig = {
+      ...workspaceConfig,
+      profiles: {
+        QA: { channels: ["C123"], repos: ["repo-qa"] },
+      },
+    };
+    appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: activeAnchorId });
+
+    const call = await postJson(
+      "/exec/mcp",
+      { args: ["atlassian", "getJiraIssue", "{}"] },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const body = (await call.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(call.status).toBe(200);
+    expect(body).toMatchObject({ stdout: "THOR-123", stderr: "", exitCode: 0 });
+    expect(upstreamConfigs.find((config) => config.name === "atlassian")?.headers).toEqual({
+      Authorization: "Basic qa-token",
+    });
+  });
+
+  it("blocks an unlisted Slack session from adopting a mixed channel+repo profile", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    workspaceConfig = {
+      ...workspaceConfig,
+      profiles: {
+        QA: { channels: ["C123"], repos: ["repo-qa"] },
+      },
+    };
+    const unlistedAnchorId = "00000000-0000-7000-8000-0000000004c1";
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "unlisted-session",
+      anchorId: unlistedAnchorId,
+    });
+    appendAlias({
+      aliasType: "slack.thread",
+      aliasValue: "C999/1710000000.001",
+      anchorId: unlistedAnchorId,
+    });
+    appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: unlistedAnchorId });
+
+    const call = await postJson(
+      "/exec/mcp",
+      { args: ["atlassian", "getJiraIssue", "{}"] },
+      { "x-thor-session-id": "unlisted-session" },
+    );
+    const body = (await call.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(call.status).toBe(200);
+    expect(body.exitCode).toBe(1);
+    expect(body.stderr).toMatch(/mixed channel\+repo profile/);
+    expect(toolCalls).toEqual([]);
+  });
+
+  it("allows a non-Slack session to use a mixed profile through its repo alias", async () => {
+    vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
+    vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    workspaceConfig = {
+      ...workspaceConfig,
+      profiles: {
+        QA: { channels: ["C123"], repos: ["repo-qa"] },
+      },
+    };
+    const repoAnchorId = "00000000-0000-7000-8000-0000000004d1";
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "repo-session",
+      anchorId: repoAnchorId,
+    });
+    appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: repoAnchorId });
+
+    const call = await postJson(
+      "/exec/mcp",
+      { args: ["atlassian", "getJiraIssue", "{}"] },
+      { "x-thor-session-id": "repo-session" },
+    );
+    const body = (await call.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(call.status).toBe(200);
+    expect(body).toMatchObject({ stdout: "THOR-123", stderr: "", exitCode: 0 });
+    expect(upstreamConfigs.find((config) => config.name === "atlassian")?.headers).toEqual({
+      Authorization: "Basic qa-token",
+    });
+  });
+
+  it("fails closed for MCP calls when Thor session context is missing", async () => {
+    const allowed = await postJson("/exec/mcp", {
+      args: ["atlassian", "getJiraIssue", "{}"],
+    });
+    const allowedBody = (await allowed.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(allowed.status).toBe(200);
+    expect(allowedBody).toMatchObject({ stdout: "", exitCode: 1 });
+    expect(allowedBody.stderr).toContain("missing Thor session id");
+    expect(toolCalls).toEqual([]);
+
+    const fakeSession = await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian", "getJiraIssue", "{}"],
+      },
+      { "x-thor-session-id": "fake-session" },
+    );
+    const fakeSessionBody = (await fakeSession.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(fakeSession.status).toBe(200);
+    expect(fakeSessionBody).toMatchObject({ stdout: "", exitCode: 1 });
+    expect(fakeSessionBody.stderr).toContain("invalid Thor session id");
+    expect(toolCalls).toEqual([]);
+
     const pending = await postJson("/exec/mcp", {
       args: [
         "atlassian",
         "createJiraIssue",
         '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
       ],
-      cwd: "/workspace/repos/acme",
-      directory: "/workspace/repos/acme",
     });
     const pendingBody = (await pending.json()) as {
       stdout: string;
@@ -430,8 +935,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"projectKey":"THOR","summary":"Fix it","description":"body"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -462,8 +965,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -582,8 +1083,6 @@ describe("remote-cli MCP endpoints", () => {
       "/exec/mcp",
       {
         args: ["atlassian", "createIssueLink", JSON.stringify(cleanArgs)],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -615,8 +1114,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -661,8 +1158,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -697,8 +1192,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "session-without-slack-thread" },
     );
@@ -715,11 +1208,6 @@ describe("remote-cli MCP endpoints", () => {
     appendAlias({
       aliasType: "opencode.session",
       aliasValue: "legacy-thread-session",
-      anchorId: legacyAnchorId,
-    });
-    appendAlias({
-      aliasType: "slack.thread_id",
-      aliasValue: "1710000000.001",
       anchorId: legacyAnchorId,
     });
     appendSessionEvent("legacy-thread-session", {
@@ -748,7 +1236,6 @@ describe("remote-cli MCP endpoints", () => {
     expect(pendingBody.stderr).toContain("unsupported Slack thread correlation key");
     expect(slackPostMessage).not.toHaveBeenCalled();
   });
-
   it("fails closed when posting the approval card to Slack fails", async () => {
     slackPostMessage.mockRejectedValueOnce(
       Object.assign(new Error("An API error occurred: channel_not_found"), {
@@ -765,8 +1252,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -894,8 +1379,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body","contentFormat":"adf"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -931,8 +1414,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -998,8 +1479,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
@@ -1059,8 +1538,6 @@ describe("remote-cli MCP endpoints", () => {
           "createJiraIssue",
           '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
         ],
-        cwd: "/workspace/repos/acme",
-        directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );

@@ -20,7 +20,7 @@ import {
   generateAppJWT,
   getInstallationIdFromWorkspace,
   getInstallationToken,
-} from "./github-app-auth.js";
+} from "./github-app-auth.ts";
 
 describe("parseOwnerFromRemoteUrl", () => {
   it("parses HTTPS remote", () => {

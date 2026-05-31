@@ -1,4 +1,4 @@
-import { defineConfig } from "tsup";
+import { defineConfig } from "tsdown";
 
 export default defineConfig({
   entry: {
@@ -8,13 +8,14 @@ export default defineConfig({
   format: "esm",
   target: "node22",
   platform: "node",
-  splitting: false,
   sourcemap: false,
   clean: true,
-  outExtension: () => ({ js: ".mjs" }),
+  dts: false,
+  outExtensions: () => ({ js: ".mjs" }),
   banner: {
     js: '#!/usr/bin/env node\nimport{createRequire as __cr}from"node:module";const require=__cr(import.meta.url);',
   },
-  // Bundle everything into standalone .mjs files
-  noExternal: [/.*/],
+  // Bundle everything into standalone .mjs files. onlyBundle:false silences the
+  // informational notice about bundling node_modules deps.
+  deps: { alwaysBundle: [/.*/], onlyBundle: false },
 });

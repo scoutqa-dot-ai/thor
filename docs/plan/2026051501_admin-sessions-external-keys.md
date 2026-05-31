@@ -1,8 +1,10 @@
 # Admin Sessions — Useful External Keys
 
 **Date**: 2026-05-15
-**Status**: Draft
+**Status**: Superseded in part by `docs/plan/2026052701_profile-based-integration-routing.md` Phase 6
 **Depends on**: `docs/plan/2026051401_admin-sessions-dashboard.md`, `docs/plan/2026050501_prebind-correlation-anchors.md`
+
+> **Post-implementation note (2026-05-28):** Phase 6 of the profile-based routing plan dropped the legacy `slack.thread_id` alias type and the no-channel `slack:thread:<ts>` correlation key form entirely. The "Non-goals" entries below that said `slack.thread_id` would stay in `ALIAS_TYPES` and that admin would keep rendering a legacy chip are superseded — only `slack.thread` is emitted and rendered now. `buildSlackCorrelationKeys` was renamed to `buildSlackCorrelationKey` and returns a single string, not `[newKey, legacyKey]`.
 
 ## Goal
 

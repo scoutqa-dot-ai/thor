@@ -25,6 +25,10 @@ REMOTE_CLI_GIT_REPO_NAME="${REMOTE_CLI_GIT_REPO_NAME:-scoutqa-dot-ai-thor-openco
 REMOTE_CLI_GIT_REPO_DIR="${REMOTE_CLI_GIT_REPO_DIR:-/workspace/repos/${REMOTE_CLI_GIT_REPO_NAME}}"
 HOST_REMOTE_CLI_GIT_REPO_DIR="${HOST_REMOTE_CLI_GIT_REPO_DIR:-${HOST_WORKSPACE}/repos/${REMOTE_CLI_GIT_REPO_NAME}}"
 THOR_INTERNAL_SECRET="${THOR_INTERNAL_SECRET:-$(docker exec thor-gateway-1 printenv THOR_INTERNAL_SECRET 2>/dev/null)}"
+SLACK_API_URL="${SLACK_API_URL:-https://slack.com/api}"
+SLACK_BOT_TOKEN="${SLACK_BOT_TOKEN:-}"
+SLACK_CHANNEL_ID="${SLACK_E2E_CHANNEL_ID:-${SLACK_CHANNEL_ID:-}}"
+export SLACK_CHANNEL_ID
 
 mkdir -p "${HOST_WORKSPACE}/repos/e2e-test"
 
@@ -80,6 +84,15 @@ exec_stdout_field() {
     const v = stdout[process.env.FIELD];
     console.log(v === undefined ? '' : typeof v === 'boolean' ? String(v) : String(v));
   " 2>/dev/null || echo ""
+}
+
+slack_post_json() {
+  local method="$1"
+  local json="$2"
+  curl -sS -X POST "$SLACK_API_URL/$method" \
+    -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+    -H 'Content-Type: application/json; charset=utf-8' \
+    --data-binary "$json"
 }
 
 response_contains() {
@@ -139,6 +152,9 @@ fi
 if [[ "$remote_cli_health" == *"ok"* ]]; then echo "  ✓ remote-cli is healthy"; else echo "  ✗ remote-cli is not healthy at $REMOTE_CLI_URL"; preflight_ok=false; fi
 if [[ "$runner_health" == *"ok"* ]]; then echo "  ✓ runner is healthy"; else echo "  ✗ runner is not healthy at $RUNNER_URL"; preflight_ok=false; fi
 if [[ "$gateway_health" == *"ok"* ]]; then echo "  ✓ gateway is healthy"; else echo "  ✗ gateway is not healthy at $GATEWAY_URL"; preflight_ok=false; fi
+if [[ -n "$THOR_INTERNAL_SECRET" ]]; then echo "  ✓ THOR_INTERNAL_SECRET is available"; else echo "  ✗ THOR_INTERNAL_SECRET is unavailable"; preflight_ok=false; fi
+if [[ -n "$SLACK_BOT_TOKEN" ]]; then echo "  ✓ SLACK_BOT_TOKEN is available"; else echo "  ✗ SLACK_BOT_TOKEN is unavailable"; preflight_ok=false; fi
+if [[ -n "$SLACK_CHANNEL_ID" ]]; then echo "  ✓ Slack e2e channel is configured"; else echo "  ✗ SLACK_E2E_CHANNEL_ID or SLACK_CHANNEL_ID is not set"; preflight_ok=false; fi
 
 if [[ "$preflight_ok" != "true" ]]; then
   echo ""
@@ -170,7 +186,7 @@ assert '[[ "$gh_response_ok" == "yes" ]]' "agent command: successfully listed PR
 
 echo ""
 echo "=== Session resume ==="
-RESUME_CORR_KEY="slack:thread:opencode-e2e-resume-$(date +%s)"
+RESUME_CORR_KEY="git:branch:opencode-e2e:resume-$(date +%s)"
 PHRASE="THOR$(date +%s | tail -c 6)"
 trigger1_raw=$(curl -sf -X POST "$RUNNER_URL/trigger" \
   -H 'Content-Type: application/json' \
@@ -239,19 +255,69 @@ else
 fi
 
 if [[ -z "$APPROVAL_TOOL" ]]; then
-  echo "  ⚠ No discoverable approval-required tool; skipping approval re-entry smoke (${APPROVAL_DISCOVERY_DEBUG:-no matching connected upstream})"
-elif [[ -z "$THOR_INTERNAL_SECRET" ]]; then
-  echo "  ⚠ THOR_INTERNAL_SECRET unavailable; skipping approval re-entry smoke"
+  assert 'false' \
+    "approval re-entry: discovered an approval-required tool" \
+    "${APPROVAL_DISCOVERY_DEBUG:-no matching connected upstream}"
 else
+  echo "  Found approval-required tool: $APPROVAL_UPSTREAM/$APPROVAL_TOOL (via $APPROVAL_DIR)"
+
+  approval_seed_json=$(node -e "
+    console.log(JSON.stringify({
+      channel: process.env.SLACK_CHANNEL_ID,
+      text: 'Thor OpenCode approval re-entry seed ' + Date.now()
+    }));
+  ")
+  approval_seed_raw=$(slack_post_json "chat.postMessage" "$approval_seed_json")
+  approval_seed_ok=$(json_field "$approval_seed_raw" "ok")
+  approval_thread_ts=$(json_field "$approval_seed_raw" "ts")
+  assert '[[ "$approval_seed_ok" == "true" && -n "$approval_thread_ts" ]]' \
+    "approval re-entry: seeded Slack thread" \
+    "response: ${approval_seed_raw:0:500}"
+
+  trigger_context_raw='{}'
+  e2e_session_id=""
+  if [[ "$approval_seed_ok" == "true" && -n "$approval_thread_ts" ]]; then
+    trigger_context_body=$(APPROVAL_THREAD_TS="$approval_thread_ts" node -e "
+      console.log(JSON.stringify({
+        correlationKey: 'slack:thread:' + process.env.SLACK_CHANNEL_ID + '/' + process.env.APPROVAL_THREAD_TS
+      }));
+    ")
+    trigger_context_raw=$(APPROVAL_THREAD_TS="$approval_thread_ts" curl -sf -X POST "$RUNNER_URL/internal/e2e/trigger-context" \
+      -H 'Content-Type: application/json' \
+      -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
+      -d "$trigger_context_body" \
+      2>/dev/null || echo '{}')
+    e2e_session_id=$(json_field "$trigger_context_raw" "sessionId")
+  fi
+  assert '[[ -n "$e2e_session_id" ]]' \
+    "approval re-entry: created bound Thor session" \
+    "response: ${trigger_context_raw:0:500}; set THOR_E2E_TEST_HELPERS=1 for the runner service"
+
+  case "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" in
+    atlassian/createJiraIssue)
+      approval_args_json='{"projectKey":"THOR","issueTypeName":"Task","summary":"OpenCode e2e approval re-entry"}'
+      ;;
+    posthog/create-feature-flag)
+      approval_args_json="{\"key\":\"thor-opencode-e2e-approval-$(date +%s)\",\"name\":\"Thor OpenCode E2E approval\",\"description\":\"opencode e2e approval body\",\"active\":false}"
+      ;;
+    *)
+      approval_args_json='{"description":"opencode e2e approval body"}'
+      ;;
+  esac
+  escaped_approval_args=$(node -e "console.log(JSON.stringify(process.argv[1]))" "$approval_args_json")
+
   echo "  Creating pending approval via $APPROVAL_UPSTREAM/$APPROVAL_TOOL..."
   e2e_call_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
     -H 'Content-Type: application/json' \
-    -d "{\"args\":[\"$APPROVAL_UPSTREAM\",\"$APPROVAL_TOOL\",\"{}\"],\"cwd\":\"$APPROVAL_DIR\",\"directory\":\"$APPROVAL_DIR\"}" \
+    -H "x-thor-session-id: $e2e_session_id" \
+    -d "{\"args\":[\"$APPROVAL_UPSTREAM\",\"$APPROVAL_TOOL\",$escaped_approval_args]}" \
     2>/dev/null || echo '{}')
   e2e_action_id=$(echo "$e2e_call_raw" | extract_action_id)
 
   if [[ -z "$e2e_action_id" ]]; then
-    echo "  ⚠ Could not create pending approval — skipping approval re-entry smoke"
+    assert 'false' \
+      "approval re-entry: created pending approval" \
+      "response: ${e2e_call_raw:0:500}"
   else
     curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
       -H 'Content-Type: application/json' \

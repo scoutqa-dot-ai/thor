@@ -7,7 +7,7 @@ import {
   envString,
   getRunnerBaseUrl,
   matchesInternalSecret,
-} from "./env.js";
+} from "./env.ts";
 
 describe("env loader", () => {
   it("reads required and optional strings with trim/default semantics", () => {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { formatAge, formatBytes, formatCostUsd, formatDuration, formatTokens } from "./format.js";
+import { formatAge, formatBytes, formatCostUsd, formatDuration, formatTokens } from "./format.ts";
 
 describe("formatTokens", () => {
   it("returns the raw integer below 1k", () => {

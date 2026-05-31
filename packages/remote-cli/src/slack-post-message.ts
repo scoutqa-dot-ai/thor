@@ -2,11 +2,12 @@ import type { KnownBlock } from "@slack/types";
 import { WebClient } from "@slack/web-api";
 import {
   appendCorrelationAlias,
-  buildSlackCorrelationKeys,
+  buildSlackCorrelationKey,
   currentSessionForAnchor,
   isPathWithin,
   realpathOrNull,
   resolveAlias,
+  resolveSessionAnchorId,
   type ExecResult,
 } from "@thor/common";
 import MarkdownIt from "markdown-it";
@@ -112,14 +113,13 @@ function resolveBlocksFilePath(blocksFile: string, cwd?: string): string | { err
 }
 
 function hasUsableThorSession(sessionId: string): boolean {
-  const sessionAnchor = resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId });
-  if (sessionAnchor) return currentSessionForAnchor(sessionAnchor) === sessionId;
+  const anchorId = resolveSessionAnchorId(sessionId);
+  if (!anchorId) return false;
 
-  const subsessionAnchor = resolveAlias({
-    aliasType: "opencode.subsession",
-    aliasValue: sessionId,
-  });
-  return subsessionAnchor ? currentSessionForAnchor(subsessionAnchor) !== undefined : false;
+  const sessionAnchor = resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId });
+  return sessionAnchor
+    ? currentSessionForAnchor(anchorId) === sessionId
+    : currentSessionForAnchor(anchorId) !== undefined;
 }
 
 function stripCodeSegments(text: string): string {
@@ -313,7 +313,7 @@ export async function handleSlackPostMessage(
   );
   if ("error" in slackResponse) return result(`Slack post failed: ${slackResponse.error}\n`);
 
-  const correlationKey = buildSlackCorrelationKeys(parsed.channel, slackResponse.thread_ts)[0];
+  const correlationKey = buildSlackCorrelationKey(parsed.channel, slackResponse.thread_ts);
   const appendAlias = deps.appendAlias ?? appendCorrelationAlias;
   try {
     appendAlias(sessionId, correlationKey);

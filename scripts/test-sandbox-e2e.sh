@@ -183,9 +183,13 @@ SBX_WORKTREE_DIR="/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${SBX_BRANCH}
 SBX_HOST_WORKTREE_DIR="${HOST_WORKSPACE}/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${SBX_BRANCH}"
 
 if [[ -z "$SBX_OLD_SHA" || -z "$SBX_NEW_SHA" ]]; then
-  echo "  ⚠ Prerequisites missing (clone may have failed) — skipping sandbox tests"
+  assert 'false' \
+    "sandbox repo has commits for lifecycle checks" \
+    "oldSha='${SBX_OLD_SHA:-}', newSha='${SBX_NEW_SHA:-}'"
 elif [[ "$SBX_OLD_SHA" == "$SBX_NEW_SHA" ]]; then
-  echo "  ⚠ Repo has only one commit — skipping sandbox tests"
+  assert 'false' \
+    "sandbox repo has at least two commits for lifecycle checks" \
+    "oldSha='${SBX_OLD_SHA:0:12}', newSha='${SBX_NEW_SHA:0:12}'"
 else
   # 8a. List sandboxes — should be empty (or at least none for our worktree)
   sbx_list_before=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
