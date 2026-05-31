@@ -1044,8 +1044,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           const collectedTextParts: string[] = [];
           const collectedToolCalls: Array<{ tool: string; state: string }> = [];
           let lastMessageId: string | undefined;
-          let totalCost = 0;
-          const totalTokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
           let terminalError: string | undefined;
           let latestSessionError: string | undefined;
           let latestSessionErrorSeq: number | undefined;
@@ -1245,12 +1243,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                     lastMessageId = toolPart.messageID;
                   } else if (part.type === "step-finish") {
                     const stepFinish = part as StepFinishPart;
-                    totalCost += stepFinish.cost;
-                    totalTokens.input += stepFinish.tokens.input;
-                    totalTokens.output += stepFinish.tokens.output;
-                    totalTokens.reasoning += stepFinish.tokens.reasoning;
-                    totalTokens.cache.read += stepFinish.tokens.cache.read;
-                    totalTokens.cache.write += stepFinish.tokens.cache.write;
                     lastMessageId = stepFinish.messageID;
                   }
                 } else if (event.type === "session.error") {
