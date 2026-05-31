@@ -4,7 +4,7 @@ import {
   isBareMemoryDirectoryPath,
   isMemoryPath,
   normalizeMemoryPath,
-} from "./memory-paths.js";
+} from "./memory-paths.ts";
 
 describe("memory-paths", () => {
   it("normalizes memory paths before checks", () => {

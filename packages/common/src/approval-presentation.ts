@@ -4,8 +4,8 @@ import {
   GhIssueCreateApprovalArgsSchema,
   CreateJiraIssueApprovalArgsSchema,
   type ApprovalToolName,
-} from "./approval-events.js";
-import { findSlackTriggerCorrelationKey } from "./event-log.js";
+} from "./approval-events.ts";
+import { findSlackTriggerCorrelationKey } from "./event-log.ts";
 
 const SLACK_SECTION_TEXT_LIMIT = 3000;
 const SLACK_THREAD_CORRELATION_PREFIX = "slack:thread:";
@@ -32,9 +32,7 @@ type TrimStep = {
   maxStringLength: number;
 };
 
-export type SlackTextObject =
-  | { type: "mrkdwn"; text: string }
-  | { type: "plain_text"; text: string };
+type SlackTextObject = { type: "mrkdwn"; text: string } | { type: "plain_text"; text: string };
 
 export type SlackBlock =
   | { type: "divider" }

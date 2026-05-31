@@ -18,8 +18,8 @@ import {
   type ExecStreamEvent,
   type ConfigLoader,
 } from "@thor/common";
-import { execCommand, execCommandStream } from "./exec.js";
-import { createMcpService, type McpServiceDeps } from "./mcp-handler.js";
+import { execCommand, execCommandStream } from "./exec.ts";
+import { createMcpService, type McpServiceDeps } from "./mcp-handler.ts";
 import {
   registerCreatedIssueCorrelationAlias,
   registerGitCorrelationAlias,
@@ -28,8 +28,8 @@ import {
   handleSlackPostMessage,
   parseSlackPostMessageArgs,
   type SlackPostMessageDeps,
-} from "./slack-post-message.js";
-import { listSchemas, listTables, getColumns, executeQuery, getQuestion } from "./metabase.js";
+} from "./slack-post-message.ts";
+import { listSchemas, listTables, getColumns, executeQuery, getQuestion } from "./metabase.ts";
 import {
   createSandbox,
   deleteSandbox,
@@ -46,7 +46,7 @@ import {
   THOR_CWD_LABEL,
   THOR_MANAGED_LABEL,
   THOR_SHA_LABEL,
-} from "./sandbox.js";
+} from "./sandbox.ts";
 import {
   resolveGitArgs,
   validateCwd,
@@ -55,8 +55,8 @@ import {
   validateLangfuseArgs,
   validateMetabaseArgs,
   validateScoutqaArgs,
-} from "./policy.js";
-import { attributionFields, resolveTriggerUser } from "./attribution.js";
+} from "./policy.ts";
+import { attributionFields, resolveTriggerUser } from "./attribution.ts";
 
 const log = createLogger("remote-cli");
 
@@ -1053,10 +1053,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         }
       }
 
-      const result = await mcpService.executeMcp(args, {
-        directory: typeof req.body?.directory === "string" ? req.body.directory : undefined,
-        ...thorIds(req),
-      });
+      const result = await mcpService.executeMcp(args, thorIds(req));
 
       res.json(result);
     } catch (err) {

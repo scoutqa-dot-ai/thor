@@ -19,7 +19,7 @@ vi.hoisted(() => {
 
 const execCalls = vi.hoisted(() => [] as Array<{ bin: string; args: string[]; cwd: string }>);
 
-vi.mock("./exec.js", () => ({
+vi.mock("./exec.ts", () => ({
   execCommand: vi.fn(async (bin: string, args: string[], cwd: string) => {
     execCalls.push({ bin, args, cwd });
     if (bin === "gh" && args[0] === "issue" && args[1] === "create") {
@@ -37,8 +37,8 @@ vi.mock("./exec.js", () => ({
   execCommandStream: vi.fn(),
 }));
 
-import { createRemoteCliApp, type RemoteCliAppConfig } from "./index.js";
-import { execCommand } from "./exec.js";
+import { createRemoteCliApp, type RemoteCliAppConfig } from "./index.ts";
+import { execCommand } from "./exec.ts";
 
 const worklogRoot = "/tmp/thor-remote-cli-gh-test";
 const cwd = "/workspace/worktrees/acme/feat/test";

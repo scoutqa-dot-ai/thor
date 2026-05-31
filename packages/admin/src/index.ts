@@ -1,5 +1,5 @@
 import { createLogger, loadAdminEnv, logInfo } from "@thor/common";
-import { createAdminApp } from "./app.js";
+import { createAdminApp } from "./app.ts";
 
 const log = createLogger("admin");
 

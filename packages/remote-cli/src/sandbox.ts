@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve, sep } from "node:path";
 import { rm, unlink, mkdir, stat } from "node:fs/promises";
 import { Daytona, type FileUpload, type Sandbox } from "@daytonaio/sdk";
-import { execCommand } from "./exec.js";
+import { execCommand } from "./exec.ts";
 import { loadDaytonaEnv, withKeyLock, formatBytes } from "@thor/common";
 
 export interface ExecStreamCallbacks {
@@ -13,6 +14,10 @@ export interface ExecStreamCallbacks {
 
 const DAYTONA_REPO_DIR = "/workspace/sandbox";
 const SANDBOX_SYNC_BUNDLE_PATH = "/tmp/sync.bundle";
+const requireFromCurrentModule = createRequire(import.meta.url);
+const requireFromDaytonaSdk = createRequire(
+  requireFromCurrentModule.resolve("@daytonaio/sdk/package.json"),
+);
 
 export const THOR_MANAGED_LABEL = "thor-managed";
 export const THOR_CWD_LABEL = "thor-cwd";
@@ -27,12 +32,12 @@ export function withCwdLock<T>(cwd: string, fn: () => Promise<T>): Promise<T> {
 }
 
 export class SandboxError extends Error {
-  constructor(
-    public readonly userMessage: string,
-    public readonly adminDetail: string,
-    options?: { cause?: unknown },
-  ) {
+  readonly userMessage: string;
+  readonly adminDetail: string;
+  constructor(userMessage: string, adminDetail: string, options?: { cause?: unknown }) {
     super(adminDetail, options);
+    this.userMessage = userMessage;
+    this.adminDetail = adminDetail;
     this.name = "SandboxError";
   }
 }
@@ -122,12 +127,19 @@ export async function syncSandbox(
   });
 }
 
-export const DIRTY_FILE_LIMIT = 100;
-export const FILE_SIZE_LIMIT = 100 * 1024 * 1024; // 100 MB
+const DIRTY_FILE_LIMIT = 100;
+const FILE_SIZE_LIMIT = 100 * 1024 * 1024; // 100 MB
 
 export interface OverlayResult {
   pushed: string[];
   deleted: string[];
+}
+
+function installDaytonaSdkRequireShim(): void {
+  const globalScope = globalThis as typeof globalThis & { require?: NodeRequire };
+  if (typeof globalScope.require !== "function") {
+    globalScope.require = requireFromDaytonaSdk;
+  }
 }
 
 /**
@@ -297,6 +309,7 @@ export async function pullSandboxChanges(
       await mkdir(dir, { recursive: true }).catch(() => {});
     }
 
+    installDaytonaSdkRequireShim();
     await sandbox.fs.downloadFiles(
       downloads.map((f) => ({
         source: join(DAYTONA_REPO_DIR, f),
@@ -497,6 +510,7 @@ export function shellQuote(value: string): string {
 
 export const _testing = {
   parseGitStatus,
+  installDaytonaSdkRequireShim,
   resetDaytona(): void {
     daytonaSingleton = null;
     daytonaEnv = null;

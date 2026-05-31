@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { appendJsonlWorklog } from "./worklog.js";
+import { appendJsonlWorklog } from "./worklog.ts";
 
 describe("appendJsonlWorklog", () => {
   const originalWorklogDir = process.env.WORKLOG_DIR;

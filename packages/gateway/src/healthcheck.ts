@@ -1,4 +1,4 @@
-import type { PendingQueueSnapshot } from "./queue.js";
+import type { PendingQueueSnapshot } from "./queue.ts";
 
 interface ServiceHealth {
   status: "ok" | "error";

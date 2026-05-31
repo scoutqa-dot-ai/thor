@@ -7,15 +7,16 @@ import {
   createConfigLoader,
   extractRepoFromCwd,
   getInstallationIdForOwner,
-  interpolateEnv,
-  interpolateHeaders,
   findUserBySlack,
   findUserByGithub,
-  findUserByEmail,
+  getProfileForSlackChannel,
+  getProfileForRepo,
+  isSlackChannelInProfile,
   resolveSafeRepoDirectory,
   resolveSlackChannelRepoDirectory,
-  getSlackPrivateChannelAllowlist,
-} from "./workspace-config.js";
+  resolveStrictProfileForSession,
+} from "./workspace-config.ts";
+import { appendAlias } from "./event-log.ts";
 
 let tempDir: string;
 
@@ -102,33 +103,282 @@ describe("loadWorkspaceConfig", () => {
     const config = loadWorkspaceConfig(path);
     expect(findUserBySlack(config, "UABCDEF1")?.email).toBe("alice@example.com");
     expect(findUserByGithub(config, "alice-dev")?.slack).toBe("UABCDEF1");
-    expect(findUserByEmail(config, "BOB@example.com")?.name).toBe("Bob");
     expect(findUserBySlack(config, "UNOMATCH")).toBeUndefined();
   });
 
-  it("accepts Slack private channel allowlist and exposes it through the helper", () => {
+  it("accepts profiles and exposes channel lookup helpers", () => {
     const path = writeConfig("config.json", {
-      slack: { private_channel_allowlist: ["G123", "G456"] },
+      profiles: {
+        QA: { channels: ["G123", "D456"] },
+        LABS: { channels: ["C789"] },
+      },
     });
 
     const config = loadWorkspaceConfig(path);
-    expect(getSlackPrivateChannelAllowlist(config)).toEqual(["G123", "G456"]);
-    expect(getSlackPrivateChannelAllowlist({})).toEqual([]);
+    expect(getProfileForSlackChannel(config, "G123")).toBe("QA");
+    expect(getProfileForSlackChannel(config, "C789")).toBe("LABS");
+    expect(getProfileForSlackChannel(config, "C000")).toBeUndefined();
+    expect(isSlackChannelInProfile(config, "D456")).toBe(true);
+    expect(isSlackChannelInProfile(config, "D000")).toBe(false);
   });
 
-  it("rejects invalid Slack private channel allowlist entries", () => {
+  describe("resolveStrictProfileForSession", () => {
+    const anchor = "00000000-0000-7000-8000-000000000aa1";
+    const worklogRoot = "/tmp/thor-strict-profile-test";
+
+    beforeEach(() => {
+      vi.stubEnv("WORKLOG_DIR", `${worklogRoot}/worklog`);
+      rmSync(worklogRoot, { recursive: true, force: true });
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      rmSync(worklogRoot, { recursive: true, force: true });
+    });
+
+    function makeConfig() {
+      return loadWorkspaceConfig(
+        writeConfig("profiles.json", {
+          profiles: {
+            QA: { channels: ["C123"] },
+            LABS: { channels: ["C456"] },
+          },
+        }),
+      );
+    }
+
+    it("returns undefined when the session has no anchor binding", () => {
+      const config = makeConfig();
+      expect(resolveStrictProfileForSession(config, "unknown-session")).toEqual({
+        ok: true,
+        profile: undefined,
+      });
+    });
+
+    it("returns undefined when the anchor has no slack.thread aliases", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "s1", anchorId: anchor });
+      const config = makeConfig();
+      expect(resolveStrictProfileForSession(config, "s1")).toEqual({
+        ok: true,
+        profile: undefined,
+      });
+    });
+
+    it("returns the unique profile when every Slack channel maps to the same profile", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "s2", anchorId: anchor });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C123/1710000000.001",
+        anchorId: anchor,
+      });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C123/1710000000.005",
+        anchorId: anchor,
+      });
+      const config = makeConfig();
+      expect(resolveStrictProfileForSession(config, "s2")).toEqual({
+        ok: true,
+        profile: "QA",
+      });
+    });
+
+    it("fails hard when channels map to different profiles", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "s3", anchorId: anchor });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C123/1710000000.001",
+        anchorId: anchor,
+      });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C456/1710000000.002",
+        anchorId: anchor,
+      });
+      const config = makeConfig();
+      const result = resolveStrictProfileForSession(config, "s3");
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/multiple profiles/);
+    });
+
+    it("fails hard when a profile-bound channel coexists with a no-profile channel", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "s4", anchorId: anchor });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C123/1710000000.001",
+        anchorId: anchor,
+      });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C999/1710000000.002",
+        anchorId: anchor,
+      });
+      const config = makeConfig();
+      const result = resolveStrictProfileForSession(config, "s4");
+      expect(result.ok).toBe(false);
+    });
+
+    function makeRepoConfig() {
+      return loadWorkspaceConfig(
+        writeConfig("repo-profiles.json", {
+          profiles: {
+            QA: { repos: ["repo-qa"] },
+            LABS: { channels: ["C456"], repos: ["repo-labs"] },
+          },
+        }),
+      );
+    }
+
+    it("resolves a profile from the anchor repo alias when there is no Slack binding", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "rs1", anchorId: anchor });
+      appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: anchor });
+      const config = makeRepoConfig();
+      expect(resolveStrictProfileForSession(config, "rs1")).toEqual({
+        ok: true,
+        profile: "QA",
+      });
+    });
+
+    it("lets an anchor repo alias upgrade a channel that maps to no profile when the profile is repo-only", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "rs2", anchorId: anchor });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C999/1710000000.001",
+        anchorId: anchor,
+      });
+      appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: anchor });
+      const config = makeRepoConfig();
+      expect(resolveStrictProfileForSession(config, "rs2")).toEqual({
+        ok: true,
+        profile: "QA",
+      });
+    });
+
+    it("resolves a mixed profile from the anchor repo alias when there is no Slack binding", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "rs5", anchorId: anchor });
+      appendAlias({ aliasType: "repo", aliasValue: "repo-labs", anchorId: anchor });
+      const config = makeRepoConfig();
+      expect(resolveStrictProfileForSession(config, "rs5")).toEqual({
+        ok: true,
+        profile: "LABS",
+      });
+    });
+
+    it("blocks unlisted Slack channels from adopting a mixed channel+repo profile", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "rs6", anchorId: anchor });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C999/1710000000.001",
+        anchorId: anchor,
+      });
+      appendAlias({ aliasType: "repo", aliasValue: "repo-labs", anchorId: anchor });
+      const config = makeRepoConfig();
+      const result = resolveStrictProfileForSession(config, "rs6");
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/mixed channel\+repo profile/);
+    });
+
+    it("fails when the channel profile and anchor repo alias disagree", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "rs3", anchorId: anchor });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C456/1710000000.001",
+        anchorId: anchor,
+      });
+      appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: anchor });
+      const config = makeRepoConfig();
+      const result = resolveStrictProfileForSession(config, "rs3");
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/conflicting profiles/);
+    });
+
+    it("fails when repo aliases map to different profiles", () => {
+      appendAlias({ aliasType: "opencode.session", aliasValue: "rs4", anchorId: anchor });
+      appendAlias({ aliasType: "repo", aliasValue: "repo-qa", anchorId: anchor });
+      appendAlias({ aliasType: "repo", aliasValue: "repo-labs", anchorId: anchor });
+      const config = makeRepoConfig();
+      const result = resolveStrictProfileForSession(config, "rs4");
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/repos in multiple profiles/);
+    });
+  });
+
+  it("rejects invalid or duplicate profile channel entries", () => {
     expect(() =>
       loadWorkspaceConfig(
-        writeConfig("empty-channel.json", { slack: { private_channel_allowlist: [""] } }),
+        writeConfig("empty-channel.json", { profiles: { QA: { channels: [""] } } }),
       ),
-    ).toThrow("slack.private_channel_allowlist.0");
+    ).toThrow("profiles.QA.channels.0");
     expect(() =>
       loadWorkspaceConfig(
         writeConfig("duplicate-channel.json", {
-          slack: { private_channel_allowlist: ["G123", "G123"] },
+          profiles: { QA: { channels: ["G123", "G123"] } },
         }),
       ),
-    ).toThrow("Slack private channel allowlist must not contain duplicates");
+    ).toThrow("Profile channels must not contain duplicates");
+    expect(() =>
+      loadWorkspaceConfig(
+        writeConfig("duplicate-across-profiles.json", {
+          profiles: { QA: { channels: ["G123"] }, LABS: { channels: ["G123"] } },
+        }),
+      ),
+    ).toThrow("Slack channel G123 is assigned to both profiles QA and LABS");
+    expect(() =>
+      loadWorkspaceConfig(
+        writeConfig("lowercase-profile.json", {
+          profiles: { qa: { channels: ["G123"] } },
+        }),
+      ),
+    ).toThrow("uppercase ASCII letters and underscores");
+    expect(() =>
+      loadWorkspaceConfig(
+        writeConfig("hyphen-profile.json", {
+          profiles: { "QA-LABS": { channels: ["G123"] } },
+        }),
+      ),
+    ).toThrow("uppercase ASCII letters and underscores");
+    expect(() =>
+      loadWorkspaceConfig(
+        writeConfig("digit-profile.json", {
+          profiles: { QA1: { channels: ["G123"] } },
+        }),
+      ),
+    ).toThrow("uppercase ASCII letters and underscores");
+  });
+
+  it("accepts repo-only and mixed profiles and exposes repo lookup", () => {
+    const path = writeConfig("repos.json", {
+      profiles: {
+        QA: { repos: ["repo-qa"] },
+        LABS: { channels: ["C789"], repos: ["repo-labs"] },
+      },
+    });
+    const config = loadWorkspaceConfig(path);
+    expect(getProfileForRepo(config, "repo-qa")).toBe("QA");
+    expect(getProfileForRepo(config, "repo-labs")).toBe("LABS");
+    expect(getProfileForRepo(config, "repo-none")).toBeUndefined();
+    expect(getProfileForSlackChannel(config, "C789")).toBe("LABS");
+  });
+
+  it("rejects a profile with neither channels nor repos", () => {
+    expect(() =>
+      loadWorkspaceConfig(writeConfig("empty-profile.json", { profiles: { QA: {} } })),
+    ).toThrow("at least one channel or repo");
+  });
+
+  it("rejects duplicate repos within and across profiles", () => {
+    expect(() =>
+      loadWorkspaceConfig(
+        writeConfig("dup-repo.json", { profiles: { QA: { repos: ["r", "r"] } } }),
+      ),
+    ).toThrow("Profile repos must not contain duplicates");
+    expect(() =>
+      loadWorkspaceConfig(
+        writeConfig("dup-repo-across.json", {
+          profiles: { QA: { repos: ["r"] }, LABS: { repos: ["r"] } },
+        }),
+      ),
+    ).toThrow("Repo r is assigned to both profiles QA and LABS");
   });
 
   it("rejects mitmproxy rule without host selector", () => {
@@ -293,36 +543,6 @@ describe("Slack channel repo routing helpers", () => {
     const missing = resolveSlackChannelRepoDirectory("C_NONE", "thor", root, resolveRepo);
     expect(missing).toMatchObject({ directory: "/workspace/repos/thor", source: "default" });
     expect(missing.fallbackReason).toBeUndefined();
-  });
-});
-
-describe("interpolateEnv", () => {
-  it("replaces ${VAR} with env value", () => {
-    vi.stubEnv("TEST_SECRET", "mysecret");
-    expect(interpolateEnv("Bearer ${TEST_SECRET}")).toBe("Bearer mysecret");
-    vi.unstubAllEnvs();
-  });
-
-  it("throws on missing env var", () => {
-    delete process.env.NONEXISTENT_VAR;
-    expect(() => interpolateEnv("${NONEXISTENT_VAR}")).toThrow("is not set");
-  });
-
-  it("returns string unchanged if no placeholders", () => {
-    expect(interpolateEnv("plain string")).toBe("plain string");
-  });
-});
-
-describe("interpolateHeaders", () => {
-  it("interpolates all header values", () => {
-    vi.stubEnv("AUTH_TOKEN", "abc123");
-    const result = interpolateHeaders({ Authorization: "Bearer ${AUTH_TOKEN}" });
-    expect(result).toEqual({ Authorization: "Bearer abc123" });
-    vi.unstubAllEnvs();
-  });
-
-  it("returns undefined for undefined input", () => {
-    expect(interpolateHeaders(undefined)).toBeUndefined();
   });
 });
 

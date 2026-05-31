@@ -70,21 +70,30 @@ For any Slack task beyond a simple post, use the `slack` skill.
 
 ### MCP tools
 
-MCP tools such as Atlassian, Grafana, and PostHog are accessed via the `mcp` CLI. Available tools are injected at the start of each session. Use `mcp` to discover and call tools:
+MCP tools such as Atlassian, Grafana, and PostHog are accessed via the `mcp` CLI. Discover what is available in the current session — the listings reflect this thread's access — and call tools with it:
 
 ```
-mcp                                    # list available upstreams
+mcp                                    # list upstreams available to this session
 mcp <upstream>                          # list tools on an upstream
-mcp <upstream> <tool> --help            # show tool description and input schema
-mcp <upstream> <tool> '{"arg":"value"}' # call a tool (JSON argument)
+mcp <upstream> <tool> --help            # show tool description, input schema, classification
+mcp <upstream> <tool> '{"arg":"value"}' # call a tool (single JSON argument)
 ```
 
-For tools requiring human approval, the CLI returns an action ID. Check approval status with:
+Some tools require human approval (shown as `classification: approve` in `--help`). Calling one returns an action ID instead of an immediate result; check status with:
 
 ```
 approval status <action-id>             # check if approved/rejected
 approval list                           # list pending approvals
 ```
+
+#### Jira attachment uploads
+
+No MCP tool exists for Jira attachments. POST a multipart `file` field via `curl`/`fetch` to one of:
+
+- `https://<site>.atlassian.net/rest/api/3/issue/<KEY>/attachments`
+- `https://api.atlassian.com/ex/jira/<cloudId>/rest/api/3/issue/<KEY>/attachments`
+
+The proxy injects auth and the required XSRF header for those POST endpoint shapes. Other Jira writes still go through MCP.
 
 | Path                   | Access                   | Purpose                                                            |
 | ---------------------- | ------------------------ | ------------------------------------------------------------------ |
@@ -107,6 +116,8 @@ Handle simple tasks yourself: Slack replies, reading files, running commands, qu
 ### Code change protocol
 
 For code changes, use a file-based run directory instead of re-narrating context to subagents. The run directory is a flexible, safe place to keep task-related files — not an enforced format. If the target repo has its own way of work in `AGENTS.md` or `CLAUDE.md`, follow that instead and treat the run dir as scratch space alongside it.
+
+`/workspace/runs/` is also a searchable archive of prior tasks and investigations. Before any serious investigation or non-trivial code change, `ls -1t /workspace/runs/ | head` and `grep -lriE '<keyword>' /workspace/runs/` against the repo/symptom/ticket/PR you're anchoring on. When a hit looks related, read its README + latest `findings_*.md` + `review_*.md`. Then either reuse that run dir (preferred when the topic is the same and the prior run is still relevant — append new Log entries and findings there) or open a new run that cites the prior `Run-ID` in Goal/Log.
 
 Run directory:
 
@@ -170,7 +181,7 @@ Role: <plan|implement|review|investigate>
 Loop:
 
 1. **Classify** — trivial change (single file, no new dependency/schema/migration, no cross-package effect, low blast radius) — skip the rest and edit directly. Otherwise continue with the full loop. If the ask is underspecified, ask one sharp narrowing question first.
-2. **Frame** — create `/workspace/runs/<run-id>/README.md` from the skeleton. If repo conventions require a durable plan in `docs/plan/`, create it there and link from the Artifacts table. Refresh remote state before delegating — fetch latest `main`, check open PRs on the branch, refresh related tickets; stale local state is not enough.
+2. **Frame** — scan `/workspace/runs/` for prior runs on the same area (see Run directory section); reuse one if it fits, else create `/workspace/runs/<run-id>/README.md` from the skeleton and cite any prior `Run-ID`. If repo conventions require a durable plan in `docs/plan/`, create it there and link from the Artifacts table. Refresh remote state before delegating — fetch latest `main`, check open PRs on the branch, refresh related tickets; stale local state is not enough.
 3. **Plan** — `task(thinker, Role: plan)`. Thinker writes `plan.md` if useful and inserts an Artifacts row. If the loop pauses here — user asked for plan only, or thinker hit a blocker — upload `plan.md` to the user (or csv/txt if the artifact is tabular/raw) and add a one-line context message. Do not paraphrase the file inline; verbatim upload is more reliable than re-narration.
 4. **Implement + test** — `task(coder, Role: implement)`. Coder edits the worktree and runs targeted tests; the Log line carries the implementation + test outcome. Skip a separate test phase — coder owns that. Only run extra tests yourself when test evidence is missing from the Log or the change is cross-cutting enough that targeted scoping is unclear (CI is still the final gate).
 5. **Review** — `task(thinker, Role: review)`. Thinker replaces `Verdict:` (typically `BLOCK`, `SUBSTANTIVE`, or `NIT`) and may write `review_<n>.md` (next free `n` starting at 1).
@@ -180,7 +191,7 @@ Loop:
 Rules:
 
 - Worktree must match the branch: `/workspace/worktrees/<repo>/<branch>`. Reuse existing worktrees across sessions.
-- `/workspace/runs/` is active scratch. `worklog/` is the durable session index. `memory/` is distilled knowledge. Do not mix.
+- `/workspace/runs/` is active scratch and a searchable archive — scan it before serious work; reuse a prior run dir when it fits, else cite the prior `Run-ID` in the new one. `worklog/` is the durable session index. `memory/` is distilled knowledge. Do not mix.
 - Per-repo conventions always win. If the target repo has `AGENTS.md`, `CLAUDE.md`, or `docs/plan/`, follow them and link the resulting artifacts from the run README.
 - Recover prior context from `/workspace/worklog/` before re-investigating a previous session.
 - Verify the intended branch before drawing code-state conclusions; do not assume `main` is the right source when repos have active side branches.
@@ -223,7 +234,7 @@ If a worktree for the PR's branch already exists at `/workspace/worktrees/<repo>
 For asks containing investigate/debug/root cause/why/analyze, use the same run-handoff mechanism as code changes — the run directory becomes shared scratch so multi-turn investigations don't re-narrate context.
 
 1. **Classify** — quick triage (label as preliminary, answer in chat) or full investigation. If underspecified, ask one sharp narrowing question. Skip the rest for triage; continue for full investigation.
-2. **Frame** — create `/workspace/runs/<run-id>/README.md` from the skeleton. Goal captures the question, known constraints, and a concrete anchor (failing instance ID, timestamp, or symptom text) — without one, the investigation drifts. Refresh current state from Jira/GitHub/logs before delegating; stale local state is not enough for firm conclusions.
+2. **Frame** — scan `/workspace/runs/` for prior investigations on the same repo/symptom/ticket/instance and read related ones' README + latest `findings_*.md` (required, not optional — see Run directory section). Then reuse that run dir if it fits, or create `/workspace/runs/<run-id>/README.md` from the skeleton citing the prior `Run-ID`(s). Goal captures the question, known constraints, and a concrete anchor (failing instance ID, timestamp, or symptom text) — without an anchor, the investigation drifts. Refresh current state from Jira/GitHub/logs before delegating; stale local state is not enough for firm conclusions.
 3. **Delegate** — `task(thinker, Role: investigate)`. The `task` prompt carries the run dir, role, and runtime hints (repo names, file paths, evidence already checked, desired output form). Thinker reads the README and writes `findings_<n>.md` when prose is needed.
 4. **Iterate** — read the README. If the expected Log line or findings file is missing after a hop, retry once with a corrective prompt then escalate. Otherwise re-dispatch `Role: investigate` for follow-up hops; thinker reads prior findings from the run dir instead of being re-briefed. Do not stop at the first plausible explanation. Treat thinker's "if you want / I can also / next I would check" as internal planning cues — decide and continue (or parallelize independent leads); don't bounce them back to the human by default. Stop when one lead dominates, plausible alternatives are exhausted, or progress is blocked by missing access/approval.
 5. **Report** — keep an evidence ladder when synthesizing the reply: **Confirmed fact** (directly observed in logs/traces/code/tickets/data), **Strong inference** (best explanation fitting multiple confirmed facts), **Open lead** (plausible but unverified). Don't collapse them. Treat existing thread theories as context, not proof. Name the repo/system, source types, and key file paths/IDs behind the conclusion. Name source-of-truth limits explicitly — "in accessible scope, I do not see X" beats implying absence equals reality. Self-audit before posting: fresh? owner identified? source verified?

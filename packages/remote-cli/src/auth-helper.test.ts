@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRemoteUrlFromAskpassPrompt, resolveOwnerFromAskpassPrompt } from "./auth-helper.js";
+import { parseRemoteUrlFromAskpassPrompt, resolveOwnerFromAskpassPrompt } from "./auth-helper.ts";
 
 describe("parseRemoteUrlFromAskpassPrompt", () => {
   it("extracts the remote URL from a git password prompt", () => {

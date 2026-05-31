@@ -1,5 +1,5 @@
 import { serializeError } from "serialize-error";
-import { truncate } from "./logger.js";
+import { truncate } from "./logger.ts";
 
 export interface ErrorMetadataOptions {
   maxMessageLength?: number;

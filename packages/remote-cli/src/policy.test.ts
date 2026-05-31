@@ -12,7 +12,7 @@ import {
   validateLdcliArgs,
   validateLangfuseArgs,
   validateMetabaseArgs,
-} from "./policy.js";
+} from "./policy.ts";
 
 beforeEach(() => {
   vi.spyOn(realpathSync, "native").mockImplementation((path) => normalizePosix(String(path)));
