@@ -366,6 +366,51 @@ if [[ "$preflight_ok" != "true" ]]; then
   exit 1
 fi
 
+# ── 2. OpenCode Docker shim ─────────────────────────────────────────────────
+#
+# Verifies the agent-visible `docker` command in the OpenCode container is only
+# the remote-cli-backed shim: allowed troubleshooting commands can see the host
+# compose stack, while disallowed Docker subcommands are blocked by policy.
+
+echo ""
+echo "=== OpenCode Docker Shim ==="
+
+opencode_docker_ps_output=""
+if opencode_docker_ps_output=$(docker exec "$opencode_container" docker ps --format '{{.Names}}' 2>&1); then
+  opencode_docker_ps_exit=0
+else
+  opencode_docker_ps_exit=$?
+fi
+assert '[[ "$opencode_docker_ps_exit" == "0" ]]' \
+  "opencode docker shim allows docker ps" \
+  "exit=$opencode_docker_ps_exit output: ${opencode_docker_ps_output:0:500}"
+assert '[[ "$opencode_docker_ps_output" == *"$remote_cli_container"* ]]' \
+  "opencode docker ps sees the remote-cli compose container" \
+  "expected '$remote_cli_container' in: ${opencode_docker_ps_output:0:500}"
+
+opencode_docker_logs_output=""
+if opencode_docker_logs_output=$(docker exec "$opencode_container" docker logs --tail 1 "$remote_cli_container" 2>&1); then
+  opencode_docker_logs_exit=0
+else
+  opencode_docker_logs_exit=$?
+fi
+assert '[[ "$opencode_docker_logs_exit" == "0" ]]' \
+  "opencode docker shim allows docker logs" \
+  "exit=$opencode_docker_logs_exit output: ${opencode_docker_logs_output:0:500}"
+
+opencode_docker_inspect_output=""
+if opencode_docker_inspect_output=$(docker exec "$opencode_container" docker inspect "$remote_cli_container" 2>&1); then
+  opencode_docker_inspect_exit=0
+else
+  opencode_docker_inspect_exit=$?
+fi
+assert '[[ "$opencode_docker_inspect_exit" != "0" ]]' \
+  "opencode docker shim denies docker inspect" \
+  "exit=$opencode_docker_inspect_exit output: ${opencode_docker_inspect_output:0:500}"
+assert '[[ "$opencode_docker_inspect_output" == *"only docker ps, docker logs, and docker stats"* ]]' \
+  "opencode docker inspect returns remote-cli policy error" \
+  "output: ${opencode_docker_inspect_output:0:500}"
+
 # ── 2. Remote-cli git/gh auth ────────────────────────────────────────────────
 
 echo ""

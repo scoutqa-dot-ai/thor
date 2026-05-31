@@ -125,6 +125,8 @@ jobs:
             echo "THOR_INTERNAL_SECRET=$THOR_INTERNAL_SECRET"
           } >> "$GITHUB_ENV"
 
+          export DOCKER_SOCKET_GID="$(stat -c %g /var/run/docker.sock)"
+
           cat > docker-volumes/workspace/config/thor.json <<EOF
           {
             "owners": {
