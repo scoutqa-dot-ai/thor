@@ -181,10 +181,3 @@ export async function getQuestion(questionRef: string): Promise<QuestionInfo> {
     sql: card.dataset_query.native.query,
   };
 }
-
-/**
- * Check if a schema is in the allowlist.
- */
-export function isSchemaAllowed(schema: string): boolean {
-  return config().schemas.has(schema);
-}

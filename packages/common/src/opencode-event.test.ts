@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isOmittedMarker, parseOpencodeEvent, projectOpencodeEvent } from "./opencode-event.js";
+import { isOmittedMarker, parseOpencodeEvent, projectOpencodeEvent } from "./opencode-event.ts";
 
 describe("parseOpencodeEvent", () => {
   it("parses a message.part.updated event with a tool part", () => {

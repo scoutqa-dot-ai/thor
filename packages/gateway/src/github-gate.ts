@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { InternalExecClient } from "./service.js";
+import type { InternalExecClient } from "./service.ts";
 
 type InternalExecResult = Awaited<ReturnType<InternalExecClient>>;
 

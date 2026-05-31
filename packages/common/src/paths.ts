@@ -1,7 +1,7 @@
 import { realpath, stat } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import path from "node:path";
-import { envString, type EnvSource } from "./env.js";
+import { envString, type EnvSource } from "./env.ts";
 
 export const WORKSPACE_REPOS_ROOT = "/workspace/repos";
 export const WORKSPACE_WORKTREES_ROOT = "/workspace/worktrees";
