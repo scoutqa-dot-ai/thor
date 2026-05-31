@@ -29,12 +29,15 @@ files.
 Per-repo `AGENTS.md` / `CLAUDE.md` conventions still win for durable repo
 artifacts.
 
+Runner-injected memory is limited to global, Slack channel, and person tiers; see
+[`memory.md`](memory.md) for the memory model and read/write policy.
+
 ## Current Protocols
 
-| Protocol      | Used for                            | Primary prompt owner    | Subagent roles                                  |
-| ------------- | ----------------------------------- | ----------------------- | ----------------------------------------------- |
-| Code change   | Non-trivial implementation work     | `build.md`              | `thinker:plan`, `coder:implement`, `thinker:review` |
-| Investigation | Debugging, root-cause, and analysis | `build.md`, `thinker.md` | `thinker:investigate`                          |
+| Protocol      | Used for                            | Primary prompt owner     | Subagent roles                                      |
+| ------------- | ----------------------------------- | ------------------------ | --------------------------------------------------- |
+| Code change   | Non-trivial implementation work     | `build.md`               | `thinker:plan`, `coder:implement`, `thinker:review` |
+| Investigation | Debugging, root-cause, and analysis | `build.md`, `thinker.md` | `thinker:investigate`                               |
 
 ## Protocol Ownership
 

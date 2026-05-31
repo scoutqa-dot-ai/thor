@@ -21,7 +21,6 @@ import {
   logError,
   truncate,
   isAllowedDirectory,
-  extractRepoFromCwd,
   ANCHOR_LOCK_PREFIX,
   SESSION_LOCK_PREFIX,
   appendSessionEvent,
@@ -132,16 +131,79 @@ function readMemoryFile(filePath: string): string | undefined {
   }
 }
 
-/** Read root memory file, returns content or undefined. */
+/** Read global memory file, returns content or undefined. */
 function readRootMemory(memoryDir = MEMORY_DIR): string | undefined {
   return readMemoryFile(`${memoryDir}/README.md`);
 }
 
-/** Read per-repo memory file, returns content or undefined. */
-function readRepoMemory(directory: string, memoryDir = MEMORY_DIR): string | undefined {
-  const repo = extractRepoFromCwd(directory);
-  if (!repo) return undefined;
-  return readMemoryFile(`${memoryDir}/${repo}/README.md`);
+function parseSlackThreadCorrelationKey(
+  correlationKey?: string,
+): { channelId: string; threadTs: string } | undefined {
+  if (!correlationKey) return undefined;
+  const match = /^slack:thread:([^/]+)\/(.+)$/.exec(correlationKey);
+  if (!match) return undefined;
+  const channelId = match[1]?.trim();
+  const threadTs = match[2]?.trim();
+  if (!channelId || !threadTs) return undefined;
+  return { channelId, threadTs };
+}
+
+function readChannelMemoryTarget(
+  correlationKey: string | undefined,
+  memoryDir = MEMORY_DIR,
+): { channelId: string; path: string; content?: string } | undefined {
+  const slackThread = parseSlackThreadCorrelationKey(correlationKey);
+  if (!slackThread) return undefined;
+  const path = `${memoryDir}/channels/${slackThread.channelId}.md`;
+  return { channelId: slackThread.channelId, path, content: readMemoryFile(path) };
+}
+
+function sanitizePersonSlugPart(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^[._-]+|[._-]+$/g, "")
+    .replace(/[-_.]{2,}/g, (match) => match[0] ?? "-");
+}
+
+function personSlug(user: UserRecord): string | undefined {
+  const emailLocalPart = user.email.split("@")[0];
+  return (
+    sanitizePersonSlugPart(emailLocalPart ?? "") ||
+    sanitizePersonSlugPart(user.github ?? "") ||
+    sanitizePersonSlugPart(user.name)
+  );
+}
+
+function resolveTriggeringUser(
+  loader: ConfigLoader,
+  actor: { triggerSlackId?: string; triggerGithubLogin?: string },
+): UserRecord | undefined {
+  if (!actor.triggerSlackId && !actor.triggerGithubLogin) return undefined;
+  try {
+    const workspaceConfig = loader();
+    return (
+      (actor.triggerSlackId ? findUserBySlack(workspaceConfig, actor.triggerSlackId) : undefined) ??
+      (actor.triggerGithubLogin
+        ? findUserByGithub(workspaceConfig, actor.triggerGithubLogin)
+        : undefined)
+    );
+  } catch {
+    // Best-effort prompt context; do not fail a run because config is temporarily unreadable.
+    return undefined;
+  }
+}
+
+function readPersonMemoryTarget(
+  user: UserRecord | undefined,
+  memoryDir = MEMORY_DIR,
+): { slug: string; path: string; content?: string } | undefined {
+  if (!user) return undefined;
+  const slug = personSlug(user);
+  if (!slug) return undefined;
+  const path = `${memoryDir}/people/${slug}.md`;
+  return { slug, path, content: readMemoryFile(path) };
 }
 
 function getToolInstructions(directory: string): string | undefined {
@@ -165,23 +227,10 @@ function formatTriggeringUser(user: UserRecord): string {
 }
 
 function buildTriggeringUserPromptBlock(
-  loader: ConfigLoader,
+  user: UserRecord | undefined,
   actor: { triggerSlackId?: string; triggerGithubLogin?: string },
 ): string | undefined {
   if (!actor.triggerSlackId && !actor.triggerGithubLogin) return undefined;
-
-  let user: UserRecord | undefined;
-  try {
-    const workspaceConfig = loader();
-    user = actor.triggerSlackId
-      ? findUserBySlack(workspaceConfig, actor.triggerSlackId)
-      : undefined;
-    user ??= actor.triggerGithubLogin
-      ? findUserByGithub(workspaceConfig, actor.triggerGithubLogin)
-      : undefined;
-  } catch {
-    // Best-effort prompt context; do not fail a run because config is temporarily unreadable.
-  }
 
   const actorId = [
     actor.triggerSlackId ? `slack: ${actor.triggerSlackId}` : undefined,
@@ -904,40 +953,68 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
       // --- Memory: inject into new or stale sessions ---
       if (!resumed) {
+        const bootstrapBlocks: string[] = [];
         const rootMemory = readRootMemory(memoryDir);
         if (rootMemory) {
-          prompt = `[Root memory — important context from prior sessions]\n${rootMemory}\n\n${prompt}`;
+          bootstrapBlocks.push(
+            `[Global memory — important context from prior sessions]\n${rootMemory}`,
+          );
           bootstrapMemoryPaths.push(`${memoryDir}/README.md`);
         } else {
-          prompt = `[Root memory: none yet — write to ${memoryDir}/README.md to persist cross-repo context]\n\n${prompt}`;
+          bootstrapBlocks.push(
+            `[Global memory: none yet — write to ${memoryDir}/README.md to persist cross-cutting context]`,
+          );
         }
 
-        // Per-repo memory: inject repo-specific context
-        const repo = extractRepoFromCwd(sessionDirectory);
-        if (repo) {
-          const repoMemoryPath = `${memoryDir}/${repo}/README.md`;
-          const repoMemory = readRepoMemory(sessionDirectory, memoryDir);
-          if (repoMemory) {
-            prompt = `[Repo memory — context for ${repo}]\n${repoMemory}\n\n${prompt}`;
-            bootstrapMemoryPaths.push(repoMemoryPath);
+        const channelMemory = readChannelMemoryTarget(correlationKey, memoryDir);
+        if (channelMemory) {
+          if (channelMemory.content) {
+            bootstrapBlocks.push(
+              `[Channel memory — context for Slack channel ${channelMemory.channelId}]\n${channelMemory.content}`,
+            );
+            bootstrapMemoryPaths.push(channelMemory.path);
           } else {
-            prompt = `[Repo memory: none yet — write to ${repoMemoryPath} to persist per-repo context]\n\n${prompt}`;
+            bootstrapBlocks.push(
+              `[Channel memory: none yet — write to ${channelMemory.path} to persist durable channel/team context]`,
+            );
+          }
+        }
+
+        const triggeringUser = resolveTriggeringUser(workspaceConfigLoader, {
+          triggerSlackId: parsed.data.triggerSlackId,
+          triggerGithubLogin: parsed.data.triggerGithubLogin,
+        });
+        const personMemory = readPersonMemoryTarget(triggeringUser, memoryDir);
+        if (personMemory) {
+          if (personMemory.content) {
+            bootstrapBlocks.push(
+              `[Person memory — context for ${personMemory.slug}]\n${personMemory.content}`,
+            );
+            bootstrapMemoryPaths.push(personMemory.path);
+          } else {
+            bootstrapBlocks.push(
+              `[Person memory: none yet — write to ${personMemory.path} to persist durable user preferences/identity context]`,
+            );
           }
         }
 
         // Tool instructions: inject MCP tool list from config
         const toolInstructions = getToolInstructions(sessionDirectory);
         if (toolInstructions) {
-          prompt = `${toolInstructions}\n\n${prompt}`;
+          bootstrapBlocks.push(toolInstructions);
           logInfo(log, "tool_instructions_injected", { directory: sessionDirectory });
         }
 
-        const triggeringUserBlock = buildTriggeringUserPromptBlock(workspaceConfigLoader, {
+        const triggeringUserBlock = buildTriggeringUserPromptBlock(triggeringUser, {
           triggerSlackId: parsed.data.triggerSlackId,
           triggerGithubLogin: parsed.data.triggerGithubLogin,
         });
         if (triggeringUserBlock) {
-          prompt = `${triggeringUserBlock}\n\n${prompt}`;
+          bootstrapBlocks.push(triggeringUserBlock);
+        }
+
+        if (bootstrapBlocks.length > 0) {
+          prompt = `${bootstrapBlocks.join("\n\n")}\n\n${prompt}`;
         }
       }
 

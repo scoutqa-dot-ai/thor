@@ -302,13 +302,14 @@ Each repo can influence Thor's behavior in two ways:
 
 **Memory (Thor only, outside the repo):**
 
-- Root memory: `/workspace/memory/README.md` — injected into every new session. Cross-repo context: critical incidents, team decisions, corrections. Keep short.
-- Per-repo memory: `/workspace/memory/<repo>/README.md` — injected only for sessions in that repo. Repo-specific patterns, decisions, gotchas.
-- Additional memory files: `/workspace/memory/` and `/workspace/memory/<repo>/` — store one topic per file, list and grep as needed.
+- Global memory: `/workspace/memory/README.md` — injected into every new session. Use only for rare cross-cutting Thor context, critical durable corrections, and workspace-wide operating notes. Keep short.
+- Channel memory: `/workspace/memory/channels/<channel-id>.md` — injected into new Slack thread sessions when the correlation key is `slack:thread:<channel>/<ts>`. Use for durable channel/team preferences, recurring workflows, and channel-specific norms.
+- Person memory: `/workspace/memory/people/<person-slug>.md` — injected into new sessions when the triggering actor resolves through `/workspace/config/thor.json` `users[]`. The slug prefers email local-part (for example `Son.Dao@example.com` → `people/son.dao.md`), else GitHub login, else sanitized name. Use for durable user preferences and identity context.
+- Repo-scoped context: not runner-injected memory. Use repo-local `AGENTS.md`, `CLAUDE.md`, and in-repo docs for repo/product facts, codebase conventions, runbooks, and anything humans should also see. Do not create or rely on `/workspace/memory/<repo>/README.md` for new repo context.
 
-**Reading:** at the start of non-trivial sessions, check for relevant memory files by listing and grepping `/workspace/memory/`. For recovering prior context (Slack threads, past decisions, earlier investigations), search `/workspace/worklog/` first — it is faster and more complete than scanning Slack history. When a prompt says "Previous session was lost" and points at a worklog note, read that note directly as the continuity artifact.
+**Reading:** the runner injects global/channel/person memory on new sessions only. For additional Thor-only context, check relevant files under `/workspace/memory/`. For recovering prior context (Slack threads, past decisions, earlier investigations), search `/workspace/worklog/` first — it is faster and more complete than scanning Slack history. When a prompt says "Previous session was lost" and points at a worklog note, read that note directly as the continuity artifact.
 
-Prefer in-repo docs for anything humans should also see. Use memory for Thor-only context that doesn't belong in the codebase. Do not store ephemeral task state, raw tool output, or anything already in the repo.
+**Writing:** global memory is rare and cross-cutting; channel memory is durable channel/team context; person memory is durable user preference or identity context. Prefer in-repo docs for anything humans should also see. Use memory for Thor-only context that doesn't belong in the codebase. Do not store ephemeral task state, raw tool output, secrets, repo facts, or anything already in the repo.
 
 ## Final Rule
 

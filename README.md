@@ -156,7 +156,7 @@ The registry is maintained by operators from team Slack and GitHub membership re
 
 ## Operations Notes
 
-- Tell Thor about your team, repos, and reusable operating context in the OpenCode UI after the stack is up. That context is stored in persistent memory.
+- Tell Thor about durable cross-task context through the memory tiers in [`docs/feat/memory.md`](docs/feat/memory.md): global, Slack channel, and person memory are runner-injected; repo context belongs in repo-local `AGENTS.md`, `CLAUDE.md`, and docs.
 - Clone source repos from the `remote-cli` container so git credentials and filesystem ownership stay consistent.
 - Repos under `/workspace/repos` are mounted read-only into OpenCode. Thor creates edits in `/workspace/worktrees`.
 - OpenCode and remote-cli share the same `/tmp` volume so temporary artifacts referenced by absolute path, such as `slack-post-message --blocks-file /tmp/...`, are readable by the posting service.
