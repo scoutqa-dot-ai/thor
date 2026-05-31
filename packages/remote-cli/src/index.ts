@@ -56,6 +56,7 @@ import {
   validateScoutqaArgs,
 } from "./policy.ts";
 import { attributionFields, resolveTriggerUser } from "./attribution.ts";
+import { handleNetdataAlert, type NetdataAlertDeps } from "./netdata-alert.ts";
 
 const log = createLogger("remote-cli");
 
@@ -88,6 +89,7 @@ export interface RemoteCliAppConfig {
   env?: ReturnType<typeof loadRemoteCliEnv>;
   mcp?: McpServiceDeps;
   slackPostMessage?: SlackPostMessageDeps;
+  netdataAlert?: NetdataAlertDeps;
   configLoader?: ConfigLoader;
 }
 
@@ -1176,6 +1178,36 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       });
       res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
     }
+  });
+
+  app.post("/internal/netdata-alert", async (req, res) => {
+    const providedSecret = getInternalSecretHeader(req);
+    if (!matchesInternalSecret(internalSecret, providedSecret)) {
+      res.status(401).json({ ok: false, error: "Unauthorized" });
+      return;
+    }
+
+    const result = await handleNetdataAlert(req.body, {
+      fetch: config.netdataAlert?.fetch,
+      env:
+        config.netdataAlert?.env ??
+        (envConfig
+          ? {
+              SLACK_BOT_TOKEN: envConfig.slackBotToken,
+              SLACK_API_BASE_URL: envConfig.slackApiBaseUrl,
+              SLACK_SUPPORT_CHANNEL_ID: envConfig.slackSupportChannelId,
+              NETDATA_PUBLIC_URL: envConfig.netdataPublicUrl,
+            }
+          : undefined),
+    });
+    if (!result.ok) {
+      logError(log, "netdata_alert_error", result.body.error ?? "Netdata alert failed", {
+        status: result.status,
+      });
+    } else {
+      logInfo(log, "netdata_alert_posted");
+    }
+    res.status(result.status).json(result.body);
   });
 
   app.post("/exec/approval", async (req, res) => {

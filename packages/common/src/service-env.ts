@@ -83,6 +83,8 @@ export function loadRemoteCliEnv(env: EnvSource = process.env) {
     nodeEnv: envOptionalString(env, "NODE_ENV") ?? "",
     slackBotToken: envString(env, "SLACK_BOT_TOKEN"),
     slackApiBaseUrl: envBaseUrl(env, "SLACK_API_BASE_URL", "https://slack.com/api"),
+    slackSupportChannelId: envOptionalString(env, "SLACK_SUPPORT_CHANNEL_ID") ?? "",
+    netdataPublicUrl: envOptionalString(env, "NETDATA_PUBLIC_URL") ?? "",
     ...loadRemoteCliInternalEnv(env),
     ...loadRemoteCliGitHubEnv(env),
   };
