@@ -161,4 +161,120 @@ describe("execCommandStream", () => {
     child.emit("close", 0);
     await expect(resultPromise).resolves.toBe(0);
   });
+
+  it("aborts with SIGTERM, cleans up the abort listener, and resolves on close", async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const child = Object.assign(new EventEmitter(), {
+      killed: false,
+      exitCode: null as number | null,
+      kill: vi.fn((signal?: string) => {
+        child.killed = true;
+        return signal !== undefined;
+      }),
+      stdout: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+      stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+    });
+
+    vi.doMock("node:child_process", () => ({
+      execFile: vi.fn(),
+      spawn: vi.fn(() => child),
+    }));
+
+    const { execCommandStream: mockedExecCommandStream } = await import("./exec.ts");
+    const controller = new AbortController();
+    const removeSpy = vi.spyOn(controller.signal, "removeEventListener");
+
+    const resultPromise = mockedExecCommandStream(
+      "slow",
+      [],
+      "/tmp",
+      { onStdout: () => {}, onStderr: () => {} },
+      { signal: controller.signal },
+    );
+
+    controller.abort();
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+
+    child.exitCode = 143;
+    child.emit("close", 143);
+    await expect(resultPromise).resolves.toBe(143);
+    expect(removeSpy).toHaveBeenCalledWith("abort", expect.any(Function));
+  });
+
+  it("escalates to SIGKILL after a grace period when the child does not exit", async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const child = Object.assign(new EventEmitter(), {
+      killed: false,
+      exitCode: null as number | null,
+      kill: vi.fn((signal?: string) => signal !== undefined),
+      stdout: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+      stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+    });
+
+    vi.doMock("node:child_process", () => ({
+      execFile: vi.fn(),
+      spawn: vi.fn(() => child),
+    }));
+
+    const { execCommandStream: mockedExecCommandStream } = await import("./exec.ts");
+    const controller = new AbortController();
+
+    const resultPromise = mockedExecCommandStream(
+      "slow",
+      [],
+      "/tmp",
+      { onStdout: () => {}, onStderr: () => {} },
+      { signal: controller.signal },
+    );
+
+    controller.abort();
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+
+    child.exitCode = 137;
+    child.emit("close", 137);
+    await expect(resultPromise).resolves.toBe(137);
+  });
+
+  it("clears the SIGKILL escalation timer when the child exits during the grace period", async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const child = Object.assign(new EventEmitter(), {
+      killed: false,
+      exitCode: null as number | null,
+      kill: vi.fn((signal?: string) => signal !== undefined),
+      stdout: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+      stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+    });
+
+    vi.doMock("node:child_process", () => ({
+      execFile: vi.fn(),
+      spawn: vi.fn(() => child),
+    }));
+
+    const { execCommandStream: mockedExecCommandStream } = await import("./exec.ts");
+    const controller = new AbortController();
+
+    const resultPromise = mockedExecCommandStream(
+      "slow",
+      [],
+      "/tmp",
+      { onStdout: () => {}, onStderr: () => {} },
+      { signal: controller.signal },
+    );
+
+    controller.abort();
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+
+    child.exitCode = 143;
+    child.emit("close", 143);
+    await expect(resultPromise).resolves.toBe(143);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(child.kill).not.toHaveBeenCalledWith("SIGKILL");
+  });
 });

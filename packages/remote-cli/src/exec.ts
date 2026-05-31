@@ -10,6 +10,8 @@
 import { execFile, spawn } from "node:child_process";
 import type { ExecResult } from "@thor/common";
 
+const ABORT_KILL_GRACE_MS = 5_000;
+
 export interface ExecCommandOptions {
   env?: NodeJS.ProcessEnv;
   maxBuffer?: number;
@@ -73,10 +75,19 @@ export function execCommandStream(
   return new Promise((resolve) => {
     let settled = false;
     const child = spawn(binary, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const clearKillTimer = () => {
+      if (killTimer !== undefined) {
+        clearTimeout(killTimer);
+        killTimer = undefined;
+      }
+    };
 
     const finish = (exitCode: number) => {
       if (settled) return;
       settled = true;
+      clearKillTimer();
       options.signal?.removeEventListener("abort", abort);
       resolve(exitCode);
     };
@@ -84,6 +95,12 @@ export function execCommandStream(
     const abort = () => {
       if (child.exitCode === null && !child.killed) {
         child.kill("SIGTERM");
+        clearKillTimer();
+        killTimer = setTimeout(() => {
+          if (child.exitCode === null) {
+            child.kill("SIGKILL");
+          }
+        }, ABORT_KILL_GRACE_MS);
       }
     };
 
