@@ -2378,7 +2378,7 @@ describe("gateway", () => {
     });
   });
 
-  it("marks app mentions in non-allowlisted private channels as policy-blocked", async () => {
+  it("marks app mentions in unprofiled private channels as policy-blocked", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
     await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
@@ -2412,7 +2412,7 @@ describe("gateway", () => {
     });
   });
 
-  it("allows app mentions in allowlisted private channels", async () => {
+  it("allows app mentions in profiled private channels", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
@@ -2442,7 +2442,7 @@ describe("gateway", () => {
         expect(fetchImpl).toHaveBeenCalledTimes(1);
       },
       {
-        workspaceConfigLoader: () => ({ slack: { private_channel_allowlist: ["GPRIVATE"] } }),
+        workspaceConfigLoader: () => ({ profiles: { QA: { channels: ["GPRIVATE"] } } }),
       },
     );
   });
@@ -2499,7 +2499,7 @@ describe("gateway", () => {
         expect(fetchImpl).toHaveBeenCalledTimes(1);
       },
       {
-        workspaceConfigLoader: () => ({ slack: { private_channel_allowlist: ["DALLOWED"] } }),
+        workspaceConfigLoader: () => ({ profiles: { QA: { channels: ["DALLOWED"] } } }),
       },
     );
   });
@@ -2714,7 +2714,7 @@ describe("gateway", () => {
     });
   });
 
-  it("drops deferred events for non-allowlisted private channels resolved via conversations.info", async () => {
+  it("drops deferred events for unprofiled private channels resolved via conversations.info", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
     await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
@@ -2782,7 +2782,7 @@ describe("gateway", () => {
     });
   });
 
-  it("blocks engaged message continuations in non-allowlisted private channels", async () => {
+  it("blocks engaged message continuations in unprofiled private channels", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     sessionKeys.add("slack:thread:GPRIVATE/1710000000.001");
 
@@ -2853,7 +2853,7 @@ describe("gateway", () => {
 
   it("ignores thread replies in unengaged threads (Thor has not replied)", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    sessionKeys.delete("slack:thread:1710000000.001");
+    sessionKeys.delete("slack:thread:C0/1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({
@@ -2896,7 +2896,7 @@ describe("gateway", () => {
       .fn<typeof fetch>()
       // POST /trigger → 200 (fire-and-forget)
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
-    sessionKeys.add("slack:thread:1710000000.001");
+    sessionKeys.add("slack:thread:C123/1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({
@@ -2933,7 +2933,7 @@ describe("gateway", () => {
       expect(fetchImpl).toHaveBeenCalledTimes(1);
       expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
-      expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
+      expect(triggerBody.correlationKey).toBe("slack:thread:C123/1710000000.001");
       expect(triggerBody.triggerSlackId).toBe("U123");
       expect(triggerBody.interrupt).toBe(false);
     });
@@ -3381,7 +3381,7 @@ describe("gateway", () => {
 
   it("resolves approval outcome correlation keys through registered aliases", async () => {
     correlationKeyAliases.set(
-      "slack:thread:1710000000.001",
+      "slack:thread:C123/1710000000.001",
       "git:branch:test-repo:feature/from-slack",
     );
     const fetchImpl = vi
@@ -3540,7 +3540,12 @@ describe("gateway", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            stdout: "",
+            stdout: JSON.stringify({
+              status: "error",
+              tool: "merge_pull_request",
+              upstream: "github",
+              reason: "categorized failure",
+            }),
             stderr: 'Error calling "merge_pull_request": upstream unavailable\n',
             exitCode: 1,
           }),
@@ -3597,15 +3602,19 @@ describe("gateway", () => {
     expect(capturedSlack!.update).toHaveBeenCalled();
     const updateArg = capturedSlack!.update.mock.calls[0][0] as { text: string };
     expect(updateArg.text).toContain("Approved, resolution failed");
+    expect(updateArg.text).toContain("categorized failure");
+    expect(updateArg.text).toContain("remote-cli stderr:");
     expect(updateArg.text).toContain('Error calling "merge_pull_request"');
-    expect(updateArg.text).not.toContain("upstream unavailable");
+    expect(updateArg.text).toContain("upstream unavailable");
 
     const runnerCall = fetchImpl.mock.calls.find(
       ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
     );
     expect(runnerCall).toBeDefined();
     const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
+    expect(runnerBody.prompt).toContain("categorized failure");
+    expect(runnerBody.prompt).toContain("remote-cli stderr:");
     expect(runnerBody.prompt).toContain('Error calling "merge_pull_request"');
-    expect(runnerBody.prompt).not.toContain("upstream unavailable");
+    expect(runnerBody.prompt).toContain("upstream unavailable");
   });
 });

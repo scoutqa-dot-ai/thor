@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { once } from "node:events";
 import { realpathSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { normalize as normalizePosix } from "node:path/posix";
 
 interface FakeSandbox {
@@ -66,7 +69,13 @@ vi.mock("@daytonaio/sdk", () => {
   };
 });
 
-import { _testing, THOR_CWD_LABEL, THOR_MANAGED_LABEL, THOR_SHA_LABEL } from "./sandbox.ts";
+import {
+  _testing,
+  pullSandboxChanges,
+  THOR_CWD_LABEL,
+  THOR_MANAGED_LABEL,
+  THOR_SHA_LABEL,
+} from "./sandbox.ts";
 import { createRemoteCliApp } from "./index.ts";
 
 const CWD = "/workspace/worktrees/acme/feat-sandbox";
@@ -172,6 +181,61 @@ describe("/exec/sandbox", () => {
 
     // Sandbox SHA updated after sync
     expect(sandbox.labels[THOR_SHA_LABEL]).toBe(HEAD_SHA);
+  });
+
+  it("pulls generated files when Daytona bulk download needs require", async () => {
+    const worktree = await mkdtemp(join(tmpdir(), "thor-sandbox-pull-"));
+    const globalScope = globalThis as {
+      require?: (id: string) => unknown;
+    };
+    const previousRequire = globalScope.require;
+    delete globalScope.require;
+
+    try {
+      const sandbox = makeSandbox("sbx-1", "thor-acme", {
+        [THOR_MANAGED_LABEL]: "true",
+        [THOR_CWD_LABEL]: worktree,
+        [THOR_SHA_LABEL]: HEAD_SHA,
+      });
+      sandbox.process.executeCommand.mockImplementation(async (command: string) => {
+        if (command.includes("git status --porcelain -uall -z")) {
+          return { exitCode: 0, result: "?? generated.txt\0" };
+        }
+        if (command.includes("stat -c")) {
+          return { exitCode: 0, result: "12 generated.txt\n" };
+        }
+        return { exitCode: 0, result: "" };
+      });
+      sandbox.fs.downloadFiles.mockImplementation(
+        async (files: Array<{ source: string; destination: string }>) => {
+          const shimmedRequire = globalScope.require;
+          expect(typeof shimmedRequire).toBe("function");
+
+          const streamModule = shimmedRequire?.("stream") as typeof import("node:stream");
+          expect(streamModule.Transform).toBeTypeOf("function");
+
+          return files.map((file) => ({ source: file.source, result: file.destination }));
+        },
+      );
+      daytonaState.sandboxes.set(sandbox.id, sandbox);
+
+      const result = await pullSandboxChanges(sandbox.id, worktree);
+
+      expect(result).toEqual({ pulled: ["generated.txt"], deleted: [] });
+      expect(sandbox.fs.downloadFiles).toHaveBeenCalledWith([
+        {
+          source: "/workspace/sandbox/generated.txt",
+          destination: join(worktree, "generated.txt"),
+        },
+      ]);
+    } finally {
+      if (previousRequire) {
+        globalScope.require = previousRequire;
+      } else {
+        delete globalScope.require;
+      }
+      await rm(worktree, { recursive: true, force: true });
+    }
   });
 
   it("auto-creates sandbox when none exists for cwd", async () => {

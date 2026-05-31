@@ -51,10 +51,11 @@ jobs:
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       DAYTONA_SNAPSHOT: ${{ vars.DAYTONA_SNAPSHOT }}
       ATLASSIAN_AUTH: ${{ secrets.ATLASSIAN_AUTH }}
-      # Fakes: services not exercised by e2e, but referenced at compose startup.
+      POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+      # Grafana uses the local MCP sidecar; catalog/schema checks do not query Grafana Cloud.
       GRAFANA_URL: http://grafana-mcp:8000
       GRAFANA_SERVICE_ACCOUNT_TOKEN: ci-fake
-      POSTHOG_API_KEY: ci-fake
+      # Fakes: services not exercised by e2e, but referenced at compose startup.
       LANGFUSE_PUBLIC_KEY: ci-fake
       LANGFUSE_SECRET_KEY: ci-fake
       LANGFUSE_HOST: https://us.cloud.langfuse.com
@@ -108,8 +109,14 @@ jobs:
           printf '%s' "$THOR_GITHUB_APP_PRIVATE_KEY" > docker-volumes/github-app/private-key.pem
           chmod 600 docker-volumes/github-app/private-key.pem
 
-          # data service requires env_file: .env — create an empty one.
-          : > .env
+          # MCP credentials are passed to compose services through env_file.
+          {
+            printf 'ATLASSIAN_AUTH=%s\n' "$ATLASSIAN_AUTH"
+            printf 'POSTHOG_API_KEY=%s\n' "$POSTHOG_API_KEY"
+            printf 'GRAFANA_URL=%s\n' "$GRAFANA_URL"
+            printf 'GRAFANA_SERVICE_ACCOUNT_TOKEN=%s\n' "$GRAFANA_SERVICE_ACCOUNT_TOKEN"
+            printf 'GRAFANA_ORG_ID=%s\n' "${GRAFANA_ORG_ID:-1}"
+          } > .env
 
           export CRON_SECRET="$(openssl rand -hex 32)"
           export THOR_INTERNAL_SECRET="$(openssl rand -hex 32)"
@@ -168,7 +175,7 @@ jobs:
         run: pnpm test:create-jira-approval-e2e
 
       - name: Run OpenCode LLM smoke test
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/slack-channel-repo-routing'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/profile-based-integration-routing'
         env:
           CI: "true"
         run: pnpm test:opencode-e2e

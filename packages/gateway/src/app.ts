@@ -1,10 +1,9 @@
 import express, { type Express, type Request, type Response } from "express";
 import {
   appendJsonlWorklog,
-  buildSlackCorrelationKeys,
+  buildSlackCorrelationKey,
   createLogger,
   errorToMetadata,
-  extractApprovalFailureCategory,
   getWorkspaceWorktreesRoot,
   hasSessionForCorrelationKey,
   logError,
@@ -16,7 +15,6 @@ import {
   resolveSafeRepoDirectory,
   resolveSlackChannelRepoDirectory,
   SLACK_CHANNEL_REPO_MEMORY_ROOT,
-  truncate,
   resolveRepoDirectory,
   type ApprovalButtonRoute,
   type InboundWebhookHistoryEntry,
@@ -50,7 +48,7 @@ import { verifyThorAuthoredSha } from "./github-gate.ts";
 import { deepHealthCheck } from "./healthcheck.ts";
 import {
   buildPendingSlackPrivacyKey,
-  getSlackCorrelationKeys,
+  getSlackCorrelationKey,
   isForwardableSlackMessage,
   isSupportedSlackMessageSubtype,
   isPendingSlackPrivacyKey,
@@ -151,9 +149,6 @@ function summarizeResolutionOutput(
   let tool: string | undefined;
   let upstream: string | undefined;
 
-  // Avoid echoing raw stdout/stderr — both can contain upstream tool response
-  // data, which the approval card must not leak. Only surface structured fields
-  // and a sanitized failure category.
   try {
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
     if (typeof parsed.status === "string") status = parsed.status;
@@ -168,8 +163,12 @@ function summarizeResolutionOutput(
     // non-JSON stdout: drop, do not surface
   }
 
-  if (!summary) {
-    summary = extractApprovalFailureCategory(stderr);
+  const trimmedStderr = stderr.trim();
+  if (trimmedStderr) {
+    summary =
+      summary && summary !== trimmedStderr
+        ? `${summary}\nremote-cli stderr: ${trimmedStderr}`
+        : trimmedStderr;
   }
 
   return { status, summary, tool, upstream };
@@ -644,7 +643,7 @@ async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<v
   const target = [route.upstreamName ?? resolution.upstream, resolution.tool]
     .filter(Boolean)
     .join("/");
-  const summarySuffix = resolution.summary ? `\n>${truncate(resolution.summary, 180)}` : "";
+  const summarySuffix = resolution.summary ? `\n>${resolution.summary}` : "";
   const text = `${statusEmoji} *${decisionLabel}* by <@${reviewer}> · \`${route.actionId}\`${target ? ` (${target})` : ""}${summarySuffix}`;
 
   if (!channel) {
@@ -669,11 +668,11 @@ async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<v
     resolutionExitCode: resolved.exitCode,
   };
 
-  const rawCorrelationKeys = buildSlackCorrelationKeys(channel, threadTs);
-  const outcomeCorrelationKey = resolveCorrelationKeys(rawCorrelationKeys);
-  if (outcomeCorrelationKey !== rawCorrelationKeys[0]) {
+  const rawCorrelationKey = buildSlackCorrelationKey(channel, threadTs);
+  const outcomeCorrelationKey = resolveCorrelationKeys([rawCorrelationKey]);
+  if (outcomeCorrelationKey !== rawCorrelationKey) {
     logInfo(log, "corr_key_resolved", {
-      rawKey: rawCorrelationKeys[0],
+      rawKey: rawCorrelationKey,
       correlationKey: outcomeCorrelationKey,
     });
   }
@@ -1431,11 +1430,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           return;
         }
         addEyesReaction();
-        const rawKeys = getSlackCorrelationKeys(event);
-        const correlationKey = resolveCorrelationKeys(rawKeys);
-        if (correlationKey !== rawKeys[0]) {
-          logInfo(log, "corr_key_resolved", { rawKey: rawKeys[0], correlationKey });
-        }
+        const correlationKey = getSlackCorrelationKey(event);
         await acceptSlackEvent(event, correlationKey, { delayMs: 0, interrupt: true });
         return;
       }
@@ -1458,15 +1453,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     // Message continuations. Supported subtypes are user-authored messages;
     // unsupported/system subtypes remain ignored below.
     if (event.type === "message" && isForwardableSlackMessage(event)) {
-      const rawKeys = getSlackCorrelationKeys(event);
-      const correlationKey = resolveCorrelationKeys(rawKeys);
-      if (correlationKey !== rawKeys[0]) {
-        logInfo(log, "corr_key_resolved", { rawKey: rawKeys[0], correlationKey });
-      }
+      const correlationKey = getSlackCorrelationKey(event);
 
       // Only forward if Thor is engaged in this thread via the JSONL alias index.
       // Users must @mention to start new conversations.
-      const engaged = hasSessionForCorrelationKey(rawKeys);
+      const engaged = hasSessionForCorrelationKey(correlationKey);
       if (!engaged) {
         logInfo(log, "event_ignored_not_engaged", {
           eventId,

@@ -14,19 +14,19 @@ import { join } from "node:path";
 import { fork } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
+  anchorHasExternalKeyType,
   appendAlias,
   appendSessionEvent,
   findActiveTrigger,
   findSlackTriggerCorrelationKey,
   findTriggerActor,
-  findTriggerCorrelationKey,
   listAnchors,
   listAnchorSessionStates,
   listSessionAliases,
   mintAnchor,
-  mintTriggerId,
   readTriggerSlice,
   resolveAlias,
+  resolveSessionAnchorId,
   reverseLookupAnchor,
   sessionLogPath,
   SessionEventLogRecordSchema,
@@ -111,7 +111,6 @@ describe("session event log", () => {
       ts: "2026-05-21T00:00:03.000Z",
     });
 
-    expect(findTriggerCorrelationKey("parent")).toBe("github:issue:thor:owner/repo#42");
     expect(findSlackTriggerCorrelationKey("parent")).toBe("slack:thread:C123/1710000000.001");
   });
 
@@ -367,32 +366,52 @@ describe("session event log", () => {
 
   it("resolves aliases newest-wins and lists session aliases", () => {
     appendAlias({ aliasType: "opencode.session", aliasValue: "s1", anchorId: anchorA });
-    appendAlias({ aliasType: "slack.thread_id", aliasValue: "1.2", anchorId: anchorA });
-    appendAlias({ aliasType: "slack.thread_id", aliasValue: "1.2", anchorId: anchorB });
-    expect(resolveAlias({ aliasType: "slack.thread_id", aliasValue: "1.2" })).toBe(anchorB);
+    appendAlias({ aliasType: "slack.thread", aliasValue: "1.2", anchorId: anchorA });
+    appendAlias({ aliasType: "slack.thread", aliasValue: "1.2", anchorId: anchorB });
+    expect(resolveAlias({ aliasType: "slack.thread", aliasValue: "1.2" })).toBe(anchorB);
 
     // Session-scoped alias audit only fires when callers explicitly write the
     // alias record into the session log; the global alias is the routing source
     // of truth. listSessionAliases reflects whatever the session itself recorded.
     appendSessionEvent("s1", {
       type: "alias",
-      aliasType: "slack.thread_id",
+      aliasType: "slack.thread",
       aliasValue: "1.2",
       anchorId: anchorA,
     });
     expect(listSessionAliases("s1")).toMatchObject([
-      { aliasType: "slack.thread_id", aliasValue: "1.2", anchorId: anchorA },
+      { aliasType: "slack.thread", aliasValue: "1.2", anchorId: anchorA },
     ]);
+  });
+
+  it("keeps the repo metadata binding on every anchor that shares a repo", () => {
+    // repo is anchor metadata, not a routing key: two anchors working the same
+    // repo must each retain their own binding. A routing alias (slack.thread)
+    // would let the second stamp evict the first; repo must not.
+    appendAlias({ aliasType: "repo", aliasValue: "dubai", anchorId: anchorA });
+    appendAlias({ aliasType: "repo", aliasValue: "dubai", anchorId: anchorB });
+
+    expect(reverseLookupAnchor(anchorA).externalKeys).toContainEqual({
+      aliasType: "repo",
+      aliasValue: "dubai",
+    });
+    expect(reverseLookupAnchor(anchorB).externalKeys).toContainEqual({
+      aliasType: "repo",
+      aliasValue: "dubai",
+    });
+    expect(anchorHasExternalKeyType(anchorA, "repo")).toBe(true);
+    expect(anchorHasExternalKeyType(anchorB, "repo")).toBe(true);
+    expect(anchorHasExternalKeyType(anchorParent, "repo")).toBe(false);
   });
 
   it("invalidates alias cache when the worklog directory changes", () => {
     appendAlias({
       ts: "2026-05-14T12:00:00.000Z",
-      aliasType: "slack.thread_id",
+      aliasType: "slack.thread",
       aliasValue: "same-size",
       anchorId: anchorA,
     });
-    expect(resolveAlias({ aliasType: "slack.thread_id", aliasValue: "same-size" })).toBe(anchorA);
+    expect(resolveAlias({ aliasType: "slack.thread", aliasValue: "same-size" })).toBe(anchorA);
 
     const oldAliasLog = readFileSync(join(testDir, "aliases.jsonl"), "utf8");
     const nextDir = mkdtempSync(join(tmpdir(), "thor-event-log-next-"));
@@ -400,7 +419,7 @@ describe("session event log", () => {
       const nextAliasLog =
         JSON.stringify({
           ts: "2026-05-14T12:00:00.000Z",
-          aliasType: "slack.thread_id",
+          aliasType: "slack.thread",
           aliasValue: "same-size",
           anchorId: anchorB,
         }) + "\n";
@@ -409,7 +428,7 @@ describe("session event log", () => {
       process.env.WORKLOG_DIR = nextDir;
       writeFileSync(join(nextDir, "aliases.jsonl"), nextAliasLog);
 
-      expect(resolveAlias({ aliasType: "slack.thread_id", aliasValue: "same-size" })).toBe(anchorB);
+      expect(resolveAlias({ aliasType: "slack.thread", aliasValue: "same-size" })).toBe(anchorB);
       expect(resolveAlias({ aliasType: "opencode.session", aliasValue: "s1" })).toBeUndefined();
     } finally {
       process.env.WORKLOG_DIR = testDir;
@@ -490,6 +509,15 @@ describe("session event log", () => {
     });
   });
 
+  it("resolves parent and child OpenCode session ids to their anchor", () => {
+    appendAlias({ aliasType: "opencode.session", aliasValue: "parent", anchorId: anchorParent });
+    appendAlias({ aliasType: "opencode.subsession", aliasValue: "child", anchorId: anchorParent });
+
+    expect(resolveSessionAnchorId("parent")).toBe(anchorParent);
+    expect(resolveSessionAnchorId("child")).toBe(anchorParent);
+    expect(resolveSessionAnchorId("missing")).toBeUndefined();
+  });
+
   it("treats superseded orphan trigger_start as crashed and surfaces the latest open trigger", () => {
     appendAlias({
       aliasType: "opencode.session",
@@ -542,14 +570,14 @@ describe("session event log", () => {
   it("preserves the anchor across session_stale recreate", () => {
     // First session on the anchor.
     appendAlias({ aliasType: "opencode.session", aliasValue: "head-old", anchorId: anchorA });
-    appendAlias({ aliasType: "slack.thread_id", aliasValue: "1.5", anchorId: anchorA });
+    appendAlias({ aliasType: "slack.thread", aliasValue: "1.5", anchorId: anchorA });
 
     // session_stale recreate: new session bound to the same anchor.
     appendAlias({ aliasType: "opencode.session", aliasValue: "head-new", anchorId: anchorA });
     appendSessionEvent("head-new", { type: "trigger_start", triggerId: triggerA });
 
     // Slack alias still resolves to the same anchor.
-    expect(resolveAlias({ aliasType: "slack.thread_id", aliasValue: "1.5" })).toBe(anchorA);
+    expect(resolveAlias({ aliasType: "slack.thread", aliasValue: "1.5" })).toBe(anchorA);
     // The reverse map carries both bound sessions; the most recent is the head.
     const reverse = reverseLookupAnchor(anchorA);
     expect(reverse.sessionIds).toContain("head-old");
@@ -573,7 +601,7 @@ describe("session event log", () => {
   it("lists anchor session states for idle, in-progress, stuck, and superseded sessions", () => {
     const now = new Date("2026-05-14T12:10:00.000Z");
     appendAlias({ aliasType: "opencode.session", aliasValue: "idle", anchorId: anchorDashA });
-    appendAlias({ aliasType: "slack.thread_id", aliasValue: "111.222", anchorId: anchorDashA });
+    appendAlias({ aliasType: "slack.thread", aliasValue: "111.222", anchorId: anchorDashA });
     appendAlias({ aliasType: "opencode.session", aliasValue: "live", anchorId: anchorDashB });
     appendAlias({ aliasType: "opencode.session", aliasValue: "stale", anchorId: anchorDashC });
     appendAlias({
@@ -627,7 +655,7 @@ describe("session event log", () => {
     ]);
     expect(rows.find((r) => r.anchorId === anchorDashA)).toMatchObject({
       latestTerminalStatus: "completed",
-      externalKeys: [{ aliasType: "slack.thread_id", aliasValue: "111.222" }],
+      externalKeys: [{ aliasType: "slack.thread", aliasValue: "111.222" }],
     });
     expect(rows.find((r) => r.anchorId === anchorDashD)).toMatchObject({
       ownerSessionId: "sup-old",
@@ -713,10 +741,10 @@ describe("session event log", () => {
     expect(rows.find((r) => r.anchorId === anchorDashF)?.idleMs).toBeUndefined();
   });
 
-  it("mints UUIDv7 anchors and trigger ids that sort lexicographically by mint time", async () => {
+  it("mints UUIDv7 anchors that sort lexicographically by mint time", async () => {
     const a = mintAnchor();
     await new Promise((resolve) => setTimeout(resolve, 5));
-    const b = mintTriggerId();
+    const b = mintAnchor();
     expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(b).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(a < b).toBe(true);

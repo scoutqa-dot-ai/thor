@@ -1,6 +1,6 @@
 import type { InternalExecClient } from "./service.ts";
 
-export type CheckSuiteGateFailureReason = "sha_missing" | "author_mismatch" | "exec_failed";
+type CheckSuiteGateFailureReason = "sha_missing" | "author_mismatch" | "exec_failed";
 
 export type CheckSuiteGateResult =
   | { ok: true }

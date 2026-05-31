@@ -4,7 +4,7 @@ import { appendAlias } from "./event-log.ts";
 import {
   appendCorrelationAlias,
   appendCorrelationAliasForAnchor,
-  buildSlackCorrelationKeys,
+  buildSlackCorrelationKey,
   computeGitCorrelationKey,
   computeSlackCorrelationKey,
   ensureAnchorForCorrelationKey,
@@ -54,12 +54,12 @@ describe("correlation key resolution", () => {
   it("resolves correlation keys to anchors and routes lock keys at the anchor level", () => {
     bindSession("session-1", anchor1);
     appendAlias({
-      aliasType: "slack.thread_id",
-      aliasValue: "1710000000.001",
+      aliasType: "slack.thread",
+      aliasValue: "C123/1710000000.001",
       anchorId: anchor1,
     });
 
-    const rawKey = "slack:thread:1710000000.001";
+    const rawKey = "slack:thread:C123/1710000000.001";
 
     expect(resolveCorrelationKeys([rawKey])).toBe(rawKey);
     expect(hasSessionForCorrelationKey(rawKey)).toBe(true);
@@ -111,10 +111,8 @@ describe("correlation key resolution", () => {
     expect(computeSlackCorrelationKey({ channel: "C123", thread_ts: "1710000000.003" }, "{}")).toBe(
       "slack:thread:C123/1710000000.003",
     );
-    // Legacy fallback: no channel known.
-    expect(computeSlackCorrelationKey({ thread_ts: "1710000000.003" }, "{}")).toBe(
-      "slack:thread:1710000000.003",
-    );
+    // No channel known → no correlation key under the strict channel/profile model.
+    expect(computeSlackCorrelationKey({ thread_ts: "1710000000.003" }, "{}")).toBeUndefined();
   });
 
   it("does not derive git branch correlation keys from dry-run or unsupported push shapes", () => {
@@ -147,14 +145,14 @@ describe("correlation key resolution", () => {
 
   it("registers correlation aliases against the executing session's anchor", () => {
     bindSession("session-2", anchor2);
-    appendCorrelationAlias("session-2", "slack:thread:1710000000.004");
-    expect(resolveAnchorForCorrelationKey("slack:thread:1710000000.004")).toBe(anchor2);
-    expect(resolveSessionForCorrelationKey("slack:thread:1710000000.004")).toBe("session-2");
+    appendCorrelationAlias("session-2", "slack:thread:C222/1710000000.004");
+    expect(resolveAnchorForCorrelationKey("slack:thread:C222/1710000000.004")).toBe(anchor2);
+    expect(resolveSessionForCorrelationKey("slack:thread:C222/1710000000.004")).toBe("session-2");
   });
 
   it("appendCorrelationAlias fails closed when the session has no anchor binding yet", () => {
     expect(() =>
-      appendCorrelationAlias("session-no-anchor", "slack:thread:1710000000.020"),
+      appendCorrelationAlias("session-no-anchor", "slack:thread:C222/1710000000.020"),
     ).toThrow(/no anchor binding yet/);
   });
 
@@ -174,38 +172,21 @@ describe("correlation key resolution", () => {
     expect(resolveSessionForCorrelationKey("git:branch:thor:feat-x")).toBe("parent-session");
   });
 
-  it("writes the new slack.thread alias and resolves under either key shape", () => {
+  it("writes the channel-qualified slack.thread alias", () => {
     const channel = "C0AKCHANNEL";
     const ts = "1710000000.777";
-    const [newKey, legacyKey] = buildSlackCorrelationKeys(channel, ts);
-    expect(newKey).toBe(`slack:thread:${channel}/${ts}`);
-    expect(legacyKey).toBe(`slack:thread:${ts}`);
+    const key = buildSlackCorrelationKey(channel, ts);
+    expect(key).toBe(`slack:thread:${channel}/${ts}`);
 
-    appendCorrelationAliasForAnchor(anchor1, newKey);
+    appendCorrelationAliasForAnchor(anchor1, key);
 
-    // New-format lookup works.
-    expect(resolveAnchorForCorrelationKey(newKey)).toBe(anchor1);
-    // Multi-key resolve prefers the bound key.
-    expect(resolveCorrelationKeys([newKey, legacyKey])).toBe(newKey);
-    // The persisted alias has the new type.
+    expect(resolveAnchorForCorrelationKey(key)).toBe(anchor1);
+    expect(resolveCorrelationKeys([key])).toBe(key);
     expect(
       readAliases().some(
         (a) => a.aliasType === "slack.thread" && a.aliasValue === `${channel}/${ts}`,
       ),
     ).toBe(true);
-  });
-
-  it("falls back to a legacy slack.thread_id binding when only the legacy alias exists", () => {
-    const channel = "C0AKLEGACY";
-    const ts = "1710000000.888";
-    const [newKey, legacyKey] = buildSlackCorrelationKeys(channel, ts);
-
-    appendCorrelationAliasForAnchor(anchor2, legacyKey);
-
-    expect(resolveAnchorForCorrelationKey(legacyKey)).toBe(anchor2);
-    expect(resolveAnchorForCorrelationKey(newKey)).toBeUndefined();
-    // Multi-key resolve picks legacy because new is unbound.
-    expect(resolveCorrelationKeys([newKey, legacyKey])).toBe(legacyKey);
   });
 
   it("does not treat untyped keys as alias values", () => {
@@ -219,17 +200,17 @@ describe("correlation key resolution", () => {
 
   it("resolves different correlation keys on the same anchor to a single anchor lock", () => {
     bindSession("session-3", anchor3);
-    appendCorrelationAliasForAnchor(anchor3, "slack:thread:1710000000.005");
+    appendCorrelationAliasForAnchor(anchor3, "slack:thread:C333/1710000000.005");
     appendCorrelationAliasForAnchor(anchor3, "git:branch:thor:feature/shared");
 
-    expect(resolveCorrelationLockKey("slack:thread:1710000000.005")).toBe(`anchor:${anchor3}`);
+    expect(resolveCorrelationLockKey("slack:thread:C333/1710000000.005")).toBe(`anchor:${anchor3}`);
     expect(resolveCorrelationLockKey("git:branch:thor:feature/shared")).toBe(`anchor:${anchor3}`);
-    expect(resolveSessionForCorrelationKey("slack:thread:1710000000.005")).toBe("session-3");
+    expect(resolveSessionForCorrelationKey("slack:thread:C333/1710000000.005")).toBe("session-3");
     expect(resolveSessionForCorrelationKey("git:branch:thor:feature/shared")).toBe("session-3");
   });
 
   it("ensures one anchor for concurrent slack correlation key callers", async () => {
-    const key = "slack:thread:1710000000.030";
+    const key = "slack:thread:C030/1710000000.030";
 
     const results = await Promise.all([
       ensureAnchorForCorrelationKey(key),
@@ -242,7 +223,7 @@ describe("correlation key resolution", () => {
     expect(resolveAnchorForCorrelationKey(key)).toBe(results[0].anchorId);
 
     const slackAliases = readAliases().filter(
-      (alias) => alias.aliasType === "slack.thread_id" && alias.aliasValue === "1710000000.030",
+      (alias) => alias.aliasType === "slack.thread" && alias.aliasValue === "C030/1710000000.030",
     );
     expect(slackAliases).toHaveLength(1);
     expect(slackAliases[0].anchorId).toBe(results[0].anchorId);
@@ -297,7 +278,7 @@ describe("correlation key resolution", () => {
   });
 
   it("returns an existing correlation anchor without minting", async () => {
-    const key = "slack:thread:1710000000.040";
+    const key = "slack:thread:C040/1710000000.040";
     appendCorrelationAliasForAnchor(anchor2, key);
 
     const result = await ensureAnchorForCorrelationKey(key);

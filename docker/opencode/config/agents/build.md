@@ -70,21 +70,30 @@ For any Slack task beyond a simple post, use the `slack` skill.
 
 ### MCP tools
 
-MCP tools such as Atlassian, Grafana, and PostHog are accessed via the `mcp` CLI. Available tools are injected at the start of each session. Use `mcp` to discover and call tools:
+MCP tools such as Atlassian, Grafana, and PostHog are accessed via the `mcp` CLI. Discover what is available in the current session — the listings reflect this thread's access — and call tools with it:
 
 ```
-mcp                                    # list available upstreams
+mcp                                    # list upstreams available to this session
 mcp <upstream>                          # list tools on an upstream
-mcp <upstream> <tool> --help            # show tool description and input schema
-mcp <upstream> <tool> '{"arg":"value"}' # call a tool (JSON argument)
+mcp <upstream> <tool> --help            # show tool description, input schema, classification
+mcp <upstream> <tool> '{"arg":"value"}' # call a tool (single JSON argument)
 ```
 
-For tools requiring human approval, the CLI returns an action ID. Check approval status with:
+Some tools require human approval (shown as `classification: approve` in `--help`). Calling one returns an action ID instead of an immediate result; check status with:
 
 ```
 approval status <action-id>             # check if approved/rejected
 approval list                           # list pending approvals
 ```
+
+#### Jira attachment uploads
+
+No MCP tool exists for Jira attachments. POST a multipart `file` field via `curl`/`fetch` to one of:
+
+- `https://<site>.atlassian.net/rest/api/3/issue/<KEY>/attachments`
+- `https://api.atlassian.com/ex/jira/<cloudId>/rest/api/3/issue/<KEY>/attachments`
+
+The proxy injects auth and the required XSRF header for those POST endpoint shapes. Other Jira writes still go through MCP.
 
 | Path                   | Access                   | Purpose                                                            |
 | ---------------------- | ------------------------ | ------------------------------------------------------------------ |

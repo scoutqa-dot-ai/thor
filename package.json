@@ -11,7 +11,6 @@
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:mcp": "node scripts/test-mcp.ts",
     "test:e2e": "./scripts/test-e2e.sh",
     "test:opencode-e2e": "./scripts/test-opencode-e2e.sh",
     "test:create-jira-approval-e2e": "./scripts/test-create-jira-approval-e2e.sh",

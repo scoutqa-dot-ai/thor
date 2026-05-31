@@ -27,7 +27,7 @@ export function execCommand(
   const maxBuffer = options.maxBuffer ?? Infinity;
 
   return new Promise((resolve) => {
-    const child = execFile(
+    execFile(
       binary,
       args,
       {

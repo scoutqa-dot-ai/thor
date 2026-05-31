@@ -98,9 +98,6 @@ importers:
       '@thor/common':
         specifier: workspace:*
         version: link:../common
-      zod:
-        specifier: ^4.3.6
-        version: 4.4.3
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -133,9 +130,6 @@ importers:
         specifier: ^4.3.6
         version: 4.4.3
     devDependencies:
-      '@scoutqa/cli':
-        specifier: 0.10.4-alpha.1
-        version: 0.10.4-alpha.1
       '@types/express':
         specifier: ^5.0.2
         version: 5.0.6
@@ -826,11 +820,6 @@ packages:
 
   '@rolldown/pluginutils@1.0.1':
     resolution: {integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==}
-
-  '@scoutqa/cli@0.10.4-alpha.1':
-    resolution: {integrity: sha512-F203MB9d61mU91fCv05wXwVZ3wUFmwWroL7KTLOE/Sjv6Hx32RL5IEgAWowGix9mHcktfioQloKpdnw0m1sfbw==}
-    engines: {node: '>=20.0.0'}
-    hasBin: true
 
   '@slack/logger@4.0.1':
     resolution: {integrity: sha512-6cmdPrV/RYfd2U0mDGiMK8S7OJqpCTm7enMLRR3edccsPX8j7zXTLnaEF4fhxxJJTAIOil6+qZrnUPTuaLvwrQ==}
@@ -3100,8 +3089,6 @@ snapshots:
     optional: true
 
   '@rolldown/pluginutils@1.0.1': {}
-
-  '@scoutqa/cli@0.10.4-alpha.1': {}
 
   '@slack/logger@4.0.1':
     dependencies:
