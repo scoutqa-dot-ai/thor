@@ -107,7 +107,7 @@ Integration-specific env vars live in each integration's doc. Cross-cutting vars
 | `THOR_E2E_TEST_HELPERS`         | No       | `runner`                    | Enables secret-gated deterministic runner e2e helpers                                                |
 | `RUNNER_BASE_URL`               | Yes      | `remote-cli`                | Public base URL for Thor trigger viewer links in PR/Jira content                                     |
 | `INGRESS_PORT`                  | No       | `ingress`                   | Host port for the reverse proxy                                                                      |
-| `ATLASSIAN_AUTH`                | No       | `remote-cli`, `mitmproxy`   | Atlassian MCP auth header and mitmproxy default injection                                            |
+| `ATLASSIAN_AUTH`                | No       | `remote-cli`, `mitmproxy`   | Global Atlassian MCP auth header and mitmproxy default injection; profile suffixes are MCP-only      |
 | `POSTHOG_API_KEY`               | No       | `remote-cli`                | Global PostHog MCP auth; profile variants use `_<PROFILE_NAME>` suffixes                             |
 | `GRAFANA_URL`                   | No       | `grafana-mcp`, `remote-cli` | Global Grafana instance URL; profile variants use `_<PROFILE_NAME>` suffixes                         |
 | `GRAFANA_SERVICE_ACCOUNT_TOKEN` | No       | `grafana-mcp`, `remote-cli` | Global Grafana service account token; profile variants use `_<PROFILE_NAME>` suffixes                |

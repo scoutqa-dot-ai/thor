@@ -7,7 +7,7 @@ For Slack admission details, see [`../slack.md`](../slack.md). For the remote-cl
 ## Invariants
 
 - A profile must define `channels[]`, `repos[]`, or both.
-- Profile names use uppercase ASCII letters and underscores only. The name is also the environment suffix, such as `ATLASSIAN_AUTH_QA`.
+- Profile names use uppercase ASCII letters and underscores only. The name is also the environment suffix, such as `POSTHOG_API_KEY_QA`.
 - Each Slack channel id and each repo name can belong to only one profile.
 - `channels[]` selects a credential profile and admits gated Slack surfaces: private channels, DMs, group DMs, and Slack Connect/shared channels.
 - `repos[]` selects a credential profile from the trigger-stamped repo alias. It never admits a gated Slack surface.
@@ -34,7 +34,9 @@ For Slack admission details, see [`../slack.md`](../slack.md). For the remote-cl
 }
 ```
 
-Single-value integrations check the profile-suffixed environment variable first, then the unsuffixed global. For example, `ATLASSIAN_AUTH_QA` is preferred over `ATLASSIAN_AUTH` for profile `QA`. Grafana is a bundle: if any `GRAFANA_*_<PROFILE>` value is set, the profile URL and token must both be set.
+Single-value integrations check the profile-suffixed environment variable first, then the unsuffixed global. For example, `POSTHOG_API_KEY_QA` is preferred over `POSTHOG_API_KEY` for profile `QA`. Grafana is a bundle: if any `GRAFANA_*_<PROFILE>` value is set, the profile URL and token must both be set.
+
+Atlassian profile support is not first class yet. MCP calls can resolve `ATLASSIAN_AUTH_<PROFILE>` before falling back to `ATLASSIAN_AUTH`, but direct Jira/Atlassian HTTP egress through mitmproxy still uses the unsuffixed global `ATLASSIAN_AUTH` because mitmproxy is not profile-aware. Treat Atlassian profile suffixes as best-effort MCP routing until a later mitmproxy profile-routing update lands.
 
 ## Resolution
 

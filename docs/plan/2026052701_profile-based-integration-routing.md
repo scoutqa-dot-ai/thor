@@ -4,7 +4,7 @@ Replace Thor's current split channel-policy model (Slack private-channel allowli
 
 ## Goal
 
-Let Thor route integrations by Slack channel without duplicating full credential blocks in config. Operators should be able to say “these channels are in profile `qa`” or “these channels are in profile `labs`”, then let runtime env resolution decide whether Atlassian, PostHog, Grafana, Metabase, Langfuse, or future CLI-backed integrations are enabled for that profile. A public channel outside any profile still works against global credentials; a non-public channel outside every profile is rejected.
+Let Thor route integrations by Slack channel without duplicating full credential blocks in config. Operators should be able to say “these channels are in profile `qa`” or “these channels are in profile `labs`”, then let runtime env resolution decide whether PostHog, Grafana, Metabase, Langfuse, or future CLI-backed integrations are enabled for that profile. A public channel outside any profile still works against global credentials; a non-public channel outside every profile is rejected.
 
 ## Scope
 
@@ -13,7 +13,7 @@ Let Thor route integrations by Slack channel without duplicating full credential
 - New `profiles` config in `/workspace/config/thor.json` as the single operator-maintained source for channel-specific overrides.
 - Drop `slack.private_channel_allowlist` in favor of “non-public channels must appear in some profile”.
 - Keep unsuffixed env vars as global credentials; add profile-suffixed variants such as `POSTHOG_API_KEY_LABS`.
-- Start with MCP-backed integrations (`atlassian`, `grafana`, `posthog`) and design the config/runtime shape so other `remote-cli` surfaces can adopt it later.
+- Start with MCP-backed integrations (`grafana`, `posthog`) and design the config/runtime shape so other `remote-cli` surfaces can adopt it later. Atlassian MCP can use the same resolver, but profile-scoped Atlassian is not first class until mitmproxy direct egress becomes profile-aware.
 - Update Slack gating, tool advertisement, MCP routing, approval resolution, docs, and tests to match the new model.
 
 **Out of scope**
@@ -151,7 +151,7 @@ Hardens the model against silent profile flips by enumerating every Slack alias 
   3. Maps each channel to a profile (`getProfileForSlackChannel`) and dedupes.
   4. Returns `{ profile: undefined }` if there are no Slack bindings; `{ profile: name }` if exactly one distinct profile is detected; `AmbiguousProfileError` if the set contains more than one distinct value (including any mix of "in profile" + "not in any profile" channels).
 - **Drop `slack.thread_id` entirely.** Remove from `ALIAS_TYPES`, stop emitting it in `aliasForCorrelationKey`, simplify `buildSlackCorrelationKeys` to a single channel-qualified key, drop the admin views legacy chip, and migrate tests to the channel-qualified form. Old session-log lines with `aliasType: "slack.thread_id"` are tolerated implicitly because both readers use `safeParse` and skip unknown types — they just stop binding anchors.
-- **Single-var env resolution stays soft.** `ATLASSIAN_AUTH_<PROFILE>` missing while `ATLASSIAN_AUTH` is set still falls back to global. Same for `POSTHOG_API_KEY`.
+- **Single-var env resolution stays soft.** `POSTHOG_API_KEY_<PROFILE>` missing while `POSTHOG_API_KEY` is set still falls back to global. Atlassian MCP follows the same fallback, but direct Atlassian HTTP egress remains global-only through mitmproxy until the follow-up profile-routing work lands.
 - **Multi-var bundles fail on partial profile coverage.** In `resolveProxyConfig` for Grafana, if any of `GRAFANA_URL_<PROFILE>` / `GRAFANA_SERVICE_ACCOUNT_TOKEN_<PROFILE>` / `GRAFANA_ORG_ID_<PROFILE>` is set but the URL+token pair is incomplete, throw — do not silently use the unsuffixed bundle. All-three-unset still falls back cleanly.
 - **Drop the approval `routing` snapshot.** Remove the `routing` field from the approval schema (greenfield — ignore any stored data with that field). At approval-click time, re-resolve profile via the strict resolver using `action.origin.sessionId`. If the resolver returns ambiguous or the integration's env bundle won't load for the resolved profile, mark the action `rejected` with a system reason and surface it via the existing Slack rejection path. Otherwise execute against the freshly resolved target.
 - **Surface ambiguity loudly in MCP listing and call paths.** `resolveProfileForContext` must return a result type the caller can fail on, not silently fall back to globals. Existing fallback-on-error behavior is preserved only for transient errors (config load failure), not for `AmbiguousProfileError`.
@@ -162,7 +162,7 @@ Hardens the model against silent profile flips by enumerating every Slack alias 
 - A session anchor bound to two channels in different profiles fails the next `/exec/mcp` call with a clear ambiguity error; same anchor bound to one channel in a profile + one outside any profile fails identically.
 - A partial Grafana profile bundle (e.g. only `GRAFANA_URL_QA` set) fails the MCP call instead of silently using globals.
 - An approval action created with no `routing` field re-resolves cleanly when the resolver returns one profile, executes under the freshly resolved target, and is rejected with a system reason when the resolver returns ambiguous.
-- Single-var integrations (Atlassian, PostHog) still fall back to globals when their `_<PROFILE>` suffix is unset.
+- PostHog still falls back to globals when its `_<PROFILE>` suffix is unset.
 
 ### Phase 7 — Repo-based profile selection
 
