@@ -114,10 +114,11 @@ describe("session event log", () => {
     expect(findSlackTriggerCorrelationKey("parent")).toBe("slack:thread:C123/1710000000.001");
   });
 
-  it("never truncates text or reasoning opencode_event records, even when oversized", () => {
+  it("never truncates text, reasoning, or step-finish opencode_event records, even when oversized", () => {
     // Long assistant text / reasoning chains can legitimately exceed the
-    // 4 KB per-record cap. They must persist in full so the debugging UI
-    // sees the whole body.
+    // 4 KB per-record cap. step-finish carries authoritative cost/token data.
+    // These records must persist in full so the debugging UI sees the whole body
+    // and accounting remains exact.
     const longText = "lorem ipsum ".repeat(2000); // ~24 KB
     appendSessionEvent("longtext", {
       type: "opencode_event",
@@ -137,15 +138,40 @@ describe("session event log", () => {
         },
       },
     });
+    appendSessionEvent("longtext", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "prt_big_step_finish",
+            type: "step-finish",
+            cost: 0.0123,
+            tokens: { input: 10, output: 20, reasoning: 3, cache: { read: 4, write: 5 } },
+            vendorPayload: "z".repeat(10_000),
+          },
+        },
+      },
+    });
 
     const lines = readFileSync(sessionLogPath("longtext"), "utf8").trim().split("\n");
     const parsed = lines.map((line) => JSON.parse(line));
     const text = parsed.find((r) => r.event?.properties?.part?.type === "text");
     const reasoning = parsed.find((r) => r.event?.properties?.part?.type === "reasoning");
+    const stepFinish = parsed.find((r) => r.event?.properties?.part?.type === "step-finish");
     expect(text.event.properties.part.text).toBe(longText);
     expect(text._truncated).toBeUndefined();
     expect(reasoning.event.properties.part.text).toBe(longText);
     expect(reasoning._truncated).toBeUndefined();
+    expect(stepFinish.event.properties.part.cost).toBe(0.0123);
+    expect(stepFinish.event.properties.part.tokens).toEqual({
+      input: 10,
+      output: 20,
+      reasoning: 3,
+      cache: { read: 4, write: 5 },
+    });
+    expect(stepFinish.event.properties.part.vendorPayload).toBe("z".repeat(10_000));
+    expect(stepFinish._truncated).toBeUndefined();
   });
 
   it("preserves the render skeleton when projecting oversized tool opencode_event", () => {
