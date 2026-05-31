@@ -11,11 +11,7 @@ import type {
   ToolStateCompleted,
   ToolStateError,
 } from "@opencode-ai/sdk";
-<<<<<<< HEAD
-import { EventBusRegistry } from "./event-bus.js";
-=======
-import { EventBusRegistry, waitForSessionSettled } from "./event-bus.ts";
->>>>>>> origin/main
+import { EventBusRegistry } from "./event-bus.ts";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {

@@ -373,18 +373,13 @@ describe("triggerRunnerGitHub", () => {
 
 describe("approval outcome prompts", () => {
   it("includes approval guidance when slack events and approval outcomes share a batch", async () => {
-<<<<<<< HEAD
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
       new Response('{"type":"start","sessionId":"s1","resumed":false}\n', {
         status: 200,
         headers: { "content-type": "application/x-ndjson" },
       }),
     );
-    const { triggerRunnerSlack } = await import("./service.js");
-=======
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ busy: true }));
     const { triggerRunnerSlack } = await import("./service.ts");
->>>>>>> origin/main
 
     const result = await triggerRunnerSlack(
       [
