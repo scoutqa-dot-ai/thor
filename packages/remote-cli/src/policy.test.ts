@@ -70,7 +70,7 @@ describe("validateCwd", () => {
 describe("validateDockerArgs", () => {
   it("allows only docker ps, logs, and stats with pass-through arguments", () => {
     expect(validateDockerArgs(["ps"])).toBeNull();
-    expect(validateDockerArgs(["ps", "--all", "--format", "{{.Names}"])).toBeNull();
+    expect(validateDockerArgs(["ps", "--all", "--format", "{{.Names}}"])).toBeNull();
     expect(validateDockerArgs(["logs", "--tail", "20", "remote-cli"])).toBeNull();
     expect(validateDockerArgs(["logs", "-f", "gateway"])).toBeNull();
     expect(validateDockerArgs(["stats", "--no-stream", "remote-cli"])).toBeNull();

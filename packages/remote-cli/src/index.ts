@@ -758,6 +758,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   });
 
   app.post("/exec/scoutqa", async (req, res) => {
+    const write = createSafeNdjsonWriter(res);
     try {
       const { args } = req.body ?? {};
 
@@ -771,8 +772,6 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
       res.setHeader("Content-Type", "application/x-ndjson");
       res.setHeader("Transfer-Encoding", "chunked");
-
-      const write = createSafeNdjsonWriter(res);
 
       await withNdjsonHeartbeat(write, async () => {
         const exitCode = await execCommandStream("scoutqa", args, "/workspace", {
@@ -792,7 +791,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       if (!res.headersSent) {
         res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
       } else {
-        res.write(JSON.stringify({ type: "exit", exitCode: 1 } satisfies ExecStreamEvent) + "\n");
+        write({ type: "exit", exitCode: 1 });
         res.end();
       }
     }
