@@ -21,6 +21,8 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:3004:3004"
+    group_add:
+      - "${DOCKER_SOCKET_GID:-0}"
     environment:
       - NODE_ENV=production
       - GITHUB_APP_ID=${GITHUB_APP_ID:?set GITHUB_APP_ID}
@@ -54,6 +56,7 @@ services:
       - ./docker-volumes/workspace:/workspace
       - ./docker-volumes/github-app:/var/lib/remote-cli/github-app
       - shared-tmp:/tmp
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       grafana-mcp:
         condition: service_healthy

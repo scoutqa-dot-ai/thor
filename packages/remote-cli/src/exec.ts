@@ -55,6 +55,10 @@ export interface StreamCallbacks {
   onStderr: (chunk: string) => void;
 }
 
+export interface ExecCommandStreamOptions {
+  signal?: AbortSignal;
+}
+
 /**
  * Spawn a command and stream stdout/stderr chunks via callbacks.
  * Returns a promise that resolves with the exit code when the process ends.
@@ -64,9 +68,32 @@ export function execCommandStream(
   args: string[],
   cwd: string,
   callbacks: StreamCallbacks,
+  options: ExecCommandStreamOptions = {},
 ): Promise<number> {
   return new Promise((resolve) => {
+    let settled = false;
     const child = spawn(binary, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+
+    const finish = (exitCode: number) => {
+      if (settled) return;
+      settled = true;
+      options.signal?.removeEventListener("abort", abort);
+      resolve(exitCode);
+    };
+
+    const abort = () => {
+      if (child.exitCode === null && !child.killed) {
+        child.kill("SIGTERM");
+      }
+    };
+
+    if (options.signal) {
+      if (options.signal.aborted) {
+        abort();
+      } else {
+        options.signal.addEventListener("abort", abort, { once: true });
+      }
+    }
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
@@ -74,7 +101,7 @@ export function execCommandStream(
     child.stdout.on("data", (chunk: string) => callbacks.onStdout(chunk));
     child.stderr.on("data", (chunk: string) => callbacks.onStderr(chunk));
 
-    child.on("close", (code) => resolve(code ?? 1));
-    child.on("error", () => resolve(1));
+    child.on("close", (code) => finish(code ?? 1));
+    child.on("error", () => finish(1));
   });
 }

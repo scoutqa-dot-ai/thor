@@ -1,12 +1,12 @@
 /**
- * Server-side command policy for git, gh, scoutqa, langfuse, ldcli, metabase.
+ * Server-side command policy for git, gh, docker, scoutqa, langfuse, ldcli, metabase.
  *
  * All validation happens here — the OpenCode wrapper scripts are untrusted.
  *
  * Git and gh policy live in policy-git.ts and policy-gh.ts respectively, each
  * an explicit allowlist of supported workflows that share a small token-scanning
  * helper in policy-args.ts. The smaller validators (scoutqa, langfuse, ldcli,
- * metabase) stay inline below.
+ * docker, metabase) stay inline below.
  */
 
 export { resolveGitArgs, validateGitArgs } from "./policy-git.ts";
@@ -68,6 +68,43 @@ export function validateScoutqaArgs(args: string[]): string | null {
     if (sub !== "status") {
       return `"scoutqa auth ${sub || ""}" is not allowed — only "scoutqa auth status" is permitted`;
     }
+  }
+
+  return null;
+}
+
+// ── docker policy ───────────────────────────────────────────────────────────
+
+const ALLOWED_DOCKER_SUBCOMMANDS: ReadonlySet<string> = new Set(["ps", "logs", "stats"]);
+
+const DENIED_DOCKER_DAEMON_FLAGS: ReadonlySet<string> = new Set([
+  "--host",
+  "-H",
+  "--context",
+  "--config",
+  "--tls",
+  "--tlscacert",
+  "--tlscert",
+  "--tlskey",
+  "--tlsverify",
+]);
+
+export function validateDockerArgs(args: string[]): string | null {
+  if (!Array.isArray(args) || args.length === 0) {
+    return "args must be a non-empty array";
+  }
+
+  for (const arg of args) {
+    const flag = arg.split("=")[0];
+    const deniedFlag = arg.startsWith("-H") && arg.length > 2 ? "-H" : flag;
+    if (DENIED_DOCKER_DAEMON_FLAGS.has(deniedFlag)) {
+      return `flag "${deniedFlag}" is not allowed for docker`;
+    }
+  }
+
+  const subcommand = args[0];
+  if (!ALLOWED_DOCKER_SUBCOMMANDS.has(subcommand)) {
+    return `"docker ${subcommand}" is not allowed — only docker ps, docker logs, and docker stats are permitted`;
   }
 
   return null;

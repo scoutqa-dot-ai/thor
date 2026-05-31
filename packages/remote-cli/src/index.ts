@@ -49,6 +49,7 @@ import {
 import {
   resolveGitArgs,
   validateCwd,
+  validateDockerArgs,
   validateGhArgs,
   validateLdcliArgs,
   validateLangfuseArgs,
@@ -779,6 +780,62 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
       } else {
         res.write(JSON.stringify({ type: "exit", exitCode: 1 } satisfies ExecStreamEvent) + "\n");
+        res.end();
+      }
+    }
+  });
+
+  app.post("/exec/docker", async (req, res) => {
+    const writeNdjson = (chunk: ExecStreamEvent) => {
+      res.write(JSON.stringify(chunk) + "\n");
+    };
+
+    try {
+      const { args } = req.body ?? {};
+
+      const argsError = validateDockerArgs(args);
+      if (argsError) {
+        res.status(400).json({ stdout: "", stderr: argsError, exitCode: 1 });
+        return;
+      }
+
+      const ids = thorIds(req);
+      logInfo(log, "exec_docker", { subcommand: args[0], argc: args.length, ...ids });
+
+      res.setHeader("Content-Type", "application/x-ndjson");
+      res.setHeader("Transfer-Encoding", "chunked");
+      res.flushHeaders();
+
+      const abortController = new AbortController();
+      res.on("close", () => {
+        if (!res.writableEnded) abortController.abort();
+      });
+
+      await withNdjsonHeartbeat(writeNdjson, async () => {
+        const exitCode = await execCommandStream(
+          "docker",
+          args,
+          "/workspace",
+          {
+            onStdout: (data) => writeNdjson({ type: "stdout", data }),
+            onStderr: (data) => writeNdjson({ type: "stderr", data }),
+          },
+          { signal: abortController.signal },
+        );
+        writeNdjson({ type: "exit", exitCode });
+      });
+      res.end();
+    } catch (err) {
+      logError(
+        log,
+        "exec_docker_error",
+        err instanceof Error ? err.message : String(err),
+        thorIds(req),
+      );
+      if (!res.headersSent) {
+        res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+      } else {
+        writeNdjson({ type: "exit", exitCode: 1 });
         res.end();
       }
     }

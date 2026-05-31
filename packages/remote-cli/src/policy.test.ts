@@ -7,6 +7,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } 
 import {
   resolveGitArgs,
   validateCwd,
+  validateDockerArgs,
   validateGitArgs,
   validateGhArgs,
   validateLdcliArgs,
@@ -61,6 +62,58 @@ describe("validateCwd", () => {
     });
 
     expect(validateCwd("/workspace/repos/link")).not.toBeNull();
+  });
+});
+
+// ── docker policy ───────────────────────────────────────────────────────────
+
+describe("validateDockerArgs", () => {
+  it("allows only docker ps, logs, and stats with pass-through arguments", () => {
+    expect(validateDockerArgs(["ps"])).toBeNull();
+    expect(validateDockerArgs(["ps", "--all", "--format", "{{.Names}"])).toBeNull();
+    expect(validateDockerArgs(["logs", "--tail", "20", "remote-cli"])).toBeNull();
+    expect(validateDockerArgs(["logs", "-f", "gateway"])).toBeNull();
+    expect(validateDockerArgs(["stats", "--no-stream", "remote-cli"])).toBeNull();
+  });
+
+  it("rejects every other docker subcommand", () => {
+    for (const args of [
+      ["exec", "remote-cli", "sh"],
+      ["run", "alpine"],
+      ["compose", "ps"],
+      ["container", "ls"],
+      ["inspect", "remote-cli"],
+      ["restart", "gateway"],
+      ["cp", "remote-cli:/tmp/x", "/tmp/x"],
+      ["system", "df"],
+    ]) {
+      expect(validateDockerArgs(args)).toContain("only docker ps, docker logs, and docker stats");
+    }
+  });
+
+  it("rejects docker daemon and config selector flags anywhere", () => {
+    const denied = [
+      ["--host", "unix:///tmp/docker.sock", "ps"],
+      ["-H", "tcp://127.0.0.1:2375", "ps"],
+      ["-Htcp://127.0.0.1:2375", "ps"],
+      ["ps", "--host=unix:///tmp/docker.sock"],
+      ["logs", "--context", "other", "remote-cli"],
+      ["stats", "--config=/tmp/docker", "remote-cli"],
+      ["ps", "--tls"],
+      ["logs", "--tlscacert", "/tmp/ca.pem", "remote-cli"],
+      ["logs", "--tlscert=/tmp/cert.pem", "remote-cli"],
+      ["logs", "--tlskey=/tmp/key.pem", "remote-cli"],
+      ["ps", "--tlsverify"],
+    ];
+
+    for (const args of denied) {
+      expect(validateDockerArgs(args)).toContain("is not allowed for docker");
+    }
+  });
+
+  it("rejects empty and non-array args", () => {
+    expect(validateDockerArgs([])).not.toBeNull();
+    expect(validateDockerArgs("ps" as unknown as string[])).not.toBeNull();
   });
 });
 

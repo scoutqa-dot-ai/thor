@@ -104,12 +104,13 @@ Approval creation **fails closed** when remote-cli cannot resolve or post to the
 
 ### Command policy
 
-`git`, `gh`, `langfuse`, `metabase`, `ldcli`, and `scoutqa` go through remote-cli `POST /exec/*` endpoints with server-side allowlists per command. The OpenCode-side wrappers are convenience — bypassing them by calling raw binaries inside OpenCode does not exist as a path because credentials live in remote-cli.
+`git`, `gh`, `docker`, `langfuse`, `metabase`, `ldcli`, and `scoutqa` go through remote-cli `POST /exec/*` endpoints with server-side allowlists per command. The OpenCode-side wrappers are convenience — bypassing them by calling raw binaries inside OpenCode does not exist as a path because credentials and privileged mounts live in remote-cli. Docker is limited to `docker ps`, `docker logs`, and `docker stats`; daemon/config selector flags and all other subcommands are denied before the Docker CLI runs.
 
 ### Credential handling
 
 - `git` uses GitHub App installation tokens minted on demand through `GIT_ASKPASS` when the target owner resolves from the command or repo remote.
 - `gh` resolves GitHub App auth before execution and exports `GH_TOKEN` only with the short-lived installation token for the resolved owner.
+- Docker socket access is mounted only into `remote-cli`; OpenCode receives only a `docker` shim that forwards through remote-cli policy.
 - OpenCode never receives direct API credentials for MCP upstreams.
 - **ChatGPT subscription credentials live in `codex-lb`, not OpenCode.** opencode points its `openai` provider at `http://codex-lb:2455/v1` with a literal in-network token (`codex-lb-local`) that has no value outside the docker network. The OAuth refresh tokens and account cookies for ChatGPT are persisted under `codex-lb`'s own SQLite store at `/var/lib/codex-lb`, which is never mounted into OpenCode. An agent that reads opencode's auth/config files finds no ChatGPT credential it can replay.
 
@@ -121,6 +122,7 @@ If a policy layer fails, these limit what damage is reachable:
 - **GitHub App scopes.** The app is granted the minimum permissions listed in `github.md` §3 — no admin, no settings write, no org-wide access.
 - **Per-owner installation tokens.** GitHub installation tokens are scoped to a single owner and expire within an hour.
 - **Daytona sandbox isolation.** Project builds and test runs execute in per-worktree Daytona sandboxes; `git` is blocked inside the sandbox so the agent cannot push from there.
+- **Docker socket isolation.** The host Docker socket is powerful, so access is isolated to `remote-cli` and exposed to the agent only through the three-command Docker troubleshooting allowlist. OpenCode cannot access `/var/run/docker.sock` directly.
 - **codex-lb account/quota dashboard isolation.** The codex-lb dashboard (`/dashboard`, `/accounts`, `/settings`, `/api/*`) sits behind the same Vouch + `THOR_ADMIN_EMAILS` gate as `/admin/`, and its host ports bind to `127.0.0.1` only. Adding or rotating ChatGPT accounts requires an admin browser session — neither OpenCode nor an external attacker can reach those routes.
 
 ## Layer 6: Audit trail
