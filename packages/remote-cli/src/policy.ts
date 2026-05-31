@@ -90,7 +90,7 @@ const DENIED_DOCKER_DAEMON_FLAGS: ReadonlySet<string> = new Set([
 ]);
 
 export function validateDockerArgs(args: string[]): string | null {
-  if (!Array.isArray(args) || args.length === 0) {
+  if (!Array.isArray(args) || args.length === 0 || !args.every((arg) => typeof arg === "string")) {
     return "args must be a non-empty array";
   }
 

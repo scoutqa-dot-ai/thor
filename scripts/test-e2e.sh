@@ -411,7 +411,7 @@ assert '[[ "$opencode_docker_inspect_output" == *"only docker ps, docker logs, a
   "opencode docker inspect returns remote-cli policy error" \
   "output: ${opencode_docker_inspect_output:0:500}"
 
-# ── 2. Remote-cli git/gh auth ────────────────────────────────────────────────
+# ── 3. Remote-cli git/gh auth ────────────────────────────────────────────────
 
 echo ""
 echo "=== Remote-CLI Git/GH Auth ==="

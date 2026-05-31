@@ -114,6 +114,7 @@ describe("validateDockerArgs", () => {
   it("rejects empty and non-array args", () => {
     expect(validateDockerArgs([])).not.toBeNull();
     expect(validateDockerArgs("ps" as unknown as string[])).not.toBeNull();
+    expect(validateDockerArgs(["ps", 123 as unknown as string])).not.toBeNull();
   });
 });
 
