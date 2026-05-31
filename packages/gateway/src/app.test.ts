@@ -2378,7 +2378,7 @@ describe("gateway", () => {
     });
   });
 
-  it("marks app mentions in non-allowlisted private channels as policy-blocked", async () => {
+  it("marks app mentions in unprofiled private channels as policy-blocked", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
     await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
@@ -2412,7 +2412,7 @@ describe("gateway", () => {
     });
   });
 
-  it("allows app mentions in allowlisted private channels", async () => {
+  it("allows app mentions in profiled private channels", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
@@ -2442,7 +2442,7 @@ describe("gateway", () => {
         expect(fetchImpl).toHaveBeenCalledTimes(1);
       },
       {
-        workspaceConfigLoader: () => ({ slack: { private_channel_allowlist: ["GPRIVATE"] } }),
+        workspaceConfigLoader: () => ({ profiles: { QA: { channels: ["GPRIVATE"] } } }),
       },
     );
   });
@@ -2499,7 +2499,7 @@ describe("gateway", () => {
         expect(fetchImpl).toHaveBeenCalledTimes(1);
       },
       {
-        workspaceConfigLoader: () => ({ slack: { private_channel_allowlist: ["DALLOWED"] } }),
+        workspaceConfigLoader: () => ({ profiles: { QA: { channels: ["DALLOWED"] } } }),
       },
     );
   });
@@ -2620,6 +2620,87 @@ describe("gateway", () => {
     });
   });
 
+  it("records pending privacy history only after enqueue succeeds", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    sessionKeys.add("slack:thread:CLOOKUP/1710000000.001");
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(fetchImpl, async (baseUrl, _queue, queueDir) => {
+        const body = slackEventBody("EvDeferredHistory", {
+          type: "message",
+          user: "U123",
+          text: "continue this",
+          ts: "1710000000.108",
+          thread_ts: "1710000000.001",
+          channel: "CLOOKUP",
+          channel_type: "channel",
+        });
+
+        const response = await postSignedSlackEvent(baseUrl, body);
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+        expect(readQueuedEvents(queueDir)).toMatchObject([
+          {
+            id: "EvDeferredHistory",
+            correlationKey: "pending:slack-privacy:CLOOKUP:EvDeferredHistory",
+          },
+        ]);
+
+        const entries = readSlackWebhookEntries(worklogDir);
+        expect(entries).toHaveLength(1);
+        expect(entries[0]).toMatchObject({
+          requestId: "EvDeferredHistory",
+          reason: "received",
+          metadata: {
+            eventId: "EvDeferredHistory",
+            channel: "CLOOKUP",
+            correlationKey: "pending:slack-privacy:CLOOKUP:EvDeferredHistory",
+          },
+        });
+      });
+    });
+  });
+
+  it("records enqueue_failed history when pending privacy enqueue fails", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    sessionKeys.add("slack:thread:CFAIL/1710000000.001");
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(fetchImpl, async (baseUrl, queue, queueDir) => {
+        vi.spyOn(queue, "enqueue").mockRejectedValueOnce(new Error("queue disk full"));
+        const body = slackEventBody("EvDeferredEnqueueFail", {
+          type: "message",
+          user: "U123",
+          text: "continue this",
+          ts: "1710000000.109",
+          thread_ts: "1710000000.001",
+          channel: "CFAIL",
+          channel_type: "channel",
+        });
+
+        const response = await postSignedSlackEvent(baseUrl, body);
+
+        expect(response.status).toBe(500);
+        expect(readQueuedEvents(queueDir)).toHaveLength(0);
+
+        const entries = readSlackWebhookEntries(worklogDir);
+        expect(entries).toHaveLength(1);
+        expect(entries[0]).toMatchObject({
+          requestId: "EvDeferredEnqueueFail",
+          reason: "enqueue_failed",
+          metadata: {
+            eventId: "EvDeferredEnqueueFail",
+            channel: "CFAIL",
+            correlationKey: "pending:slack-privacy:CFAIL:EvDeferredEnqueueFail",
+            errorName: "Error",
+            errorMessage: "queue disk full",
+          },
+        });
+      });
+    });
+  });
+
   it("uses a fresh public-channel cache hit to accept app mentions without pending privacy", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
@@ -2662,6 +2743,56 @@ describe("gateway", () => {
       await queue.flush();
       expect(fetchImpl).toHaveBeenCalledTimes(2);
       expect(slack.conversationsInfo).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("records enqueue_failed history when cached public app mention enqueue fails", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await withWorklogDir(async (worklogDir) => {
+      await withServer(fetchImpl, async (baseUrl, queue, _queueDir, slack) => {
+        slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_private: false } });
+
+        const firstResponse = await postSignedSlackEvent(
+          baseUrl,
+          slackEventBody("EvAcceptCachePrime", {
+            type: "app_mention",
+            user: "U123",
+            text: "<@U999> prime cache",
+            ts: "1710000000.208",
+            channel: "CACCEPTFAIL",
+          }),
+        );
+        expect(firstResponse.status).toBe(200);
+        await queue.flush();
+
+        vi.spyOn(queue, "enqueue").mockRejectedValueOnce(new Error("queue unavailable"));
+        const secondResponse = await postSignedSlackEvent(
+          baseUrl,
+          slackEventBody("EvAcceptEnqueueFail", {
+            type: "app_mention",
+            user: "U123",
+            text: "<@U999> cached public channel",
+            ts: "1710000000.209",
+            channel: "CACCEPTFAIL",
+          }),
+        );
+
+        expect(secondResponse.status).toBe(500);
+
+        const entries = readSlackWebhookEntries(worklogDir);
+        expect(entries).toHaveLength(2);
+        expect(entries[1]).toMatchObject({
+          requestId: "EvAcceptEnqueueFail",
+          reason: "enqueue_failed",
+          metadata: {
+            eventId: "EvAcceptEnqueueFail",
+            channel: "CACCEPTFAIL",
+            correlationKey: "slack:thread:CACCEPTFAIL/1710000000.209",
+            errorMessage: "queue unavailable",
+          },
+        });
+      });
     });
   });
 
@@ -2714,7 +2845,7 @@ describe("gateway", () => {
     });
   });
 
-  it("drops deferred events for non-allowlisted private channels resolved via conversations.info", async () => {
+  it("drops deferred events for unprofiled private channels resolved via conversations.info", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
     await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
@@ -2782,7 +2913,7 @@ describe("gateway", () => {
     });
   });
 
-  it("blocks engaged message continuations in non-allowlisted private channels", async () => {
+  it("blocks engaged message continuations in unprofiled private channels", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     sessionKeys.add("slack:thread:GPRIVATE/1710000000.001");
 
@@ -2853,7 +2984,7 @@ describe("gateway", () => {
 
   it("ignores thread replies in unengaged threads (Thor has not replied)", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
-    sessionKeys.delete("slack:thread:1710000000.001");
+    sessionKeys.delete("slack:thread:C0/1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({
@@ -2896,7 +3027,7 @@ describe("gateway", () => {
       .fn<typeof fetch>()
       // POST /trigger → 200 (fire-and-forget)
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
-    sessionKeys.add("slack:thread:1710000000.001");
+    sessionKeys.add("slack:thread:C123/1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const body = JSON.stringify({
@@ -2933,7 +3064,7 @@ describe("gateway", () => {
       expect(fetchImpl).toHaveBeenCalledTimes(1);
       expect(fetchImpl.mock.calls[0][0]).toBe("http://runner.test/trigger");
       const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
-      expect(triggerBody.correlationKey).toBe("slack:thread:1710000000.001");
+      expect(triggerBody.correlationKey).toBe("slack:thread:C123/1710000000.001");
       expect(triggerBody.triggerSlackId).toBe("U123");
       expect(triggerBody.interrupt).toBe(false);
     });
@@ -3381,7 +3512,7 @@ describe("gateway", () => {
 
   it("resolves approval outcome correlation keys through registered aliases", async () => {
     correlationKeyAliases.set(
-      "slack:thread:1710000000.001",
+      "slack:thread:C123/1710000000.001",
       "git:branch:test-repo:feature/from-slack",
     );
     const fetchImpl = vi
@@ -3540,7 +3671,12 @@ describe("gateway", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            stdout: "",
+            stdout: JSON.stringify({
+              status: "error",
+              tool: "merge_pull_request",
+              upstream: "github",
+              reason: "categorized failure",
+            }),
             stderr: 'Error calling "merge_pull_request": upstream unavailable\n',
             exitCode: 1,
           }),
@@ -3597,15 +3733,19 @@ describe("gateway", () => {
     expect(capturedSlack!.update).toHaveBeenCalled();
     const updateArg = capturedSlack!.update.mock.calls[0][0] as { text: string };
     expect(updateArg.text).toContain("Approved, resolution failed");
+    expect(updateArg.text).toContain("categorized failure");
+    expect(updateArg.text).toContain("remote-cli stderr:");
     expect(updateArg.text).toContain('Error calling "merge_pull_request"');
-    expect(updateArg.text).not.toContain("upstream unavailable");
+    expect(updateArg.text).toContain("upstream unavailable");
 
     const runnerCall = fetchImpl.mock.calls.find(
       ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
     );
     expect(runnerCall).toBeDefined();
     const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
+    expect(runnerBody.prompt).toContain("categorized failure");
+    expect(runnerBody.prompt).toContain("remote-cli stderr:");
     expect(runnerBody.prompt).toContain('Error calling "merge_pull_request"');
-    expect(runnerBody.prompt).not.toContain("upstream unavailable");
+    expect(runnerBody.prompt).toContain("upstream unavailable");
   });
 });

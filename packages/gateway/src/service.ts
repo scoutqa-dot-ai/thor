@@ -1,9 +1,7 @@
 import {
   createLogger,
   ExecResultSchema,
-  extractApprovalFailureCategory,
   hasSessionForCorrelationKey,
-  logInfo,
   logWarn,
   logError,
   resolveCorrelationKeys,
@@ -12,7 +10,7 @@ import {
 } from "@thor/common";
 import type { ExecResult } from "@thor/common";
 import {
-  getSlackCorrelationKeys,
+  getSlackCorrelationKey,
   isPendingSlackPrivacyKey,
   type SlackThreadEvent,
 } from "./slack.ts";
@@ -597,7 +595,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
       });
       return { kind: "drop", logPrefix: "slack", reason: decision.reason };
     }
-    const resolvedKey = resolveCorrelationKeys(getSlackCorrelationKeys(event));
+    const resolvedKey = resolveCorrelationKeys([getSlackCorrelationKey(event)]);
     return {
       kind: "reroute",
       logPrefix: "slack",
@@ -1042,7 +1040,7 @@ export async function resolveApproval(
           `remote-cli returned ${response.status}: ${body.stderr || body.stdout || "unknown error"}`,
           { remoteCliUrl, attempt },
         );
-        return isResolvedApprovalExecutionFailure(body) ? body : undefined;
+        return body;
       }
       return body;
     } catch (err) {
@@ -1060,10 +1058,6 @@ export async function resolveApproval(
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isResolvedApprovalExecutionFailure(body: ExecResult): boolean {
-  return body.exitCode !== 0 && extractApprovalFailureCategory(body.stderr) !== undefined;
 }
 
 export async function updateSlackMessage(

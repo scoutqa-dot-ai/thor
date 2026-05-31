@@ -48,7 +48,6 @@ const ApprovalActionSchema = z
     }
   });
 
-export type ApprovalStatus = "pending" | "approved" | "rejected";
 export type ApprovalAction = z.infer<typeof ApprovalActionSchema>;
 
 export class ApprovalStore {

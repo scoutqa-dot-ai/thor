@@ -11,14 +11,14 @@ export {
   SLACK_CHANNEL_REPO_MEMORY_ROOT,
   extractRepoFromCwd,
   getInstallationIdForOwner,
-  interpolateEnv,
-  interpolateHeaders,
   findUserBySlack,
   findUserByGithub,
-  findUserByEmail,
-  getSlackPrivateChannelAllowlist,
+  getProfileForSlackChannel,
+  getProfileForRepo,
+  isSlackChannelInProfile,
+  resolveStrictProfileForSession,
 } from "./workspace-config.ts";
-export { PROXY_NAMES, PROXY_REGISTRY, isProxyName, getProxyConfig } from "./proxies.ts";
+export { PROXY_NAMES, isProxyName, resolveProxyConfig, getAvailableProxyNames } from "./proxies.ts";
 export {
   APPROVAL_TOOL_NAMES,
   ApprovalArgsSchema,
@@ -59,8 +59,7 @@ export {
 } from "./service-env.ts";
 export type {
   WorkspaceConfig,
-  ProxyConfig,
-  ProxyUpstream,
+  ProfileConfig,
   ConfigLoader,
   OwnerConfig,
   UserRecord,
@@ -68,7 +67,7 @@ export type {
   ValidationResult,
 } from "./workspace-config.ts";
 export type { ProxyName } from "./proxies.ts";
-export { writeToolCallLog, appendJsonlWorklog, getWorklogDir } from "./worklog.ts";
+export { writeToolCallLog, appendJsonlWorklog } from "./worklog.ts";
 export type { ToolCallLogEntry, InboundWebhookHistoryEntry } from "./worklog.ts";
 export {
   SessionEventLogRecordSchema,
@@ -78,17 +77,17 @@ export {
   readTriggerSlice,
   findActiveTrigger,
   findTriggerActor,
-  findTriggerCorrelationKey,
   findSlackTriggerCorrelationKey,
   findAnchorContext,
   resolveAlias,
+  resolveSessionAnchorId,
   reverseLookupAnchor,
+  anchorHasExternalKeyType,
   listAnchors,
   listAnchorSessionStates,
   currentSessionForAnchor,
   listSessionAliases,
   mintAnchor,
-  mintTriggerId,
   sessionLogPath,
   iterateJsonlFileLinesSync,
   isUuidV7,
@@ -156,12 +155,11 @@ export {
   ensureAnchorForCorrelationKey,
   appendCorrelationAlias,
   appendCorrelationAliasForAnchor,
-  buildSlackCorrelationKeys,
+  buildSlackCorrelationKey,
   computeGitCorrelationKey,
   computeSlackCorrelationKey,
   resolveAnchorForCorrelationKey,
   resolveSessionForCorrelationKey,
-  ANCHOR_LOCK_PREFIX,
   SESSION_LOCK_PREFIX,
 } from "./correlation.ts";
 export type { EnsureAnchorResult } from "./correlation.ts";
@@ -175,10 +173,9 @@ export {
   buildThorDisclaimerForSession,
   buildThorAnchorUrl,
   buildThorTriggerUrl,
-  findActiveTriggerOrThrow,
   formatThorContextFooter,
 } from "./disclaimer.ts";
-export type { ActiveTriggerSnapshot, ThorDisclaimerContext } from "./disclaimer.ts";
+export type { ThorDisclaimerContext } from "./disclaimer.ts";
 export {
   ProgressStartSchema,
   ProgressToolSchema,
@@ -201,7 +198,6 @@ export { handleProgressEvent, getRegistrySize, clearRegistry } from "./progress-
 export type { ProgressTransport, ProgressTarget, ProgressBlock } from "./progress-manager.ts";
 export {
   buildApprovalButtonValue,
-  extractApprovalFailureCategory,
   parseApprovalButtonValue,
   resolveSlackThreadTargetFromTrigger,
   formatApprovalArgs,

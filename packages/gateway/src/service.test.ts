@@ -369,7 +369,7 @@ describe("approval outcome prompts", () => {
           thread_ts: "1710000000.001",
         },
       ],
-      "slack:thread:1710000000.001",
+      "slack:thread:C123/1710000000.001",
       { runnerUrl: "http://runner:3000", fetchImpl },
       noopSlackDeps(),
       false,
@@ -526,7 +526,7 @@ describe("planBatchDispatch", () => {
 
       const plan = await planPendingPrivacy({
         slackDeps: slackDepsWith(client),
-        workspaceConfigLoader: () => ({ slack: { private_channel_allowlist: ["C_DEFER"] } }),
+        workspaceConfigLoader: () => ({ profiles: { QA: { channels: ["C_DEFER"] } } }),
       });
 
       expect(plan.kind).toBe("reroute");
@@ -654,7 +654,7 @@ describe("triggerRunnerApprovalOutcomes", () => {
           threadTs: "1710000000.001",
         },
       ],
-      "slack:thread:1710000000.001",
+      "slack:thread:C123/1710000000.001",
       { runnerUrl: "http://runner:3000", fetchImpl },
       noopSlackDeps(),
       false,
