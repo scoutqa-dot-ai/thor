@@ -1,6 +1,6 @@
 # Security Model
 
-How Thor contains untrusted input through layered controls. For integration-specific details, see [`slack.md`](../slack.md), [`github.md`](../github.md), [`daytona.md`](../daytona.md), and [`profile.md`](./profile.md).
+How Thor contains untrusted input through layered controls.
 
 ## Threat model
 

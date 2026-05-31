@@ -42,7 +42,7 @@ ingress -> gateway -> runner -> opencode -> codex-lb -> ChatGPT
 
 All outbound HTTP(S) from OpenCode is routed through mitmproxy; see [`docs/feat/security-model.md`](docs/feat/security-model.md) Layer 1a for the routing path, built-in defaults, and custom rule format.
 
-3. Create `/workspace/config/thor.json` (on the host: `docker-volumes/workspace/config/thor.json`) from [`docs/examples/thor.json`](docs/examples/thor.json). It carries GitHub App installation IDs, user attribution, Slack routing profiles, and any mitmproxy rules. MCP upstream access is enabled when matching global or profile-scoped env vars are present.
+3. Create `/workspace/config/thor.json` (on the host: `docker-volumes/workspace/config/thor.json`) from [`docs/examples/thor.json`](docs/examples/thor.json).
 
 4. Clone repos into the shared workspace:
 
@@ -71,23 +71,23 @@ curl http://localhost:8080/global/health
 
 Thor is an internal AI teammate for engineering and product work; it is not meant to mirror production infrastructure exactly. Each integration owns its own env vars, app/manifest setup, required permissions, and troubleshooting reasons.
 
-- **Slack** — [`docs/slack.md`](docs/slack.md). Events API intake, signing-secret verification, routing profiles for gated channels, per-channel repo override, app manifest.
+- **Slack** — [`docs/slack.md`](docs/slack.md). Events API intake, signing-secret verification, per-channel repo override, app manifest.
 - **GitHub App** — [`docs/github.md`](docs/github.md). Webhook intake, App permissions and event subscriptions, installation IDs, bot commit identity, CI wake gate.
 - **Daytona sandboxes** — [`docs/daytona.md`](docs/daytona.md). On-demand cloud sandboxes for project builds/tests/lints. Custom snapshot publishing.
 - **Outbound HTTP(S) (mitmproxy)** — [`docs/feat/security-model.md`](docs/feat/security-model.md) Layer 1a. Routing path, built-in defaults (Atlassian/Slack/OpenAI), custom credential rules.
 
 Runtime integration paths:
 
-| Integration      | Path                                               | Auth                    | Notes                                                   |
-| ---------------- | -------------------------------------------------- | ----------------------- | ------------------------------------------------------- |
-| Git / GitHub CLI | `remote-cli /exec/git`, `/exec/gh`                 | GitHub App token        | Repo-scoped worktree edits                              |
-| Atlassian MCP    | `remote-cli /exec/mcp`                             | `ATLASSIAN_AUTH` header | Read + approved writes                                  |
-| PostHog MCP      | `remote-cli /exec/mcp`                             | API key                 | Read + approved writes                                  |
-| Grafana MCP      | `remote-cli /exec/mcp`                             | Service account token   | Logs and observability                                  |
-| Slack Web API    | `gateway` + `remote-cli` + OpenCode over mitmproxy | Bot token               | Mentions, progress, approval cards, thread reads/writes |
-| Langfuse         | `remote-cli /exec/langfuse`                        | API key pair            | Read-only trace queries                                 |
-| LaunchDarkly     | `remote-cli /exec/ldcli`                           | Access token            | Read-only feature flag inspection                       |
-| Metabase         | `remote-cli /exec/metabase`                        | API key                 | Read-only warehouse access                              |
+| Integration      | Path                                               | Auth                  | Notes                                                   |
+| ---------------- | -------------------------------------------------- | --------------------- | ------------------------------------------------------- |
+| Git / GitHub CLI | `remote-cli /exec/git`, `/exec/gh`                 | GitHub App token      | Repo-scoped worktree edits                              |
+| Atlassian MCP    | `remote-cli /exec/mcp`                             | Auth header           | Read + approved writes                                  |
+| PostHog MCP      | `remote-cli /exec/mcp`                             | API key               | Read + approved writes                                  |
+| Grafana MCP      | `remote-cli /exec/mcp`                             | Service account token | Logs and observability                                  |
+| Slack Web API    | `gateway` + `remote-cli` + OpenCode over mitmproxy | Bot token             | Mentions, progress, approval cards, thread reads/writes |
+| Langfuse         | `remote-cli /exec/langfuse`                        | API key pair          | Read-only trace queries                                 |
+| LaunchDarkly     | `remote-cli /exec/ldcli`                           | Access token          | Read-only feature flag inspection                       |
+| Metabase         | `remote-cli /exec/metabase`                        | API key               | Read-only warehouse access                              |
 
 Common usage patterns:
 
