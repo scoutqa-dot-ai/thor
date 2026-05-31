@@ -1047,7 +1047,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           let latestSessionError: string | undefined;
           let latestSessionErrorSeq: number | undefined;
           let latestSessionErrorAt: number | undefined;
-          let finished = false;
           let sawParentMessagePart = false;
           let latestAssistantMessage:
             | { id: string; finish: string | undefined; tokenTotal: number | undefined }
@@ -1107,7 +1106,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
                 if (next === "timeout") {
                   terminalError = latestSessionError;
-                  finished = true;
                   break;
                 }
                 if (next.done) {
@@ -1289,7 +1287,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                     );
                   }
                   terminalError = latestSessionError;
-                  finished = true;
                   break;
                 }
               }
@@ -1297,10 +1294,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
               await iterator.return?.();
               subscription.close();
             }
-          }
-
-          if (!finished && latestSessionError) {
-            terminalError = latestSessionError;
           }
 
           const durationMs = Date.now() - promptStart;
