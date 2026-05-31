@@ -1043,7 +1043,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           let seq = 0;
           const collectedTextParts: string[] = [];
           const collectedToolCalls: Array<{ tool: string; state: string }> = [];
-          let lastMessageId: string | undefined;
           let terminalError: string | undefined;
           let latestSessionError: string | undefined;
           let latestSessionErrorSeq: number | undefined;
@@ -1188,7 +1187,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                     if (textPart.text.trim().length > 0) {
                       messageIdsWithAssistantOutput.add(textPart.messageID);
                     }
-                    lastMessageId = textPart.messageID;
                   } else if (part.type === "tool") {
                     const toolPart = part as ToolPart;
                     emitTaskDelegateProgress(toolPart);
@@ -1240,10 +1238,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                       emitToolProgress(toolPart, status);
                       emitMemoryEventsFromToolPart(toolPart, emit);
                     }
-                    lastMessageId = toolPart.messageID;
-                  } else if (part.type === "step-finish") {
-                    const stepFinish = part as StepFinishPart;
-                    lastMessageId = stepFinish.messageID;
                   }
                 } else if (event.type === "session.error") {
                   const errorProps = event.properties;
@@ -1335,7 +1329,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             ...(terminalError ? { error: terminalError } : {}),
             response: collectedTextParts.join("\n\n"),
             toolCalls: collectedToolCalls,
-            messageId: lastMessageId,
             durationMs,
           });
           await progressChain;
