@@ -130,6 +130,18 @@ describe("remote-cli docker endpoint", () => {
     expect(execCommandStreamMock).not.toHaveBeenCalled();
   });
 
+  it("rejects non-string args with a precise policy error", async () => {
+    const response = await postJson("/exec/docker", {
+      args: ["ps", 123],
+    });
+    const body = (await response.json()) as { stderr: string; exitCode: number };
+
+    expect(response.status).toBe(400);
+    expect(body.stderr).toContain("args must be a non-empty string array");
+    expect(body.exitCode).toBe(1);
+    expect(execCommandStreamMock).not.toHaveBeenCalled();
+  });
+
   it("safe NDJSON writer no-ops after end or destroy and swallows write errors", () => {
     const write = vi.fn();
     const writer = createSafeNdjsonWriter({
