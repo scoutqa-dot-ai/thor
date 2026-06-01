@@ -1,6 +1,7 @@
 import { APPROVAL_TOOL_NAMES } from "./approval-events.ts";
+import { envBaseUrl } from "./env.ts";
 
-export const PROXY_NAMES = ["atlassian", "grafana", "posthog"] as const;
+export const PROXY_NAMES = ["atlassian", "grafana", "langfuse", "posthog"] as const;
 
 export type ProxyName = (typeof PROXY_NAMES)[number];
 
@@ -91,11 +92,31 @@ const POSTHOG_ALLOW = [
 ];
 const POSTHOG_APPROVE = ["create-feature-flag"];
 
+const LANGFUSE_ALLOW = [
+  "listObservations",
+  "getObservation",
+  "getObservationFieldSchema",
+  "getObservationFilterSchema",
+  "getObservationFilterValues",
+  "queryMetrics",
+  "getMetricsSchema",
+  "listScores",
+  "getScore",
+  "listScoreConfigs",
+  "getScoreConfig",
+];
+const LANGFUSE_APPROVE: string[] = [];
+
 // Tool policy stays global per integration (profiles only re-route credentials),
 // so the approve inventory is the union of the per-upstream approve lists. Assert
 // at load time that it matches the typed approval events; a drift means an
 // approved write tool has no disclaimer-compatible schema (or vice versa).
-const APPROVED_PROXY_TOOLS = [...ATLASSIAN_APPROVE, ...GRAFANA_APPROVE, ...POSTHOG_APPROVE].sort();
+const APPROVED_PROXY_TOOLS = [
+  ...ATLASSIAN_APPROVE,
+  ...GRAFANA_APPROVE,
+  ...LANGFUSE_APPROVE,
+  ...POSTHOG_APPROVE,
+].sort();
 const typedApprovalTools = [...APPROVAL_TOOL_NAMES].sort();
 
 if (
@@ -108,8 +129,8 @@ if (
 }
 
 function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
-  const value = env[name];
-  return value && value.trim() ? value : undefined;
+  const value = env[name]?.trim();
+  return value ? value : undefined;
 }
 
 function scopedEnv(
@@ -165,6 +186,42 @@ export function resolveProxyConfig(
       approve: POSTHOG_APPROVE,
       target: {
         key: targetKey(name, profile, apiKey.scope),
+        name,
+        ...(profile && { profile }),
+      },
+    };
+  }
+
+  if (name === "langfuse") {
+    const scopedPublic = profile ? envValue(env, `LANGFUSE_PUBLIC_KEY_${profile}`) : undefined;
+    const scopedSecret = profile ? envValue(env, `LANGFUSE_SECRET_KEY_${profile}`) : undefined;
+    const scopedBaseUrl = profile ? envValue(env, `LANGFUSE_BASE_URL_${profile}`) : undefined;
+    const anyScoped = Boolean(scopedPublic || scopedSecret || scopedBaseUrl);
+    const useScoped = Boolean(scopedPublic && scopedSecret && scopedBaseUrl);
+    if (profile && anyScoped && !useScoped) {
+      const missing = [
+        !scopedPublic ? `LANGFUSE_PUBLIC_KEY_${profile}` : undefined,
+        !scopedSecret ? `LANGFUSE_SECRET_KEY_${profile}` : undefined,
+        !scopedBaseUrl ? `LANGFUSE_BASE_URL_${profile}` : undefined,
+      ].filter(Boolean);
+      throw new Error(
+        `partial langfuse profile bundle for "${profile}": missing ${missing.join(", ")}. Set LANGFUSE_PUBLIC_KEY_${profile}, LANGFUSE_SECRET_KEY_${profile}, and LANGFUSE_BASE_URL_${profile} together, or none of them.`,
+      );
+    }
+    const baseUrlVar = useScoped ? `LANGFUSE_BASE_URL_${profile}` : "LANGFUSE_BASE_URL";
+    const publicKey = useScoped ? scopedPublic : envValue(env, "LANGFUSE_PUBLIC_KEY");
+    const secretKey = useScoped ? scopedSecret : envValue(env, "LANGFUSE_SECRET_KEY");
+    if (!publicKey || !secretKey || !envValue(env, baseUrlVar)) return undefined;
+    const token = Buffer.from(`${publicKey}:${secretKey}`).toString("base64");
+    return {
+      upstream: {
+        url: `${envBaseUrl(env, baseUrlVar)}/api/public/mcp`,
+        headers: { Authorization: `Basic ${token}` },
+      },
+      allow: LANGFUSE_ALLOW,
+      approve: LANGFUSE_APPROVE,
+      target: {
+        key: targetKey(name, profile, useScoped ? "profile" : "global"),
         name,
         ...(profile && { profile }),
       },
