@@ -1,0 +1,23 @@
+scripts/test-e2e.sh
+  a831e36b94fc8ca4 515
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "47e6a4b20dcd662a941d18173787c24ff66c7e49",
+  "prompts": {
+    "a831e36b94fc8ca4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "162f6ea5-638a-400c-8cc6-f8f6cf08945d",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
