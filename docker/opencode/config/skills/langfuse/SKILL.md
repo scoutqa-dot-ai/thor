@@ -1,6 +1,6 @@
 ---
 name: langfuse
-description: Query and analyze Langfuse observability data (traces, observations, metrics) via CLI for debugging LLM behavior, cost, and user activity.
+description: Query and analyze Langfuse observability data (observations, metrics, scores, prompts, models) via the mcp CLI for debugging LLM behavior, cost, and user activity.
 ---
 
 ## When to use
@@ -8,109 +8,81 @@ description: Query and analyze Langfuse observability data (traces, observations
 Use this skill when:
 
 - The user asks to debug LLM/agent behavior
-- Investigating traces, sessions, or observations in Langfuse
+- Investigating traces, spans, generations, or sessions in Langfuse
 - Analyzing cost, usage, or model performance
 - Looking up activity for a specific user
 - Exploring tool calls, agent steps, or execution flows
+- Reviewing evaluation scores or prompt definitions
 
 ---
 
 ## Overview
 
-This skill provides **read-only access** to Langfuse via CLI:
+Langfuse is a **read-only** MCP upstream, reached through the `mcp` CLI like any
+other upstream. It appears in `mcp` only when this session's profile resolves
+Langfuse credentials.
 
 ```bash
-langfuse api <resource> <action> [options]
+mcp                                      # list upstreams available to this session
+mcp langfuse                             # list Langfuse tools
+mcp langfuse <tool> --help               # show a tool's description + input schema
+mcp langfuse <tool> '{"arg":"value"}'    # call a tool (single JSON argument)
 ```
 
-Available resources:
+Always start with `mcp langfuse` and `--help` to read the live tool list and each
+tool's exact input schema, then call with a single JSON argument.
 
-- `traces`
-- `sessions`
-- `observations`
-- `metrics`
-- `models`
-- `prompts`
+Read-only tools available include:
 
-Inspect schema:
+- Observations: `listObservations`, `getObservation`, and the schema/filter
+  helpers (`getObservationFieldSchema`, `getObservationFilterSchema`,
+  `getObservationFilterValues`)
+- Metrics: `queryMetrics`, `getMetricsSchema`
+- Scores: `listScores`, `getScore`, `listScoreConfigs`, `getScoreConfig`
+- Models: `listModels`, `getModel`
+- Prompts: `listPrompts`, `getPrompt`, `getPromptUnresolved`
+- Health/media: `getHealth`, `getMedia`
 
-```bash
-langfuse api __schema
-```
+Write/mutation tools are not exposed (Langfuse access is read-only); they will not
+appear in the listing.
 
 ---
 
 ## Core workflows
 
-### 1. List recent traces (default entry point)
+### 1. List recent observations (default entry point)
 
-Always narrow by timestamp to avoid errors.
-
-```bash
-langfuse api traces list \
-  --limit 10 \
-  --from-timestamp "<ISO_TIMESTAMP>" \
-  --fields "core,metrics"
-```
-
----
-
-### 2. Get full trace details
+Narrow by time and limit to keep payloads small. Inspect the live schema first:
 
 ```bash
-langfuse api traces get <trace-id>
+mcp langfuse getObservationFilterSchema --help
+mcp langfuse listObservations '{"limit":10,"type":"GENERATION"}'
 ```
 
-Use this after identifying a relevant trace.
-
----
-
-### 3. Filter traces by user
+### 2. Get full observation details
 
 ```bash
-langfuse api traces list \
-  --limit 50 \
-  --from-timestamp "<ISO_TIMESTAMP>" \
-  --filter '[{"type":"string","column":"userId","operator":"=","value":"<uuid>"}]' \
-  --fields "core,metrics"
+mcp langfuse getObservation '{"observationId":"<id>"}'
 ```
 
----
+### 3. Filter by user
 
-### 4. Inspect observations (tool calls, LLM steps)
+Use `getObservationFilterValues` / `getObservationFilterSchema` to discover the
+exact filter shape, then pass it to `listObservations`.
+
+### 4. Analyze metrics (cost, usage)
 
 ```bash
-langfuse api observations list \
-  --user-id "<uuid>" \
-  --type "TOOL" \
-  --fields "core,basic"
+mcp langfuse getMetricsSchema '{}'
+mcp langfuse queryMetrics '{"view":"observations","metrics":[{"measure":"totalCost","aggregation":"sum"}],"dimensions":[{"field":"name"}]}'
 ```
 
-Pagination with `--cursor "<cursor-from-body.meta.cursor>"`
-
----
-
-### 5. Analyze metrics (cost, usage)
+### 5. Inspect prompts and models
 
 ```bash
-langfuse api metrics list \
-  --query '<JSON_QUERY>'
-```
-
-Example (cost by model):
-
-```json
-{
-  "view": "observations",
-  "dimensions": [{ "field": "name" }],
-  "metrics": [
-    { "measure": "totalCost", "aggregation": "sum" },
-    { "measure": "count", "aggregation": "sum" }
-  ],
-  "fromTimestamp": "...",
-  "toTimestamp": "...",
-  "config": { "row_limit": 20 }
-}
+mcp langfuse listPrompts '{}'
+mcp langfuse getPrompt '{"name":"<prompt-name>"}'
+mcp langfuse listModels '{}'
 ```
 
 ---
@@ -118,65 +90,19 @@ Example (cost by model):
 ## Execution strategy
 
 1. Identify the goal:
-   - Debug issue → traces → trace detail → observations
-   - User activity → filter by userId
+   - Debug issue → observations → observation detail
+   - User activity → filter observations by user
    - Cost analysis → metrics query
-
-2. Start small:
-   - Use `--limit`
-   - Use `--fields`
-
-3. Expand only when needed:
-   - Fetch full trace
-   - Traverse observations
-
-4. Handle pagination:
-   - Traces → `--page`
-   - Observations → `--cursor`
-
----
-
-## Response format
-
-All responses follow:
-
-```json
-{
-  "ok": true,
-  "status": 200,
-  "body": {
-    "data": [...],
-    "meta": {
-      "totalItems": 100,
-      "totalPages": 10,
-      "page": 1
-    }
-  }
-}
-```
-
-Access:
-
-- Data → `body.data[]`
-- Pagination → `body.meta`
+2. Start small: pass `limit` and narrow filters.
+3. Read each tool's `--help` schema before constructing arguments — argument
+   shapes are defined by the live MCP server, not by this skill.
+4. Expand only when needed.
 
 ---
 
 ## Constraints
 
-- Avoid large payloads:
-  - Use `--limit`
-  - Use `--fields`
-- Do not assume pagination type (resource-dependent)
-
----
-
-## Gotchas
-
-- Pagination differs:
-  - `traces` → page-based (`--page`)
-  - `observations` → cursor-based (`meta.cursor`)
-- Trace IDs must be full 32-character values
-- Observation types include:
-  - `GENERATION`, `TOOL`, `AGENT`, `SPAN`, `EVENT`, etc.
-- Only `startTimeMonth` is valid for time aggregation in metrics
+- Read-only: no create/update/delete tools are available.
+- Avoid large payloads — pass `limit` and the narrowest filters.
+- Argument names and pagination shapes come from each tool's live input schema;
+  confirm them with `mcp langfuse <tool> --help` rather than assuming.

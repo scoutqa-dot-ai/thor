@@ -7,11 +7,13 @@ const FULL_ENV: NodeJS.ProcessEnv = {
   POSTHOG_API_KEY: "phc_global",
   GRAFANA_URL: "https://grafana.global",
   GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
+  LANGFUSE_PUBLIC_KEY: "pk-global",
+  LANGFUSE_SECRET_KEY: "sk-global",
 };
 
 describe("proxy registry", () => {
   it("exposes the expected hardcoded upstreams", () => {
-    expect(PROXY_NAMES).toEqual(["atlassian", "grafana", "posthog"]);
+    expect(PROXY_NAMES).toEqual(["atlassian", "grafana", "langfuse", "posthog"]);
     expect(resolveProxyConfig("atlassian", undefined, FULL_ENV)?.upstream.url).toBe(
       "https://mcp.atlassian.com/v1/mcp",
     );
@@ -72,6 +74,50 @@ describe("proxy registry", () => {
 
     expect(() => resolveProxyConfig("grafana", "QA", env)).toThrow(
       /partial grafana profile bundle/i,
+    );
+  });
+
+  it("resolves langfuse as a base64 basic-auth bundle with host default and profile fallback", () => {
+    const env = {
+      LANGFUSE_PUBLIC_KEY: "pk-global",
+      LANGFUSE_SECRET_KEY: "sk-global",
+      LANGFUSE_PUBLIC_KEY_LABS: "pk-labs",
+      LANGFUSE_SECRET_KEY_LABS: "sk-labs",
+      LANGFUSE_HOST_LABS: "https://eu.cloud.langfuse.com/",
+    } as NodeJS.ProcessEnv;
+
+    // Global: default host, base64(pk:sk).
+    const globalCfg = resolveProxyConfig("langfuse", undefined, env);
+    expect(globalCfg?.upstream.url).toBe("https://us.cloud.langfuse.com/api/public/mcp");
+    expect(globalCfg?.upstream.headers).toEqual({
+      Authorization: `Basic ${Buffer.from("pk-global:sk-global").toString("base64")}`,
+    });
+    expect(globalCfg?.allow).toContain("listObservations");
+    expect(globalCfg?.approve).toEqual([]);
+
+    // Profile-scoped bundle: scoped host (trailing slash trimmed) + scoped creds.
+    expect(resolveProxyConfig("langfuse", "LABS", env)?.upstream).toEqual({
+      url: "https://eu.cloud.langfuse.com/api/public/mcp",
+      headers: { Authorization: `Basic ${Buffer.from("pk-labs:sk-labs").toString("base64")}` },
+    });
+
+    // Unscoped profile falls back to global creds + default host.
+    expect(resolveProxyConfig("langfuse", "QA", env)?.upstream.url).toBe(
+      "https://us.cloud.langfuse.com/api/public/mcp",
+    );
+    expect(getAvailableProxyNames("QA", env)).toEqual(["langfuse"]);
+  });
+
+  it("fails hard on a partial langfuse profile bundle instead of silently using globals", () => {
+    const env = {
+      LANGFUSE_PUBLIC_KEY: "pk-global",
+      LANGFUSE_SECRET_KEY: "sk-global",
+      LANGFUSE_PUBLIC_KEY_QA: "pk-qa",
+      // LANGFUSE_SECRET_KEY_QA intentionally missing.
+    } as NodeJS.ProcessEnv;
+
+    expect(() => resolveProxyConfig("langfuse", "QA", env)).toThrow(
+      /partial langfuse profile bundle/i,
     );
   });
 

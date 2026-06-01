@@ -1,6 +1,6 @@
 import { APPROVAL_TOOL_NAMES } from "./approval-events.ts";
 
-export const PROXY_NAMES = ["atlassian", "grafana", "posthog"] as const;
+export const PROXY_NAMES = ["atlassian", "grafana", "langfuse", "posthog"] as const;
 
 export type ProxyName = (typeof PROXY_NAMES)[number];
 
@@ -91,11 +91,44 @@ const POSTHOG_ALLOW = [
 ];
 const POSTHOG_APPROVE = ["create-feature-flag"];
 
+// Read-only inventory of Langfuse's hosted MCP server. Write/delete tools
+// (prompt/dataset/score/annotation/comment/model mutations) are deliberately
+// omitted so they classify as hidden — Langfuse stays read-only, matching the
+// CLI integration it replaces.
+const LANGFUSE_ALLOW = [
+  "listObservations",
+  "getObservation",
+  "getObservationFieldSchema",
+  "getObservationFilterSchema",
+  "getObservationFilterValues",
+  "queryMetrics",
+  "getMetricsSchema",
+  "listModels",
+  "getModel",
+  "listScores",
+  "getScore",
+  "listScoreConfigs",
+  "getScoreConfig",
+  "getPrompt",
+  "getPromptUnresolved",
+  "listPrompts",
+  "getHealth",
+  "getMedia",
+];
+const LANGFUSE_APPROVE: string[] = [];
+
+const DEFAULT_LANGFUSE_HOST = "https://us.cloud.langfuse.com";
+
 // Tool policy stays global per integration (profiles only re-route credentials),
 // so the approve inventory is the union of the per-upstream approve lists. Assert
 // at load time that it matches the typed approval events; a drift means an
 // approved write tool has no disclaimer-compatible schema (or vice versa).
-const APPROVED_PROXY_TOOLS = [...ATLASSIAN_APPROVE, ...GRAFANA_APPROVE, ...POSTHOG_APPROVE].sort();
+const APPROVED_PROXY_TOOLS = [
+  ...ATLASSIAN_APPROVE,
+  ...GRAFANA_APPROVE,
+  ...LANGFUSE_APPROVE,
+  ...POSTHOG_APPROVE,
+].sort();
 const typedApprovalTools = [...APPROVAL_TOOL_NAMES].sort();
 
 if (
@@ -165,6 +198,44 @@ export function resolveProxyConfig(
       approve: POSTHOG_APPROVE,
       target: {
         key: targetKey(name, profile, apiKey.scope),
+        name,
+        ...(profile && { profile }),
+      },
+    };
+  }
+
+  if (name === "langfuse") {
+    // pk+sk are a required bundle; host is the optional third member. A
+    // partially-scoped bundle fails hard rather than mixing profile and global
+    // credentials (mirrors Grafana, profile-routing Decision 12).
+    const scopedPublic = profile ? envValue(env, `LANGFUSE_PUBLIC_KEY_${profile}`) : undefined;
+    const scopedSecret = profile ? envValue(env, `LANGFUSE_SECRET_KEY_${profile}`) : undefined;
+    const scopedHost = profile ? envValue(env, `LANGFUSE_HOST_${profile}`) : undefined;
+    const anyScoped = Boolean(scopedPublic || scopedSecret || scopedHost);
+    const useScoped = Boolean(scopedPublic && scopedSecret);
+    if (profile && anyScoped && !useScoped) {
+      const missing = [
+        !scopedPublic ? `LANGFUSE_PUBLIC_KEY_${profile}` : undefined,
+        !scopedSecret ? `LANGFUSE_SECRET_KEY_${profile}` : undefined,
+      ].filter(Boolean);
+      throw new Error(
+        `partial langfuse profile bundle for "${profile}": missing ${missing.join(", ")}. Set the whole bundle or none of it.`,
+      );
+    }
+    const publicKey = useScoped ? scopedPublic : envValue(env, "LANGFUSE_PUBLIC_KEY");
+    const secretKey = useScoped ? scopedSecret : envValue(env, "LANGFUSE_SECRET_KEY");
+    if (!publicKey || !secretKey) return undefined;
+    const host = (useScoped ? scopedHost : envValue(env, "LANGFUSE_HOST")) ?? DEFAULT_LANGFUSE_HOST;
+    const token = Buffer.from(`${publicKey}:${secretKey}`).toString("base64");
+    return {
+      upstream: {
+        url: `${host.replace(/\/+$/, "")}/api/public/mcp`,
+        headers: { Authorization: `Basic ${token}` },
+      },
+      allow: LANGFUSE_ALLOW,
+      approve: LANGFUSE_APPROVE,
+      target: {
+        key: targetKey(name, profile, useScoped ? "profile" : "global"),
         name,
         ...(profile && { profile }),
       },
