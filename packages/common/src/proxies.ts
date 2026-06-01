@@ -161,6 +161,14 @@ function targetKey(name: ProxyName, profile: string | undefined, scope: "profile
   return `${name}:${profile && scope === "profile" ? profile : "GLOBAL"}`;
 }
 
+// Trim trailing slashes with a linear scan rather than a `/\/+$/` regex, which
+// CodeQL flags as polynomial ReDoS on inputs with many repeated slashes.
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end -= 1;
+  return value.slice(0, end);
+}
+
 export function resolveProxyConfig(
   name: string,
   profile?: string,
@@ -229,7 +237,7 @@ export function resolveProxyConfig(
     const token = Buffer.from(`${publicKey}:${secretKey}`).toString("base64");
     return {
       upstream: {
-        url: `${host.replace(/\/+$/, "")}/api/public/mcp`,
+        url: `${trimTrailingSlashes(host)}/api/public/mcp`,
         headers: { Authorization: `Basic ${token}` },
       },
       allow: LANGFUSE_ALLOW,
