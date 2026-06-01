@@ -512,7 +512,7 @@ else
       "response: ${mcp_context_raw:0:300}; set THOR_E2E_TEST_HELPERS=1 for the runner service"
   else
     assert 'true' "mcp integrations: runner created Thor session context"
-    mcp_e2e_upstreams=(atlassian grafana posthog)
+    mcp_e2e_upstreams=(atlassian grafana langfuse posthog)
     for mcp_upstream in "${mcp_e2e_upstreams[@]}"; do
       mcp_tools_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/mcp" \
         -H 'Content-Type: application/json' \
