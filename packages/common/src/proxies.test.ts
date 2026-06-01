@@ -8,7 +8,7 @@ const FULL_ENV: NodeJS.ProcessEnv = {
   GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
   LANGFUSE_PUBLIC_KEY: "pk-global",
   LANGFUSE_SECRET_KEY: "sk-global",
-  LANGFUSE_HOST: "https://us.cloud.langfuse.com",
+  LANGFUSE_BASE_URL: "https://us.cloud.langfuse.com",
 };
 
 describe("proxy registry", () => {
@@ -80,7 +80,7 @@ describe("proxy registry", () => {
     const env = {
       LANGFUSE_PUBLIC_KEY: "pk-global",
       LANGFUSE_SECRET_KEY: "sk-global",
-      LANGFUSE_HOST: "https://eu.cloud.langfuse.com/",
+      LANGFUSE_BASE_URL: "https://eu.cloud.langfuse.com/",
       LANGFUSE_PUBLIC_KEY_LABS: "pk-labs",
       LANGFUSE_SECRET_KEY_LABS: "sk-labs",
     } as NodeJS.ProcessEnv;
@@ -108,7 +108,50 @@ describe("proxy registry", () => {
     expect(getAvailableProxyNames("QA", env)).toEqual(["langfuse"]);
   });
 
-  it("disables langfuse when the required LANGFUSE_HOST is unset", () => {
+  it("routes a profile to its per-profile host override and keeps it a distinct target", () => {
+    const env = {
+      LANGFUSE_PUBLIC_KEY: "pk-global",
+      LANGFUSE_SECRET_KEY: "sk-global",
+      LANGFUSE_BASE_URL: "https://us.cloud.langfuse.com",
+      LANGFUSE_BASE_URL_EU: "https://cloud.langfuse.com",
+      LANGFUSE_PUBLIC_KEY_EU: "pk-eu",
+      LANGFUSE_SECRET_KEY_EU: "sk-eu",
+    } as NodeJS.ProcessEnv;
+
+    // EU creds reach the EU host, not the global US host.
+    const eu = resolveProxyConfig("langfuse", "EU", env);
+    expect(eu?.upstream).toEqual({
+      url: "https://cloud.langfuse.com/api/public/mcp",
+      headers: { Authorization: `Basic ${Buffer.from("pk-eu:sk-eu").toString("base64")}` },
+    });
+
+    // A profile that overrides only the host (global creds) still routes to the
+    // override and stays a distinct target so it does not pool with the global US one.
+    const hostOnly = resolveProxyConfig("langfuse", "EU", {
+      LANGFUSE_PUBLIC_KEY: "pk-global",
+      LANGFUSE_SECRET_KEY: "sk-global",
+      LANGFUSE_BASE_URL: "https://us.cloud.langfuse.com",
+      LANGFUSE_BASE_URL_EU: "https://cloud.langfuse.com",
+    } as NodeJS.ProcessEnv);
+    expect(hostOnly?.upstream.url).toBe("https://cloud.langfuse.com/api/public/mcp");
+    expect(hostOnly?.upstream.headers?.Authorization).toBe(
+      `Basic ${Buffer.from("pk-global:sk-global").toString("base64")}`,
+    );
+    expect(hostOnly?.target.key).toBe("langfuse:EU");
+  });
+
+  it("fails fast when a per-profile host override is not https", () => {
+    const env = {
+      LANGFUSE_PUBLIC_KEY: "pk-global",
+      LANGFUSE_SECRET_KEY: "sk-global",
+      LANGFUSE_BASE_URL: "https://us.cloud.langfuse.com",
+      LANGFUSE_BASE_URL_EU: "http://insecure.eu.langfuse.internal",
+    } as NodeJS.ProcessEnv;
+
+    expect(() => resolveProxyConfig("langfuse", "EU", env)).toThrow(/must use https/i);
+  });
+
+  it("disables langfuse when the required LANGFUSE_BASE_URL is unset", () => {
     const env = {
       LANGFUSE_PUBLIC_KEY: "pk-global",
       LANGFUSE_SECRET_KEY: "sk-global",
@@ -118,21 +161,21 @@ describe("proxy registry", () => {
     expect(getAvailableProxyNames(undefined, env)).not.toContain("langfuse");
   });
 
-  it("fails fast when LANGFUSE_HOST is not an https URL", () => {
+  it("fails fast when LANGFUSE_BASE_URL is not an https URL", () => {
     const httpEnv = {
       LANGFUSE_PUBLIC_KEY: "pk-global",
       LANGFUSE_SECRET_KEY: "sk-global",
-      LANGFUSE_HOST: "http://insecure.langfuse.internal",
+      LANGFUSE_BASE_URL: "http://insecure.langfuse.internal",
     } as NodeJS.ProcessEnv;
     expect(() => resolveProxyConfig("langfuse", undefined, httpEnv)).toThrow(/must use https/i);
 
     const malformedEnv = {
       LANGFUSE_PUBLIC_KEY: "pk-global",
       LANGFUSE_SECRET_KEY: "sk-global",
-      LANGFUSE_HOST: "not-a-url",
+      LANGFUSE_BASE_URL: "not-a-url",
     } as NodeJS.ProcessEnv;
     expect(() => resolveProxyConfig("langfuse", undefined, malformedEnv)).toThrow(
-      /invalid LANGFUSE_HOST/i,
+      /invalid LANGFUSE_BASE_URL/i,
     );
   });
 
@@ -140,7 +183,7 @@ describe("proxy registry", () => {
     const env = {
       LANGFUSE_PUBLIC_KEY: "pk-global",
       LANGFUSE_SECRET_KEY: "sk-global",
-      LANGFUSE_HOST: "https://us.cloud.langfuse.com",
+      LANGFUSE_BASE_URL: "https://us.cloud.langfuse.com",
       LANGFUSE_PUBLIC_KEY_QA: "pk-qa",
       // LANGFUSE_SECRET_KEY_QA intentionally missing.
     } as NodeJS.ProcessEnv;

@@ -9,7 +9,7 @@ reachable through the existing `mcp` CLI. This supersedes `2026041502_langfuse-c
 
 The CLI integration predates profile-based integration routing
 (`2026052701_profile-based-integration-routing.md`). It resolves a single global
-`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST` triple and cannot route
+`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` triple and cannot route
 credentials per Thor profile. Langfuse now ships a hosted remote MCP server
 (`{host}/api/public/mcp`, streamable HTTP, `Authorization: Basic base64(pk:sk)`), so we can
 drop the bespoke CLI surface and reuse the `resolveProxyConfig` credential-routing path that
@@ -23,8 +23,8 @@ already gives PostHog/Grafana profile suffixes (`*_<PROFILE>` → global fallbac
   (preserves the prior CLI's read-only posture).
 - Resolve the Langfuse upstream in `resolveProxyConfig`: `LANGFUSE_PUBLIC_KEY` +
   `LANGFUSE_SECRET_KEY` are a strict credential bundle (profile suffix first, global fallback,
-  fail hard on a half-scoped pair per profile-routing Decision 12); `LANGFUSE_HOST` is a single
-  required global env var, validated https, fail fast if unsafe, no default.
+  fail hard on a half-scoped pair per profile-routing Decision 12); `LANGFUSE_BASE_URL` is
+  profile-scoped independently (suffix first, global fallback), validated https, fail fast if unsafe, no default.
 - Remove the CLI surface end to end: `/exec/langfuse` endpoint, `validateLangfuseArgs` +
   tests, the `langfuse` OpenCode wrapper, the `langfuse-cli` npm global, the `langfuse: 4`
   `KNOWN_BINS` entry, and the standalone-binary skill instructions.
@@ -51,13 +51,16 @@ For a profile `LABS`, the **credential bundle** is `pk+sk` (strict — both or n
 - If exactly one of the `*_LABS` pk/sk pair is set → throw (no silent mix of profile and
   global credential scopes).
 
-The **host** is a single required global env var — `LANGFUSE_HOST`. There is no per-profile
-host override and no default: if `LANGFUSE_HOST` is unset, Langfuse is disabled (same as
-missing credentials). The host **must be https**, since the key pair is sent as HTTP Basic;
-a non-https or malformed `LANGFUSE_HOST` **throws** (fail fast) rather than connecting and
-leaking credentials in cleartext.
+The **host** is `LANGFUSE_BASE_URL`, profile-scoped independently of the credential bundle:
+`LANGFUSE_BASE_URL_LABS` if set, else the global `LANGFUSE_BASE_URL`. This lets a region/instance
+profile route its scoped keys at the matching host. There is no default: if no host resolves,
+Langfuse is disabled (same as missing credentials). A profile-scoped host counts as a distinct
+upstream target even on global credentials, so it does not pool with the global one. The host
+**must be https** (whichever scope resolves), since the key pair is sent as HTTP Basic; a
+non-https or malformed value **throws** (fail fast) rather than connecting and leaking
+credentials in cleartext.
 
-Upstream: `url = ${LANGFUSE_HOST}/api/public/mcp`, `headers.Authorization = Basic base64(pk:sk)`.
+Upstream: `url = ${host}/api/public/mcp`, `headers.Authorization = Basic base64(pk:sk)`.
 
 ## Allow list (read-only)
 
@@ -102,13 +105,13 @@ live endpoint if names diverge.
 
 ## Decision log
 
-| #   | Decision                                                                         | Rationale                                                                                                                                                                                                                                                                                                                                                                                            | Rejected                                                                                                                                     |
-| --- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Langfuse becomes an MCP proxy, not a profile-aware CLI                           | Hosted remote MCP exists; reusing `resolveProxyConfig` gets profile routing for free and deletes the bespoke `/exec/langfuse` + policy surface                                                                                                                                                                                                                                                       | Keep the CLI and bolt profile-suffix env resolution onto `/exec/langfuse`                                                                    |
-| 2   | Keep langfuse read-only (allow reads, no approve list)                           | Matches the prior CLI's hard read-only policy; no write use case today; keeps `APPROVAL_TOOL_NAMES` assertion unchanged                                                                                                                                                                                                                                                                              | Expose write tools behind approvals now                                                                                                      |
-| 3   | Treat pk+sk as a strict credential bundle (both profile-scoped, or both global)  | A half-scoped credential pair is almost certainly an operator typo; failing hard beats silently mixing a profile pk with a global sk                                                                                                                                                                                                                                                                 | Single-var soft fallback per key (could mix profile pk with global sk)                                                                       |
-| 5   | `LANGFUSE_HOST` is a single required global env var, validated https, no default | Simplest model — one endpoint per deployment, set explicitly. Avoids the "which host pairs with scoped creds" ambiguity entirely. Fail fast on a non-https/malformed host because the key pair is sent as HTTP Basic and would otherwise leak in cleartext. Unset host → integration disabled. Supersedes the per-profile host / `us` default / fallback designs explored during the PR #178 review. | `us` default; per-profile `LANGFUSE_HOST_<PROFILE>`; scoped→global→default fallback (all add ambiguity for a single per-deployment endpoint) |
-| 4   | Insert `langfuse` alphabetically in `PROXY_NAMES`                                | Stable, predictable ordering in listings/health; only the one order assertion in `proxies.test.ts` changes                                                                                                                                                                                                                                                                                           | Append at end                                                                                                                                |
+| #   | Decision                                                                                                         | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Rejected                                                                                                                                                                                                            |
+| --- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Langfuse becomes an MCP proxy, not a profile-aware CLI                                                           | Hosted remote MCP exists; reusing `resolveProxyConfig` gets profile routing for free and deletes the bespoke `/exec/langfuse` + policy surface                                                                                                                                                                                                                                                                                                                                                                                                                              | Keep the CLI and bolt profile-suffix env resolution onto `/exec/langfuse`                                                                                                                                           |
+| 2   | Keep langfuse read-only (allow reads, no approve list)                                                           | Matches the prior CLI's hard read-only policy; no write use case today; keeps `APPROVAL_TOOL_NAMES` assertion unchanged                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Expose write tools behind approvals now                                                                                                                                                                             |
+| 3   | Treat pk+sk as a strict credential bundle (both profile-scoped, or both global)                                  | A half-scoped credential pair is almost certainly an operator typo; failing hard beats silently mixing a profile pk with a global sk                                                                                                                                                                                                                                                                                                                                                                                                                                        | Single-var soft fallback per key (could mix profile pk with global sk)                                                                                                                                              |
+| 5   | `LANGFUSE_BASE_URL` is profile-scoped independently (suffix first, global fallback), validated https, no default | Reverses the earlier global-only stance: a region/instance profile (e.g. `EU`) must route its scoped keys at the matching host, or it silently sends EU keys to the global US host and fails to authenticate. Scoping the host independently — not folding it into the pk/sk bundle — preserves the supported "scoped creds, shared global host" pattern. A profile-scoped host counts as a distinct upstream target even on global creds so it does not pool with the global one. https validation and the no-default/fail-fast posture apply to whichever scope resolves. | Global-only host (cannot route regional profiles; the EU example was dead config); folding host into the pk/sk bundle (would break scoped-creds-on-global-host); `us` default / multi-step fallback (add ambiguity) |
+| 4   | Insert `langfuse` alphabetically in `PROXY_NAMES`                                                                | Stable, predictable ordering in listings/health; only the one order assertion in `proxies.test.ts` changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Append at end                                                                                                                                                                                                       |
 
 ## Phases
 
@@ -160,7 +163,8 @@ once green.
 
 ## Migration notes
 
-- `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST` keep their names and global
-  meaning; profile variants add `_<PROFILE>` suffixes. No flag day.
+- `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` keep their names and global meaning; the host var
+  is renamed `LANGFUSE_HOST` → `LANGFUSE_BASE_URL` (a deployment that set only `LANGFUSE_HOST`
+  must rename it). All three are profile-scoped via `_<PROFILE>` suffixes.
 - Existing prompts/skills that shelled out to `langfuse api ...` must switch to
   `mcp langfuse <tool>`; the standalone binary is removed.

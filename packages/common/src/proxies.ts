@@ -168,11 +168,11 @@ function assertSafeLangfuseHost(host: string): void {
   try {
     url = new URL(host);
   } catch {
-    throw new Error(`invalid LANGFUSE_HOST "${host}": must be an absolute https URL`);
+    throw new Error(`invalid LANGFUSE_BASE_URL "${host}": must be an absolute https URL`);
   }
   if (url.protocol !== "https:") {
     throw new Error(
-      `unsafe LANGFUSE_HOST "${host}": must use https so the API key pair is not sent in cleartext`,
+      `unsafe LANGFUSE_BASE_URL "${host}": must use https so the API key pair is not sent in cleartext`,
     );
   }
 }
@@ -224,8 +224,9 @@ export function resolveProxyConfig(
     // pk+sk are a strict credential bundle: both profile-scoped, or fall back to
     // the global pair. A half-scoped pair (one set, one missing) is almost
     // certainly an operator typo, so fail hard rather than mixing credential
-    // scopes (profile-routing Decision 12). The host is a single required global
-    // env var (no per-profile override, no default) and must be https.
+    // scopes (profile-routing Decision 12). The host (base URL) is profile-scoped
+    // independently with a global fallback, so a region/instance profile can route
+    // its credentials at the matching host; it must be https either way.
     const scopedPublic = profile ? envValue(env, `LANGFUSE_PUBLIC_KEY_${profile}`) : undefined;
     const scopedSecret = profile ? envValue(env, `LANGFUSE_SECRET_KEY_${profile}`) : undefined;
     const anyScopedCred = Boolean(scopedPublic || scopedSecret);
@@ -240,10 +241,14 @@ export function resolveProxyConfig(
     }
     const publicKey = useScoped ? scopedPublic : envValue(env, "LANGFUSE_PUBLIC_KEY");
     const secretKey = useScoped ? scopedSecret : envValue(env, "LANGFUSE_SECRET_KEY");
-    const host = envValue(env, "LANGFUSE_HOST");
+    const resolvedHost = scopedEnv(env, "LANGFUSE_BASE_URL", profile);
+    const host = resolvedHost.value;
     if (!publicKey || !secretKey || !host) return undefined;
     assertSafeLangfuseHost(host);
     const token = Buffer.from(`${publicKey}:${secretKey}`).toString("base64");
+    // A profile-scoped host is a distinct upstream even on global creds, so the
+    // target key must reflect either a scoped credential pair or a scoped host.
+    const scope = useScoped || resolvedHost.scope === "profile" ? "profile" : "global";
     return {
       upstream: {
         url: `${trimTrailingSlashes(host)}/api/public/mcp`,
@@ -252,7 +257,7 @@ export function resolveProxyConfig(
       allow: LANGFUSE_ALLOW,
       approve: LANGFUSE_APPROVE,
       target: {
-        key: targetKey(name, profile, useScoped ? "profile" : "global"),
+        key: targetKey(name, profile, scope),
         name,
         ...(profile && { profile }),
       },
