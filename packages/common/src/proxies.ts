@@ -117,8 +117,6 @@ const LANGFUSE_ALLOW = [
 ];
 const LANGFUSE_APPROVE: string[] = [];
 
-const DEFAULT_LANGFUSE_HOST = "https://us.cloud.langfuse.com";
-
 // Tool policy stays global per integration (profiles only re-route credentials),
 // so the approve inventory is the union of the per-upstream approve lists. Assert
 // at load time that it matches the typed approval events; a drift means an
@@ -169,6 +167,23 @@ function trimTrailingSlashes(value: string): string {
   return value.slice(0, end);
 }
 
+// The Langfuse MCP key pair is sent as HTTP Basic, so the host must be https or
+// the credentials would travel in cleartext. Fail fast on a malformed or
+// non-https host rather than connecting unsafely.
+function assertSafeLangfuseHost(host: string): void {
+  let url: URL;
+  try {
+    url = new URL(host);
+  } catch {
+    throw new Error(`invalid LANGFUSE_HOST "${host}": must be an absolute https URL`);
+  }
+  if (url.protocol !== "https:") {
+    throw new Error(
+      `unsafe LANGFUSE_HOST "${host}": must use https so the API key pair is not sent in cleartext`,
+    );
+  }
+}
+
 export function resolveProxyConfig(
   name: string,
   profile?: string,
@@ -216,11 +231,8 @@ export function resolveProxyConfig(
     // pk+sk are a strict credential bundle: both profile-scoped, or fall back to
     // the global pair. A half-scoped pair (one set, one missing) is almost
     // certainly an operator typo, so fail hard rather than mixing credential
-    // scopes (profile-routing Decision 12). The host is an endpoint, not a
-    // credential — typically one region shared across an org's projects — so it
-    // resolves independently: profile suffix, then global, then the default. A
-    // profile-scoped host is only honored alongside scoped credentials so the
-    // GLOBAL target key never maps to more than one URL.
+    // scopes (profile-routing Decision 12). The host is a single required global
+    // env var (no per-profile override, no default) and must be https.
     const scopedPublic = profile ? envValue(env, `LANGFUSE_PUBLIC_KEY_${profile}`) : undefined;
     const scopedSecret = profile ? envValue(env, `LANGFUSE_SECRET_KEY_${profile}`) : undefined;
     const anyScopedCred = Boolean(scopedPublic || scopedSecret);
@@ -235,9 +247,9 @@ export function resolveProxyConfig(
     }
     const publicKey = useScoped ? scopedPublic : envValue(env, "LANGFUSE_PUBLIC_KEY");
     const secretKey = useScoped ? scopedSecret : envValue(env, "LANGFUSE_SECRET_KEY");
-    if (!publicKey || !secretKey) return undefined;
-    const scopedHost = useScoped && profile ? envValue(env, `LANGFUSE_HOST_${profile}`) : undefined;
-    const host = scopedHost ?? envValue(env, "LANGFUSE_HOST") ?? DEFAULT_LANGFUSE_HOST;
+    const host = envValue(env, "LANGFUSE_HOST");
+    if (!publicKey || !secretKey || !host) return undefined;
+    assertSafeLangfuseHost(host);
     const token = Buffer.from(`${publicKey}:${secretKey}`).toString("base64");
     return {
       upstream: {
