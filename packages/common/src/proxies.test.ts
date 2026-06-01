@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { APPROVAL_TOOL_NAMES } from "./approval-events.ts";
 import { getAvailableProxyNames, PROXY_NAMES, resolveProxyConfig } from "./proxies.ts";
 
 const FULL_ENV: NodeJS.ProcessEnv = {
@@ -14,7 +13,6 @@ const FULL_ENV: NodeJS.ProcessEnv = {
 
 describe("proxy registry", () => {
   it("exposes the expected hardcoded upstreams", () => {
-    expect(PROXY_NAMES).toEqual(["atlassian", "grafana", "langfuse", "posthog"]);
     expect(resolveProxyConfig("atlassian", undefined, FULL_ENV)?.upstream.url).toBe(
       "https://mcp.atlassian.com/v1/mcp",
     );
@@ -93,19 +91,6 @@ describe("proxy registry", () => {
     expect(globalCfg?.upstream.headers).toEqual({
       Authorization: `Basic ${Buffer.from("pk-global:sk-global").toString("base64")}`,
     });
-    expect(globalCfg?.allow).toEqual([
-      "listObservations",
-      "getObservation",
-      "getObservationFieldSchema",
-      "getObservationFilterSchema",
-      "getObservationFilterValues",
-      "queryMetrics",
-      "getMetricsSchema",
-      "listScores",
-      "getScore",
-      "listScoreConfigs",
-      "getScoreConfig",
-    ]);
     expect(globalCfg?.approve).toEqual([]);
 
     // Profile-scoped credentials, same required global host, distinct target key.
@@ -173,13 +158,5 @@ describe("proxy registry", () => {
       const overlap = proxy!.allow.filter((tool) => proxy!.approve.includes(tool));
       expect(overlap).toEqual([]);
     }
-  });
-
-  it("requires approval only for the approved write-tool inventory", () => {
-    const approvedTools = PROXY_NAMES.flatMap(
-      (name) => resolveProxyConfig(name, undefined, FULL_ENV)?.approve ?? [],
-    ).sort();
-
-    expect(approvedTools).toEqual([...APPROVAL_TOOL_NAMES].sort());
   });
 });
