@@ -93,7 +93,19 @@ describe("proxy registry", () => {
     expect(globalCfg?.upstream.headers).toEqual({
       Authorization: `Basic ${Buffer.from("pk-global:sk-global").toString("base64")}`,
     });
-    expect(globalCfg?.allow).toContain("listObservations");
+    expect(globalCfg?.allow).toEqual([
+      "listObservations",
+      "getObservation",
+      "getObservationFieldSchema",
+      "getObservationFilterSchema",
+      "getObservationFilterValues",
+      "queryMetrics",
+      "getMetricsSchema",
+      "listScores",
+      "getScore",
+      "listScoreConfigs",
+      "getScoreConfig",
+    ]);
     expect(globalCfg?.approve).toEqual([]);
 
     // Profile-scoped credentials, same required global host, distinct target key.

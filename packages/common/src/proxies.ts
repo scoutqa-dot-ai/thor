@@ -91,10 +91,10 @@ const POSTHOG_ALLOW = [
 ];
 const POSTHOG_APPROVE = ["create-feature-flag"];
 
-// Read-only inventory of Langfuse's hosted MCP server. Write/delete tools
-// (prompt/dataset/score/annotation/comment/model mutations) are deliberately
-// omitted so they classify as hidden — Langfuse stays read-only, matching the
-// CLI integration it replaces.
+// Read-only inventory of Langfuse's hosted MCP server for the observability
+// surface Thor uses. Write/delete tools (prompt/dataset/score/annotation/comment/
+// model mutations) are deliberately omitted so they classify as hidden — Langfuse
+// stays read-only, matching the CLI integration it replaces.
 const LANGFUSE_ALLOW = [
   "listObservations",
   "getObservation",
@@ -103,17 +103,10 @@ const LANGFUSE_ALLOW = [
   "getObservationFilterValues",
   "queryMetrics",
   "getMetricsSchema",
-  "listModels",
-  "getModel",
   "listScores",
   "getScore",
   "listScoreConfigs",
   "getScoreConfig",
-  "getPrompt",
-  "getPromptUnresolved",
-  "listPrompts",
-  "getHealth",
-  "getMedia",
 ];
 const LANGFUSE_APPROVE: string[] = [];
 

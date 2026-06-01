@@ -1,6 +1,6 @@
 ---
 name: langfuse
-description: Query and analyze Langfuse observability data (observations, metrics, scores, prompts, models) via the mcp CLI for debugging LLM behavior, cost, and user activity.
+description: Query and analyze Langfuse observability data (observations, metrics, scores) via the mcp CLI for debugging LLM behavior, cost, and user activity.
 ---
 
 ## When to use
@@ -13,7 +13,7 @@ Use this skill when:
 - Analyzing cost, usage, or model performance
 - Looking up activity for a specific user
 - Exploring tool calls, agent steps, or execution flows
-- Reviewing evaluation scores or prompt definitions
+- Reviewing evaluation scores
 
 ---
 
@@ -40,9 +40,6 @@ Read-only tools available include:
   `getObservationFilterValues`)
 - Metrics: `queryMetrics`, `getMetricsSchema`
 - Scores: `listScores`, `getScore`, `listScoreConfigs`, `getScoreConfig`
-- Models: `listModels`, `getModel`
-- Prompts: `listPrompts`, `getPrompt`, `getPromptUnresolved`
-- Health/media: `getHealth`, `getMedia`
 
 Write/mutation tools are not exposed (Langfuse access is read-only); they will not
 appear in the listing.
@@ -77,12 +74,11 @@ mcp langfuse getMetricsSchema '{}'
 mcp langfuse queryMetrics '{"view":"observations","metrics":[{"measure":"totalCost","aggregation":"sum"}],"dimensions":[{"field":"name"}]}'
 ```
 
-### 5. Inspect prompts and models
+### 5. Review scores and score configs
 
 ```bash
-mcp langfuse listPrompts '{}'
-mcp langfuse getPrompt '{"name":"<prompt-name>"}'
-mcp langfuse listModels '{}'
+mcp langfuse listScores '{"limit":10}'
+mcp langfuse listScoreConfigs '{}'
 ```
 
 ---

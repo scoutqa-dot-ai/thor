@@ -63,11 +63,11 @@ Upstream: `url = ${LANGFUSE_HOST}/api/public/mcp`, `headers.Authorization = Basi
 
 Observability/debugging read tools only: `listObservations`, `getObservation`,
 `getObservationFieldSchema`, `getObservationFilterSchema`, `getObservationFilterValues`,
-`queryMetrics`, `getMetricsSchema`, `listModels`, `getModel`, `listScores`, `getScore`,
-`listScoreConfigs`, `getScoreConfig`, `getPrompt`, `getPromptUnresolved`, `listPrompts`,
-`getHealth`, `getMedia`. Write/delete tools (create/update/upsert/delete on prompts,
-datasets, scores, annotation queues, comments, models) are intentionally excluded → they
-classify as `hidden` and are unreachable.
+`queryMetrics`, `getMetricsSchema`, `listScores`, `getScore`, `listScoreConfigs`,
+`getScoreConfig`. Write/delete tools (create/update/upsert/delete on prompts, datasets,
+scores, annotation queues, comments, models) are intentionally excluded → they classify as
+`hidden` and are unreachable. Read-only model, prompt, health, and media tools are also left
+out because they are not part of Thor's normal Langfuse debugging surface.
 
 ### Parity with the old CLI policy
 
@@ -79,20 +79,22 @@ a 1:1 port** — it preserves the read-only posture but the tool coverage differ
 | ---------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `observations`   | `listObservations`, `getObservation` (+ field/filter schema helpers) | covered                                                                                                        |
 | `metrics`        | `queryMetrics`, `getMetricsSchema`                                   | covered                                                                                                        |
-| `models`         | `listModels`, `getModel`                                             | covered                                                                                                        |
-| `prompts`        | `listPrompts`, `getPrompt`, `getPromptUnresolved`                    | covered                                                                                                        |
+| `models`         | _(none)_                                                             | omitted from the normal MCP surface because current Thor use cases do not rely on it                           |
+| `prompts`        | _(none)_                                                             | omitted from the normal MCP surface because current Thor use cases do not rely on it                           |
 | `__schema`       | `--help` + `getObservationFilterSchema` / `getMetricsSchema`         | per-tool schema, not a single resource                                                                         |
 | `traces`         | _(none)_                                                             | the hosted MCP server exposes no dedicated trace tool; query traces via `listObservations` (carries `traceId`) |
 | `sessions`       | _(none)_                                                             | likewise no session tool; filter observations by `sessionId`                                                   |
 
-Two deliberate differences from the old scope:
+Deliberate differences from the old scope:
 
-- **Wider:** `listScores` / `getScore` / `listScoreConfigs` / `getScoreConfig`, `getHealth`,
-  and `getMedia` are exposed even though the old CLI never had them. They are read-only and
-  fit the observability/debugging goal. Trim them if a strict old-scope equivalent is wanted.
+- **Wider:** `listScores` / `getScore` / `listScoreConfigs` / `getScoreConfig` are exposed
+  even though the old CLI never had them. They are read-only and fit the
+  observability/debugging goal.
 - **Narrower (upstream-driven, not a policy choice):** the old `traces` and `sessions`
   resources have no dedicated MCP tool, so that exact capability is not represented;
   `listObservations` filtering is the replacement path.
+- **Narrower (policy choice):** read-only model, prompt, health, and media MCP tools are not
+  exposed until there is a demonstrated Thor use case.
 
 Tool names are transcribed from the published MCP reference and are cross-checked at connect
 time by `validatePolicy` (warns in production, throws in dev on drift). Verify against the
