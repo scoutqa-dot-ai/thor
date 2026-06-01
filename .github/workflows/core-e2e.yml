@@ -116,6 +116,9 @@ jobs:
             printf 'GRAFANA_URL=%s\n' "$GRAFANA_URL"
             printf 'GRAFANA_SERVICE_ACCOUNT_TOKEN=%s\n' "$GRAFANA_SERVICE_ACCOUNT_TOKEN"
             printf 'GRAFANA_ORG_ID=%s\n' "${GRAFANA_ORG_ID:-1}"
+            printf 'LANGFUSE_PUBLIC_KEY=%s\n' "$LANGFUSE_PUBLIC_KEY"
+            printf 'LANGFUSE_SECRET_KEY=%s\n' "$LANGFUSE_SECRET_KEY"
+            printf 'LANGFUSE_BASE_URL=%s\n' "$LANGFUSE_BASE_URL"
           } > .env
 
           export CRON_SECRET="$(openssl rand -hex 32)"
