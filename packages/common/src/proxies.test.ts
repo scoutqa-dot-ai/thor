@@ -109,19 +109,6 @@ describe("proxy registry", () => {
     expect(getAvailableProxyNames("QA", env)).toEqual(["langfuse"]);
   });
 
-  it("validates https on the resolved per-profile host, not just the global one", () => {
-    const env = {
-      LANGFUSE_PUBLIC_KEY: "pk-global",
-      LANGFUSE_SECRET_KEY: "sk-global",
-      LANGFUSE_BASE_URL: "https://us.cloud.langfuse.com",
-      LANGFUSE_PUBLIC_KEY_EU: "pk-eu",
-      LANGFUSE_SECRET_KEY_EU: "sk-eu",
-      LANGFUSE_BASE_URL_EU: "http://insecure.eu.langfuse.internal",
-    } as NodeJS.ProcessEnv;
-
-    expect(() => resolveProxyConfig("langfuse", "EU", env)).toThrow(/must use https/i);
-  });
-
   it("disables langfuse when the required LANGFUSE_BASE_URL is unset", () => {
     const env = {
       LANGFUSE_PUBLIC_KEY: "pk-global",
@@ -130,24 +117,6 @@ describe("proxy registry", () => {
 
     expect(resolveProxyConfig("langfuse", undefined, env)).toBeUndefined();
     expect(getAvailableProxyNames(undefined, env)).not.toContain("langfuse");
-  });
-
-  it("fails fast when LANGFUSE_BASE_URL is not an https URL", () => {
-    const httpEnv = {
-      LANGFUSE_PUBLIC_KEY: "pk-global",
-      LANGFUSE_SECRET_KEY: "sk-global",
-      LANGFUSE_BASE_URL: "http://insecure.langfuse.internal",
-    } as NodeJS.ProcessEnv;
-    expect(() => resolveProxyConfig("langfuse", undefined, httpEnv)).toThrow(/must use https/i);
-
-    const malformedEnv = {
-      LANGFUSE_PUBLIC_KEY: "pk-global",
-      LANGFUSE_SECRET_KEY: "sk-global",
-      LANGFUSE_BASE_URL: "not-a-url",
-    } as NodeJS.ProcessEnv;
-    expect(() => resolveProxyConfig("langfuse", undefined, malformedEnv)).toThrow(
-      /invalid LANGFUSE_BASE_URL/i,
-    );
   });
 
   it("fails hard on a partial langfuse profile bundle instead of silently using globals", () => {

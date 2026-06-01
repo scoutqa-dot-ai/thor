@@ -104,7 +104,7 @@ Approval creation **fails closed** when remote-cli cannot resolve or post to the
 
 ### Command policy
 
-`git`, `gh`, `metabase`, `ldcli`, and `scoutqa` go through remote-cli `POST /exec/*` endpoints with server-side allowlists per command. Langfuse moved from a dedicated `/exec/langfuse` command to the MCP proxy (`/exec/mcp`, upstream `langfuse`), so its tool policy and read-only allowlist live in the MCP layer above. The OpenCode-side wrappers are convenience — bypassing them by calling raw binaries inside OpenCode does not exist as a path because credentials live in remote-cli.
+`git`, `gh`, `metabase`, `ldcli`, and `scoutqa` go through remote-cli `POST /exec/*` endpoints with server-side allowlists per command. The OpenCode-side wrappers are convenience — bypassing them by calling raw binaries inside OpenCode does not exist as a path because credentials live in remote-cli.
 
 ### Credential handling
 

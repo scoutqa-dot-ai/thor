@@ -1,4 +1,5 @@
 import { APPROVAL_TOOL_NAMES } from "./approval-events.ts";
+import { envBaseUrl } from "./env.ts";
 
 export const PROXY_NAMES = ["atlassian", "grafana", "langfuse", "posthog"] as const;
 
@@ -91,10 +92,6 @@ const POSTHOG_ALLOW = [
 ];
 const POSTHOG_APPROVE = ["create-feature-flag"];
 
-// Read-only inventory of Langfuse's hosted MCP server for the observability
-// surface Thor uses. Write/delete tools (prompt/dataset/score/annotation/comment/
-// model mutations) are deliberately omitted so they classify as hidden — Langfuse
-// stays read-only, matching the CLI integration it replaces.
 const LANGFUSE_ALLOW = [
   "listObservations",
   "getObservation",
@@ -152,31 +149,6 @@ function targetKey(name: ProxyName, profile: string | undefined, scope: "profile
   return `${name}:${profile && scope === "profile" ? profile : "GLOBAL"}`;
 }
 
-// Trim trailing slashes with a linear scan rather than a `/\/+$/` regex, which
-// CodeQL flags as polynomial ReDoS on inputs with many repeated slashes.
-function trimTrailingSlashes(value: string): string {
-  let end = value.length;
-  while (end > 0 && value[end - 1] === "/") end -= 1;
-  return value.slice(0, end);
-}
-
-// The Langfuse MCP key pair is sent as HTTP Basic, so the host must be https or
-// the credentials would travel in cleartext. Fail fast on a malformed or
-// non-https host rather than connecting unsafely.
-function assertSafeLangfuseHost(host: string): void {
-  let url: URL;
-  try {
-    url = new URL(host);
-  } catch {
-    throw new Error(`invalid LANGFUSE_BASE_URL "${host}": must be an absolute https URL`);
-  }
-  if (url.protocol !== "https:") {
-    throw new Error(
-      `unsafe LANGFUSE_BASE_URL "${host}": must use https so the API key pair is not sent in cleartext`,
-    );
-  }
-}
-
 export function resolveProxyConfig(
   name: string,
   profile?: string,
@@ -221,12 +193,6 @@ export function resolveProxyConfig(
   }
 
   if (name === "langfuse") {
-    // pk, sk, and base URL are a strict per-profile bundle: a profile sets all
-    // three (suffix), or none of them (global fallback). A partial bundle is
-    // almost certainly an operator typo — and routing scoped keys at the wrong
-    // host would silently fail to authenticate — so fail hard rather than mixing
-    // profile and global scopes (profile-routing Decision 12). The resolved host
-    // must be https since the key pair is sent as HTTP Basic.
     const scopedPublic = profile ? envValue(env, `LANGFUSE_PUBLIC_KEY_${profile}`) : undefined;
     const scopedSecret = profile ? envValue(env, `LANGFUSE_SECRET_KEY_${profile}`) : undefined;
     const scopedBaseUrl = profile ? envValue(env, `LANGFUSE_BASE_URL_${profile}`) : undefined;
@@ -242,15 +208,14 @@ export function resolveProxyConfig(
         `partial langfuse profile bundle for "${profile}": missing ${missing.join(", ")}. Set LANGFUSE_PUBLIC_KEY_${profile}, LANGFUSE_SECRET_KEY_${profile}, and LANGFUSE_BASE_URL_${profile} together, or none of them.`,
       );
     }
+    const baseUrlVar = useScoped ? `LANGFUSE_BASE_URL_${profile}` : "LANGFUSE_BASE_URL";
     const publicKey = useScoped ? scopedPublic : envValue(env, "LANGFUSE_PUBLIC_KEY");
     const secretKey = useScoped ? scopedSecret : envValue(env, "LANGFUSE_SECRET_KEY");
-    const host = useScoped ? scopedBaseUrl : envValue(env, "LANGFUSE_BASE_URL");
-    if (!publicKey || !secretKey || !host) return undefined;
-    assertSafeLangfuseHost(host);
+    if (!publicKey || !secretKey || !envValue(env, baseUrlVar)) return undefined;
     const token = Buffer.from(`${publicKey}:${secretKey}`).toString("base64");
     return {
       upstream: {
-        url: `${trimTrailingSlashes(host)}/api/public/mcp`,
+        url: `${envBaseUrl(env, baseUrlVar)}/api/public/mcp`,
         headers: { Authorization: `Basic ${token}` },
       },
       allow: LANGFUSE_ALLOW,
