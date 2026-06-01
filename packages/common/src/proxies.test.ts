@@ -76,75 +76,46 @@ describe("proxy registry", () => {
     );
   });
 
-  it("resolves langfuse as a base64 basic-auth bundle on the required global host", () => {
+  it("resolves langfuse as a per-profile base64 basic-auth bundle with its own host", () => {
     const env = {
       LANGFUSE_PUBLIC_KEY: "pk-global",
       LANGFUSE_SECRET_KEY: "sk-global",
-      LANGFUSE_BASE_URL: "https://eu.cloud.langfuse.com/",
-      LANGFUSE_PUBLIC_KEY_LABS: "pk-labs",
-      LANGFUSE_SECRET_KEY_LABS: "sk-labs",
+      LANGFUSE_BASE_URL: "https://us.cloud.langfuse.com/",
+      LANGFUSE_PUBLIC_KEY_EU: "pk-eu",
+      LANGFUSE_SECRET_KEY_EU: "sk-eu",
+      LANGFUSE_BASE_URL_EU: "https://cloud.langfuse.com",
     } as NodeJS.ProcessEnv;
 
     // Global creds, host trailing slash trimmed, base64(pk:sk).
     const globalCfg = resolveProxyConfig("langfuse", undefined, env);
-    expect(globalCfg?.upstream.url).toBe("https://eu.cloud.langfuse.com/api/public/mcp");
+    expect(globalCfg?.upstream.url).toBe("https://us.cloud.langfuse.com/api/public/mcp");
     expect(globalCfg?.upstream.headers).toEqual({
       Authorization: `Basic ${Buffer.from("pk-global:sk-global").toString("base64")}`,
     });
     expect(globalCfg?.approve).toEqual([]);
 
-    // Profile-scoped credentials, same required global host, distinct target key.
-    const labs = resolveProxyConfig("langfuse", "LABS", env);
-    expect(labs?.upstream).toEqual({
-      url: "https://eu.cloud.langfuse.com/api/public/mcp",
-      headers: { Authorization: `Basic ${Buffer.from("pk-labs:sk-labs").toString("base64")}` },
-    });
-    expect(labs?.target.key).toBe("langfuse:LABS");
-
-    // Unscoped profile falls back to global creds on the same host.
-    expect(resolveProxyConfig("langfuse", "QA", env)?.upstream.url).toBe(
-      "https://eu.cloud.langfuse.com/api/public/mcp",
-    );
-    expect(getAvailableProxyNames("QA", env)).toEqual(["langfuse"]);
-  });
-
-  it("routes a profile to its per-profile host override and keeps it a distinct target", () => {
-    const env = {
-      LANGFUSE_PUBLIC_KEY: "pk-global",
-      LANGFUSE_SECRET_KEY: "sk-global",
-      LANGFUSE_BASE_URL: "https://us.cloud.langfuse.com",
-      LANGFUSE_BASE_URL_EU: "https://cloud.langfuse.com",
-      LANGFUSE_PUBLIC_KEY_EU: "pk-eu",
-      LANGFUSE_SECRET_KEY_EU: "sk-eu",
-    } as NodeJS.ProcessEnv;
-
-    // EU creds reach the EU host, not the global US host.
+    // A full profile bundle routes its own creds at its own host, distinct target key.
     const eu = resolveProxyConfig("langfuse", "EU", env);
     expect(eu?.upstream).toEqual({
       url: "https://cloud.langfuse.com/api/public/mcp",
       headers: { Authorization: `Basic ${Buffer.from("pk-eu:sk-eu").toString("base64")}` },
     });
+    expect(eu?.target.key).toBe("langfuse:EU");
 
-    // A profile that overrides only the host (global creds) still routes to the
-    // override and stays a distinct target so it does not pool with the global US one.
-    const hostOnly = resolveProxyConfig("langfuse", "EU", {
-      LANGFUSE_PUBLIC_KEY: "pk-global",
-      LANGFUSE_SECRET_KEY: "sk-global",
-      LANGFUSE_BASE_URL: "https://us.cloud.langfuse.com",
-      LANGFUSE_BASE_URL_EU: "https://cloud.langfuse.com",
-    } as NodeJS.ProcessEnv);
-    expect(hostOnly?.upstream.url).toBe("https://cloud.langfuse.com/api/public/mcp");
-    expect(hostOnly?.upstream.headers?.Authorization).toBe(
-      `Basic ${Buffer.from("pk-global:sk-global").toString("base64")}`,
+    // A profile with no scoped vars at all falls back to the whole global bundle.
+    expect(resolveProxyConfig("langfuse", "QA", env)?.upstream.url).toBe(
+      "https://us.cloud.langfuse.com/api/public/mcp",
     );
-    expect(hostOnly?.target.key).toBe("langfuse:EU");
+    expect(getAvailableProxyNames("QA", env)).toEqual(["langfuse"]);
   });
 
-  it("fails fast when a per-profile host override is not https", () => {
+  it("validates https on the resolved per-profile host, not just the global one", () => {
     const env = {
       LANGFUSE_PUBLIC_KEY: "pk-global",
       LANGFUSE_SECRET_KEY: "sk-global",
       LANGFUSE_BASE_URL: "https://us.cloud.langfuse.com",
+      LANGFUSE_PUBLIC_KEY_EU: "pk-eu",
+      LANGFUSE_SECRET_KEY_EU: "sk-eu",
       LANGFUSE_BASE_URL_EU: "http://insecure.eu.langfuse.internal",
     } as NodeJS.ProcessEnv;
 
@@ -179,18 +150,21 @@ describe("proxy registry", () => {
     );
   });
 
-  it("fails hard on a partial langfuse profile credential bundle instead of silently using globals", () => {
+  it("fails hard on a partial langfuse profile bundle instead of silently using globals", () => {
     const env = {
       LANGFUSE_PUBLIC_KEY: "pk-global",
       LANGFUSE_SECRET_KEY: "sk-global",
       LANGFUSE_BASE_URL: "https://us.cloud.langfuse.com",
       LANGFUSE_PUBLIC_KEY_QA: "pk-qa",
-      // LANGFUSE_SECRET_KEY_QA intentionally missing.
+      // LANGFUSE_SECRET_KEY_QA and LANGFUSE_BASE_URL_QA intentionally missing.
     } as NodeJS.ProcessEnv;
 
+    // The error names both missing legs so the whole 3-var bundle is required.
     expect(() => resolveProxyConfig("langfuse", "QA", env)).toThrow(
-      /partial langfuse profile credential bundle/i,
+      /partial langfuse profile bundle/i,
     );
+    expect(() => resolveProxyConfig("langfuse", "QA", env)).toThrow(/LANGFUSE_SECRET_KEY_QA/);
+    expect(() => resolveProxyConfig("langfuse", "QA", env)).toThrow(/LANGFUSE_BASE_URL_QA/);
   });
 
   it("keeps allow and approve sets disjoint for each upstream", () => {

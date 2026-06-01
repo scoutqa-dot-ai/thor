@@ -221,34 +221,33 @@ export function resolveProxyConfig(
   }
 
   if (name === "langfuse") {
-    // pk+sk are a strict credential bundle: both profile-scoped, or fall back to
-    // the global pair. A half-scoped pair (one set, one missing) is almost
-    // certainly an operator typo, so fail hard rather than mixing credential
-    // scopes (profile-routing Decision 12). The host (base URL) is profile-scoped
-    // independently with a global fallback, so a region/instance profile can route
-    // its credentials at the matching host; it must be https either way.
+    // pk, sk, and base URL are a strict per-profile bundle: a profile sets all
+    // three (suffix), or none of them (global fallback). A partial bundle is
+    // almost certainly an operator typo — and routing scoped keys at the wrong
+    // host would silently fail to authenticate — so fail hard rather than mixing
+    // profile and global scopes (profile-routing Decision 12). The resolved host
+    // must be https since the key pair is sent as HTTP Basic.
     const scopedPublic = profile ? envValue(env, `LANGFUSE_PUBLIC_KEY_${profile}`) : undefined;
     const scopedSecret = profile ? envValue(env, `LANGFUSE_SECRET_KEY_${profile}`) : undefined;
-    const anyScopedCred = Boolean(scopedPublic || scopedSecret);
-    const useScoped = Boolean(scopedPublic && scopedSecret);
-    if (profile && anyScopedCred && !useScoped) {
-      const missing = scopedPublic
-        ? `LANGFUSE_SECRET_KEY_${profile}`
-        : `LANGFUSE_PUBLIC_KEY_${profile}`;
+    const scopedBaseUrl = profile ? envValue(env, `LANGFUSE_BASE_URL_${profile}`) : undefined;
+    const anyScoped = Boolean(scopedPublic || scopedSecret || scopedBaseUrl);
+    const useScoped = Boolean(scopedPublic && scopedSecret && scopedBaseUrl);
+    if (profile && anyScoped && !useScoped) {
+      const missing = [
+        !scopedPublic ? `LANGFUSE_PUBLIC_KEY_${profile}` : undefined,
+        !scopedSecret ? `LANGFUSE_SECRET_KEY_${profile}` : undefined,
+        !scopedBaseUrl ? `LANGFUSE_BASE_URL_${profile}` : undefined,
+      ].filter(Boolean);
       throw new Error(
-        `partial langfuse profile credential bundle for "${profile}": missing ${missing}. Set both LANGFUSE_PUBLIC_KEY_${profile} and LANGFUSE_SECRET_KEY_${profile}, or neither.`,
+        `partial langfuse profile bundle for "${profile}": missing ${missing.join(", ")}. Set LANGFUSE_PUBLIC_KEY_${profile}, LANGFUSE_SECRET_KEY_${profile}, and LANGFUSE_BASE_URL_${profile} together, or none of them.`,
       );
     }
     const publicKey = useScoped ? scopedPublic : envValue(env, "LANGFUSE_PUBLIC_KEY");
     const secretKey = useScoped ? scopedSecret : envValue(env, "LANGFUSE_SECRET_KEY");
-    const resolvedHost = scopedEnv(env, "LANGFUSE_BASE_URL", profile);
-    const host = resolvedHost.value;
+    const host = useScoped ? scopedBaseUrl : envValue(env, "LANGFUSE_BASE_URL");
     if (!publicKey || !secretKey || !host) return undefined;
     assertSafeLangfuseHost(host);
     const token = Buffer.from(`${publicKey}:${secretKey}`).toString("base64");
-    // A profile-scoped host is a distinct upstream even on global creds, so the
-    // target key must reflect either a scoped credential pair or a scoped host.
-    const scope = useScoped || resolvedHost.scope === "profile" ? "profile" : "global";
     return {
       upstream: {
         url: `${trimTrailingSlashes(host)}/api/public/mcp`,
@@ -257,7 +256,7 @@ export function resolveProxyConfig(
       allow: LANGFUSE_ALLOW,
       approve: LANGFUSE_APPROVE,
       target: {
-        key: targetKey(name, profile, scope),
+        key: targetKey(name, profile, useScoped ? "profile" : "global"),
         name,
         ...(profile && { profile }),
       },
