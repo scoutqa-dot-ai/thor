@@ -1,0 +1,31 @@
+.env.example
+  5afbbf084a1aea57 74-77,81-82
+packages/common/src/proxies.ts
+  5afbbf084a1aea57 170-186,234-235,250-252
+packages/common/src/proxies.test.ts
+  5afbbf084a1aea57 12,81,85,90,92,99-101,105,107,109,114,120-138,142,146
+README.md
+  5afbbf084a1aea57 115
+docs/plan/2026060101_langfuse-mcp.md
+  5afbbf084a1aea57 25-27,54-58,60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "73e20c4dab5dea2bcbbec5fa31124922a35b091c",
+  "prompts": {
+    "5afbbf084a1aea57": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f316a35f-82e3-4230-a5c6-38f16cdbee45",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 75,
+      "total_deletions": 54,
+      "accepted_lines": 72,
+      "overriden_lines": 0
+    }
+  }
+}
