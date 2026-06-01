@@ -1,0 +1,25 @@
+packages/common/src/proxies.ts
+  5afbbf084a1aea57 142-143
+docker/opencode/config/skills/langfuse/SKILL.md
+  5afbbf084a1aea57 11-12,33-34,56,97-98,108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "35c664dfe13483e0902bec767f1ee479075ed0e8",
+  "prompts": {
+    "5afbbf084a1aea57": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f316a35f-82e3-4230-a5c6-38f16cdbee45",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 11,
+      "accepted_lines": 10,
+      "overriden_lines": 0
+    }
+  }
+}
