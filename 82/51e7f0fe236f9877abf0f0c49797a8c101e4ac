@@ -1,0 +1,23 @@
+packages/common/src/proxies.ts
+  5afbbf084a1aea57 164-171,240
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "8251e7f0fe236f9877abf0f0c49797a8c101e4ac",
+  "prompts": {
+    "5afbbf084a1aea57": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f316a35f-82e3-4230-a5c6-38f16cdbee45",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 96,
+      "total_deletions": 1,
+      "accepted_lines": 96,
+      "overriden_lines": 0
+    }
+  }
+}
