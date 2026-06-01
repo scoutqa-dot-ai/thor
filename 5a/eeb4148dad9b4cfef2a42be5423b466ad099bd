@@ -1,0 +1,35 @@
+packages/common/src/proxies.ts
+  a831e36b94fc8ca4 171,175,227-229,244-245,249-251,260
+README.md
+  a831e36b94fc8ca4 115
+docs/plan/2026060101_langfuse-mcp.md
+  a831e36b94fc8ca4 12,26-27,54-60,63,113,166-168
+packages/common/src/proxies.test.ts
+  a831e36b94fc8ca4 11,83,111-154,164,168,175,178,186
+.github/workflows/sandbox-e2e.yml
+  a831e36b94fc8ca4 51-53
+.github/workflows/core-e2e.yml
+  a831e36b94fc8ca4 58-60
+.env.example
+  a831e36b94fc8ca4 3,69-70,75-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "5aeeb4148dad9b4cfef2a42be5423b466ad099bd",
+  "prompts": {
+    "a831e36b94fc8ca4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "162f6ea5-638a-400c-8cc6-f8f6cf08945d",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 108,
+      "total_deletions": 58,
+      "accepted_lines": 95,
+      "overriden_lines": 0
+    }
+  }
+}
