@@ -139,8 +139,8 @@ if (
 }
 
 function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
-  const value = env[name];
-  return value && value.trim() ? value : undefined;
+  const value = env[name]?.trim();
+  return value ? value : undefined;
 }
 
 function scopedEnv(

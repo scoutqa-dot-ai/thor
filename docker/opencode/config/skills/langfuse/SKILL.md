@@ -8,7 +8,8 @@ description: Query and analyze Langfuse observability data (observations, metric
 Use this skill when:
 
 - The user asks to debug LLM/agent behavior
-- Investigating traces, spans, generations, or sessions in Langfuse
+- Investigating observations (LLM generations, spans, tool calls) — traces and
+  sessions are queried as observations filtered by `traceId` / `sessionId`
 - Analyzing cost, usage, or model performance
 - Looking up activity for a specific user
 - Exploring tool calls, agent steps, or execution flows
@@ -25,12 +26,12 @@ Langfuse credentials.
 ```bash
 mcp                                      # list upstreams available to this session
 mcp langfuse                             # list Langfuse tools
-mcp langfuse <tool> --help               # show a tool's description + input schema
+mcp langfuse <tool>                      # show a tool's description + input schema
 mcp langfuse <tool> '{"arg":"value"}'    # call a tool (single JSON argument)
 ```
 
-Always start with `mcp langfuse` and `--help` to read the live tool list and each
-tool's exact input schema, then call with a single JSON argument.
+Always start with `mcp langfuse` to list tools, then `mcp langfuse <tool>` to read
+a tool's description and exact input schema, then call it with a single JSON argument.
 
 Read-only tools available include:
 
@@ -52,10 +53,9 @@ appear in the listing.
 
 ### 1. List recent observations (default entry point)
 
-Narrow by time and limit to keep payloads small. Inspect the live schema first:
+Keep payloads small with `limit` and filters:
 
 ```bash
-mcp langfuse getObservationFilterSchema --help
 mcp langfuse listObservations '{"limit":10,"type":"GENERATION"}'
 ```
 
@@ -94,8 +94,8 @@ mcp langfuse listModels '{}'
    - User activity → filter observations by user
    - Cost analysis → metrics query
 2. Start small: pass `limit` and narrow filters.
-3. Read each tool's `--help` schema before constructing arguments — argument
-   shapes are defined by the live MCP server, not by this skill.
+3. Read each tool's schema (run `mcp langfuse <tool>`) before constructing
+   arguments — argument shapes are defined by the live MCP server, not by this skill.
 4. Expand only when needed.
 
 ---
@@ -105,4 +105,4 @@ mcp langfuse listModels '{}'
 - Read-only: no create/update/delete tools are available.
 - Avoid large payloads — pass `limit` and the narrowest filters.
 - Argument names and pagination shapes come from each tool's live input schema;
-  confirm them with `mcp langfuse <tool> --help` rather than assuming.
+  confirm them by running `mcp langfuse <tool>` (prints the input schema) rather than assuming.
