@@ -108,6 +108,26 @@ describe("proxy registry", () => {
     expect(getAvailableProxyNames("QA", env)).toEqual(["langfuse"]);
   });
 
+  it("falls a scoped langfuse credential bundle back to the global host when no scoped host is set", () => {
+    const env = {
+      LANGFUSE_PUBLIC_KEY: "pk-global",
+      LANGFUSE_SECRET_KEY: "sk-global",
+      LANGFUSE_HOST: "https://eu.cloud.langfuse.com",
+      LANGFUSE_PUBLIC_KEY_QA: "pk-qa",
+      LANGFUSE_SECRET_KEY_QA: "sk-qa",
+      // No LANGFUSE_HOST_QA: the host is an endpoint, not a credential, so it
+      // inherits the global host rather than jumping to the us default.
+    } as NodeJS.ProcessEnv;
+
+    const cfg = resolveProxyConfig("langfuse", "QA", env);
+    expect(cfg?.upstream.url).toBe("https://eu.cloud.langfuse.com/api/public/mcp");
+    expect(cfg?.upstream.headers?.Authorization).toBe(
+      `Basic ${Buffer.from("pk-qa:sk-qa").toString("base64")}`,
+    );
+    // Scoped credentials still key a distinct upstream target.
+    expect(cfg?.target.key).toBe("langfuse:QA");
+  });
+
   it("fails hard on a partial langfuse profile bundle instead of silently using globals", () => {
     const env = {
       LANGFUSE_PUBLIC_KEY: "pk-global",
@@ -117,7 +137,7 @@ describe("proxy registry", () => {
     } as NodeJS.ProcessEnv;
 
     expect(() => resolveProxyConfig("langfuse", "QA", env)).toThrow(
-      /partial langfuse profile bundle/i,
+      /partial langfuse profile credential bundle/i,
     );
   });
 

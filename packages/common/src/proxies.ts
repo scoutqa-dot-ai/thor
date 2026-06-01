@@ -213,27 +213,31 @@ export function resolveProxyConfig(
   }
 
   if (name === "langfuse") {
-    // pk+sk are a required bundle; host is the optional third member. A
-    // partially-scoped bundle fails hard rather than mixing profile and global
-    // credentials (mirrors Grafana, profile-routing Decision 12).
+    // pk+sk are a strict credential bundle: both profile-scoped, or fall back to
+    // the global pair. A half-scoped pair (one set, one missing) is almost
+    // certainly an operator typo, so fail hard rather than mixing credential
+    // scopes (profile-routing Decision 12). The host is an endpoint, not a
+    // credential — typically one region shared across an org's projects — so it
+    // resolves independently: profile suffix, then global, then the default. A
+    // profile-scoped host is only honored alongside scoped credentials so the
+    // GLOBAL target key never maps to more than one URL.
     const scopedPublic = profile ? envValue(env, `LANGFUSE_PUBLIC_KEY_${profile}`) : undefined;
     const scopedSecret = profile ? envValue(env, `LANGFUSE_SECRET_KEY_${profile}`) : undefined;
-    const scopedHost = profile ? envValue(env, `LANGFUSE_HOST_${profile}`) : undefined;
-    const anyScoped = Boolean(scopedPublic || scopedSecret || scopedHost);
+    const anyScopedCred = Boolean(scopedPublic || scopedSecret);
     const useScoped = Boolean(scopedPublic && scopedSecret);
-    if (profile && anyScoped && !useScoped) {
-      const missing = [
-        !scopedPublic ? `LANGFUSE_PUBLIC_KEY_${profile}` : undefined,
-        !scopedSecret ? `LANGFUSE_SECRET_KEY_${profile}` : undefined,
-      ].filter(Boolean);
+    if (profile && anyScopedCred && !useScoped) {
+      const missing = scopedPublic
+        ? `LANGFUSE_SECRET_KEY_${profile}`
+        : `LANGFUSE_PUBLIC_KEY_${profile}`;
       throw new Error(
-        `partial langfuse profile bundle for "${profile}": missing ${missing.join(", ")}. Set the whole bundle or none of it.`,
+        `partial langfuse profile credential bundle for "${profile}": missing ${missing}. Set both LANGFUSE_PUBLIC_KEY_${profile} and LANGFUSE_SECRET_KEY_${profile}, or neither.`,
       );
     }
     const publicKey = useScoped ? scopedPublic : envValue(env, "LANGFUSE_PUBLIC_KEY");
     const secretKey = useScoped ? scopedSecret : envValue(env, "LANGFUSE_SECRET_KEY");
     if (!publicKey || !secretKey) return undefined;
-    const host = (useScoped ? scopedHost : envValue(env, "LANGFUSE_HOST")) ?? DEFAULT_LANGFUSE_HOST;
+    const scopedHost = useScoped && profile ? envValue(env, `LANGFUSE_HOST_${profile}`) : undefined;
+    const host = scopedHost ?? envValue(env, "LANGFUSE_HOST") ?? DEFAULT_LANGFUSE_HOST;
     const token = Buffer.from(`${publicKey}:${secretKey}`).toString("base64");
     return {
       upstream: {
