@@ -9,8 +9,9 @@ on:
       - "scripts/test-opencode-e2e.sh"
       - "packages/**"
       - "docker/**"
-      - pnpm-lock.yaml
       - docker-compose.yml
+      - Dockerfile
+      - pnpm-lock.yaml
   workflow_dispatch:
 
 permissions:
