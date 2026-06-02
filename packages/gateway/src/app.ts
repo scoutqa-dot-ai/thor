@@ -66,6 +66,7 @@ import {
   buildCorrelationKey,
   buildIssueCorrelationKey,
   buildPendingBranchResolveKey,
+  buildPendingCheckSuiteKey,
   getGitHubEventBranch,
   getGitHubEventLocalRepo,
   getGitHubEventNumber,
@@ -396,7 +397,11 @@ type GitHubIgnoreReason =
   | "check_suite_branch_missing"
   | "correlation_key_unresolved"
   | "check_suite_conclusion_missing"
-  | "check_suite_gate_failed";
+  | "check_suite_gate_failed"
+  | "check_suite_pr_missing"
+  | "check_suite_pr_ambiguous"
+  | "check_suite_pr_checks_pending"
+  | "check_suite_pr_checks_lookup_failed";
 
 const GITHUB_WEBHOOK_INGESTED_STREAM = "github-webhook-ingested";
 const GITHUB_WEBHOOK_IGNORED_STREAM = "github-webhook-ignored";
@@ -1092,6 +1097,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           remoteCliUrl,
           internalSecret: config.internalSecret,
           internalExec,
+          githubAppBotEmail: config.githubAppBotEmail,
           ...latestQueuedTriggerActor(events),
           interrupt: hasInterrupt,
           onAccepted: ack,
@@ -1104,12 +1110,18 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           const now = Date.now();
           const resolvedKey = resolveCorrelationKeys([plan.toCorrelationKey]);
           if (plan.githubEvents) {
-            for (const [index, event] of githubEvents.entries()) {
+            const baseEvents =
+              plan.githubEvents.length === githubEvents.length
+                ? githubEvents
+                : githubEvents.slice(-plan.githubEvents.length);
+            for (const [index, payload] of plan.githubEvents.entries()) {
+              const event = baseEvents[index];
+              if (!event) throw new Error("reroute plan missing source GitHub event");
               await queue.enqueue({
                 ...event,
                 id: `${event.id}:resolved`,
                 correlationKey: resolvedKey,
-                payload: plan.githubEvents[index],
+                payload,
                 readyAt: now,
                 delayMs: 0,
               });
@@ -1744,6 +1756,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
     const branch = getGitHubEventBranch(parsed.data);
     let correlationKey: string;
+    let targetCorrelationKey: string | undefined;
     let delayMs = githubMentionDelay;
     let interrupt = true;
 
@@ -1777,6 +1790,54 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       delayMs = 0;
       interrupt = false;
     } else if (isCheckSuiteCompletedEvent(parsed.data)) {
+      const pullRequests = parsed.data.check_suite.pull_requests;
+      if (pullRequests.length === 0) {
+        history.githubStream = "ignored";
+        history.parseStatus = "schema_valid";
+        history.action = parsed.data.action;
+        history.reason = "check_suite_pr_missing";
+        history.metadata = {
+          repoFullName,
+          localRepo,
+          headSha: parsed.data.check_suite.head_sha,
+        };
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "check_suite_pr_missing",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      if (pullRequests.length !== 1) {
+        history.githubStream = "ignored";
+        history.parseStatus = "schema_valid";
+        history.action = parsed.data.action;
+        history.reason = "check_suite_pr_ambiguous";
+        history.metadata = {
+          repoFullName,
+          localRepo,
+          headSha: parsed.data.check_suite.head_sha,
+          pullRequests: pullRequests.map((pr) => ({
+            number: pr.number,
+            headRef: pr.head?.ref,
+            headRepoFullName: pr.head?.repo?.full_name,
+          })),
+        };
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "check_suite_pr_ambiguous",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
       if (!branch) {
         history.githubStream = "ignored";
         history.parseStatus = "schema_valid";
@@ -1843,41 +1904,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         res.status(200).json({ ok: true, ignored: true });
         return;
       }
-
-      const directory = resolveRepoDirectory(localRepo);
-      const gate = directory
-        ? await verifyThorAuthoredSha({
-            internalExec,
-            directory,
-            sha: parsed.data.check_suite.head_sha,
-            expectedEmail: config.githubAppBotEmail ?? "",
-          })
-        : { ok: false as const, reason: "exec_failed" as const };
-      if (!gate.ok) {
-        history.githubStream = "ignored";
-        history.parseStatus = "schema_valid";
-        history.action = parsed.data.action;
-        history.reason = "check_suite_gate_failed";
-        history.metadata = {
-          repoFullName,
-          localRepo,
-          rawKey,
-          resolvedKey,
-          headSha: parsed.data.check_suite.head_sha,
-          gateReason: gate.reason,
-        };
-        logGitHubIgnored({
-          deliveryId,
-          repoFullName,
-          eventType: eventTypeHeader,
-          action: parsed.data.action,
-          reason: "check_suite_gate_failed",
-        });
-        res.status(200).json({ ok: true, ignored: true });
-        return;
-      }
-
-      correlationKey = resolvedKey;
+      targetCorrelationKey = resolvedKey;
+      correlationKey = buildPendingCheckSuiteKey(localRepo, pullRequests[0]!.number, branch);
       delayMs = 0;
       interrupt = false;
     } else if (branch) {
@@ -1907,7 +1935,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     history.parseStatus = "schema_valid";
     history.action = parsed.data.action;
     history.reason = "accepted";
-    history.metadata = { repoFullName, localRepo, correlationKey };
+    history.metadata = {
+      repoFullName,
+      localRepo,
+      correlationKey,
+      ...(targetCorrelationKey ? { targetCorrelationKey } : {}),
+    };
 
     logInfo(log, "github_event_accepted", {
       deliveryId,
