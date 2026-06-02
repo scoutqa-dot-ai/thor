@@ -1,7 +1,10 @@
 # Langfuse CLI Integration
 
 **Date**: 2026-04-15
-**Status**: Draft
+**Status**: Superseded by `2026060101_langfuse-mcp.md` — Langfuse moved from the
+`/exec/langfuse` CLI to the hosted remote MCP server so it routes by Thor profile.
+The CLI surface described below (the `langfuse` wrapper, `langfuse-cli` npm global,
+`/exec/langfuse` endpoint, and `validateLangfuseArgs`) has been removed.
 
 ## Goal
 
