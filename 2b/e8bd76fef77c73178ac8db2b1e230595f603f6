@@ -1,0 +1,23 @@
+packages/common/src/approval-events.ts
+  bc89926b6ccf9e1b 73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "2be8bd76fef77c73178ac8db2b1e230595f603f6",
+  "prompts": {
+    "bc89926b6ccf9e1b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1698c69e-9c72-45f7-96b5-57efa50f748e",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 44,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
