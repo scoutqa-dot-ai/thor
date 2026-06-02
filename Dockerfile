@@ -126,11 +126,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
-RUN for attempt in 1 2 3; do \
-        npm i -g @scoutqa/cli@latest @launchdarkly/ldcli@2.2.0 && break; \
-        if [ "$attempt" = "3" ]; then exit 1; fi; \
-        sleep $((attempt * 5)); \
-    done
+RUN npm i -g @scoutqa/cli@latest @launchdarkly/ldcli@2.2.0
 
 FROM remote-cli-tools AS remote-cli
 COPY --from=remote-cli-build /app /app
