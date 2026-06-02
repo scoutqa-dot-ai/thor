@@ -1,0 +1,23 @@
+docker/opencode/config/skills/using-gh/SKILL.md
+  ef0e823117c061fd 32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "9bf7a62beda976528ef9ae35efd283dbc80a84ec",
+  "prompts": {
+    "ef0e823117c061fd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0439f7eb-fe3a-499d-ab26-fe6ab45969d3",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 2,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
