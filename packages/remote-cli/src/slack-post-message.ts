@@ -8,6 +8,7 @@ import {
   realpathOrNull,
   resolveAlias,
   resolveSessionAnchorId,
+  SUPPORTED_SLACK_CHANNEL_ID,
   type ExecResult,
 } from "@thor/common";
 import MarkdownIt from "markdown-it";
@@ -204,6 +205,9 @@ export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: 
   }
 
   if (!channel) return { error: "--channel is required" };
+  if (!SUPPORTED_SLACK_CHANNEL_ID.test(channel)) {
+    return { error: "--channel must be a Slack channel or private group ID starting with C or G" };
+  }
 
   return {
     channel,

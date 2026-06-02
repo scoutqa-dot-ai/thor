@@ -12,6 +12,7 @@ import { openAsBlob } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename } from "node:path";
 import { parseArgs as parseNodeArgs } from "node:util";
+import { SUPPORTED_SLACK_CHANNEL_ID } from "@thor/common/slack";
 import { z } from "zod";
 
 const USAGE = `Usage:
@@ -21,7 +22,7 @@ Upload a file to Slack using Slack's external upload flow.
 Authentication is injected by mitmproxy; do not pass a token manually.
 
 Options:
-  --channel <id>     Share the file in channel ID C...
+  --channel <id>     Share the file in channel/private group ID C... or G...
   --thread-ts <ts>   Reply in an existing thread; requires --channel
   --title <title>    Slack file title; defaults to the file basename
   --comment <text>   Initial comment when sharing; requires --channel
@@ -143,6 +144,9 @@ function parseJson<T>(label: string, schema: z.ZodType<T>, raw: string): T {
 const { file, channel, threadTs, title: titleArg, comment } = parseArgs(process.argv.slice(2));
 
 if (!file) die("file path is required");
+if (channel && !SUPPORTED_SLACK_CHANNEL_ID.test(channel)) {
+  die("--channel must be a Slack channel or private group ID starting with C or G");
+}
 
 const fileStat = await stat(file).catch(() => null);
 if (!fileStat || !fileStat.isFile()) die(`file not found: ${file}`);

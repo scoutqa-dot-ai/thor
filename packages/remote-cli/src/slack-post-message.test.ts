@@ -65,7 +65,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     delete process.env.WORKLOG_DIR;
   });
 
-  it("posts mrkdwn to any channel and registers a new-thread alias", async () => {
+  it("posts mrkdwn to a Slack channel and registers a new-thread alias", async () => {
     postMessageMock.mockResolvedValue({ ok: true, channel: "C999", ts: "1777940309.867569" });
 
     const response = await postSlack(
@@ -180,6 +180,18 @@ describe("remote-cli slack-post-message endpoint", () => {
 
   it("rejects invalid message inputs before calling Slack", async () => {
     await expectFailure({ args: [], stdin: "hi" }, "--channel is required");
+    await expectFailure(
+      { args: ["--channel", "U123"], stdin: "hi" },
+      "--channel must be a Slack channel or private group ID starting with C or G",
+    );
+    await expectFailure(
+      { args: ["--channel", "D123"], stdin: "hi" },
+      "--channel must be a Slack channel or private group ID starting with C or G",
+    );
+    await expectFailure(
+      { args: ["--channel", "general"], stdin: "hi" },
+      "--channel must be a Slack channel or private group ID starting with C or G",
+    );
     await expectFailure(
       { args: ["--channel", "C123", "--thread-ts"], stdin: "hi" },
       "--thread-ts requires a value",
