@@ -289,6 +289,7 @@ export function getGitHubEventLocalRepo(raw: GitHubWebhookEvent): string | null 
 }
 
 const PENDING_BRANCH_RESOLVE_PREFIX = "pending:branch-resolve:";
+const PENDING_CHECK_SUITE_PREFIX = "pending:check-suite:";
 
 export function buildPendingBranchResolveKey(localRepo: string, number: number): string {
   return `${PENDING_BRANCH_RESOLVE_PREFIX}${localRepo}:${number}`;
@@ -296,6 +297,18 @@ export function buildPendingBranchResolveKey(localRepo: string, number: number):
 
 export function isPendingBranchResolveKey(key: string): boolean {
   return key.startsWith(PENDING_BRANCH_RESOLVE_PREFIX);
+}
+
+export function buildPendingCheckSuiteKey(
+  localRepo: string,
+  prNumber: number,
+  branch: string,
+): string {
+  return `${PENDING_CHECK_SUITE_PREFIX}${localRepo}:${prNumber}:${branch}`;
+}
+
+export function isPendingCheckSuiteKey(key: string): boolean {
+  return key.startsWith(PENDING_CHECK_SUITE_PREFIX);
 }
 
 export function getGitHubEventSourceTs(raw: GitHubWebhookEnvelope): number {
