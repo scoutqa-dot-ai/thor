@@ -164,9 +164,12 @@ jobs:
           # override so opencode talks to OpenAI directly via auth.json.
           # Also enable the langfuse plugin + OpenTelemetry so the e2e run
           # exercises tracing (LANGFUSE_* are wired into the env_file above).
+          # The plugin is referenced by absolute path; bare-name would trigger
+          # opencode's runtime `npm install`, which mitmproxy 403s. The package
+          # is pre-installed globally in the opencode image (see Dockerfile).
           jq 'del(.provider)
             | .experimental.openTelemetry = true
-            | .plugin += ["opencode-plugin-langfuse"]' \
+            | .plugin += ["/usr/local/lib/node_modules/opencode-plugin-langfuse"]' \
             docker/opencode/config/opencode.json \
             > docker/opencode/config/opencode.json.tmp \
             && mv docker/opencode/config/opencode.json.tmp docker/opencode/config/opencode.json
