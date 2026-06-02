@@ -430,6 +430,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     instance: ProxyInstance,
     cloudId: string,
     email: string,
+    profile: string | undefined,
   ): Promise<JiraLookupResult> {
     if (!instance.upstream.tools.some((tool) => tool.name === JIRA_ACCOUNT_LOOKUP_TOOL)) {
       return { ok: false, reason: "tool_unavailable" };
@@ -438,6 +439,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       instance,
       toolName: JIRA_ACCOUNT_LOOKUP_TOOL,
       args: { cloudId, searchString: email },
+      profile,
       logEvent: "jira_account_lookup",
       decision: "allowed",
     });
@@ -507,16 +509,8 @@ export function createMcpService(deps: McpServiceDeps): McpService {
 
   async function listUpstreams(profile?: string): Promise<McpExecResult> {
     try {
-      const upstreams = getAvailableProxyNames(profile).map((name) => {
-        const resolved = resolveProxyConfig(name, profile)!;
-        const instance = instances.get(resolved.target.key);
-        return {
-          name,
-          toolCount: instance?.upstream.tools.length ?? 0,
-          connected: instances.has(resolved.target.key),
-        };
-      });
-      return ok(stringify({ upstreams }));
+      const upstreams = getAvailableProxyNames(profile);
+      return ok(upstreams.join("\n") + (upstreams.length > 0 ? "\n" : ""));
     } catch (err) {
       return fail(err instanceof Error ? err.message : String(err));
     }
@@ -545,6 +539,8 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     instance: ProxyInstance;
     toolName: string;
     args: Record<string, unknown>;
+    targetKey?: string;
+    profile?: string;
     logEvent: string;
     decision: "allowed" | "blocked" | "pending" | "approved" | "rejected";
     extraLogFields?: Record<string, unknown>;
@@ -555,7 +551,17 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   }
 
   async function executeUpstreamCall(opts: UpstreamCallOpts): Promise<McpExecResult> {
-    const { instance, toolName, args, logEvent, decision, extraLogFields, inputSchema } = opts;
+    const {
+      instance,
+      toolName,
+      args,
+      targetKey,
+      profile,
+      logEvent,
+      decision,
+      extraLogFields,
+      inputSchema,
+    } = opts;
     const start = Date.now();
     try {
       const result = await instance.upstream.client.callTool({
@@ -566,10 +572,20 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       logInfo(log, logEvent, {
         upstream: instance.name,
         tool: toolName,
+        targetKey: targetKey ?? instance.targetKey,
+        ...(profile !== undefined ? { profile } : {}),
         durationMs: duration,
         ...extraLogFields,
       });
-      writeToolCallLogFn({ tool: toolName, decision, args, result, durationMs: duration });
+      writeToolCallLogFn({
+        tool: toolName,
+        decision,
+        targetKey: targetKey ?? instance.targetKey,
+        profile,
+        args,
+        result,
+        durationMs: duration,
+      });
       opts.onSuccess?.(result);
 
       const stdout = unwrapResult(result);
@@ -603,10 +619,20 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       logError(log, logEvent, message, {
         upstream: instance.name,
         tool: toolName,
+        targetKey: targetKey ?? instance.targetKey,
+        ...(profile !== undefined ? { profile } : {}),
         durationMs: duration,
         ...extraLogFields,
       });
-      writeToolCallLogFn({ tool: toolName, decision, args, durationMs: duration, error: message });
+      writeToolCallLogFn({
+        tool: toolName,
+        decision,
+        targetKey: targetKey ?? instance.targetKey,
+        profile,
+        args,
+        durationMs: duration,
+        error: message,
+      });
       opts.onError?.(message);
 
       let stderr = `Error calling "${toolName}": ${message}\n`;
@@ -624,8 +650,9 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     context: McpCommandContext,
   ): Promise<McpExecResult> {
     let instance: ProxyInstance | undefined;
+    let profile: string | undefined;
     try {
-      const { profile } = resolveProfileForContext(context);
+      ({ profile } = resolveProfileForContext(context));
       instance = await getInstance(upstreamName, profile);
     } catch (err) {
       return fail(err instanceof Error ? err.message : String(err));
@@ -700,10 +727,18 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       logInfo(log, "tool_call_pending_approval", {
         upstream: instance.name,
         tool: toolInfo.name,
+        targetKey: instance.targetKey,
+        ...(profile !== undefined ? { profile } : {}),
         actionId: action.id,
         ...getThorIds(context),
       });
-      writeToolCallLogFn({ tool: toolInfo.name, decision: "pending", args: approvalArgs });
+      writeToolCallLogFn({
+        tool: toolInfo.name,
+        decision: "pending",
+        targetKey: instance.targetKey,
+        profile,
+        args: approvalArgs,
+      });
       const approvalEvent: ApprovalRequiredEventPayload = {
         ...approvalRequired.data,
         actionId: action.id,
@@ -720,6 +755,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       instance,
       toolName: toolInfo.name,
       args,
+      profile,
       logEvent: "tool_call",
       decision: "allowed",
       extraLogFields: getThorIds(context),
@@ -878,6 +914,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
           upstreamArgs,
           pendingAction.origin?.sessionId,
           instance,
+          profile,
         );
       }
     } catch (err) {
@@ -887,6 +924,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       instance,
       toolName: pendingAction.tool,
       args: upstreamArgs,
+      profile,
       logEvent: "tool_call_approved",
       decision: "approved",
       extraLogFields: { actionId: pendingAction.id },
@@ -906,6 +944,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     args: Record<string, unknown>,
     sessionId: string | undefined,
     instance: ProxyInstance,
+    profile: string | undefined,
   ): Promise<Record<string, unknown>> {
     const resolved = resolveTriggerUser(sessionId, getConfig);
     if (args.assignee_account_id !== undefined) {
@@ -937,7 +976,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
     let lookup: JiraLookupResult;
     try {
-      lookup = await lookupJiraAccountIdViaUpstream(instance, cloudId, resolved.user.email);
+      lookup = await lookupJiraAccountIdViaUpstream(instance, cloudId, resolved.user.email, profile);
     } catch {
       logInfo(log, "attribution_applied", {
         surface: "jira",

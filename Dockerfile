@@ -82,7 +82,7 @@ CMD ["node", "/app/packages/runner/dist/index.js"]
 
 # --- Install upstream opencode from npm ---
 FROM base AS opencode
-RUN npm install -g opencode-ai@1.15.10
+RUN npm install -g opencode-ai@1.15.10 opencode-plugin-langfuse@0.1.8
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl jq python3-pip ripgrep \
     && npm install -g prettier@3.8.3 \
@@ -95,7 +95,6 @@ COPY --from=opencode-cli-build /app/packages/opencode-cli/dist/remote-cli.mjs /u
 COPY docker/opencode/bin/git /usr/local/bin/git
 COPY docker/opencode/bin/gh /usr/local/bin/gh
 COPY docker/opencode/bin/scoutqa /usr/local/bin/scoutqa
-COPY docker/opencode/bin/langfuse /usr/local/bin/langfuse
 COPY docker/opencode/bin/metabase /usr/local/bin/metabase
 COPY docker/opencode/bin/ldcli /usr/local/bin/ldcli
 COPY docker/opencode/bin/sandbox /usr/local/bin/sandbox
@@ -127,7 +126,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
-RUN npm i -g @scoutqa/cli@latest langfuse-cli@0.0.8 @launchdarkly/ldcli@2.2.0
+RUN npm i -g @scoutqa/cli@latest @launchdarkly/ldcli@2.2.0
 
 FROM remote-cli-tools AS remote-cli
 COPY --from=remote-cli-build /app /app
