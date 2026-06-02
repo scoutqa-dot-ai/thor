@@ -32,7 +32,7 @@ import {
   verifyThorAuthoredSha,
   type PrCheckSummary,
   type PrChecksAggregateOutput,
-} from "./github-gate.js";
+} from "./github-gate.ts";
 import {
   addSlackGateRejectedReaction,
   evaluateSlackChannelGate,
