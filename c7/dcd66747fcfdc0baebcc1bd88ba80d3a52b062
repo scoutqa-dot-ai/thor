@@ -1,0 +1,548 @@
+docker/opencode/config/skills/using-gh/SKILL.md
+  ef0e823117c061fd 32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "c7dcd66747fcfdc0baebcc1bd88ba80d3a52b062",
+  "prompts": {
+    "2e2250850906b356": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "817a1928-cd78-4b00-9443-a505a8a4a67d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 160,
+      "total_deletions": 106,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    },
+    "ef0e823117c061fd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0439f7eb-fe3a-499d-ab26-fe6ab45969d3",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": null,
+      "messages": [
+        {
+          "type": "user",
+          "text": "<system_instruction>\nYou are working inside Conductor, a Mac app that lets the user run many coding agents in parallel.\nYour work should take place in the /Users/son.dao/conductor/workspaces/thor/stockholm-v1 directory (unless otherwise directed), which has been set up for you to work in.\nEach workspace has a .context directory (gitignored) where you can save files to collaborate with other agents.\nThe target branch for this workspace is origin/main. Use this for actions like diffing (`git diff origin/main...`) or creating PRs (`gh pr create --base main`).\n\nDo not rename the current branch unless the user explicitly tells you to do so.\n\nBy default, the user will only see the last message that you send before stopping. Include all essential information in the last message. The intermediate messages will be collapsed and accessible by the user but not displayed by default.\n\nIf the user asks you to work on several unrelated tasks, you can suggest they start new workspaces.\nSometimes the user might send you a message they meant to send in a different workspace or a different chat. If something doesn't make sense in the context of your work, just ask. \nIf the user asks for help with Conductor, you can ask them to go to \"Help -> Send Feedback\" to get in touch with our team.\n</system_instruction>\n\n\"This command returns `approval_required` and posts Slack Approve/Reject buttons in the originating thread;\" -> is this instruction consistent with other approval-required actions?",
+          "timestamp": "2026-06-02T12:49:25.569Z"
+        },
+        {
+          "type": "assistant",
+          "text": " The user is asking about consistency in how approval requirements are handled across the codebase, specifically referencing a string about \"approval_required\" and Slack approval buttons they found in another thread. I'm investigating the feat/gh-issue-create-approval branch to find that quote and see how it compares to other approval-required implementations in the system.",
+          "timestamp": "2026-06-02T12:49:31.550Z"
+        },
+        {
+          "type": "assistant",
+          "text": "I'll investigate how approval-required actions are described across the codebase to check consistency. Let me find the quoted text and other approval flows.",
+          "timestamp": "2026-06-02T12:49:31.554Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Grep",
+          "input": {
+            "output_mode": "files_with_matches",
+            "pattern": "approval_required"
+          },
+          "timestamp": "2026-06-02T12:49:31.561Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Grep",
+          "input": {
+            "-n": true,
+            "output_mode": "content",
+            "pattern": "Approve/Reject buttons in the originating thread"
+          },
+          "timestamp": "2026-06-02T12:49:31.713Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Let me look at the SKILL.md file and how other approval-required actions are described.",
+          "timestamp": "2026-06-02T12:49:34.102Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Read",
+          "input": {
+            "file_path": "/Users/son.dao/conductor/workspaces/thor/stockholm-v1/docker/opencode/config/skills/using-gh/SKILL.md"
+          },
+          "timestamp": "2026-06-02T12:49:35.307Z"
+        },
+        {
+          "type": "assistant",
+          "text": " I'm checking how other approval-required actions are documented across the codebase to see if there's a consistent pattern for how these flows should be described to agents.",
+          "timestamp": "2026-06-02T12:49:40.356Z"
+        },
+        {
+          "type": "assistant",
+          "text": "`gh issue create` appears to be the only approval-gated action in this skill. Let me check whether there are other approval-required actions elsewhere and how they're described to the agent, plus what the actual implementation returns.",
+          "timestamp": "2026-06-02T12:49:40.362Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Grep",
+          "input": {
+            "-n": true,
+            "output_mode": "content",
+            "pattern": "approval status"
+          },
+          "timestamp": "2026-06-02T12:49:41.141Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Grep",
+          "input": {
+            "-i": true,
+            "-n": true,
+            "output_mode": "content",
+            "pattern": "originating thread|Approve/Reject|posts Slack|Slack.*button"
+          },
+          "timestamp": "2026-06-02T12:49:41.993Z"
+        },
+        {
+          "type": "assistant",
+          "text": " I need to check how the MCP tool approval requirements are documented in the agent-facing skill definitions, particularly in the build.md file and any other relevant skill files that describe approval-required tools.",
+          "timestamp": "2026-06-02T12:49:46.193Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Now let me look at how the MCP tool approval-required actions are described to the agent — the build.md agent file and any MCP skill docs.",
+          "timestamp": "2026-06-02T12:49:46.193Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Read",
+          "input": {
+            "file_path": "/Users/son.dao/conductor/workspaces/thor/stockholm-v1/docker/opencode/config/agents/build.md",
+            "limit": 70,
+            "offset": 30
+          },
+          "timestamp": "2026-06-02T12:49:47.408Z"
+        },
+        {
+          "type": "assistant",
+          "text": " I'm comparing how approval-required actions are described across different contexts. The MCP tools documentation focuses on the agent-observable behavior—calling an approval-required tool returns an action ID that you can check with a status command—without mentioning Slack buttons or thread context. The gh issue create skill appears to describe something different, though the thought cuts off mid-sentence.",
+          "timestamp": "2026-06-02T12:49:56.949Z"
+        },
+        {
+          "type": "assistant",
+          "text": "I now have what I need. Let me verify the actual payload shape the command returns, to check the `approval_required` claim too.",
+          "timestamp": "2026-06-02T12:49:56.949Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Read",
+          "input": {
+            "file_path": "/Users/son.dao/conductor/workspaces/thor/stockholm-v1/packages/remote-cli/src/mcp-handler.ts",
+            "limit": 25,
+            "offset": 820
+          },
+          "timestamp": "2026-06-02T12:49:57.752Z"
+        },
+        {
+          "type": "assistant",
+          "text": " The payload structure checks out—it returns the approval status command as documented. But looking at the MCP description in build.md, there's no mention of posting Slack buttons to the originating thread, which means there's a discrepancy between what the documentation claims and what's actually described in the spec.\n\nThere's also the fail-closed case to consider: when there's no Slack thread available (like with cron-triggered actions), the claim about posting buttons isn't even true. So stating it unconditionally is misleading, and it violates AGENTS.md rule #10 by including implementation details that agents can't observe or act on. The honest answer is that this instruction isn't consistent with how the comparable MCP approval surface is documented—that one deliberately sticks to agent-observable behavior only.",
+          "timestamp": "2026-06-02T12:50:10.422Z"
+        },
+        {
+          "type": "assistant",
+          "text": "No — it's **not** consistent with the other approval-required surface, and it conflicts with the repo's own agent-facing-docs rule.\n\n## The comparison\n\nThere are two approval-gated surfaces documented to the agent. They describe the gate very differently:\n\n**MCP approve-classified tools** — `docker/opencode/config/agents/build.md:82`:\n> \"Some tools require human approval (shown as `classification: approve` in `--help`). Calling one returns an action ID instead of an immediate result; check status with: `approval status <action-id>`\"\n\n→ Describes **only what the agent observes**: a returned action ID, and the `approval status` command to poll. Says nothing about Slack, buttons, or threads.\n\n**`gh issue create`** — `using-gh/SKILL.md:32`:\n> \"This command returns `approval_required` and **posts Slack Approve/Reject buttons in the originating thread**; use the returned `approval status <id>` command while waiting.\"\n\n→ Adds Slack-side routing mechanics (buttons, \"originating thread\") that the other approval doc deliberately omits.\n\n## Why this is a problem\n\n1. **Inconsistent with the sibling doc.** The MCP description is the established pattern for \"this needs human approval\"; the new line diverges by exposing the Slack delivery detail.\n\n2. **Conflicts with AGENTS.md rule #10** (\"Agent-facing prompts and skills\"): *\"describe only state the agent can actually observe or act on… Keep… internal service or component names, and other implementation details the agent cannot reach from inside its container out of agent-facing docs.\"* The Slack button/thread posting is exactly such a side-channel mechanic — the agent can't see or act on it from its container; it only sees the `approval_required` payload and uses `approval status`.\n\n3. **Not unconditionally true.** Per the plan (`docs/plan/2026052501_gh-issue-create-approval.md:3`), the flow is *\"fail-closed … when no Slack thread is available\"* (e.g. cron / non-Slack origins). Stating \"posts Slack buttons in the originating thread\" as a flat fact is misleading for those origins.\n\nThe accurate, agent-observable parts of the sentence are fine — the command does return a `type: \"approval_required\"` payload with `command: \"approval status <id>\"` (confirmed at `mcp-handler.ts:833-840`).\n\n## Suggested fix\n\nBring it in line with the MCP wording — drop the Slack mechanics, keep the observable contract:\n\n> Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable). Issue creation requires human approval: this command returns an `approval_required` payload with an action ID instead of creating the issue; poll with the returned `approval status <id>` command. Only after approval does Thor execute the exact reviewed command, add the traceability footer / trigger-user assignee, and bind the created `github:issue:` session for later issue comments.\n\nWant me to apply that edit?",
+          "timestamp": "2026-06-02T12:50:19.488Z"
+        },
+        {
+          "type": "user",
+          "text": "Apply",
+          "timestamp": "2026-06-02T12:50:39.110Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Edit",
+          "input": {
+            "file_path": "/Users/son.dao/conductor/workspaces/thor/stockholm-v1/docker/opencode/config/skills/using-gh/SKILL.md",
+            "new_string": "Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable). Issue creation requires human approval: this command returns an `approval_required` payload with an action ID instead of creating the issue; poll with the returned `approval status <id>` command. Only after approval does Thor execute the exact reviewed command, add the traceability footer / trigger-user assignee, and bind the created `github:issue:` session for later issue comments.",
+            "old_string": "Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable). This command returns `approval_required` and posts Slack Approve/Reject buttons in the originating thread; use the returned `approval status <id>` command while waiting. Only after approval does Thor execute the exact reviewed command, add the traceability footer / trigger-user assignee, and bind the created `github:issue:` session for later issue comments.",
+            "replace_all": false
+          },
+          "timestamp": "2026-06-02T12:50:44.839Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Applied. `using-gh/SKILL.md:32` now matches the MCP approval wording in `build.md` — it states only the agent-observable contract (`approval_required` payload + action ID, poll with `approval status <id>`) and drops the Slack button/originating-thread mechanics, which were the inconsistency and the AGENTS.md rule #10 violation.",
+          "timestamp": "2026-06-02T12:50:49.415Z"
+        },
+        {
+          "type": "user",
+          "text": "\"add the traceability footer / trigger-user assignee\" -> not needed?",
+          "timestamp": "2026-06-02T12:51:50.019Z"
+        },
+        {
+          "type": "assistant",
+          "text": " I'm reconsidering whether the traceability footer and trigger-user assignee details belong in the skill documentation, since AGENTS.md rule #10 says to only describe what the agent can observe or act on, not server-side implementation details. I need to figure out if this is something the agent actually does or if Thor handles it automatically behind the scenes.",
+          "timestamp": "2026-06-02T12:51:55.159Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Good question — let me check whether the footer/assignee is something the agent does versus something Thor applies server-side automatically.",
+          "timestamp": "2026-06-02T12:51:55.220Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Grep",
+          "input": {
+            "output_mode": "files_with_matches",
+            "path": "packages",
+            "pattern": "traceability footer|trigger-user|triggerUser|assignee"
+          },
+          "timestamp": "2026-06-02T12:51:55.222Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Grep",
+          "input": {
+            "-i": true,
+            "-n": true,
+            "output_mode": "content",
+            "path": "packages/remote-cli/src/policy-gh.ts",
+            "pattern": "footer|disclaimer|assignee|triggerUser"
+          },
+          "timestamp": "2026-06-02T12:51:58.395Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Read",
+          "input": {
+            "file_path": "/Users/son.dao/conductor/workspaces/thor/stockholm-v1/packages/remote-cli/src/policy-gh.ts",
+            "limit": 70,
+            "offset": 320
+          },
+          "timestamp": "2026-06-02T12:52:01.693Z"
+        },
+        {
+          "type": "assistant",
+          "text": " I need to verify that Thor handles the footer and assignee injection server-side rather than the agent, so I'm checking how the disclaimer and trigger-user assignee get applied by looking at the mcp-handler implementation.",
+          "timestamp": "2026-06-02T12:52:06.929Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Let me confirm the footer and assignee are injected automatically by Thor at execution (not by the agent).",
+          "timestamp": "2026-06-02T12:52:06.932Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Grep",
+          "input": {
+            "-i": true,
+            "-n": true,
+            "head_limit": 40,
+            "output_mode": "content",
+            "path": "packages/remote-cli/src/gh-disclaimer.test.ts",
+            "pattern": "footer|disclaimer|assignee|triggerUser|trigger.*assign"
+          },
+          "timestamp": "2026-06-02T12:52:07.296Z"
+        },
+        {
+          "type": "assistant",
+          "text": " I'm realizing the footer and trigger-user assignee are actually handled server-side by Thor's policy layer across all event types, not something the agent controls. Since this is implementation detail that violates rule #10 in AGENTS.md, I should consider whether it's worth keeping in the documentation at all, or if it just adds noise about backend behavior the agent can't influence. The footer and assignee details are implementation specifics Thor handles server-side, which technically falls outside what the agent needs to know per rule #10, but they do serve a practical purpose—they signal to the agent that the reviewed command runs exactly as-is and that it shouldn't manually duplicate these elements. I think the cleanest approach is to either trim this to just mention the alias binding (which is observable to the agent) or remove the server-side mechanics entirely and let the user decide based on their documentation philosophy. I'm going to trim the documentation to focus on what the agent actually needs to act on—the command executes exactly as reviewed and the issue gets bound to the session—and drop the server-side details about footer injection and assignee handling since those don't require any agent behavior.",
+          "timestamp": "2026-06-02T12:52:35.583Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Confirmed. The footer and trigger-user assignee are injected **server-side by Thor's policy/disclaimer layer** at execution time — the agent never adds them. The agent only passes `--title`/`--body` (and optionally its own `--assignee`, which Thor preserves: `gh-disclaimer.test.ts:270` \"keeps an existing issue assignee\"). The footer is likewise auto-injected on *every* gh write path, not just issue create.\n\nSo you're right to flag it. By AGENTS.md rule #10, \"add the traceability footer / trigger-user assignee\" is server-side mechanics the agent neither performs nor controls — the same class of implementation detail we just removed the Slack part for. It's also inconsistently applied in this doc already: `gh pr create` (line 24-28) doesn't mention the footer at all, while `gh issue comment` (line 40) does. Singling it out under issue create isn't a pattern.\n\nThe two clauses in that sentence that *are* agent-actionable and worth keeping:\n1. **The command is executed verbatim after approval** — tells the agent what it submits is exactly what runs (don't expect to amend post-approval).\n2. **The created issue is bound as a `github:issue:` session** — the agent can use that alias for later issue comments.\n\nProposed trim:\n\n> Issue creation requires human approval: this command returns an `approval_required` payload with an action ID instead of creating the issue; poll with the returned `approval status <id>` command. Only after approval does Thor execute the exact reviewed command and bind the created `github:issue:` session for later issue comments.\n\nApplying:",
+          "timestamp": "2026-06-02T12:52:40.227Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Edit",
+          "input": {
+            "file_path": "/Users/son.dao/conductor/workspaces/thor/stockholm-v1/docker/opencode/config/skills/using-gh/SKILL.md",
+            "new_string": "Only after approval does Thor execute the exact reviewed command and bind the created `github:issue:` session for later issue comments.",
+            "old_string": "Only after approval does Thor execute the exact reviewed command, add the traceability footer / trigger-user assignee, and bind the created `github:issue:` session for later issue comments.",
+            "replace_all": false
+          },
+          "timestamp": "2026-06-02T12:52:42.477Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Done. The `gh issue create` description now states only agent-observable/actionable facts: the `approval_required` payload + `approval status <id>` poll, that the reviewed command runs verbatim after approval, and that the created issue is bound as a `github:issue:` session. The server-side footer/assignee injection (which the agent doesn't perform or control) is dropped, matching rule #10 and removing the inconsistency with the other gh write commands.",
+          "timestamp": "2026-06-02T12:52:46.600Z"
+        },
+        {
+          "type": "user",
+          "text": "check other approval-gated tools for consistency.",
+          "timestamp": "2026-06-02T12:53:15.224Z"
+        },
+        {
+          "type": "assistant",
+          "text": " I need to check how other approval-gated tools are described across the agent-facing documentation to ensure consistency with the gh issue create updates. Let me search through the config files in docker/opencode/config/ to find all mentions of approval in the skills and agents.",
+          "timestamp": "2026-06-02T12:53:20.546Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Grep",
+          "input": {
+            "-i": true,
+            "output_mode": "files_with_matches",
+            "path": "docker/opencode/config",
+            "pattern": "approv"
+          },
+          "timestamp": "2026-06-02T12:53:20.547Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Grep",
+          "input": {
+            "-C": 3,
+            "-i": true,
+            "-n": true,
+            "output_mode": "content",
+            "path": "docker/opencode/config/skills/using-git/SKILL.md",
+            "pattern": "approv"
+          },
+          "timestamp": "2026-06-02T12:53:23.842Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Grep",
+          "input": {
+            "-C": 3,
+            "-i": true,
+            "-n": true,
+            "output_mode": "content",
+            "path": "docker/opencode/config/plugins/thor.js",
+            "pattern": "approv"
+          },
+          "timestamp": "2026-06-02T12:53:25.053Z"
+        },
+        {
+          "type": "assistant",
+          "text": " I'm identifying which documentation surfaces actually describe approval-gated tool behavior—the git references are about flag approvals rather than approval-gating, and thor.js only mentions it in a comment. That leaves just two places: the MCP approve-classified tools section in build.md and the gh issue create documentation I just updated. Let me verify those descriptions are consistent with each other.\n\nThe build.md section describes how approval-gated tools return an action ID and how to check status, which aligns with the gh issue create wording that returns an `approval_required` payload with an action ID. Both mention the same polling mechanism, so the terminology is consistent even if slightly different in specificity. I should also verify the Posture section in using-gh and check whether there are other approval-gated tools I might have missed in the documentation.",
+          "timestamp": "2026-06-02T12:53:37.828Z"
+        },
+        {
+          "type": "assistant",
+          "text": "The two — and only two — agent-facing surfaces that describe approval-gated tools are `build.md:82` (MCP `classification: approve` tools) and the `using-gh` issue-create entry I just fixed. The `git` hits are \"approved *flags*\", not approval-gating, and `thor.js` only names the `approval` CLI in a comment.\n\nComparing the two against each other and against rule #10:\n\n**MCP approve-classified tools** — `build.md:82-87`:\n> \"Some tools require human approval (shown as `classification: approve` in `--help`). Calling one returns an action ID instead of an immediate result; check status with: `approval status <action-id>` / `approval list`\"\n\n✅ Already clean and consistent with the new wording: agent-observable only (returns action ID, poll with `approval status`), no Slack/thread/footer mechanics. This is the model the gh entry now matches.\n\n**`gh issue create`** — `using-gh/SKILL.md:32` (post-fix):\n> \"Issue creation requires human approval: this command returns an `approval_required` payload with an action ID instead of creating the issue; poll with the returned `approval status <id>` command. Only after approval does Thor execute the exact reviewed command and bind the created `github:issue:` session…\"\n\n✅ Now aligned with build.md.\n\nTwo minor consistency notes, neither requiring a change but worth flagging:\n\n1. **Wording variance is fine.** build.md says \"returns an action ID\"; gh says \"returns an `approval_required` payload with an action ID.\" The gh version is slightly more specific because the CLI literally emits that JSON envelope, whereas MCP `--help` surfaces it as a `classification`. Both point the agent to the same `approval status <id>` poll — the actionable contract matches. No need to homogenize.\n\n2. **`approval list` is documented in build.md but not in using-gh.** Since `approval status`/`approval list` are general CLIs (not gh-specific) and build.md is the always-loaded agent prompt, it's correct that the umbrella commands live there and the gh skill just references `approval status <id>` for its specific flow. Consistent by design, not a gap.\n\nConclusion: the approval-gated surfaces are now consistent — agent-observable contract only, server-side mechanics (Slack delivery, footer/assignee injection) kept out per rule #10. No further edits needed.",
+          "timestamp": "2026-06-02T12:53:46.759Z"
+        },
+        {
+          "type": "user",
+          "text": "<command-message>git-commit</command-message>\n<command-name>/git-commit</command-name>",
+          "timestamp": "2026-06-02T12:54:20.337Z"
+        },
+        {
+          "type": "user",
+          "text": "git commit your changes and your changes only",
+          "timestamp": "2026-06-02T12:54:20.337Z"
+        },
+        {
+          "type": "assistant",
+          "text": "I'll commit only my changes to the SKILL.md file. Let me check the current state.",
+          "timestamp": "2026-06-02T12:54:23.052Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Bash",
+          "input": {
+            "command": "git status && echo \"---DIFF---\" && git diff docker/opencode/config/skills/using-gh/SKILL.md",
+            "description": "Show status and diff of my changes"
+          },
+          "timestamp": "2026-06-02T12:54:24.410Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Only my SKILL.md change is present. Committing it:",
+          "timestamp": "2026-06-02T12:54:26.847Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Bash",
+          "input": {
+            "command": "git add docker/opencode/config/skills/using-gh/SKILL.md && git commit -m \"$(cat <<'EOF'\ndocs: align gh issue create approval wording with agent-observable contract\n\nDrop Slack button/originating-thread and server-side footer/assignee\nmechanics from the gh issue create skill entry. Describe only the\nagent-observable approval contract (approval_required payload + action\nID, poll with approval status <id>), matching the MCP approval wording\nin build.md and AGENTS.md rule #10.\n\nCo-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>\nEOF\n)\"",
+            "description": "Commit SKILL.md change"
+          },
+          "timestamp": "2026-06-02T12:54:29.505Z"
+        },
+        {
+          "type": "user",
+          "text": "\"bind the created `github:issue:` session for later issue comments.\" -- what is this?",
+          "timestamp": "2026-06-02T12:54:35.454Z"
+        },
+        {
+          "type": "assistant",
+          "text": " The user is asking what it means to bind a `github:issue:` session for later issue comments before committing, so I need to look into how the alias and session binding mechanism works in the codebase.",
+          "timestamp": "2026-06-02T12:54:41.001Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Let me investigate what that alias binding actually is before committing.",
+          "timestamp": "2026-06-02T12:54:41.013Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Grep",
+          "input": {
+            "output_mode": "files_with_matches",
+            "path": "packages",
+            "pattern": "github:issue:|github:issue|issue.*alias|registerAlias|ALIAS_TYPES"
+          },
+          "timestamp": "2026-06-02T12:54:41.304Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Read",
+          "input": {
+            "file_path": "/Users/son.dao/conductor/workspaces/thor/stockholm-v1/packages/remote-cli/src/gh-issue-alias.ts"
+          },
+          "timestamp": "2026-06-02T12:54:44.799Z"
+        },
+        {
+          "type": "assistant",
+          "text": " I'm looking at how correlation aliases work in the session routing system — specifically how an alias like `github:issue:<repo>:<owner>/<repo>#<number>` gets attached to a session so that subsequent events related to that issue can be routed back to the same session. Let me trace through the correlation mechanism in the codebase to understand how these keys are used for routing, particularly for handling later issue comments.",
+          "timestamp": "2026-06-02T12:54:50.166Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Let me check how these correlation aliases are used for routing later events, to explain \"later issue comments.\"",
+          "timestamp": "2026-06-02T12:54:50.167Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Grep",
+          "input": {
+            "-C": 2,
+            "-n": true,
+            "head_limit": 60,
+            "output_mode": "content",
+            "path": "packages/gateway/src/github.ts",
+            "pattern": "github:issue|issue.*comment|correlation.*issue|appendCorrelationAlias|alias"
+          },
+          "timestamp": "2026-06-02T12:54:50.471Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Read",
+          "input": {
+            "file_path": "/Users/son.dao/conductor/workspaces/thor/stockholm-v1/packages/gateway/src/github.ts",
+            "limit": 60,
+            "offset": 270
+          },
+          "timestamp": "2026-06-02T12:54:54.128Z"
+        },
+        {
+          "type": "assistant",
+          "text": " I see how the flow works now. When the GitHub CLI command executes and gets approved, it returns the URL of the newly created issue, which then gets parsed to extract the repository and issue number. That information is formatted into a correlation key and registered as an alias for tracking purposes.\n\nLater, when someone comments on that issue, the webhook handler reconstructs the same correlation key using the issue details and uses it to route the incoming event back to the original agent session that created the issue. This creates continuity between the initial issue creation and subsequent comments on that issue.\n\nBut here's the thing — this correlation key format with the `github:issue:` namespace is purely internal routing logic that the agent can't actually observe or interact with. The agent doesn't see the alias registry or understand how the binding works. The only observable effect from the agent's perspective is that future comments on the issue will come back to the same conversation, but that's automatic behavior the agent doesn't control. This seems like another implementation detail that shouldn't be exposed in agent-facing documentation under rule #10, similar to the footer and assignee information we already flagged.",
+          "timestamp": "2026-06-02T12:55:08.417Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Here's what that clause refers to, and why it's worth a second look.\n\n## What it actually does\n\nWhen `gh issue create` runs after approval, its stdout contains the new issue URL (`https://github.com/owner/repo/issues/123`). `registerCreatedIssueCorrelationAlias` (`gh-issue-alias.ts:69`) parses that URL and appends a **correlation-key alias** onto the current OpenCode session:\n\n```\ngithub:issue:<repo>:<owner>/<repo>#<number>\n```\n\nLater, when someone comments on that issue, GitHub sends an `issue_comment` webhook to the gateway. The gateway builds the **same** key from the issue number (`github.ts:278`, `buildIssueCorrelationKey`) and uses it to route the event — so the comment re-enters the *same agent session* that created the issue, instead of spawning a fresh, context-less one. That's the \"binding\": it's session↔issue continuity for follow-up comments.\n\n## But — it's the same rule #10 problem we just fixed\n\n`github:issue:` is an **internal correlation-key namespace**, and the alias registry is server-side state the agent can't observe or act on from inside its container. By the same reasoning that removed the Slack-button mechanics and the footer/assignee injection, this clause exposes an implementation detail rather than agent-observable behavior.\n\nThe agent-observable *effect* — \"follow-up comments on the issue you create will come back to this conversation\" — is legitimately useful to state. The internal key format and the word \"bind\" are not.\n\nSuggested reword (drops the internal token, keeps the observable effect):\n\n> Only after approval does Thor execute the exact reviewed command; afterward, comments on the created issue are routed back to this session.\n\nOr, if you'd rather keep the doc minimal and let routing be invisible (as it is for PRs/branches, which this doc doesn't mention either), drop the clause entirely:\n\n> Only after approval does Thor execute the exact reviewed command.\n\nI'd lean toward the second — the doc doesn't document `git:branch:` routing for PR comments either, so staying silent on issue routing is the consistent choice. Want me to apply one of these before committing?",
+          "timestamp": "2026-06-02T12:55:15.451Z"
+        },
+        {
+          "type": "user",
+          "text": "Why would the agent need to know that \" routed back to this session.\"?",
+          "timestamp": "2026-06-02T12:55:44.032Z"
+        },
+        {
+          "type": "assistant",
+          "text": " The user's right — the agent can't observe or act on routing, so it shouldn't be in the documentation at all. Dropping it entirely is the way to go.",
+          "timestamp": "2026-06-02T12:55:48.528Z"
+        },
+        {
+          "type": "assistant",
+          "text": "It wouldn't. That's the right conclusion.\n\nRouting back to the session is fully automatic and invisible — the agent does nothing to enable it and takes no different action because of it. There's no command to run, no flag to set, no state to check. It's not agent-observable *or* agent-actionable, so by rule #10 it doesn't belong in an agent-facing doc at all. My \"routed back to this session\" reword was still describing server-side behavior, just in friendlier words — same category error.\n\nThe doc is already silent on the equivalent `git:branch:` routing that brings PR comments back to a session, so dropping this is the consistent choice. Trimming to just the agent-actionable fact:",
+          "timestamp": "2026-06-02T12:55:50.925Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Edit",
+          "input": {
+            "file_path": "/Users/son.dao/conductor/workspaces/thor/stockholm-v1/docker/opencode/config/skills/using-gh/SKILL.md",
+            "new_string": "Only after approval does Thor execute the exact reviewed command.",
+            "old_string": "Only after approval does Thor execute the exact reviewed command and bind the created `github:issue:` session for later issue comments.",
+            "replace_all": false
+          },
+          "timestamp": "2026-06-02T12:55:52.686Z"
+        },
+        {
+          "type": "assistant",
+          "text": "The `gh issue create` entry now states only what the agent observes and acts on: the approval gate, the `approval_required` payload, the `approval status <id>` poll, and that the reviewed command runs verbatim after approval. All server-side mechanics (Slack delivery, footer/assignee injection, session-alias routing) are gone.\n\nLet me show the final result and commit:",
+          "timestamp": "2026-06-02T12:55:59.152Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Bash",
+          "input": {
+            "command": "git diff docker/opencode/config/skills/using-gh/SKILL.md",
+            "description": "Show final diff"
+          },
+          "timestamp": "2026-06-02T12:55:59.548Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Bash",
+          "input": {
+            "command": "git add docker/opencode/config/skills/using-gh/SKILL.md && git commit -m \"$(cat <<'EOF'\ndocs: trim gh issue create skill to agent-observable approval contract\n\nRemove server-side mechanics the agent cannot observe or act on (Slack\nbutton delivery, traceability footer / trigger-user assignee injection,\ngithub:issue session-alias routing) from the gh issue create entry, per\nAGENTS.md rule #10. Keep only the agent-actionable contract: approval\ngate, approval_required payload + action ID, approval status <id> poll,\nand verbatim execution of the reviewed command after approval. Aligns\nwith the MCP approve-classified tool wording in build.md.\n\nCo-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>\nEOF\n)\"",
+            "description": "Commit the SKILL.md change"
+          },
+          "timestamp": "2026-06-02T12:56:05.399Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Committed as `95fa26e4` (pre-commit prettier + typecheck passed). Only the one SKILL.md line changed.\n\nFinal `gh issue create` entry now describes only the agent-observable approval contract — the gate, the `approval_required` payload + action ID, the `approval status <id>` poll, and verbatim execution after approval. All server-side mechanics (Slack button delivery, footer/assignee injection, `github:issue:` session-alias routing) are removed per AGENTS.md rule #10, matching the MCP approve-tool wording in `build.md`.",
+          "timestamp": "2026-06-02T12:56:13.875Z"
+        },
+        {
+          "type": "user",
+          "text": "Compare with how mcp tools are described. We need consistency.",
+          "timestamp": "2026-06-02T12:56:56.049Z"
+        },
+        {
+          "type": "assistant",
+          "text": " I'm checking whether the language I used in the GitHub issue creation matches how MCP approve-classified tools are framed in the build documentation, to make sure the terminology is consistent across both places.",
+          "timestamp": "2026-06-02T12:57:01.931Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Read",
+          "input": {
+            "file_path": "/Users/son.dao/conductor/workspaces/thor/stockholm-v1/docker/opencode/config/agents/build.md",
+            "limit": 17,
+            "offset": 71
+          },
+          "timestamp": "2026-06-02T12:57:02.009Z"
+        },
+        {
+          "type": "assistant",
+          "text": " I'm comparing how MCP and the current gh issue create implementation handle approval workflows—MCP uses a generic `classification: approve` pattern with `approval status` and `approval list` commands, while the gh implementation is more specific, returning an `approval_required` payload that requires polling with the returned action ID before Thor executes the reviewed command.\n\nThe key inconsistencies are the placeholder naming (`<action-id>` vs `<id>`), the return-value framing (generic \"action ID\" vs explicit `approval_required` payload), and minor verb differences (\"check status with\" vs \"poll with\"). I should align the gh documentation to use `<action-id>` consistently with the canonical build.md reference, and consider whether to standardize the language around what gets returned. So the cleaner approach is to align the gh description with build.md's vocabulary: return an action ID instead of the result, then poll with `approval status <action-id>`. Since both gh and MCP return the same `approval_required` envelope, and build.md abstracts it as \"an action ID,\" I should drop the payload mention from gh too for consistency. The \"exact reviewed command\" clause is gh-specific and worth keeping as it reinforces the assurance that what you submit is what runs.",
+          "timestamp": "2026-06-02T12:57:35.042Z"
+        },
+        {
+          "type": "assistant",
+          "text": "Here's the side-by-side:\n\n| Aspect | MCP — `build.md:82` | `gh issue create` (current) |\n|---|---|---|\n| Gate phrasing | \"Some tools require human approval\" | \"Issue creation requires human approval\" ✅ |\n| What's returned | \"returns **an action ID** instead of an immediate result\" | \"returns an **`approval_required` payload** with an action ID instead of creating the issue\" |\n| Poll instruction | \"**check status with** `approval status <action-id>`\" | \"**poll with** the returned `approval status <id>` command\" |\n| Placeholder | `<action-id>` | `<id>` |\n\nThree drifts: (1) MCP abstracts the return as \"an action ID\" — but the MCP path returns the *same* `approval_required` envelope as gh (`mcp-handler.ts:833`), so build.md deliberately doesn't surface that literal; gh shouldn't either. (2) \"poll with\" vs \"check status with.\" (3) `<id>` vs `<action-id>`. The `approval` CLI is canonically documented in `build.md`, so the gh entry should borrow its vocabulary, not invent variants.\n\nAligning the gh wording to the build.md shape (keeping only the gh-specific \"exact reviewed command\" assurance, which has no MCP analog but doesn't contradict it):",
+          "timestamp": "2026-06-02T12:57:39.213Z"
+        },
+        {
+          "type": "tool_use",
+          "name": "Edit",
+          "input": {
+            "file_path": "/Users/son.dao/conductor/workspaces/thor/stockholm-v1/docker/opencode/config/skills/using-gh/SKILL.md",
+            "new_string": "Issue creation requires human approval: calling it returns an action ID instead of creating the issue; check status with `approval status <action-id>`. Only after approval does Thor execute the exact reviewed command.",
+            "old_string": "Issue creation requires human approval: this command returns an `approval_required` payload with an action ID instead of creating the issue; poll with the returned `approval status <id>` command. Only after approval does Thor execute the exact reviewed command.",
+            "replace_all": false
+          },
+          "timestamp": "2026-06-02T12:57:41.166Z"
+        }
+      ],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
