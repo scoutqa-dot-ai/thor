@@ -5,12 +5,12 @@ repo-specific context stays in repo-local docs and agent instructions.
 
 ## Tiers
 
-| Tier         | Path                                          | Injected by runner?                                                        | Use for                                                                                        |
-| ------------ | --------------------------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Global       | `/workspace/memory/README.md`                 | Yes, on new or stale sessions                                              | Rare cross-cutting Thor context, durable corrections, workspace-wide operating notes.          |
-| Channel      | `/workspace/memory/channels/<channel-id>.md`  | Yes, when `correlationKey` is `slack:thread:<channel>/<ts>`                | Durable team/channel preferences, recurring channel workflows, channel-specific norms.         |
+| Tier         | Path                                             | Injected by runner?                                                        | Use for                                                                                        |
+| ------------ | ------------------------------------------------ | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Global       | `/workspace/memory/README.md`                    | Yes, on new or stale sessions                                              | Rare cross-cutting Thor context, durable corrections, workspace-wide operating notes.          |
+| Channel      | `/workspace/memory/channels/<channel-id>.md`     | Yes, when `correlationKey` is `slack:thread:<channel>/<ts>`                | Durable team/channel preferences, recurring channel workflows, channel-specific norms.         |
 | Person       | `/workspace/memory/people/<email-local-part>.md` | Yes, when the trigger actor resolves through `/workspace/config/thor.json` | Durable user preferences, identity context, preferred follow-up style, stable ownership hints. |
-| Repo context | Repo-local `AGENTS.md`, `CLAUDE.md`, and docs | Delegated to OpenCode/repo files                                           | Product facts, codebase conventions, runbooks, and anything humans should review in git.       |
+| Repo context | Repo-local `AGENTS.md`, `CLAUDE.md`, and docs    | Delegated to OpenCode/repo files                                           | Product facts, codebase conventions, runbooks, and anything humans should review in git.       |
 
 ## Person Files
 
@@ -29,9 +29,9 @@ Examples:
 
 On a new or stale OpenCode session, the runner builds bootstrap context in this
 order: global memory, Slack channel memory when addressable, person memory when
-the trigger actor resolves, tool instructions, triggering-user attribution, then
-the user prompt. Missing or empty memory files are non-fatal. Memory progress
-events list only files actually read, not suggested paths.
+the trigger actor resolves, triggering-user attribution, then the user prompt.
+Missing or empty memory files are non-fatal. Memory progress events list only
+files actually read, not suggested paths.
 
 Normal resumed sessions do not receive memory bootstrap again. The correlation
 key is still added to every prompt.
