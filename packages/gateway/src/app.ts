@@ -658,6 +658,7 @@ async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<v
     resolutionStatus: resolutionFailed ? "error" : resolution.status,
     resolutionSummary: resolution.summary,
     resolutionExitCode: resolved.exitCode,
+    resolutionSideEffectAttempted: resolved.sideEffectAttempted,
   };
 
   const rawCorrelationKey = buildSlackCorrelationKey(channel, threadTs);
