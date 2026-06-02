@@ -1447,7 +1447,6 @@ const KNOWN_BINS: Record<string, number> = {
   corepack: 2,
   gh: 2,
   git: 2,
-  langfuse: 4,
   ldcli: 2,
   mcp: 3,
   metabase: 2,
@@ -2072,12 +2071,7 @@ function renderTaskCard(
   let subActivity = "";
   if (subSession) {
     const ledgerLabel = subagent ? `task · ${subagent}` : "task";
-    const result = renderInlineSubagent(
-      subSession,
-      ctx,
-      partTimeWindow(part),
-      ledgerLabel,
-    );
+    const result = renderInlineSubagent(subSession, ctx, partTimeWindow(part), ledgerLabel);
     if (result) {
       parentLedger.children.push(result.ledger);
       subActivity = result.html ?? "";

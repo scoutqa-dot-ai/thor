@@ -63,8 +63,8 @@ const QueuedEventSchema = z.object({
 /**
  * Handler callback. Call `ack()` to confirm processing and delete the files.
  * Call `reject(reason)` to move files to the dead-letter directory.
- * If the handler returns without calling ack or reject (e.g. runner busy),
- * files stay on disk and will be retried on the next scan cycle.
+ * If the handler returns without settling (e.g. runner busy), files stay on
+ * disk and will be retried on the next scan cycle.
  * If the handler throws, files are deleted to prevent infinite retry loops.
  */
 export type EventHandler = (
@@ -148,7 +148,7 @@ export class EventQueue {
    * Manually scan the queue, process all ready events, and wait for
    * all in-flight processing to complete. Repeats while handlers keep
    * acking (new files get deleted → new events may become ready).
-   * Stops when no handler acks in a cycle (deferred events stay on disk).
+   * Stops when no handler acks in a cycle (unsettled events stay on disk).
    *
    * Intended for tests (bypasses the polling interval).
    */
@@ -161,7 +161,7 @@ export class EventQueue {
       const acksBefore = this.ackCount;
       await Promise.allSettled([...this.processing.values()]);
 
-      // If no handler acked in this cycle, remaining files are deferred — stop.
+      // If no handler acked in this cycle, remaining files are unsettled — stop.
       if (this.ackCount === acksBefore) break;
     }
   }
@@ -302,16 +302,16 @@ export class EventQueue {
         source: entries[0].event.source,
       });
 
-      let settled = false;
+      let settlement: "acked" | "rejected" | undefined;
       const ack = () => {
-        if (settled) return;
-        settled = true;
+        if (settlement) return;
+        settlement = "acked";
         this.ackCount++;
         this.deleteFiles(entries);
       };
       const reject = (reason: string) => {
-        if (settled) return;
-        settled = true;
+        if (settlement) return;
+        settlement = "rejected";
         this.ackCount++;
         this.moveToDeadLetter(entries, reason);
       };
@@ -322,10 +322,10 @@ export class EventQueue {
         reject,
       );
 
-      if (settled) {
+      if (settlement) {
         logInfo(log, "event_completed", { lockKey, ...keyMetadata });
       } else {
-        logInfo(log, "event_deferred", { lockKey, ...keyMetadata });
+        logInfo(log, "event_unsettled", { lockKey, ...keyMetadata });
       }
     } catch (err) {
       logError(log, "event_handler_error", err, { lockKey });
