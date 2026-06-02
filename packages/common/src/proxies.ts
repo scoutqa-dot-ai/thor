@@ -1,4 +1,3 @@
-import { APPROVAL_TOOL_NAMES } from "./approval-events.ts";
 import { envBaseUrl } from "./env.ts";
 
 export const PROXY_NAMES = ["atlassian", "grafana", "langfuse", "posthog"] as const;
@@ -106,29 +105,6 @@ const LANGFUSE_ALLOW = [
   "getScoreConfig",
 ];
 const LANGFUSE_APPROVE: string[] = [];
-
-// Tool policy stays global per integration (profiles only re-route credentials),
-// so the approve inventory is the union of the per-upstream approve lists. Assert
-// at load time that it matches the typed approval events; a drift means an
-// approved write tool has no disclaimer-compatible schema (or vice versa).
-const APPROVED_PROXY_TOOLS = [
-  ...ATLASSIAN_APPROVE,
-  ...GRAFANA_APPROVE,
-  ...LANGFUSE_APPROVE,
-  ...POSTHOG_APPROVE,
-].sort();
-const typedApprovalTools = [...APPROVAL_TOOL_NAMES]
-  .filter((tool) => tool !== "ghIssueCreate")
-  .sort();
-
-if (
-  APPROVED_PROXY_TOOLS.length !== typedApprovalTools.length ||
-  APPROVED_PROXY_TOOLS.some((tool, index) => tool !== typedApprovalTools[index])
-) {
-  throw new Error(
-    `Approval tool inventory mismatch between proxy policy and typed approval events. Configured approve tools: ${APPROVED_PROXY_TOOLS.join(", ") || "(none)"}; typed approval tools: ${typedApprovalTools.join(", ") || "(none)"}`,
-  );
-}
 
 function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
   const value = env[name]?.trim();

@@ -20,7 +20,6 @@ export {
 } from "./workspace-config.ts";
 export { PROXY_NAMES, isProxyName, resolveProxyConfig, getAvailableProxyNames } from "./proxies.ts";
 export {
-  APPROVAL_TOOL_NAMES,
   ApprovalArgsSchema,
   ApprovalRequiredEventPayloadSchema,
   CreateJiraIssueApprovalArgsSchema,

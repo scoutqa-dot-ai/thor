@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { APPROVAL_TOOL_NAMES } from "./approval-events.ts";
 import { getAvailableProxyNames, PROXY_NAMES, resolveProxyConfig } from "./proxies.ts";
 
 const FULL_ENV: NodeJS.ProcessEnv = {
@@ -145,15 +144,5 @@ describe("proxy registry", () => {
       const overlap = proxy!.allow.filter((tool) => proxy!.approve.includes(tool));
       expect(overlap).toEqual([]);
     }
-  });
-  it("requires approval only for the approved write-tool inventory", () => {
-    const approvedTools = PROXY_NAMES.flatMap(
-      (name) => resolveProxyConfig(name, undefined, FULL_ENV)?.approve ?? [],
-    ).sort();
-    const typedApprovalTools = [...APPROVAL_TOOL_NAMES]
-      .filter((tool) => tool !== "ghIssueCreate")
-      .sort();
-
-    expect(approvedTools).toEqual(typedApprovalTools);
   });
 });

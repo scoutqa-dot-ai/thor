@@ -1,12 +1,5 @@
 import { z } from "zod/v4";
 
-export const APPROVAL_TOOL_NAMES = [
-  "createJiraIssue",
-  "addCommentToJiraIssue",
-  "create-feature-flag",
-  "ghIssueCreate",
-] as const;
-
 export const CreateJiraIssueApprovalArgsSchema = z
   .object({
     projectKey: z.string().min(1),
@@ -77,7 +70,7 @@ export const ApprovalRequiredEventPayloadSchema = z.discriminatedUnion("tool", [
   }),
 ]);
 
-export type ApprovalToolName = (typeof APPROVAL_TOOL_NAMES)[number];
+export type ApprovalToolName = z.infer<typeof ApprovalRequiredEventPayloadSchema>["tool"];
 export type ApprovalArgs = z.infer<typeof ApprovalArgsSchema>;
 export type ApprovalRequiredEventPayload = z.infer<typeof ApprovalRequiredEventPayloadSchema>;
 
