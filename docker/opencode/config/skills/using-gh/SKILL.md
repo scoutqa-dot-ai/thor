@@ -29,7 +29,7 @@ Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--base`/`-B`, `--head`/`
 
 ### `gh issue create`
 
-Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable). This command returns `approval_required` and posts Slack Approve/Reject buttons in the originating thread; use the returned `approval status <id>` command while waiting. Only after approval does Thor execute the exact reviewed command, add the traceability footer / trigger-user assignee, and bind the created `github:issue:` session for later issue comments.
+Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable). Issue creation requires human approval: this command returns an `approval_required` payload with an action ID instead of creating the issue; poll with the returned `approval status <id>` command. Only after approval does Thor execute the exact reviewed command and bind the created `github:issue:` session for later issue comments.
 
 ### `gh pr comment`
 
