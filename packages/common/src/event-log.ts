@@ -260,12 +260,12 @@ export function mintAnchor(): string {
 }
 
 /**
- * Detects opencode_event records whose part is `text` or `reasoning` — the
- * user-visible message body we must never lose. Tool inputs/outputs can run
- * arbitrarily large (file reads, big JSON payloads) and still get capped;
- * text/reasoning bypass the cap unconditionally.
+ * Detects opencode_event records whose part must never be capped. Text and
+ * reasoning preserve user-visible/debuggable content; step-finish preserves
+ * authoritative token/cost accounting. Tool inputs/outputs can run arbitrarily
+ * large (file reads, big JSON payloads) and still get capped.
  */
-function isTextOrReasoningOpencodeEvent(record: Record<string, unknown>): boolean {
+function isUncappedOpencodeEventPart(record: Record<string, unknown>): boolean {
   if (record.type !== "opencode_event") return false;
   const event = record.event;
   if (!event || typeof event !== "object") return false;
@@ -274,7 +274,7 @@ function isTextOrReasoningOpencodeEvent(record: Record<string, unknown>): boolea
   const part = (properties as { part?: unknown }).part;
   if (!part || typeof part !== "object") return false;
   const partType = (part as { type?: unknown }).type;
-  return partType === "text" || partType === "reasoning";
+  return partType === "text" || partType === "reasoning" || partType === "step-finish";
 }
 
 function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncated?: true } {
@@ -282,9 +282,10 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
   if (Buffer.byteLength(JSON.stringify(candidate), "utf8") < MAX_RECORD_BYTES)
     return candidate as T;
 
-  // Never truncate text/reasoning parts — long assistant replies or thinking
-  // chains exceed 4 KB legitimately, and the debugging UI needs them whole.
-  if (isTextOrReasoningOpencodeEvent(candidate)) return candidate as T;
+  // Never truncate text/reasoning/step-finish parts: long assistant replies or
+  // thinking chains can legitimately exceed 4 KB, and step-finish carries the
+  // authoritative token/cost accounting used by the viewer.
+  if (isUncappedOpencodeEventPart(candidate)) return candidate as T;
 
   // Project oversized opencode events to a fixed viewer skeleton. The projected
   // schema has a bounded set of keys, so size is naturally constrained.

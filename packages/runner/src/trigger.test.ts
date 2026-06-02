@@ -188,6 +188,33 @@ function stepFinishEvent(sessionId: string): Event {
   } as unknown as Event;
 }
 
+function stepFinishPartRecord(
+  sessionId: string,
+  opts: { cost?: number; tokens?: unknown } = {},
+): Record<string, unknown> {
+  return {
+    type: "opencode_event",
+    event: {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          type: "step-finish",
+          sessionID: sessionId,
+          messageID: `m-${sessionId}`,
+          reason: "stop",
+          ...(opts.cost !== undefined ? { cost: opts.cost } : {}),
+          tokens: opts.tokens ?? {
+            input: 1000,
+            output: 2000,
+            reasoning: 300,
+            cache: { read: 400 },
+          },
+        },
+      },
+    },
+  };
+}
+
 function statusEvent(sessionId: string): Event {
   return { type: "session.status", properties: { sessionID: sessionId, status: "busy" } } as Event;
 }
@@ -438,6 +465,110 @@ describe("runner /trigger orchestration", () => {
       expect(html).toContain("direct trigger");
       // No /raw escape hatch — the single-endpoint contract.
       expect(html).not.toContain("/raw");
+    });
+  });
+
+  it("renders single-agent cost from persisted step-finish cost", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000514";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("cost-session", anchorId);
+    appendSessionEvent("cost-session", { type: "trigger_start", triggerId });
+    appendSessionEvent("cost-session", stepFinishPartRecord("cost-session", { cost: 0.0123 }));
+    appendSessionEvent("cost-session", { type: "trigger_end", triggerId, status: "completed" });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`);
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain("Cost: $0.012");
+      expect(html).toContain("Tokens:");
+      expect(html).not.toContain("Est cost");
+      expect(html).not.toContain("~$");
+      expect(html).not.toContain("Model: gpt-5.4");
+    });
+  });
+
+  it("does not estimate cost when step-finish has tokens but no persisted cost", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000515";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("missing-cost-session", anchorId);
+    appendSessionEvent("missing-cost-session", { type: "trigger_start", triggerId });
+    appendSessionEvent("missing-cost-session", stepFinishPartRecord("missing-cost-session"));
+    appendSessionEvent("missing-cost-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`);
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain("Tokens:");
+      expect(html).not.toContain("Cost:");
+      expect(html).not.toContain("Est cost");
+      expect(html).not.toContain("~$");
+    });
+  });
+
+  it("renders subagent totals using persisted step-finish costs", async () => {
+    const h = createHarness();
+    const triggerId = "00000000-0000-7000-8000-000000000516";
+    const anchorId = mintAnchor();
+    bindSessionToAnchor("parent-cost-session", anchorId);
+    const subSessionId = "ses_subagent_cost_test_001";
+    const taskStart = 1_700_000_000_000;
+    const taskEnd = taskStart + 10_000;
+    mkdirSync(`${worklogDir}/sessions`, { recursive: true });
+    writeFileSync(
+      `${worklogDir}/sessions/${subSessionId}.jsonl`,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        ts: new Date(taskStart + 100).toISOString(),
+        ...stepFinishPartRecord(subSessionId, { cost: 0.0456 }),
+      })}\n`,
+    );
+
+    appendSessionEvent("parent-cost-session", { type: "trigger_start", triggerId });
+    appendSessionEvent(
+      "parent-cost-session",
+      stepFinishPartRecord("parent-cost-session", { cost: 0.0123 }),
+    );
+    appendSessionEvent("parent-cost-session", {
+      type: "opencode_event",
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "tool",
+            tool: "task",
+            state: {
+              status: "completed",
+              input: { subagent_type: "thinker", prompt: "go" },
+              metadata: { sessionId: subSessionId, model: { modelID: "expensive-model" } },
+              time: { start: taskStart, end: taskEnd },
+            },
+          },
+        },
+      },
+    });
+    appendSessionEvent("parent-cost-session", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+
+    await withServer(h.app, async (url) => {
+      const response = await fetch(`${url}/runner/v/${anchorId}/${triggerId}`);
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain("$0.012");
+      expect(html).toContain("$0.046");
+      expect(html).toContain("$0.058");
+      expect(html).not.toContain("expensive-model");
+      expect(html).not.toContain("~$");
     });
   });
 

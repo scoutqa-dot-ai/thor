@@ -52,7 +52,6 @@ import {
   validateCwd,
   validateGhArgs,
   validateLdcliArgs,
-  validateLangfuseArgs,
   validateMetabaseArgs,
   validateScoutqaArgs,
 } from "./policy.ts";
@@ -927,34 +926,6 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         writeNdjson({ type: "exit", exitCode: 1 });
         res.end();
       }
-    }
-  });
-
-  app.post("/exec/langfuse", async (req, res) => {
-    try {
-      const { args } = req.body ?? {};
-
-      const argsError = validateLangfuseArgs(args);
-      if (argsError) {
-        res.status(400).json({ stdout: "", stderr: argsError, exitCode: 1 });
-        return;
-      }
-
-      const action = args[2];
-      const needsJson = action === "list" || action === "get";
-      const finalArgs = !needsJson || args.includes("--json") ? args : [...args, "--json"];
-
-      logInfo(log, "exec_langfuse", { args: finalArgs, ...thorIds(req) });
-      const result = await execCommand("langfuse", finalArgs, "/workspace");
-      res.json(result);
-    } catch (err) {
-      logError(
-        log,
-        "exec_langfuse_error",
-        err instanceof Error ? err.message : String(err),
-        thorIds(req),
-      );
-      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
     }
   });
 
