@@ -580,62 +580,57 @@ async function prepareGitHubCheckSuiteEvents(input: {
 }): Promise<
   { ok: true; events: GitHubWebhookEvent[] } | { ok: false; kind: "drop"; reason: string }
 > {
-  const prepared: GitHubWebhookEvent[] = [];
-
-  for (const event of input.events) {
-    if (!isCheckSuiteCompletedEvent(event)) {
-      prepared.push(event);
-      continue;
-    }
-
-    const localRepo = getGitHubEventLocalRepo(event);
-    const directory = localRepo ? resolveRepoDirectory(localRepo) : undefined;
-    if (!localRepo || !directory) {
-      return { ok: false, kind: "drop", reason: "repo_not_mapped" };
-    }
-
-    const pullRequests = event.check_suite.pull_requests;
-    if (pullRequests.length !== 1) {
-      return {
-        ok: false,
-        kind: "drop",
-        reason: pullRequests.length === 0 ? "check_suite_pr_missing" : "check_suite_pr_ambiguous",
-      };
-    }
-
-    const gate = await verifyThorAuthoredSha({
-      internalExec: input.internalExec,
-      directory,
-      sha: event.check_suite.head_sha,
-      expectedEmail: input.githubAppBotEmail,
-    });
-    if (!gate.ok) {
-      return { ok: false, kind: "drop", reason: "check_suite_gate_failed" };
-    }
-
-    const prChecks = await resolvePrChecksTerminalState({
-      internalExec: input.internalExec,
-      directory,
-      prNumber: pullRequests[0]!.number,
-    });
-    if (!prChecks.ok) {
-      if (prChecks.reason === "pr_checks_pending") {
-        return { ok: false, kind: "drop", reason: "check_suite_pr_checks_pending" };
-      }
-      return { ok: false, kind: "drop", reason: "check_suite_pr_checks_lookup_failed" };
-    }
-
-    const augmented: CheckSuiteEventWithPrChecks = {
-      ...event,
-      thor: {
-        pr_checks: prChecks.aggregate,
-        pr_checks_summary: prChecks.checks,
-      },
-    };
-    prepared.push(augmented);
+  const checkSuiteEvents = input.events.filter(isCheckSuiteCompletedEvent);
+  if (checkSuiteEvents.length === 0) {
+    return { ok: true, events: input.events };
   }
 
-  return { ok: true, events: prepared };
+  const event = checkSuiteEvents[checkSuiteEvents.length - 1]!;
+  const localRepo = getGitHubEventLocalRepo(event);
+  const directory = localRepo ? resolveRepoDirectory(localRepo) : undefined;
+  if (!localRepo || !directory) {
+    return { ok: false, kind: "drop", reason: "repo_not_mapped" };
+  }
+
+  const pullRequests = event.check_suite.pull_requests;
+  if (pullRequests.length !== 1) {
+    return {
+      ok: false,
+      kind: "drop",
+      reason: pullRequests.length === 0 ? "check_suite_pr_missing" : "check_suite_pr_ambiguous",
+    };
+  }
+
+  const gate = await verifyThorAuthoredSha({
+    internalExec: input.internalExec,
+    directory,
+    sha: event.check_suite.head_sha,
+    expectedEmail: input.githubAppBotEmail,
+  });
+  if (!gate.ok) {
+    return { ok: false, kind: "drop", reason: "check_suite_gate_failed" };
+  }
+
+  const prChecks = await resolvePrChecksTerminalState({
+    internalExec: input.internalExec,
+    directory,
+    prNumber: pullRequests[0]!.number,
+  });
+  if (!prChecks.ok) {
+    if (prChecks.reason === "pr_checks_pending") {
+      return { ok: false, kind: "drop", reason: "check_suite_pr_checks_pending" };
+    }
+    return { ok: false, kind: "drop", reason: "check_suite_pr_checks_lookup_failed" };
+  }
+
+  const augmented: CheckSuiteEventWithPrChecks = {
+    ...event,
+    thor: {
+      pr_checks: prChecks.aggregate,
+      pr_checks_summary: prChecks.checks,
+    },
+  };
+  return { ok: true, events: [augmented] };
 }
 
 function resolveApprovalBatchDirectory(

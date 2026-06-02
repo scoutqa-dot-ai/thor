@@ -299,8 +299,12 @@ export function isPendingBranchResolveKey(key: string): boolean {
   return key.startsWith(PENDING_BRANCH_RESOLVE_PREFIX);
 }
 
-export function buildPendingCheckSuiteKey(localRepo: string, deliveryId: string): string {
-  return `${PENDING_CHECK_SUITE_PREFIX}${localRepo}:${deliveryId}`;
+export function buildPendingCheckSuiteKey(
+  localRepo: string,
+  prNumber: number,
+  branch: string,
+): string {
+  return `${PENDING_CHECK_SUITE_PREFIX}${localRepo}:${prNumber}:${branch}`;
 }
 
 export function isPendingCheckSuiteKey(key: string): boolean {

@@ -1110,12 +1110,18 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           const now = Date.now();
           const resolvedKey = resolveCorrelationKeys([plan.toCorrelationKey]);
           if (plan.githubEvents) {
-            for (const [index, event] of githubEvents.entries()) {
+            const baseEvents =
+              plan.githubEvents.length === githubEvents.length
+                ? githubEvents
+                : githubEvents.slice(-plan.githubEvents.length);
+            for (const [index, payload] of plan.githubEvents.entries()) {
+              const event = baseEvents[index];
+              if (!event) throw new Error("reroute plan missing source GitHub event");
               await queue.enqueue({
                 ...event,
                 id: `${event.id}:resolved`,
                 correlationKey: resolvedKey,
-                payload: plan.githubEvents[index],
+                payload,
                 readyAt: now,
                 delayMs: 0,
               });
@@ -1899,7 +1905,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         return;
       }
       targetCorrelationKey = resolvedKey;
-      correlationKey = buildPendingCheckSuiteKey(localRepo, deliveryId);
+      correlationKey = buildPendingCheckSuiteKey(localRepo, pullRequests[0]!.number, branch);
       delayMs = 0;
       interrupt = false;
     } else if (branch) {

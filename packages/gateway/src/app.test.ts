@@ -1617,7 +1617,7 @@ describe("gateway", () => {
           expect(queued[0]).toMatchObject({
             id: "delivery-check-suite-ok",
             source: "github",
-            correlationKey: "pending:check-suite:thor:delivery-check-suite-ok",
+            correlationKey: "pending:check-suite:thor:42:feature/refactor",
             delayMs: 0,
             interrupt: false,
             payload: {
@@ -1637,7 +1637,7 @@ describe("gateway", () => {
             reason: "accepted",
             eventType: "check_suite",
             metadata: {
-              correlationKey: "pending:check-suite:thor:delivery-check-suite-ok",
+              correlationKey: "pending:check-suite:thor:42:feature/refactor",
               targetCorrelationKey: "git:branch:thor:feature/refactor",
             },
           });
@@ -1693,6 +1693,70 @@ describe("gateway", () => {
     });
   });
 
+  it("collapses same-PR check_suite deliveries before rerouting", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    mockRunnerAccepted(fetchImpl);
+    const internalExec = vi.fn();
+    mockSuccessfulCheckSuiteExec(internalExec);
+
+    await withWorklogDir(async () => {
+      sessionKeys.add("git:branch:thor:feature/refactor");
+
+      await withServer(
+        fetchImpl,
+        async (baseUrl, queue, queueDir) => {
+          const firstBody = checkSuiteWebhookBody({
+            conclusion: "success",
+            updated_at: "2026-04-24T12:00:00Z",
+          });
+          const secondBody = checkSuiteWebhookBody({
+            conclusion: "failure",
+            updated_at: "2026-04-24T12:00:02Z",
+          });
+
+          await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(firstBody, "github-secret"),
+              "X-GitHub-Delivery": "delivery-check-suite-collapse-a",
+              "X-GitHub-Event": "check_suite",
+            },
+            body: firstBody,
+          });
+          await fetch(`${baseUrl}/github/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Hub-Signature-256": signGitHub(secondBody, "github-secret"),
+              "X-GitHub-Delivery": "delivery-check-suite-collapse-b",
+              "X-GitHub-Event": "check_suite",
+            },
+            body: secondBody,
+          });
+
+          await queue.flush();
+
+          expect(fetchImpl).toHaveBeenCalledTimes(1);
+          const triggerBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+          expect(triggerBody.correlationKey).toBe("git:branch:thor:feature/refactor");
+          expect(JSON.parse(triggerBody.prompt)).toMatchObject({
+            event_type: "check_suite",
+            check_suite: { conclusion: "failure" },
+          });
+          expect(readQueuedEvents(queueDir)).toHaveLength(0);
+        },
+        {
+          githubWebhookSecret: "github-secret",
+          githubMentionLogins: ["thor", "thor[bot]"],
+          githubAppBotId: 7777,
+          githubAppBotEmail: "49699333+thor[bot]@users.noreply.github.com",
+          internalExec,
+        },
+      );
+    });
+  });
+
   it.each([
     "success",
     "neutral",
@@ -1736,7 +1800,7 @@ describe("gateway", () => {
           expect(queued[0]).toMatchObject({
             id: `delivery-check-suite-${String(conclusion)}`,
             source: "github",
-            correlationKey: `pending:check-suite:thor:delivery-check-suite-${String(conclusion)}`,
+            correlationKey: "pending:check-suite:thor:42:feature/refactor",
             delayMs: 0,
             interrupt: false,
             payload: {
@@ -1756,7 +1820,7 @@ describe("gateway", () => {
             reason: "accepted",
             eventType: "check_suite",
             metadata: {
-              correlationKey: `pending:check-suite:thor:delivery-check-suite-${String(conclusion)}`,
+              correlationKey: "pending:check-suite:thor:42:feature/refactor",
               targetCorrelationKey: "git:branch:thor:feature/refactor",
             },
           });
@@ -1939,7 +2003,7 @@ describe("gateway", () => {
           expect(await response.json()).toEqual({ ok: true });
           expect(internalExec).not.toHaveBeenCalled();
           expect(readQueuedEvents(queueDir)).toMatchObject([
-            { correlationKey: "pending:check-suite:thor:delivery-check-suite-pending" },
+            { correlationKey: "pending:check-suite:thor:42:feature/refactor" },
           ]);
           expect(readGitHubIngestedEntries(worklogDir)).toMatchObject([
             { reason: "accepted", eventType: "check_suite" },
@@ -1949,7 +2013,7 @@ describe("gateway", () => {
           expect(fetchImpl).not.toHaveBeenCalled();
           expect(readQueuedEvents(queueDir)).toHaveLength(0);
           expect(readQueuedEvents(queueDir, "dead-letter")).toMatchObject([
-            { correlationKey: "pending:check-suite:thor:delivery-check-suite-pending" },
+            { correlationKey: "pending:check-suite:thor:42:feature/refactor" },
           ]);
         },
         {
@@ -2038,7 +2102,7 @@ describe("gateway", () => {
           expect(readQueuedEvents(queueDir)).toHaveLength(0);
           expect(readQueuedEvents(queueDir, "dead-letter")).toMatchObject([
             {
-              correlationKey: "pending:check-suite:thor:delivery-check-suite-pending-mixed",
+              correlationKey: "pending:check-suite:thor:42:feature/refactor",
             },
           ]);
         },
@@ -2087,7 +2151,7 @@ describe("gateway", () => {
           expect(await response.json()).toEqual({ ok: true });
           expect(internalExec).not.toHaveBeenCalled();
           expect(readQueuedEvents(queueDir)).toMatchObject([
-            { correlationKey: "pending:check-suite:thor:delivery-check-suite-lookup-failed" },
+            { correlationKey: "pending:check-suite:thor:42:feature/refactor" },
           ]);
           expect(readGitHubIngestedEntries(worklogDir)).toMatchObject([
             { reason: "accepted", eventType: "check_suite" },
