@@ -29,7 +29,7 @@ Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--base`/`-B`, `--head`/`
 
 ### `gh issue create`
 
-Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable). Issue creation requires human approval: this command returns an `approval_required` payload with an action ID instead of creating the issue; poll with the returned `approval status <id>` command. Only after approval does Thor execute the exact reviewed command and bind the created `github:issue:` session for later issue comments.
+Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable). Issue creation requires human approval: calling it returns an action ID instead of creating the issue; check status with `approval status <action-id>`. Only after approval does Thor execute the exact reviewed command.
 
 ### `gh pr comment`
 
