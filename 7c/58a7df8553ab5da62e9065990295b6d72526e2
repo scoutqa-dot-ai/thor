@@ -1,0 +1,25 @@
+.github/workflows/core-e2e.yml
+  7a95914d5079e6b3 167-169,172
+docs/langfuse.md
+  7a95914d5079e6b3 1-123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "7c58a7df8553ab5da62e9065990295b6d72526e2",
+  "prompts": {
+    "7a95914d5079e6b3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "27db5410-82ca-4ee1-a11b-c95a5db4f746",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 166,
+      "total_deletions": 40,
+      "accepted_lines": 127,
+      "overriden_lines": 0
+    }
+  }
+}
