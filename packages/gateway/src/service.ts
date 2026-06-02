@@ -566,6 +566,13 @@ function resolveCheckSuiteBranchCorrelationKey(events: GitHubWebhookEvent[]): st
   return [...keys][0];
 }
 
+type CheckSuiteEventWithPrChecks = GitHubWebhookEvent & {
+  thor: {
+    pr_checks: PrChecksAggregateOutput;
+    pr_checks_summary: PrCheckSummary[];
+  };
+};
+
 async function prepareGitHubCheckSuiteEvents(input: {
   events: GitHubWebhookEvent[];
   internalExec: InternalExecClient;
@@ -618,18 +625,14 @@ async function prepareGitHubCheckSuiteEvents(input: {
       return { ok: false, kind: "drop", reason: "check_suite_pr_checks_lookup_failed" };
     }
 
-    prepared.push({
+    const augmented: CheckSuiteEventWithPrChecks = {
       ...event,
       thor: {
         pr_checks: prChecks.aggregate,
         pr_checks_summary: prChecks.checks,
       },
-    } as GitHubWebhookEvent & {
-      thor: {
-        pr_checks: PrChecksAggregateOutput;
-        pr_checks_summary: PrCheckSummary[];
-      };
-    });
+    };
+    prepared.push(augmented);
   }
 
   return { ok: true, events: prepared };

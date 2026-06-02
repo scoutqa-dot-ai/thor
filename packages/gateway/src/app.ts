@@ -1753,7 +1753,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     let targetCorrelationKey: string | undefined;
     let delayMs = githubMentionDelay;
     let interrupt = true;
-    const payload: GitHubWebhookEvent = parsed.data;
 
     if (isPullRequestClosedEvent(parsed.data)) {
       const rawKey = buildCorrelationKey(localRepo, parsed.data.pull_request.head.ref);
@@ -1917,7 +1916,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       id: deliveryId,
       source: "github",
       correlationKey,
-      payload,
+      payload: parsed.data,
       receivedAt: new Date().toISOString(),
       sourceTs,
       readyAt: sourceTs + delayMs,
