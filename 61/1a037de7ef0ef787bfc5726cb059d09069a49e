@@ -1,0 +1,37 @@
+packages/remote-cli/src/__fixtures__/stdio-mcp-server.mjs
+  0db2e5ae7461c4cf 1-10,12-15,17-22
+packages/common/src/proxies.ts
+  0db2e5ae7461c4cf 8-16,18,170,189,226,262
+packages/remote-cli/src/mcp-handler.test.ts
+  0db2e5ae7461c4cf 9,181,186
+packages/common/src/proxies.test.ts
+  0db2e5ae7461c4cf 100
+packages/remote-cli/src/upstream.test.ts
+  0db2e5ae7461c4cf 1-30
+packages/remote-cli/src/mcp-handler.ts
+  0db2e5ae7461c4cf 41,218-220,299,317,339-340,1057
+packages/remote-cli/src/upstream.ts
+  0db2e5ae7461c4cf 2,4,6,10,17-39,48-49,55,57,62,72
+packages/common/src/index.ts
+  0db2e5ae7461c4cf 69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "611a037de7ef0ef787bfc5726cb059d09069a49e",
+  "prompts": {
+    "0db2e5ae7461c4cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f04ca88-25b3-4d8a-a5b6-d40caeff0874",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 123,
+      "total_deletions": 41,
+      "accepted_lines": 113,
+      "overriden_lines": 2
+    }
+  }
+}
