@@ -1,0 +1,25 @@
+packages/common/src/proxies.test.ts
+  0db2e5ae7461c4cf 15-22,24,41,44,47,128-130,145
+packages/remote-cli/src/upstream.ts
+  0db2e5ae7461c4cf 18-20,23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "8875c997cbc515abd827c4cd998fb33a5d2c56e9",
+  "prompts": {
+    "0db2e5ae7461c4cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f04ca88-25b3-4d8a-a5b6-d40caeff0874",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 119,
+      "total_deletions": 11,
+      "accepted_lines": 117,
+      "overriden_lines": 0
+    }
+  }
+}
