@@ -76,6 +76,7 @@ thor/
 - **Runtime**: Node.js 22+
 - **Formatting**: Default TypeScript/ESLint conventions. No custom config until needed.
 - **OpenCode version alignment**: When bumping `@opencode-ai/sdk`, also bump the OpenCode server/package version in the Dockerfile in the same change so the client and server stay aligned.
+- **OpenCode model limit alignment**: When adding or changing models in `docker/opencode/config/`, update `MODEL_CONTEXT_LIMITS` in `packages/runner/src/index.ts` in the same change so context progress remains available.
 - **OpenCode event schema/viewer drift**: Before changing OpenCode event persistence, projection, parser schemas, unknown-event fallback rendering, or `unrecognized_opencode_event` handling, read `docs/plan/2026051601_opencode-event-view-schema.md`.
 - **No frameworks unless justified** — Express for HTTP, raw TypeScript for everything else. Every added dependency should have a reason in the plan.
 

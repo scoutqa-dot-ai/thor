@@ -11,7 +11,7 @@ import type {
   ToolStateCompleted,
   ToolStateError,
 } from "@opencode-ai/sdk";
-import { EventBusRegistry, waitForSessionSettled } from "./event-bus.ts";
+import { EventBusRegistry } from "./event-bus.ts";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
@@ -81,7 +81,6 @@ const PORT = config.port;
 const OPENCODE_URL = config.opencodeUrl;
 const OPENCODE_CONNECT_TIMEOUT = config.opencodeConnectTimeout;
 const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
-const ABORT_TIMEOUT = config.abortTimeout;
 const SESSION_ERROR_GRACE_MS = config.sessionErrorGraceMs;
 
 /** Memory directory root. */
@@ -92,20 +91,10 @@ const defaultEventBuses = new EventBusRegistry(OPENCODE_URL);
 
 type OpencodeClient = ReturnType<typeof createOpencodeClient>;
 type ModelContextLimits = Map<string, number>;
-const EMPTY_MODEL_CONTEXT_LIMITS: ModelContextLimits = new Map();
-const MODEL_CONTEXT_LIMIT_CACHE_TTL_MS = 5 * 60_000;
-let cachedModelContextLimits:
-  | {
-      expiresAt: number;
-      limits: ModelContextLimits;
-    }
-  | undefined;
-let cachedModelContextLimitsPending: Promise<void> | undefined;
-
-export function resetModelContextLimitCacheForTests(): void {
-  cachedModelContextLimits = undefined;
-  cachedModelContextLimitsPending = undefined;
-}
+const MODEL_CONTEXT_LIMITS: ModelContextLimits = new Map([
+  ["openai/gpt-5.4", 1_050_000],
+  ["openai/gpt-5.5", 1_050_000],
+]);
 
 export interface RunnerAppOptions {
   opencodeUrl?: string;
@@ -583,15 +572,14 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     triggerGithubLogin: z.string().trim().min(1).optional(),
     /** Direct session ID to resume (bypasses correlation key lookup). */
     sessionId: z.string().optional(),
-    /** If true, abort a busy session before sending the prompt.
-     *  Defaults to false: return {busy: true} without aborting. */
+    /** If true, abort the resumed session before sending the prompt. */
     interrupt: z.boolean().optional(),
     /** Working directory for the OpenCode session. */
     directory: z.string(),
     /** If true, hold the HTTP response open and stream progress events as
      *  NDJSON lines until the agent settles, ending with a `done` line.
-     *  Default false: fire-and-forget — return {accepted,sessionId,resumed}
-     *  immediately and run the agent in a background task. Used by the
+     *  Default false: return one `start` NDJSON line, then run the agent in a
+     *  background task. Used by the
      *  OpenCode smoke test, which needs to read the agent's final response
      *  text and status from the trigger call. */
     stream: z.boolean().optional(),
@@ -891,55 +879,24 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       const resumed = resolution.resumed;
       const anchorId = resolution.anchorId;
 
-      // Kick off model-limit warming up front so it overlaps the busy check and
-      // prompt-send. Awaited later before the stream loop reads the cache.
-      const warmModelLimits = warmModelContextLimits({ client, opencodeUrl });
-
-      // --- If resuming a busy session, abort or bail ---
-      if (resumed) {
-        const statusResult = await client.session.status({});
-        const sessionStatus = statusResult.data?.[sessionId];
-
-        if (sessionStatus?.type === "busy") {
-          // Non-interrupt triggers don't abort — return busy so gateway can re-enqueue.
-          const shouldInterrupt = parsed.data.interrupt === true;
-          if (!shouldInterrupt) {
-            logInfo(log, "session_busy_nointerrupt", { sessionId, correlationKey });
-            res.json({ busy: true });
-            return;
-          }
-
-          // End any in-flight trigger this process owns for the session before aborting,
-          // so the prior trigger renders as `aborted` rather than `completed`.
-          const priorTriggerId = findInflightTriggerForSession(sessionId);
-          if (priorTriggerId) {
-            endTrigger(priorTriggerId, "aborted", { reason: "user_interrupt" });
-          }
-
-          logInfo(log, "session_busy_aborting", { sessionId, correlationKey });
-          await client.session.abort({ path: { id: sessionId } });
-
-          const abortSub = await eventBuses.subscribe([sessionId]);
-          const aborted = await waitForSessionSettled(abortSub, ABORT_TIMEOUT);
-          abortSub.close();
-
-          if (!aborted) {
-            logError(
-              log,
-              "session_abort_timeout",
-              `Session did not idle within ${ABORT_TIMEOUT}ms`,
-              { sessionId },
-            );
-            res.status(503).json({ error: "Session abort did not settle", sessionId });
-            return;
-          }
-          logInfo(log, "session_abort_complete", { sessionId });
+      // --- If requested, abort a resumed session before prompting. ---
+      if (resumed && parsed.data.interrupt === true) {
+        // End any in-flight trigger this process owns for the session before aborting,
+        // so the prior trigger renders as `aborted` rather than `completed`.
+        const priorTriggerId = findInflightTriggerForSession(sessionId);
+        if (priorTriggerId) {
+          endTrigger(priorTriggerId, "aborted", { reason: "user_interrupt" });
         }
-      }
 
-      // Block briefly so the first trigger after process start sees populated
-      // limits; subsequent calls within the cache TTL resolve immediately.
-      await warmModelLimits;
+        logInfo(log, "session_interrupt_aborting", { sessionId, correlationKey });
+        await client.session.abort({ path: { id: sessionId } }).catch((error) => {
+          logWarn(log, "session_interrupt_abort_failed", {
+            sessionId,
+            correlationKey,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }
 
       const bootstrapMemoryPaths: string[] = [];
 
@@ -1043,10 +1000,8 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       let progressChain = Promise.resolve();
 
       const stream = parsed.data.stream === true;
-      if (stream) {
-        res.setHeader("Content-Type", "application/x-ndjson");
-        res.flushHeaders?.();
-      }
+      res.setHeader("Content-Type", "application/x-ndjson");
+      res.flushHeaders?.();
 
       function emit(event: ProgressEvent): void {
         logInfo(log, "progress_emit", {
@@ -1072,7 +1027,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           ts: Date.now(),
         });
         options.progressEventSink?.(event);
-        if (stream && !res.writableEnded) {
+        if (!res.writableEnded) {
           res.write(JSON.stringify(event) + "\n");
         }
         if (!progressTarget || !progressTransport) return;
@@ -1094,12 +1049,12 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         resumed,
       });
 
-      for (const path of bootstrapMemoryPaths) {
-        emit({ type: "memory", action: "read", path, source: "bootstrap" });
-      }
-
-      const backgroundTask = (async () => {
+      const runBackgroundTask = async () => {
         try {
+          for (const path of bootstrapMemoryPaths) {
+            emit({ type: "memory", action: "read", path, source: "bootstrap" });
+          }
+
           // --- Stream processing ---
 
           let seq = 0;
@@ -1181,7 +1136,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                 const isParent = isSessionEvent(event, sessionId);
 
                 if (isParent && event.type === "message.updated") {
-                  emitContextProgressFromMessage(event, currentModelContextLimits(), emit);
+                  emitContextProgressFromMessage(event, MODEL_CONTEXT_LIMITS, emit);
                 }
 
                 // Forward tool progress from child sessions so
@@ -1355,13 +1310,14 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           emit({ type: "error", error: err instanceof Error ? err.message : String(err) });
           await progressChain;
         }
-      })();
+      };
       if (stream) {
+        const backgroundTask = runBackgroundTask();
         await backgroundTask;
         if (!res.writableEnded) res.end();
       } else {
-        void backgroundTask;
-        res.json({ accepted: true, sessionId, resumed });
+        if (!res.writableEnded) res.end();
+        void runBackgroundTask();
       }
     } catch (err) {
       logError(log, "trigger_error", err);
@@ -1403,59 +1359,6 @@ function eventSessionId(event: Event): string | undefined {
 
 function contextLimitKey(providerID: string, modelID: string): string {
   return `${providerID}/${modelID}`;
-}
-
-async function resolveModelContextLimits(client: OpencodeClient): Promise<ModelContextLimits> {
-  const limits: ModelContextLimits = new Map();
-  try {
-    const { data } = await client.provider.list({});
-    for (const provider of data?.all ?? []) {
-      for (const [modelID, model] of Object.entries(provider.models)) {
-        if (model.limit.context > 0) {
-          limits.set(contextLimitKey(provider.id, modelID), Math.floor(model.limit.context));
-        }
-      }
-    }
-  } catch (err) {
-    logWarn(log, "model_context_limits_load_failed", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-  return limits;
-}
-
-function currentModelContextLimits(): ModelContextLimits {
-  const cached = cachedModelContextLimits;
-  if (!cached) return EMPTY_MODEL_CONTEXT_LIMITS;
-  if (cached.expiresAt <= Date.now()) return EMPTY_MODEL_CONTEXT_LIMITS;
-  return cached.limits;
-}
-
-function warmModelContextLimits(input: {
-  client: OpencodeClient;
-  opencodeUrl: string;
-}): Promise<void> {
-  const cached = cachedModelContextLimits;
-  if (cached && cached.expiresAt > Date.now()) return Promise.resolve();
-  if (cachedModelContextLimitsPending) return cachedModelContextLimitsPending;
-
-  cachedModelContextLimitsPending = resolveModelContextLimits(input.client)
-    .then((limits) => {
-      cachedModelContextLimits = {
-        limits,
-        expiresAt: Date.now() + MODEL_CONTEXT_LIMIT_CACHE_TTL_MS,
-      };
-    })
-    .catch((err) => {
-      logWarn(log, "model_context_limits_warm_failed", {
-        opencodeUrl: input.opencodeUrl,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    })
-    .finally(() => {
-      cachedModelContextLimitsPending = undefined;
-    });
-  return cachedModelContextLimitsPending;
 }
 
 function messageUpdatedInfo(event: Event): Record<string, unknown> | undefined {

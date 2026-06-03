@@ -259,7 +259,7 @@ describe("EventQueue", () => {
 
   it("files stay on disk when handler does not call ack", async () => {
     const handler = vi.fn<EventHandler>().mockImplementation(async () => {
-      // Don't call ack — simulates busy/deferred
+      // Don't call ack — simulates deferred retry
     });
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
 

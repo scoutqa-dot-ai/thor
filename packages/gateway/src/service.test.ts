@@ -33,6 +33,23 @@ function execResponse(stdout: unknown, stderr = "", exitCode = 0): Response {
   });
 }
 
+function ndjsonResponseWithCancelSpy(cancelSpy: ReturnType<typeof vi.fn>): Response {
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"type":"start"}\n'));
+      },
+      cancel(reason) {
+        cancelSpy(reason);
+      },
+    }),
+    {
+      status: 200,
+      headers: { "content-type": "application/x-ndjson" },
+    },
+  );
+}
+
 function noopSlackDeps(): SlackDeps {
   return { client: {} } as unknown as SlackDeps;
 }
@@ -133,8 +150,7 @@ describe("triggerRunnerSlack edge cases", () => {
       onRejected,
     );
 
-    expect(result.busy).toBe(false);
-    expect(result.rejected).toBe(true);
+    expect(result).toMatchObject({ rejected: true });
     expect(onRejected).toHaveBeenCalledWith(expect.stringContaining("400"));
   });
 
@@ -174,7 +190,7 @@ describe("triggerRunnerCron", () => {
       deps,
     );
 
-    expect(result.busy).toBe(false);
+    expect(result).toEqual({ rejected: false });
     const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
     expect(triggerBody.prompt).toBe("Cron events:\n\ndo something\n\ndo the follow-up");
   });
@@ -213,7 +229,7 @@ describe("triggerRunnerGitHub", () => {
       vi.fn(),
     );
 
-    expect(result.busy).toBe(false);
+    expect(result).toEqual({ rejected: false });
     expect(mockFetch.mock.calls[0][0]).toBe("http://remote-cli:3004/internal/exec");
     expect(mockFetch.mock.calls[0][1]).toMatchObject({
       method: "POST",
@@ -264,7 +280,7 @@ describe("triggerRunnerGitHub", () => {
       vi.fn(),
     );
 
-    expect(result.busy).toBe(false);
+    expect(result).toEqual({ rejected: false });
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch.mock.calls[0][0]).toBe("http://runner:3000/trigger");
     const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
@@ -297,7 +313,7 @@ describe("triggerRunnerGitHub", () => {
       onRejected,
     );
 
-    expect(result.busy).toBe(false);
+    expect(result).toMatchObject({ rejected: true });
     expect(onRejected).toHaveBeenCalledWith("installation_gone");
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
@@ -326,13 +342,14 @@ describe("triggerRunnerGitHub", () => {
       onRejected,
     );
 
-    expect(result).toEqual({ busy: false });
+    expect(result).toEqual({ rejected: false });
     expect(onRejected).not.toHaveBeenCalled();
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
-  it("returns busy without ack for non-mention events", async () => {
-    mockFetch.mockResolvedValueOnce(jsonResponse({ busy: true }));
+  it("acks any successful runner response for non-mention events", async () => {
+    const cancelSpy = vi.fn();
+    mockFetch.mockResolvedValueOnce(ndjsonResponseWithCancelSpy(cancelSpy));
     const onAccepted = vi.fn();
 
     const { triggerRunnerGitHub } = await import("./service.ts");
@@ -346,8 +363,9 @@ describe("triggerRunnerGitHub", () => {
       onAccepted,
     );
 
-    expect(result.busy).toBe(true);
-    expect(onAccepted).not.toHaveBeenCalled();
+    expect(result).toEqual({ rejected: false });
+    expect(onAccepted).toHaveBeenCalled();
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
     const triggerBody = JSON.parse(String(mockFetch.mock.calls[0][1]?.body));
     expect(triggerBody.interrupt).toBe(false);
   });
@@ -355,7 +373,12 @@ describe("triggerRunnerGitHub", () => {
 
 describe("approval outcome prompts", () => {
   it("includes approval guidance when slack events and approval outcomes share a batch", async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ busy: true }));
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response('{"type":"start","sessionId":"s1","resumed":false}\n', {
+        status: 200,
+        headers: { "content-type": "application/x-ndjson" },
+      }),
+    );
     const { triggerRunnerSlack } = await import("./service.ts");
 
     const result = await triggerRunnerSlack(
@@ -389,7 +412,7 @@ describe("approval outcome prompts", () => {
       ],
     );
 
-    expect(result.busy).toBe(true);
+    expect(result).toEqual({ rejected: false });
     const req = fetchImpl.mock.calls[0]?.[1] as { body: string };
     const body = JSON.parse(req.body);
     expect(body.prompt).toContain("Slack event:");
@@ -669,7 +692,7 @@ describe("triggerRunnerApprovalOutcomes", () => {
       ),
     ]);
 
-    expect(outcome).toEqual({ kind: "resolved", result: { busy: false } });
+    expect(outcome).toEqual({ kind: "resolved", result: { rejected: false } });
     expect(onAccepted).toHaveBeenCalledTimes(1);
 
     await resultPromise;

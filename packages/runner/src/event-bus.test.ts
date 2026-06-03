@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Event, GlobalEvent, TextPart } from "@opencode-ai/sdk";
-import { EventBusRegistry, SessionSubscription, waitForSessionSettled } from "./event-bus.ts";
+import { EventBusRegistry, SessionSubscription } from "./event-bus.ts";
 
 vi.mock("@opencode-ai/sdk", () => {
   return {
@@ -46,13 +46,6 @@ function makeIdleEvent(sessionID: string): Event {
   return {
     type: "session.idle",
     properties: { sessionID },
-  };
-}
-
-function makeErrorEvent(sessionID: string): Event {
-  return {
-    type: "session.error",
-    properties: { sessionID, error: { name: "UnknownError", data: { message: "test" } } },
   };
 }
 
@@ -113,10 +106,6 @@ async function collectUntilIdle(sub: AsyncIterable<Event>): Promise<Event[]> {
     if (event.type === "session.idle") break;
   }
   return items;
-}
-
-async function* eventIterable(events: Event[]) {
-  for (const event of events) yield event;
 }
 
 describe("SessionSubscription", () => {
@@ -356,33 +345,5 @@ describe("EventBusRegistry", () => {
     expect(elapsed).toBeGreaterThanOrEqual(900);
 
     sub.close();
-  });
-});
-
-describe("waitForSessionSettled", () => {
-  it("treats idle and error events as settled", async () => {
-    await expect(waitForSessionSettled(eventIterable([makeIdleEvent("s1")]), 1_000)).resolves.toBe(
-      true,
-    );
-    await expect(waitForSessionSettled(eventIterable([makeErrorEvent("s1")]), 1_000)).resolves.toBe(
-      true,
-    );
-  });
-
-  it("returns false when the event stream ends before the session settles", async () => {
-    await expect(waitForSessionSettled(eventIterable([makePartEvent("s1")]), 1_000)).resolves.toBe(
-      false,
-    );
-  });
-
-  it("resolves false when the timeout fires before any settle event arrives", async () => {
-    const emitter = new EventEmitter();
-    const sub = new SessionSubscription(emitter, ["s1"]);
-    try {
-      // Stream stays open with no settle event — timeout has to win.
-      await expect(waitForSessionSettled(sub, 30)).resolves.toBe(false);
-    } finally {
-      sub.close();
-    }
   });
 });

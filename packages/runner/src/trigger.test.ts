@@ -3,11 +3,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Event, TextPart } from "@opencode-ai/sdk";
-import {
-  createRunnerApp,
-  resetModelContextLimitCacheForTests,
-  type RunnerAppOptions,
-} from "./index.ts";
+import { createRunnerApp, type RunnerAppOptions } from "./index.ts";
 import {
   appendAlias,
   appendCorrelationAliasForAnchor,
@@ -226,15 +222,14 @@ function sessionErrorEvent(sessionId: string, message: string): Event {
 
 function createHarness(
   opts: {
+    abortError?: Error;
     existingSessions?: Set<string>;
     busySessions?: Set<string>;
     children?: Array<{ id: string }>;
     onGet?: (sessionId: string) => Promise<void>;
-    onProviderList?: () => void;
     promptEvents?: (sessionId: string, sub: FakeSubscription) => Event[] | void;
     throwInSubscribe?: boolean;
     workspaceConfig?: WorkspaceConfig;
-    providerList?: unknown;
     opencodeUrl?: string;
   } = {},
 ) {
@@ -243,6 +238,7 @@ function createHarness(
   const busySessions = opts.busySessions ?? new Set<string>();
   const prompts: string[] = [];
   const aborts: string[] = [];
+  const statusCalls: string[] = [];
   const progressEvents: unknown[] = [];
   const abortedPending = new Set<string>();
   let counter = 0;
@@ -259,11 +255,15 @@ function createHarness(
         if (!existingSessions.has(path.id)) throw new Error("missing");
         return { data: { id: path.id } };
       },
-      status: async () => ({
-        data: Object.fromEntries([...busySessions].map((id) => [id, { type: "busy" }])),
-      }),
+      status: async () => {
+        statusCalls.push("status");
+        return {
+          data: Object.fromEntries([...busySessions].map((id) => [id, { type: "busy" }])),
+        };
+      },
       abort: async ({ path }: { path: { id: string } }) => {
         aborts.push(path.id);
+        if (opts.abortError) throw opts.abortError;
         busySessions.delete(path.id);
         abortedPending.add(path.id);
         return { data: {} };
@@ -287,12 +287,6 @@ function createHarness(
         return { data: {} };
       },
       children: async () => ({ data: opts.children ?? [] }),
-    },
-    provider: {
-      list: async () => {
-        opts.onProviderList?.();
-        return { data: opts.providerList ?? { all: [], default: {}, connected: [] } };
-      },
     },
   };
 
@@ -324,7 +318,7 @@ function createHarness(
   });
 
   latestProgressEvents = progressEvents;
-  return { app, prompts, aborts, existingSessions, busySessions, progressEvents };
+  return { app, prompts, aborts, statusCalls, existingSessions, busySessions, progressEvents };
 }
 
 let latestProgressEvents: unknown[] = [];
@@ -351,27 +345,28 @@ async function trigger(url: string, body: Record<string, unknown>) {
     body: JSON.stringify({ directory: sessionDir, ...body }),
   });
   const text = await response.text();
-  const json = text.trim() ? JSON.parse(text) : undefined;
-  let events = text
+  const responseEvents = text
     .trim()
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line));
-  if (events.length === 1 && events[0]?.accepted === true) {
-    const deadline = Date.now() + 100;
-    do {
-      events = latestProgressEvents.slice(progressOffset);
-      if (events.some((event) => (event as { type?: string }).type === "done")) break;
-      await new Promise((resolve) => setTimeout(resolve, 1));
-    } while (Date.now() < deadline);
-  }
-  return { response, json, events };
+  const json = responseEvents.length === 1 ? responseEvents[0] : undefined;
+  let events = responseEvents;
+  const deadline = Date.now() + 100;
+  do {
+    const progressEvents = latestProgressEvents.slice(progressOffset);
+    if (progressEvents.some((event) => (event as { type?: string }).type === "done")) {
+      events = progressEvents;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  } while (Date.now() < deadline);
+  return { response, json, events, responseEvents, text };
 }
 
 beforeEach(() => {
   process.env.WORKLOG_DIR = worklogDir;
   rmSync("/tmp/thor-runner-trigger-test", { recursive: true, force: true });
-  resetModelContextLimitCacheForTests();
 });
 
 afterEach(() => {
@@ -1206,7 +1201,7 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
-  it("returns busy without prompting when a resumed session is busy and interrupt is absent", async () => {
+  it("prompts a resumed session without status check when interrupt is absent", async () => {
     const h = createHarness({
       existingSessions: new Set(["busy-session"]),
       busySessions: new Set(["busy-session"]),
@@ -1214,20 +1209,20 @@ describe("runner /trigger orchestration", () => {
     setupBusySession("1710000000.003");
 
     await withServer(h.app, async (url) => {
-      const response = await fetch(`${url}/trigger`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          prompt: "later",
-          correlationKey: "slack:thread:C123/1710000000.003",
-          directory: sessionDir,
-        }),
+      const result = await trigger(url, {
+        prompt: "later",
+        correlationKey: "slack:thread:C123/1710000000.003",
       });
-      expect(await response.json()).toEqual({ busy: true });
+      expect(result.response.status).toBe(200);
+      expect(result.response.headers.get("content-type")).toContain("application/x-ndjson");
+      expect(result.responseEvents).toEqual([
+        expect.objectContaining({ type: "start", sessionId: "busy-session", resumed: true }),
+      ]);
     });
 
     expect(h.aborts).toHaveLength(0);
-    expect(h.prompts).toHaveLength(0);
+    expect(h.statusCalls).toHaveLength(0);
+    expect(h.prompts).toHaveLength(1);
   });
 
   it("aborts then prompts when a resumed session is busy and interrupt is true", async () => {
@@ -1250,6 +1245,33 @@ describe("runner /trigger orchestration", () => {
       });
     });
 
+    expect(h.statusCalls).toHaveLength(0);
+    expect(h.aborts).toEqual(["busy-session"]);
+    expect(h.prompts).toHaveLength(1);
+  });
+
+  it("still prompts when interrupt abort rejects", async () => {
+    const h = createHarness({
+      abortError: new Error("abort failed"),
+      existingSessions: new Set(["busy-session"]),
+      busySessions: new Set(["busy-session"]),
+    });
+    setupBusySession("1710000000.013");
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "now",
+        correlationKey: "slack:thread:C123/1710000000.013",
+        interrupt: true,
+      });
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        sessionId: "busy-session",
+        resumed: true,
+        status: "completed",
+      });
+    });
+
+    expect(h.statusCalls).toHaveLength(0);
     expect(h.aborts).toEqual(["busy-session"]);
     expect(h.prompts).toHaveLength(1);
   });
@@ -1292,6 +1314,7 @@ describe("runner /trigger orchestration", () => {
       });
     });
 
+    expect(h.statusCalls).toHaveLength(0);
     expect(h.aborts).toEqual(["busy-session"]);
     expect(h.prompts).toHaveLength(1);
   });
@@ -1314,7 +1337,7 @@ describe("runner /trigger orchestration", () => {
     await withServer(h.app, async (url) => {
       const result = await trigger(url, {
         prompt: "now",
-        correlationKey: "slack:thread:C123/1710000000.013",
+        correlationKey: "slack:thread:C123/1710000000.014",
       });
 
       expect(result.events.find((e) => e.type === "tool")).toMatchObject({
@@ -1325,7 +1348,7 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
-  it("returns busy without prompting when a resumed session is busy and interrupt is false", async () => {
+  it("prompts a resumed session without aborting when interrupt is false", async () => {
     const h = createHarness({
       existingSessions: new Set(["busy-session"]),
       busySessions: new Set(["busy-session"]),
@@ -1333,20 +1356,19 @@ describe("runner /trigger orchestration", () => {
     setupBusySession("1710000000.011");
 
     await withServer(h.app, async (url) => {
-      const response = await fetch(`${url}/trigger`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          prompt: "later",
-          correlationKey: "slack:thread:C123/1710000000.011",
-          directory: sessionDir,
-          interrupt: false,
-        }),
+      const result = await trigger(url, {
+        prompt: "later",
+        correlationKey: "slack:thread:C123/1710000000.011",
+        interrupt: false,
       });
-      expect(await response.json()).toEqual({ busy: true });
+      expect(result.responseEvents).toEqual([
+        expect.objectContaining({ type: "start", sessionId: "busy-session", resumed: true }),
+      ]);
     });
 
-    expect(h.prompts).toHaveLength(0);
+    expect(h.statusCalls).toHaveLength(0);
+    expect(h.aborts).toHaveLength(0);
+    expect(h.prompts).toHaveLength(1);
   });
 
   it("injects memory/tool bootstrap instructions only on new sessions", async () => {
@@ -1503,18 +1525,6 @@ describe("runner /trigger orchestration", () => {
 
   it("emits context progress from assistant message updates using configured model limits", async () => {
     const h = createHarness({
-      providerList: {
-        all: [
-          {
-            id: "openai",
-            models: {
-              "gpt-5.5": { limit: { context: 200_000 } },
-            },
-          },
-        ],
-        default: {},
-        connected: [],
-      },
       promptEvents: (sessionId) => [
         messageUpdatedEvent(sessionId),
         textEvent(sessionId, "done"),
@@ -1533,58 +1543,15 @@ describe("runner /trigger orchestration", () => {
         providerID: "openai",
         modelID: "gpt-5.5",
         tokens: 126_000,
-        limit: 200_000,
-        usagePercent: 63,
+        limit: 1_050_000,
+        usagePercent: 12,
       });
       expect(result.events.filter((e) => e.type === "tool")).toHaveLength(0);
     });
   });
 
-  it("keys context limits by provider and model to avoid same-model collisions", async () => {
-    const h = createHarness({
-      providerList: {
-        all: [
-          { id: "openai", models: { "gpt-5.4": { limit: { context: 200_000 } } } },
-          { id: "anthropic", models: { "gpt-5.4": { limit: { context: 1_000_000 } } } },
-        ],
-        default: {},
-        connected: [],
-      },
-      promptEvents: (sessionId) => [
-        messageUpdatedEvent(sessionId, {
-          providerID: "openai",
-          modelID: "gpt-5.4",
-          tokens: { input: 100_000, output: 20_000, reasoning: 6_000 },
-          role: "assistant",
-        }),
-        textEvent(sessionId, "done"),
-        idleEvent(sessionId),
-      ],
-    });
-
-    await withServer(h.app, async (url) => {
-      const result = await trigger(url, {
-        prompt: "large search",
-        correlationKey: "slack:thread:C0/1710000000.099",
-      });
-
-      expect(result.events.find((e) => e.type === "context")).toMatchObject({
-        providerID: "openai",
-        modelID: "gpt-5.4",
-        tokens: 126_000,
-        limit: 200_000,
-        usagePercent: 63,
-      });
-    });
-  });
-
   it("extracts context totals only from displayed token usage fields", async () => {
     const h = createHarness({
-      providerList: {
-        all: [{ id: "openai", models: { "gpt-5.5": { limit: { context: 200_000 } } } }],
-        default: {},
-        connected: [],
-      },
       promptEvents: (sessionId) => [
         messageUpdatedEvent(sessionId, {
           providerID: "openai",
@@ -1611,19 +1578,14 @@ describe("runner /trigger orchestration", () => {
 
       expect(result.events.find((e) => e.type === "context")).toMatchObject({
         tokens: 130_000,
-        limit: 200_000,
-        usagePercent: 65,
+        limit: 1_050_000,
+        usagePercent: 12,
       });
     });
   });
 
   it("suppresses zero-token assistant message context updates", async () => {
     const h = createHarness({
-      providerList: {
-        all: [{ id: "openai", models: { "gpt-5.5": { limit: { context: 200_000 } } } }],
-        default: {},
-        connected: [],
-      },
       promptEvents: (sessionId) => [
         messageUpdatedEvent(sessionId, {
           providerID: "openai",
@@ -1648,18 +1610,6 @@ describe("runner /trigger orchestration", () => {
 
   it("normalizes context usage percent to an integer before emitting", async () => {
     const h = createHarness({
-      providerList: {
-        all: [
-          {
-            id: "openai",
-            models: {
-              "gpt-5.5": { limit: { context: 200_000 } },
-            },
-          },
-        ],
-        default: {},
-        connected: [],
-      },
       promptEvents: (sessionId) => [
         messageUpdatedEvent(sessionId, {
           providerID: "openai",
@@ -1683,141 +1633,21 @@ describe("runner /trigger orchestration", () => {
         providerID: "openai",
         modelID: "gpt-5.5",
         tokens: 99_999,
-        limit: 200_000,
-        usagePercent: 50,
+        limit: 1_050_000,
+        usagePercent: 10,
       });
     });
   });
 
-  it("caches resolved model context limits in memory across triggers", async () => {
-    let providerLists = 0;
+  it("skips context progress for models not in the constant table", async () => {
     const h = createHarness({
-      onProviderList: () => {
-        providerLists++;
-      },
-      providerList: {
-        all: [
-          {
-            id: "openai",
-            models: {
-              "gpt-5.5": { limit: { context: 200_000 } },
-            },
-          },
-        ],
-        default: {},
-        connected: [],
-      },
       promptEvents: (sessionId) => [
-        messageUpdatedEvent(sessionId),
-        textEvent(sessionId, "done"),
-        idleEvent(sessionId),
-      ],
-    });
-
-    await withServer(h.app, async (url) => {
-      await trigger(url, {
-        prompt: "large search one",
-        correlationKey: "slack:thread:C0/1710000000.093",
-      });
-      await trigger(url, {
-        prompt: "large search two",
-        correlationKey: "slack:thread:C0/1710000000.094",
-      });
-    });
-
-    expect(providerLists).toBe(1);
-  });
-
-  it("shares the global model-limit cache across opencode urls", async () => {
-    let providerListsA = 0;
-    let providerListsB = 0;
-    const promptEvents = (sessionId: string) => [
-      messageUpdatedEvent(sessionId),
-      textEvent(sessionId, "done"),
-      idleEvent(sessionId),
-    ];
-
-    const a = createHarness({
-      opencodeUrl: "http://opencode-a.test:4096",
-      onProviderList: () => {
-        providerListsA++;
-      },
-      providerList: {
-        all: [{ id: "openai", models: { "gpt-5.5": { limit: { context: 200_000 } } } }],
-        default: {},
-        connected: [],
-      },
-      promptEvents,
-    });
-    const b = createHarness({
-      opencodeUrl: "http://opencode-b.test:4096",
-      onProviderList: () => {
-        providerListsB++;
-      },
-      providerList: {
-        all: [{ id: "openai", models: { "gpt-5.5": { limit: { context: 200_000 } } } }],
-        default: {},
-        connected: [],
-      },
-      promptEvents,
-    });
-
-    await withServer(a.app, async (urlA) => {
-      await withServer(b.app, async (urlB) => {
-        await Promise.all([
-          trigger(urlA, {
-            prompt: "large search a",
-            correlationKey: "slack:thread:C0/1710000000.095",
-          }),
-          trigger(urlB, {
-            prompt: "large search b",
-            correlationKey: "slack:thread:C0/1710000000.096",
-          }),
-        ]);
-      });
-    });
-
-    expect(providerListsA + providerListsB).toBe(1);
-  });
-
-  it("warms model limits best-effort even when a resumed session returns busy", async () => {
-    let providerLists = 0;
-    const h = createHarness({
-      existingSessions: new Set(["busy-session"]),
-      busySessions: new Set(["busy-session"]),
-      onProviderList: () => {
-        providerLists++;
-      },
-    });
-
-    await withServer(h.app, async (url) => {
-      const response = await fetch(`${url}/trigger`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          prompt: "hello",
-          sessionId: "busy-session",
-          correlationKey: "slack:thread:C0/1710000000.097",
-          directory: "/workspace/repos/runner-trigger-test",
+        messageUpdatedEvent(sessionId, {
+          providerID: "openai",
+          modelID: "gpt-5.4-mini",
+          tokens: { input: 100_000, output: 20_000, reasoning: 6_000 },
+          role: "assistant",
         }),
-      });
-
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ busy: true });
-    });
-
-    expect(providerLists).toBe(1);
-  });
-
-  it("skips context progress when no positive configured model limit is known", async () => {
-    const h = createHarness({
-      providerList: {
-        all: [{ id: "openai", models: { "gpt-5.5": { limit: { context: 0 } } } }],
-        default: {},
-        connected: [],
-      },
-      promptEvents: (sessionId) => [
-        messageUpdatedEvent(sessionId),
         textEvent(sessionId, "done"),
         idleEvent(sessionId),
       ],
@@ -1833,24 +1663,8 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
-  it("warms model limits best-effort even for tokenless message.updated events", async () => {
-    let providerLists = 0;
+  it("skips context progress for tokenless message.updated events", async () => {
     const h = createHarness({
-      onProviderList: () => {
-        providerLists++;
-      },
-      providerList: {
-        all: [
-          {
-            id: "openai",
-            models: {
-              "gpt-5.5": { limit: { context: 200_000 } },
-            },
-          },
-        ],
-        default: {},
-        connected: [],
-      },
       promptEvents: (sessionId) => [
         messageUpdatedEvent(sessionId, {
           providerID: "openai",
@@ -1871,8 +1685,6 @@ describe("runner /trigger orchestration", () => {
 
       expect(result.events.find((e) => e.type === "context")).toBeUndefined();
     });
-
-    expect(providerLists).toBe(1);
   });
 
   it("emits opencode.subsession aliases for discovered child sessions", async () => {
