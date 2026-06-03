@@ -208,6 +208,22 @@ describe("remote-cli ldcli endpoint", () => {
     ]);
   });
 
+  it("keeps scoutqa pre-first-chunk failures on the NDJSON path", async () => {
+    execCommandStreamMock.mockRejectedValue(new Error("scoutqa auth missing at /workspace/.scoutqa"));
+
+    const response = await postJson("/exec/scoutqa", {
+      args: ["list-executions"],
+    });
+    const events = await readNdjson(response);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("application/x-ndjson");
+    expect(events).toEqual([
+      { type: "stderr", data: "scoutqa auth missing at /workspace/.scoutqa\n" },
+      { type: "exit", exitCode: 1 },
+    ]);
+  });
+
   async function postJson(path: string, body: Record<string, unknown>): Promise<Response> {
     return fetch(`${baseUrl}${path}`, {
       method: "POST",

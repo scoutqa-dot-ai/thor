@@ -387,6 +387,32 @@ async function withNdjsonHeartbeat<T>(
   }
 }
 
+type NdjsonWrite = (chunk: ExecStreamEvent) => void;
+
+async function streamNdjsonResponse(
+  res: express.Response,
+  onError: (err: unknown) => void,
+  fn: (write: NdjsonWrite) => Promise<void>,
+): Promise<void> {
+  res.setHeader("Content-Type", "application/x-ndjson");
+  res.setHeader("Transfer-Encoding", "chunked");
+  res.flushHeaders();
+
+  const write: NdjsonWrite = (chunk) => {
+    res.write(JSON.stringify(chunk) + "\n");
+  };
+
+  try {
+    await withNdjsonHeartbeat(write, () => fn(write));
+  } catch (err) {
+    onError(err);
+    write({ type: "stderr", data: `${errorMessage(err)}\n` });
+    write({ type: "exit", exitCode: 1 });
+  } finally {
+    res.end();
+  }
+}
+
 function parseArgs(body: unknown): string[] | undefined {
   if (!body || typeof body !== "object" || !("args" in body)) return undefined;
   const args = (body as { args?: unknown }).args;
@@ -737,21 +763,15 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
       logInfo(log, "exec_scoutqa", { args, ...thorIds(req) });
 
-      res.setHeader("Content-Type", "application/x-ndjson");
-      res.setHeader("Transfer-Encoding", "chunked");
-
-      const write = (chunk: ExecStreamEvent) => {
-        res.write(JSON.stringify(chunk) + "\n");
-      };
-
-      await withNdjsonHeartbeat(write, async () => {
+      await streamNdjsonResponse(res, (err) => {
+        logError(log, "exec_scoutqa_error", errorMessage(err), thorIds(req));
+      }, async (write) => {
         const exitCode = await execCommandStream("scoutqa", args, "/workspace", {
           onStdout: (data) => write({ type: "stdout", data }),
           onStderr: (data) => write({ type: "stderr", data }),
         });
         write({ type: "exit", exitCode });
       });
-      res.end();
     } catch (err) {
       logError(
         log,
@@ -759,16 +779,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         errorMessage(err),
         thorIds(req),
       );
-      if (!res.headersSent) {
-        res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
-      } else {
-        res.write(
-          JSON.stringify({ type: "stderr", data: `${errorMessage(err)}\n` } satisfies ExecStreamEvent) +
-            "\n",
-        );
-        res.write(JSON.stringify({ type: "exit", exitCode: 1 } satisfies ExecStreamEvent) + "\n");
-        res.end();
-      }
+      res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
 
@@ -815,10 +826,6 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   });
 
   app.post("/exec/sandbox", async (req, res) => {
-    const writeNdjson = (chunk: ExecStreamEvent) => {
-      res.write(JSON.stringify(chunk) + "\n");
-    };
-
     try {
       const { args, cwd, mode: rawMode } = req.body ?? {};
       const mode = parseSandboxMode(rawMode);
@@ -926,11 +933,9 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       // Streaming exec runs outside the lock — parallel commands are OK.
       // Known limitation: parallel execs share one sandbox filesystem, so
       // concurrent writes to the same file produce last-writer-wins pull results.
-      res.setHeader("Content-Type", "application/x-ndjson");
-      res.setHeader("Transfer-Encoding", "chunked");
-      res.flushHeaders();
-
-      await withNdjsonHeartbeat(writeNdjson, async () => {
+      await streamNdjsonResponse(res, (err) => {
+        logError(log, "exec_sandbox_error", errorMessage(err), thorIds(req));
+      }, async (writeNdjson) => {
         const exitCode = await execInSandboxStream(result.sandboxId, result.command, {
           onStdout: (chunk) => writeNdjson({ type: "stdout", data: chunk }),
           onStderr: (chunk) => writeNdjson({ type: "stderr", data: chunk }),
@@ -960,18 +965,11 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
         writeNdjson({ type: "exit", exitCode: finalExitCode });
       });
-      res.end();
     } catch (err) {
       const message = errorMessage(err);
       logError(log, "exec_sandbox_error", message, thorIds(req));
 
-      if (!res.headersSent) {
-        res.status(500).json({ stdout: "", stderr: message, exitCode: 1 });
-      } else {
-        writeNdjson({ type: "stderr", data: `${message}\n` });
-        writeNdjson({ type: "exit", exitCode: 1 });
-        res.end();
-      }
+      res.status(500).json({ stdout: "", stderr: message, exitCode: 1 });
     }
   });
 
