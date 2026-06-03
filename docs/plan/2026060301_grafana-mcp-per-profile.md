@@ -145,14 +145,18 @@ additive seccomp profile from Decision 10:
 
 ```text
 bwrap --unshare-user --unshare-pid --unshare-ipc --unshare-uts --new-session --die-with-parent \
-  --clearenv --setenv PATH /usr/local/bin:/usr/bin:/bin --setenv HOME /tmp \
-  --setenv GRAFANA_URL <url> --setenv GRAFANA_SERVICE_ACCOUNT_TOKEN <token> [--setenv GRAFANA_ORG_ID <org>] \
+  --setenv PATH /usr/local/bin:/usr/bin:/bin --setenv HOME /tmp \
   --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib [--ro-bind /lib64 /lib64] \
   --ro-bind /etc/ssl /etc/ssl \
   --ro-bind-try /etc/resolv.conf /etc/resolv.conf --ro-bind-try /etc/nsswitch.conf /etc/nsswitch.conf --ro-bind-try /etc/hosts /etc/hosts \
   --bind /proc /proc --dev /dev --tmpfs /tmp \
   /usr/local/bin/mcp-grafana -transport stdio -enabled-tools datasource,prometheus,loki,proxied
 ```
+
+The parent spawn environment for this command supplies `GRAFANA_URL`,
+`GRAFANA_SERVICE_ACCOUNT_TOKEN`, and optional `GRAFANA_ORG_ID`. Do not pass Grafana
+credentials through `bwrap --setenv`; those values would be visible in
+`/proc/<pid>/cmdline`.
 
 **Exit criteria:** ✅ met. A reproducible `bwrap` invocation runs `mcp-grafana` rootless in
 a remote-cli-like image, blocks `/var/lib/remote-cli/github-app` and `/workspace`, scrubs
