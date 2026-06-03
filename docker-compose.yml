@@ -19,10 +19,6 @@ services:
       context: .
       target: remote-cli
     restart: unless-stopped
-    # Default-deny seccomp profile based on Docker's default for the compose
-    # target (amd64/arm64, no extra caps) plus the syscalls bwrap needs to build
-    # a rootless sandbox. Lets remote-cli confine the per-profile mcp-grafana
-    # child without CAP_SYS_ADMIN.
     security_opt:
       - seccomp=./docker/remote-cli/seccomp-bwrap.json
     ports:
