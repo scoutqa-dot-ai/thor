@@ -1,0 +1,23 @@
+docs/plan/2026060301_runner-idle-auto-resume.md
+  066ba29f86f2549a 1-127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "72e4bf8509f44b3ad9c861864b1831eea358a802",
+  "prompts": {
+    "066ba29f86f2549a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e981ca9-3607-436b-a67b-870234e749da",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 127,
+      "total_deletions": 0,
+      "accepted_lines": 127,
+      "overriden_lines": 0
+    }
+  }
+}
