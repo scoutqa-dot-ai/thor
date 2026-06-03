@@ -5,7 +5,7 @@ import { join, dirname, resolve, sep } from "node:path";
 import { rm, unlink, mkdir, stat } from "node:fs/promises";
 import { Daytona, type FileUpload, type Sandbox } from "@daytonaio/sdk";
 import { execCommand } from "./exec.ts";
-import { loadDaytonaEnv, withKeyLock, formatBytes } from "@thor/common";
+import { errorMessage, loadDaytonaEnv, withKeyLock, formatBytes } from "@thor/common";
 
 export interface ExecStreamCallbacks {
   onStdout: (chunk: string) => void;
@@ -418,7 +418,7 @@ export async function deleteSandbox(sandboxId: string): Promise<void> {
     if (isNotFoundError(err)) {
       return;
     }
-    throw toSandboxError(err, "Sandbox service error");
+    throw toSandboxError(err);
   }
 }
 
@@ -465,12 +465,12 @@ async function safeDeleteSandbox(sandbox: Sandbox): Promise<void> {
   }
 }
 
-function toSandboxError(err: unknown, fallbackUserMessage: string): SandboxError {
+function toSandboxError(err: unknown, _fallbackUserMessage?: string): SandboxError {
   if (err instanceof SandboxError) {
     return err;
   }
 
-  const adminDetail = err instanceof Error ? err.message : String(err);
+  const adminDetail = errorMessage(err);
   const lower = adminDetail.toLowerCase();
 
   if (lower.includes("auth") || lower.includes("401") || lower.includes("403")) {
@@ -490,7 +490,7 @@ function toSandboxError(err: unknown, fallbackUserMessage: string): SandboxError
   }
 
   return new SandboxError(
-    fallbackUserMessage,
+    adminDetail,
     adminDetail,
     err instanceof Error ? { cause: err } : undefined,
   );

@@ -3,13 +3,14 @@ import { once } from "node:events";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
-const { execCommandMock } = vi.hoisted(() => ({
+const { execCommandMock, execCommandStreamMock } = vi.hoisted(() => ({
   execCommandMock: vi.fn(),
+  execCommandStreamMock: vi.fn(),
 }));
 
 vi.mock("./exec.ts", () => ({
   execCommand: execCommandMock,
-  execCommandStream: vi.fn(),
+  execCommandStream: execCommandStreamMock,
 }));
 
 import { createRemoteCliApp } from "./index.ts";
@@ -27,6 +28,7 @@ describe("remote-cli ldcli endpoint", () => {
 
   beforeEach(async () => {
     execCommandMock.mockReset();
+    execCommandStreamMock.mockReset();
     process.env.LD_ACCESS_TOKEN = "ld-token";
     process.env.LD_BASE_URI = "https://app.launchdarkly.test";
     process.env.LD_PROJECT = "default";
@@ -167,11 +169,59 @@ describe("remote-cli ldcli endpoint", () => {
     expect(execCommandMock).not.toHaveBeenCalled();
   });
 
+  it("passes through thrown endpoint errors in JSON stderr", async () => {
+    execCommandMock.mockRejectedValue(new Error("ldcli provider exploded at /workspace/config"));
+
+    const response = await postJson("/exec/ldcli", {
+      args: ["flags", "list", "--project", "default"],
+    });
+    const body = (await response.json()) as { stderr: string; exitCode: number };
+
+    expect(response.status).toBe(500);
+    expect(body.stderr).toBe("ldcli provider exploded at /workspace/config");
+    expect(body.exitCode).toBe(1);
+  });
+
+  it("emits thrown streaming errors before the exit event", async () => {
+    execCommandStreamMock.mockImplementation(
+      async (
+        _bin: string,
+        _args: string[],
+        _cwd: string,
+        callbacks: { onStdout: (data: string) => void },
+      ) => {
+        callbacks.onStdout("started\n");
+        throw new Error("scoutqa stream failed at /workspace/run");
+      },
+    );
+
+    const response = await postJson("/exec/scoutqa", {
+      args: ["list-executions"],
+    });
+    const events = await readNdjson(response);
+
+    expect(response.status).toBe(200);
+    expect(events).toEqual([
+      { type: "stdout", data: "started\n" },
+      { type: "stderr", data: "scoutqa stream failed at /workspace/run\n" },
+      { type: "exit", exitCode: 1 },
+    ]);
+  });
+
   async function postJson(path: string, body: Record<string, unknown>): Promise<Response> {
     return fetch(`${baseUrl}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+  }
+
+  async function readNdjson(response: Response): Promise<unknown[]> {
+    const text = await response.text();
+    return text
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
   }
 });

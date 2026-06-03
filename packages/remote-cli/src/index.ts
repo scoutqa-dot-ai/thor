@@ -8,6 +8,7 @@ import {
   computeGitCorrelationKey,
   createConfigLoader,
   createLogger,
+  errorMessage,
   getRunnerBaseUrl,
   logError,
   logInfo,
@@ -690,10 +691,10 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       logError(
         log,
         "exec_git_error",
-        err instanceof Error ? err.message : String(err),
+        errorMessage(err),
         thorIds(req),
       );
-      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+      res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
 
@@ -733,10 +734,10 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       logError(
         log,
         "exec_gh_error",
-        err instanceof Error ? err.message : String(err),
+        errorMessage(err),
         thorIds(req),
       );
-      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+      res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
 
@@ -771,12 +772,16 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       logError(
         log,
         "exec_scoutqa_error",
-        err instanceof Error ? err.message : String(err),
+        errorMessage(err),
         thorIds(req),
       );
       if (!res.headersSent) {
-        res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+        res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
       } else {
+        res.write(
+          JSON.stringify({ type: "stderr", data: `${errorMessage(err)}\n` } satisfies ExecStreamEvent) +
+            "\n",
+        );
         res.write(JSON.stringify({ type: "exit", exitCode: 1 } satisfies ExecStreamEvent) + "\n");
         res.end();
       }
@@ -818,10 +823,10 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       logError(
         log,
         "exec_slack_post_message_error",
-        err instanceof Error ? err.message : String(err),
+        errorMessage(err),
         ids,
       );
-      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+      res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
 
@@ -964,10 +969,14 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
           } catch (pullErr) {
             const error =
               pullErr instanceof SandboxError
-                ? pullErr
+                ? new SandboxError(
+                    `${pullErr.userMessage}: ${pullErr.adminDetail}`,
+                    pullErr.adminDetail,
+                    { cause: pullErr },
+                  )
                 : new SandboxError(
-                    "Failed to pull sandbox changes back to the worktree",
-                    String(pullErr),
+                    `Failed to pull sandbox changes back to the worktree: ${errorMessage(pullErr)}`,
+                    errorMessage(pullErr),
                   );
             logError(log, "sandbox_pull_error", error.adminDetail, thorIds(req));
             writeNdjson({ type: "stderr", data: `${error.userMessage}\n` });
@@ -980,7 +989,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       res.end();
     } catch (err) {
       const error =
-        err instanceof SandboxError ? err : new SandboxError("Sandbox service error", String(err));
+        err instanceof SandboxError ? err : new SandboxError(errorMessage(err), errorMessage(err));
       logError(log, "exec_sandbox_error", error.adminDetail, thorIds(req));
 
       if (!res.headersSent) {
@@ -1020,10 +1029,10 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       logError(
         log,
         "exec_ldcli_error",
-        err instanceof Error ? err.message : String(err),
+        errorMessage(err),
         thorIds(req),
       );
-      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+      res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
 
@@ -1066,7 +1075,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
       res.json({ stdout: JSON.stringify(result, null, 2), stderr: "", exitCode: 0 });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       logError(log, "exec_metabase_error", message, thorIds(req));
       res.status(500).json({ stdout: "", stderr: message, exitCode: 1 });
     }
@@ -1095,10 +1104,10 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       logError(
         log,
         "exec_mcp_error",
-        err instanceof Error ? err.message : String(err),
+        errorMessage(err),
         thorIds(req),
       );
-      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+      res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
 
@@ -1138,14 +1147,14 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       });
       res.json(result);
     } catch (err) {
-      logError(log, "internal_exec_error", err instanceof Error ? err.message : String(err), {
+      logError(log, "internal_exec_error", errorMessage(err), {
         bin,
         argc: args.length,
         cwd,
         durationMs: Date.now() - startedAt,
         ...thorIds(req),
       });
-      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+      res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
 
@@ -1163,10 +1172,10 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       logError(
         log,
         "exec_approval_error",
-        err instanceof Error ? err.message : String(err),
+        errorMessage(err),
         thorIds(req),
       );
-      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+      res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
 

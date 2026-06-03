@@ -382,10 +382,24 @@ describe("/exec/sandbox", () => {
       { type: "stdout", data: "sandbox run output\n" },
       {
         type: "stderr",
-        data: "Failed to read sandbox state after exec. No files were pulled back.\n",
+        data:
+          "Failed to read sandbox state after exec. No files were pulled back.: sandbox git status failed: status failed\n",
       },
       { type: "exit", exitCode: 1 },
     ]);
+  });
+
+  it("passes through provider failures with paths in JSON stderr", async () => {
+    daytonaListMock.mockRejectedValueOnce(
+      new Error("no space left on device: /home/thor/.daytona/sandboxes/sbx-1"),
+    );
+
+    const response = await postJson("/exec/sandbox", { mode: "list" });
+    const body = (await response.json()) as { stderr: string; exitCode: number };
+
+    expect(response.status).toBe(500);
+    expect(body.stderr).toBe("no space left on device: /home/thor/.daytona/sandboxes/sbx-1");
+    expect(body.exitCode).toBe(1);
   });
 
   async function postJson(path: string, body: Record<string, unknown>): Promise<Response> {

@@ -131,7 +131,7 @@ export type {
 export { createLogger, logInfo, logWarn, logError, truncate } from "./logger.ts";
 export { formatTokens, formatDuration, formatAge, formatBytes, formatCostUsd } from "./format.ts";
 export type { Logger } from "./logger.ts";
-export { errorToMetadata } from "./errors.ts";
+export { errorMessage, errorToMetadata } from "./errors.ts";
 export type { ErrorMetadataOptions } from "./errors.ts";
 export {
   WORKSPACE_REPOS_ROOT,
