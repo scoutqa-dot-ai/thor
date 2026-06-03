@@ -1,0 +1,33 @@
+.github/workflows/core-e2e.yml
+  0db2e5ae7461c4cf 121-123
+.github/workflows/sandbox-e2e.yml
+  0db2e5ae7461c4cf 244-246
+.env.example
+  0db2e5ae7461c4cf 62-65
+packages/common/src/proxies.ts
+  0db2e5ae7461c4cf 76-81,140,334-343,345-347
+packages/remote-cli/src/mcp-handler.ts
+  0db2e5ae7461c4cf 335-344
+packages/common/src/proxies.test.ts
+  0db2e5ae7461c4cf 76-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "7ff736d32a8999802fd17b82d6cefefbcd88daf0",
+  "prompts": {
+    "0db2e5ae7461c4cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f04ca88-25b3-4d8a-a5b6-d40caeff0874",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 61,
+      "total_deletions": 22,
+      "accepted_lines": 61,
+      "overriden_lines": 0
+    }
+  }
+}
