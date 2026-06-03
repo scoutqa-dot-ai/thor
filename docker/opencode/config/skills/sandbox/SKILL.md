@@ -5,7 +5,7 @@ description: Run project commands (build, test, lint) in a cloud sandbox with co
 
 ## When to use
 
-Use `sandbox` to run project commands: builds, tests, lints, and anything that needs runtimes not available locally (Java, Python, etc.). The sandbox auto-creates on first use, syncs your committed code, and stops automatically when idle.
+Use `sandbox` to run project commands: builds, tests, lints, and anything that needs runtimes not available locally (Java, Python, etc.). The sandbox auto-creates on first use, syncs your worktree, and stops automatically when idle.
 
 For technical browser orchestration guidance — choosing between existing UI automation, lightweight interaction, deterministic visible capture, verification, and artifact patterns — use the dedicated `browser` skill. Keep app-specific browser flows in repo runbooks or task prompts.
 
@@ -13,9 +13,13 @@ For technical browser orchestration guidance — choosing between existing UI au
 
 ## Usage
 
-```
-sandbox <command> [args...]
-```
+Supported forms:
+
+- `sandbox <command> [args...]`
+- `sandbox bash -c '<command>'`
+- `sandbox bash -lc '<command>'`
+- `sandbox sh -c '<command>'`
+- `sandbox sh -lc '<command>'`
 
 Examples:
 
@@ -38,12 +42,11 @@ sandbox bash -c 'npm run build && npm test'
 
 ## How it works
 
-1. On first run, a cloud sandbox is created and your committed code is synced
-2. On subsequent runs, only new commits are synced (delta sync)
+1. On first run, a cloud sandbox is created for the current worktree
+2. Before exec, committed and uncommitted worktree changes are uploaded; sync is skipped if more than 100 files are dirty
 3. The command runs inside the sandbox and output streams back in real time
-4. Sandbox auto-stops after 15 minutes idle
-
-**Sync is bidirectional.** Before exec, uncommitted local changes are uploaded to the sandbox. After exec, any files the command created or modified are pulled back to your worktree. No need to commit before running. Sync is skipped if more than 100 files are dirty.
+4. After a successful command, created or modified files are pulled back to your worktree
+5. Sandbox auto-stops after 15 minutes idle
 
 ---
 
@@ -56,17 +59,6 @@ sandbox mvn test -pl module-auth       # auto-creates sandbox, syncs, runs
 sandbox mvn test -pl module-auth       # syncs uncommitted changes, reuses sandbox
 sandbox ./gradlew spotlessCheck        # same sandbox, different command
 ```
-
----
-
-## Errors
-
-| Error                         | Cause             | Fix                                        |
-| ----------------------------- | ----------------- | ------------------------------------------ |
-| "Sandbox service unavailable" | Daytona API down  | Retry in a few minutes                     |
-| "Sandbox auth failed"         | Missing API key   | Check DAYTONA_API_KEY configuration        |
-| "Sandbox creation timed out"  | Slow provisioning | Retry; sandbox will be created fresh       |
-| Nonzero exit code             | Command failed    | Normal test/build failure; read the output |
 
 ---
 
@@ -112,5 +104,5 @@ sandbox bash -c 'nvm use 20 && npm test'
 
 - Each worktree gets its own isolated sandbox — switching worktrees creates a separate sandbox
 - Code is synced to `/workspace/sandbox` inside the sandbox — paths in error output will show this prefix
-- Subsequent runs reuse the sandbox and sync only new commits
+- Subsequent runs reuse the sandbox for the same worktree
 - Multiple `sandbox` commands on the same worktree can run in parallel

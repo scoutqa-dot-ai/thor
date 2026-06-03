@@ -6,10 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { appendAlias, appendSessionEvent, formatThorContextFooter } from "@thor/common";
-import type { WorkspaceConfig } from "@thor/common";
+import type { ProxyUpstream, WorkspaceConfig } from "@thor/common";
 import type { ToolCallLogEntry } from "@thor/common";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { createRemoteCliApp } from "./index.ts";
+import { createMcpService } from "./mcp-handler.ts";
 import type { UpstreamConnection } from "./upstream.ts";
 
 const tools: Tool[] = [
@@ -106,6 +107,7 @@ describe("remote-cli MCP endpoints", () => {
   let slackFetch: ReturnType<typeof vi.fn<typeof fetch>>;
   let workspaceConfig: WorkspaceConfig;
   let configLoadFailure: Error | undefined;
+  let upstreamConnectFailure: Error | undefined;
   let toolCallLogs: ToolCallLogEntry[];
 
   beforeEach(async () => {
@@ -113,6 +115,7 @@ describe("remote-cli MCP endpoints", () => {
     vi.stubEnv("POSTHOG_API_KEY", "test-posthog-key");
     vi.stubEnv("GRAFANA_URL", "https://grafana.example.com");
     vi.stubEnv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "grafana-token");
+    vi.stubEnv("GRAFANA_ORG_ID", "1");
     vi.stubEnv("THOR_INTERNAL_SECRET", "resolve-secret");
     vi.stubEnv("WORKLOG_DIR", worklogDir);
     vi.stubEnv("RUNNER_BASE_URL", "https://thor.example.com/");
@@ -127,6 +130,7 @@ describe("remote-cli MCP endpoints", () => {
     jiraLookupResultText = JSON.stringify(jiraLookupResponse([{ accountId: "jira-account-1" }]));
     jiraLookupFailure = undefined;
     configLoadFailure = undefined;
+    upstreamConnectFailure = undefined;
     toolCallLogs = [];
     slackFetch = vi
       .fn<typeof fetch>()
@@ -178,10 +182,14 @@ describe("remote-cli MCP endpoints", () => {
         },
         connectUpstreamFn: async (
           name: string,
-          upstreamConfig: { headers?: Record<string, string> },
+          upstreamConfig: ProxyUpstream,
         ): Promise<UpstreamConnection> => {
+          if (upstreamConnectFailure) throw upstreamConnectFailure;
           connectedUpstreams.push(name);
-          upstreamConfigs.push({ name, headers: upstreamConfig.headers });
+          upstreamConfigs.push({
+            name,
+            headers: upstreamConfig.kind === "http" ? upstreamConfig.headers : undefined,
+          });
           return {
             tools,
             client: {
@@ -404,6 +412,25 @@ describe("remote-cli MCP endpoints", () => {
     expect(toolCalls).toEqual([]);
   });
 
+  it("passes through profile-scoped integration config errors while listing upstreams", async () => {
+    vi.stubEnv("LANGFUSE_PUBLIC_KEY_QA", "pk-qa");
+    workspaceConfig = { ...workspaceConfig, profiles: { QA: { channels: ["C123"] } } };
+    appendActiveTrigger();
+
+    const call = await postJson(
+      "/exec/mcp",
+      { args: ["--help"] },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const body = (await call.json()) as { stdout: string; stderr: string; exitCode: number };
+
+    expect(call.status).toBe(200);
+    expect(body).toMatchObject({ stdout: "", exitCode: 1 });
+    expect(body.stderr).toContain('partial langfuse profile bundle for "QA"');
+    expect(body.stderr).toContain("LANGFUSE_SECRET_KEY_QA");
+    expect(body.stderr).not.toContain("Integration not available in this thread context");
+  });
+
   it("warms every registered upstream", async () => {
     await closeRemoteCli();
 
@@ -429,6 +456,53 @@ describe("remote-cli MCP endpoints", () => {
     await remoteCli.warmUp();
 
     expect(connectedUpstreams.sort()).toEqual(["atlassian", "grafana", "posthog"]);
+  });
+
+  it("unrefs pending reconnect timers so shutdown is not held open", async () => {
+    let onDisconnect: (() => void) | undefined;
+    const unref = vi.fn();
+    const setTimeoutMock = (
+      handler: Parameters<typeof setTimeout>[0],
+      timeout?: Parameters<typeof setTimeout>[1],
+    ) => {
+      expect(typeof handler).toBe("function");
+      expect(timeout).toBe(1000);
+      return { unref } as unknown as ReturnType<typeof setTimeout>;
+    };
+    const setTimeoutSpy = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation(setTimeoutMock as unknown as typeof setTimeout);
+    const service = createMcpService({
+      approvalsDir,
+      isProduction: true,
+      configLoader: () => workspaceConfig,
+      writeToolCallLogFn: () => {},
+      connectUpstreamFn: async (_name, _upstreamConfig, onClose): Promise<UpstreamConnection> => {
+        onDisconnect = onClose;
+        return {
+          tools,
+          client: {
+            callTool: async () => ({ content: [] }),
+            close: async () => {},
+          } as unknown as UpstreamConnection["client"],
+        };
+      },
+    });
+
+    try {
+      const listed = await service.executeMcp(["atlassian"], { sessionId: "parent-session" });
+
+      expect(listed.exitCode).toBe(0);
+      expect(onDisconnect).toBeDefined();
+
+      onDisconnect?.();
+
+      expect(setTimeoutSpy).toHaveBeenCalledTimes(1);
+      expect(unref).toHaveBeenCalledTimes(1);
+    } finally {
+      await service.closeAll();
+      setTimeoutSpy.mockRestore();
+    }
   });
 
   it("routes Slack-triggered MCP calls through the channel profile credential target", async () => {
@@ -598,6 +672,43 @@ describe("remote-cli MCP endpoints", () => {
     });
   });
 
+  it("passes through approval-time upstream connection failures", async () => {
+    appendActiveTrigger();
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it"}',
+        ],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { stdout: string };
+    const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
+
+    await stopRemoteCliServer();
+    upstreamConnectFailure = new Error("atlassian upstream TLS failed at /workspace/certs/ca.pem");
+    await startRemoteCliServer();
+
+    const resolved = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    const resolvedBody = (await resolved.json()) as { stdout: string; stderr: string; exitCode: number };
+
+    expect(resolvedBody.exitCode).toBe(1);
+    expect(resolvedBody.stderr).toBe("atlassian upstream TLS failed at /workspace/certs/ca.pem");
+
+    const rejected = JSON.parse(resolvedBody.stdout) as { status: string; reason?: string };
+    expect(rejected.status).toBe("rejected");
+    expect(rejected.reason).toContain("atlassian upstream TLS failed at /workspace/certs/ca.pem");
+    expect(rejected.reason).not.toContain("Integration not available in this thread context");
+  });
+
   it("rejects an approval when its stored session id no longer resolves to an anchor", async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
@@ -644,7 +755,7 @@ describe("remote-cli MCP endpoints", () => {
     const resolvedBody = (await resolved.json()) as { exitCode: number; stderr: string };
 
     expect(resolvedBody.exitCode).toBe(1);
-    expect(resolvedBody.stderr).toContain("invalid Thor session id for approval routing");
+    expect(resolvedBody.stderr).toBe("Integration not available in this thread context");
     expect(toolCalls).toEqual([]);
 
     const rejectedStatus = await postJson("/exec/approval", { args: ["status", actionId] });
@@ -656,6 +767,7 @@ describe("remote-cli MCP endpoints", () => {
     expect(rejected.status).toBe("rejected");
     expect(rejected.reviewer).toBe("system");
     expect(rejected.reason).toMatch(/profile re-resolution failed/);
+    expect(rejected.reason).toContain("Integration not available in this thread context");
   });
 
   it("rejects an approval when the session's channels are bound to multiple profiles", async () => {
@@ -695,7 +807,7 @@ describe("remote-cli MCP endpoints", () => {
     );
     const resolvedBody = (await resolved.json()) as { exitCode: number; stderr: string };
     expect(resolvedBody.exitCode).toBe(1);
-    expect(resolvedBody.stderr).toMatch(/multiple profiles/);
+    expect(resolvedBody.stderr).toBe("Integration not available in this thread context");
 
     const status = await postJson("/exec/approval", { args: ["status", actionId] });
     const stored = JSON.parse(((await status.json()) as { stdout: string }).stdout) as {
@@ -706,6 +818,7 @@ describe("remote-cli MCP endpoints", () => {
     expect(stored.status).toBe("rejected");
     expect(stored.reviewer).toBe("system");
     expect(stored.reason).toMatch(/profile re-resolution failed/);
+    expect(stored.reason).toContain("Integration not available in this thread context");
   });
 
   it("counts profile-only upstreams in health configured total", async () => {
@@ -871,7 +984,7 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(call.status).toBe(200);
     expect(body.exitCode).toBe(1);
-    expect(body.stderr).toMatch(/mixed channel\+repo profile/);
+    expect(body.stderr).toBe("Integration not available in this thread context");
     expect(toolCalls).toEqual([]);
   });
 
@@ -922,7 +1035,7 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(allowed.status).toBe(200);
     expect(allowedBody).toMatchObject({ stdout: "", exitCode: 1 });
-    expect(allowedBody.stderr).toContain("missing Thor session id");
+    expect(allowedBody.stderr).toBe("Integration not available in this thread context");
     expect(toolCalls).toEqual([]);
 
     const fakeSession = await postJson(
@@ -940,7 +1053,7 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(fakeSession.status).toBe(200);
     expect(fakeSessionBody).toMatchObject({ stdout: "", exitCode: 1 });
-    expect(fakeSessionBody.stderr).toContain("invalid Thor session id");
+    expect(fakeSessionBody.stderr).toBe("Integration not available in this thread context");
     expect(toolCalls).toEqual([]);
 
     const pending = await postJson("/exec/mcp", {
@@ -958,7 +1071,7 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(pending.status).toBe(200);
     expect(pendingBody).toMatchObject({ stdout: "", exitCode: 1 });
-    expect(pendingBody.stderr).toContain("missing Thor session id");
+    expect(pendingBody.stderr).toBe("Integration not available in this thread context");
     expect(toolCalls).toEqual([]);
 
     const list = await postJson("/exec/approval", { args: ["list"] });

@@ -45,7 +45,6 @@ export const ProgressDoneSchema = z.object({
   error: z.string().optional(),
   response: z.string(),
   toolCalls: z.array(z.object({ tool: z.string(), state: z.string() })),
-  messageId: z.string().optional(),
   durationMs: z.number(),
 });
 

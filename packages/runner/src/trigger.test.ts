@@ -91,22 +91,32 @@ function textEvent(sessionId: string, text: string): Event {
 
 function messageUpdatedEvent(
   sessionId: string,
-  opts: { providerID: string; modelID: string; tokens: unknown; role?: string } = {
+  opts: {
+    providerID: string;
+    modelID: string;
+    tokens: unknown;
+    role?: string;
+    id?: string;
+    finish?: string;
+  } = {
     providerID: "openai",
     modelID: "gpt-5.5",
     tokens: { input: 100_000, output: 20_000, reasoning: 6_000 },
     role: "assistant",
+    id: "msg-ok",
   },
 ): Event {
   return {
     type: "message.updated",
     properties: {
       info: {
+        id: opts.id ?? "msg-ok",
         sessionID: sessionId,
         role: opts.role ?? "assistant",
         providerID: opts.providerID,
         modelID: opts.modelID,
         tokens: opts.tokens,
+        ...(opts.finish ? { finish: opts.finish } : {}),
       },
     },
   } as unknown as Event;
@@ -203,7 +213,12 @@ function stepFinishPartRecord(
           messageID: `m-${sessionId}`,
           reason: "stop",
           ...(opts.cost !== undefined ? { cost: opts.cost } : {}),
-          tokens: opts.tokens ?? { input: 1000, output: 2000, reasoning: 300, cache: { read: 400 } },
+          tokens: opts.tokens ?? {
+            input: 1000,
+            output: 2000,
+            reasoning: 300,
+            cache: { read: 400 },
+          },
         },
       },
     },
@@ -231,7 +246,7 @@ function createHarness(
     children?: Array<{ id: string }>;
     onGet?: (sessionId: string) => Promise<void>;
     onProviderList?: () => void;
-    promptEvents?: (sessionId: string, sub: FakeSubscription) => Event[] | void;
+    promptEvents?: (sessionId: string, sub: FakeSubscription, prompt: string) => Event[] | void;
     throwInSubscribe?: boolean;
     workspaceConfig?: WorkspaceConfig;
     providerList?: unknown;
@@ -279,7 +294,7 @@ function createHarness(
         const sub = buses.latest();
         queueMicrotask(() => {
           const events = opts.promptEvents
-            ? opts.promptEvents(path.id, sub)
+            ? opts.promptEvents(path.id, sub, body.parts[0]?.text ?? "")
             : [textEvent(path.id, `ok ${path.id}`), idleEvent(path.id)];
           if (!events) return;
           for (const event of events) sub.push(event);
@@ -1350,19 +1365,57 @@ describe("runner /trigger orchestration", () => {
   });
 
   it("injects memory/tool bootstrap instructions only on new sessions", async () => {
+    mkdirSync(`${memoryDir}/channels`, { recursive: true });
+    mkdirSync(`${memoryDir}/people`, { recursive: true });
     mkdirSync(`${memoryDir}/runner-trigger-test`, { recursive: true });
-    writeFileSync(`${memoryDir}/README.md`, "root memory text");
-    writeFileSync(`${memoryDir}/runner-trigger-test/README.md`, "repo memory text");
-    const h = createHarness();
+    writeFileSync(`${memoryDir}/README.md`, "global memory text");
+    writeFileSync(`${memoryDir}/channels/C123.md`, "channel memory text");
+    writeFileSync(`${memoryDir}/people/son.dao.md`, "person memory text");
+    writeFileSync(`${memoryDir}/runner-trigger-test/README.md`, "legacy repo memory text");
+    const h = createHarness({
+      workspaceConfig: {
+        users: [
+          {
+            name: "Son Dao",
+            email: "Son.Dao@example.com",
+            slack: "UABCDEF1",
+            github: "son-dao-gh",
+          },
+        ],
+      },
+    });
 
     await withServer(h.app, async (url) => {
       const first = await trigger(url, {
         prompt: "first",
         correlationKey: "slack:thread:C123/1710000000.005",
+        triggerSlackId: "UABCDEF1",
       });
-      expect(first.events.filter((e) => e.type === "memory")).toHaveLength(2);
-      expect(h.prompts[0]).toContain("root memory text");
-      expect(h.prompts[0]).toContain("repo memory text");
+      expect(first.events.filter((e) => e.type === "memory")).toEqual([
+        {
+          type: "memory",
+          action: "read",
+          path: `${memoryDir}/README.md`,
+          source: "bootstrap",
+        },
+        {
+          type: "memory",
+          action: "read",
+          path: `${memoryDir}/channels/C123.md`,
+          source: "bootstrap",
+        },
+        {
+          type: "memory",
+          action: "read",
+          path: `${memoryDir}/people/son.dao.md`,
+          source: "bootstrap",
+        },
+      ]);
+      expect(h.prompts[0]).toContain("global memory text");
+      expect(h.prompts[0]).toContain("channel memory text");
+      expect(h.prompts[0]).toContain("person memory text");
+      expect(h.prompts[0]).not.toContain("legacy repo memory text");
+      expect(h.prompts[0]).not.toContain("Repo memory");
       const firstLogRecords = readFileSync(sessionLogPath("session-1"), "utf8")
         .trim()
         .split("\n")
@@ -1375,16 +1428,92 @@ describe("runner /trigger orchestration", () => {
         correlationKey: "slack:thread:C123/1710000000.005",
       });
       expect(firstTriggerStart).not.toHaveProperty("promptPreview");
-      expect(JSON.stringify(firstTriggerStart)).not.toContain("root memory text");
-      expect(JSON.stringify(firstTriggerStart)).not.toContain("repo memory text");
+      expect(JSON.stringify(firstTriggerStart)).not.toContain("global memory text");
+      expect(JSON.stringify(firstTriggerStart)).not.toContain("channel memory text");
+      expect(JSON.stringify(firstTriggerStart)).not.toContain("person memory text");
 
       await trigger(url, {
         prompt: "second",
         correlationKey: "slack:thread:C123/1710000000.005",
+        triggerSlackId: "UABCDEF1",
       });
-      expect(h.prompts[1]).not.toContain("root memory text");
-      expect(h.prompts[1]).not.toContain("repo memory text");
+      expect(h.prompts[1]).not.toContain("global memory text");
+      expect(h.prompts[1]).not.toContain("channel memory text");
+      expect(h.prompts[1]).not.toContain("person memory text");
     });
+  });
+
+  it("skips channel and person memory when they are not addressable", async () => {
+    mkdirSync(`${memoryDir}/channels`, { recursive: true });
+    mkdirSync(`${memoryDir}/people`, { recursive: true });
+    writeFileSync(`${memoryDir}/README.md`, "global memory text");
+    writeFileSync(`${memoryDir}/channels/C123.md`, "channel memory text");
+    writeFileSync(`${memoryDir}/people/alice.md`, "person memory text");
+    const h = createHarness({ workspaceConfig: { users: [] } });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "first",
+        correlationKey: "slack:thread:1710000000.005",
+        triggerSlackId: "UUNKNOWN",
+      });
+      expect(result.events.filter((e) => e.type === "memory")).toEqual([
+        {
+          type: "memory",
+          action: "read",
+          path: `${memoryDir}/README.md`,
+          source: "bootstrap",
+        },
+      ]);
+    });
+
+    expect(h.prompts[0]).toContain("global memory text");
+    expect(h.prompts[0]).not.toContain("channel memory text");
+    expect(h.prompts[0]).not.toContain("person memory text");
+    expect(h.prompts[0]).not.toContain("Channel memory");
+    expect(h.prompts[0]).not.toContain("Person memory");
+  });
+
+  it("resolves person memory from github login when slack id is absent", async () => {
+    mkdirSync(`${memoryDir}/people`, { recursive: true });
+    writeFileSync(`${memoryDir}/README.md`, "global memory text");
+    writeFileSync(`${memoryDir}/people/son.dao.md`, "person memory text");
+    const h = createHarness({
+      workspaceConfig: {
+        users: [
+          {
+            name: "Son Dao",
+            email: "Son.Dao@example.com",
+            github: "sonkatalon",
+          },
+        ],
+      },
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "first",
+        correlationKey: "git:branch:thor:feat/memory-tiers",
+        triggerGithubLogin: "sonkatalon",
+      });
+      expect(result.events.filter((e) => e.type === "memory")).toEqual([
+        {
+          type: "memory",
+          action: "read",
+          path: `${memoryDir}/README.md`,
+          source: "bootstrap",
+        },
+        {
+          type: "memory",
+          action: "read",
+          path: `${memoryDir}/people/son.dao.md`,
+          source: "bootstrap",
+        },
+      ]);
+    });
+
+    expect(h.prompts[0]).toContain("person memory text");
+    expect(h.prompts[0]).toContain("github: sonkatalon");
   });
 
   it("emits context progress from assistant message updates using configured model limits", async () => {
@@ -1529,6 +1658,224 @@ describe("runner /trigger orchestration", () => {
       });
 
       expect(result.events.find((e) => e.type === "context")).toBeUndefined();
+    });
+  });
+
+  it("intercepts bad idle and sends Continue once before done", async () => {
+    let promptCalls = 0;
+    const h = createHarness({
+      promptEvents: (sessionId) => {
+        promptCalls++;
+        if (promptCalls === 1) {
+          return [
+            toolEvent(sessionId, "bash", "running", { command: "true" }),
+            messageUpdatedEvent(sessionId, {
+              id: "msg-failed-once",
+              finish: "error",
+              providerID: "openai",
+              modelID: "gpt-5.5",
+              tokens: { input: 0, output: 0, reasoning: 0 },
+              role: "assistant",
+            }),
+            idleEvent(sessionId),
+          ];
+        }
+        return [textEvent(sessionId, "continued ok"), idleEvent(sessionId)];
+      },
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "start",
+        correlationKey: "slack:thread:1710000000.201",
+      });
+
+      expect(h.prompts).toHaveLength(2);
+      expect(h.prompts[1]).toBe("Continue");
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        status: "completed",
+        response: "continued ok",
+      });
+    });
+  });
+
+  it("skips the auto-resume Continue when a concurrent send drove the session busy", async () => {
+    const busySessions = new Set<string>();
+    let promptCalls = 0;
+    const h = createHarness({
+      busySessions,
+      promptEvents: (sessionId) => {
+        promptCalls++;
+        if (promptCalls === 1) {
+          // Simulate a concurrent trigger winning the send lock and driving the
+          // session busy in the gap between session.idle and the auto-resume's
+          // locked status re-check. The re-check must see busy and skip Continue.
+          busySessions.add(sessionId);
+          return [
+            messageUpdatedEvent(sessionId, {
+              id: "msg-failed-busy",
+              finish: "error",
+              providerID: "openai",
+              modelID: "gpt-5.5",
+              tokens: { input: 0, output: 0, reasoning: 0 },
+              role: "assistant",
+            }),
+            idleEvent(sessionId),
+          ];
+        }
+        return [textEvent(sessionId, "continued ok"), idleEvent(sessionId)];
+      },
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "start",
+        correlationKey: "slack:thread:1710000000.207",
+      });
+
+      // Only the original prompt was sent — no Continue double-send into the
+      // already-busy session. This run ends as the failed idle it was.
+      expect(h.prompts).toHaveLength(1);
+      expect(h.prompts).not.toContain("Continue");
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        status: "error",
+      });
+    });
+  });
+
+  it("intercepts bad idle even when no parent message part was emitted", async () => {
+    let promptCalls = 0;
+    const h = createHarness({
+      promptEvents: (sessionId) => {
+        promptCalls++;
+        if (promptCalls === 1) {
+          return [
+            messageUpdatedEvent(sessionId, {
+              id: "msg-failed-before-parts",
+              finish: "error",
+              providerID: "openai",
+              modelID: "gpt-5.5",
+              tokens: { input: 0, output: 0, reasoning: 0 },
+              role: "assistant",
+            }),
+            idleEvent(sessionId),
+          ];
+        }
+        return [textEvent(sessionId, "continued ok"), idleEvent(sessionId)];
+      },
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "start",
+        correlationKey: "slack:thread:1710000000.204",
+      });
+
+      expect(h.prompts).toHaveLength(2);
+      expect(h.prompts[1]).toBe("Continue");
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        status: "completed",
+        response: "continued ok",
+      });
+    });
+  });
+
+  it("does not retry the same failed message id twice", async () => {
+    let promptCalls = 0;
+    const failedUpdate = (sessionId: string) =>
+      messageUpdatedEvent(sessionId, {
+        id: "msg-repeat-fail",
+        finish: "error",
+        providerID: "openai",
+        modelID: "gpt-5.5",
+        tokens: { input: 0, output: 0, reasoning: 0 },
+        role: "assistant",
+      });
+    const h = createHarness({
+      promptEvents: (sessionId) => {
+        promptCalls++;
+        return [
+          toolEvent(sessionId, "bash", "running", { command: `attempt-${promptCalls}` }),
+          failedUpdate(sessionId),
+          idleEvent(sessionId),
+        ];
+      },
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "start",
+        correlationKey: "slack:thread:1710000000.202",
+      });
+
+      expect(h.prompts).toHaveLength(2);
+      expect(h.prompts[1]).toBe("Continue");
+      expect(result.events.filter((e) => e.type === "done")).toHaveLength(1);
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        status: "error",
+        error: expect.stringContaining("failed before producing output"),
+      });
+    });
+  });
+
+  it("re-arms when a new assistant message id later updates with nonzero tokens", async () => {
+    let promptCalls = 0;
+    const failedUpdate = (sessionId: string, id: string) =>
+      messageUpdatedEvent(sessionId, {
+        id,
+        finish: "error",
+        providerID: "openai",
+        modelID: "gpt-5.5",
+        tokens: { input: 0, output: 0, reasoning: 0 },
+        role: "assistant",
+      });
+    const h = createHarness({
+      promptEvents: (sessionId) => {
+        promptCalls++;
+        if (promptCalls === 1) {
+          return [
+            toolEvent(sessionId, "bash", "running", { command: "first" }),
+            failedUpdate(sessionId, "msg-fail-1"),
+            idleEvent(sessionId),
+          ];
+        }
+        if (promptCalls === 2) {
+          return [
+            messageUpdatedEvent(sessionId, {
+              id: "msg-success",
+              providerID: "openai",
+              modelID: "gpt-5.5",
+              tokens: undefined,
+              role: "assistant",
+            }),
+            messageUpdatedEvent(sessionId, {
+              id: "msg-success",
+              providerID: "openai",
+              modelID: "gpt-5.5",
+              tokens: { input: 12, output: 3, reasoning: 0 },
+              role: "assistant",
+            }),
+            toolEvent(sessionId, "bash", "running", { command: "second" }),
+            failedUpdate(sessionId, "msg-fail-2"),
+            idleEvent(sessionId),
+          ];
+        }
+        return [textEvent(sessionId, "second continue ok"), idleEvent(sessionId)];
+      },
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "start",
+        correlationKey: "slack:thread:1710000000.203",
+      });
+
+      expect(h.prompts).toHaveLength(3);
+      expect(h.prompts.slice(1)).toEqual(["Continue", "Continue"]);
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        status: "completed",
+        response: "second continue ok",
+      });
     });
   });
 

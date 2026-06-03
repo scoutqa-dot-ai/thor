@@ -5,7 +5,7 @@ import { join, dirname, resolve, sep } from "node:path";
 import { rm, unlink, mkdir, stat } from "node:fs/promises";
 import { Daytona, type FileUpload, type Sandbox } from "@daytonaio/sdk";
 import { execCommand } from "./exec.ts";
-import { loadDaytonaEnv, withKeyLock, formatBytes } from "@thor/common";
+import { errorMessage, loadDaytonaEnv, withKeyLock, formatBytes } from "@thor/common";
 
 export interface ExecStreamCallbacks {
   onStdout: (chunk: string) => void;
@@ -27,19 +27,12 @@ let daytonaSingleton: Daytona | null = null;
 let daytonaEnv: ReturnType<typeof loadDaytonaEnv> | null = null;
 const cwdLocks = new Map<string, Promise<unknown>>();
 
-export function withCwdLock<T>(cwd: string, fn: () => Promise<T>): Promise<T> {
-  return withKeyLock(cwdLocks, cwd, fn);
+function rethrowError(err: unknown): never {
+  throw err instanceof Error ? err : new Error(errorMessage(err));
 }
 
-export class SandboxError extends Error {
-  readonly userMessage: string;
-  readonly adminDetail: string;
-  constructor(userMessage: string, adminDetail: string, options?: { cause?: unknown }) {
-    super(adminDetail, options);
-    this.userMessage = userMessage;
-    this.adminDetail = adminDetail;
-    this.name = "SandboxError";
-  }
+export function withCwdLock<T>(cwd: string, fn: () => Promise<T>): Promise<T> {
+  return withKeyLock(cwdLocks, cwd, fn);
 }
 
 function getDaytonaEnv(): ReturnType<typeof loadDaytonaEnv> {
@@ -49,10 +42,7 @@ function getDaytonaEnv(): ReturnType<typeof loadDaytonaEnv> {
     daytonaEnv = loadDaytonaEnv();
     return daytonaEnv;
   } catch {
-    throw new SandboxError(
-      "Sandbox auth failed, check DAYTONA_API_KEY",
-      "DAYTONA_API_KEY is not configured",
-    );
+    throw new Error("DAYTONA_API_KEY is not configured");
   }
 }
 
@@ -93,7 +83,7 @@ export async function createSandbox(
     if (sandbox) {
       await safeDeleteSandbox(sandbox);
     }
-    throw toSandboxError(err, "Failed to initialize code in sandbox");
+    rethrowError(err);
   }
 }
 
@@ -188,10 +178,7 @@ function parseGitStatus(stdout: string): { uploads: string[]; deletes: string[] 
 export async function overlayDirtyFiles(sandboxId: string, cwd: string): Promise<OverlayResult> {
   const gitStatus = await execCommand("git", ["status", "--porcelain", "-uall", "-z"], cwd);
   if ((gitStatus.exitCode ?? 0) !== 0) {
-    throw new SandboxError(
-      "Failed to inspect worktree state",
-      `git status failed: ${gitStatus.stderr || gitStatus.stdout}`,
-    );
+    throw new Error(`git status failed: ${gitStatus.stderr || gitStatus.stdout}`);
   }
 
   const { uploads, deletes } = parseGitStatus(gitStatus.stdout);
@@ -200,11 +187,10 @@ export async function overlayDirtyFiles(sandboxId: string, cwd: string): Promise
   if (total === 0) return { pushed: [], deleted: [] };
 
   if (total > DIRTY_FILE_LIMIT) {
-    throw new SandboxError(
+    throw new Error(
       `${total} dirty files exceeds the ${DIRTY_FILE_LIMIT}-file sync limit. ` +
         `Commit or stash your changes (git stash), add unneeded files to .gitignore, ` +
         `or clean up the worktree before running sandbox commands.`,
-      `overlay rejected: ${total} dirty files (limit ${DIRTY_FILE_LIMIT})`,
     );
   }
 
@@ -212,11 +198,10 @@ export async function overlayDirtyFiles(sandboxId: string, cwd: string): Promise
   for (const f of uploads) {
     const fileStat = await stat(join(cwd, f)).catch(() => null);
     if (fileStat && fileStat.size > FILE_SIZE_LIMIT) {
-      throw new SandboxError(
+      throw new Error(
         `File "${f}" is ${formatBytes(fileStat.size)}, exceeding the 100 MB sync limit. ` +
           `Commit it first (git add "${f}" && git commit), add it to .gitignore, ` +
           `or remove it from the worktree.`,
-        `overlay rejected: ${f} is ${fileStat.size} bytes (limit ${FILE_SIZE_LIMIT})`,
       );
     }
   }
@@ -254,9 +239,9 @@ export async function pullSandboxChanges(
     `cd ${shellQuote(DAYTONA_REPO_DIR)} && git status --porcelain -uall -z`,
   );
   if (statusResult.exitCode !== 0) {
-    throw new SandboxError(
-      "Failed to read sandbox state after exec. No files were pulled back.",
-      `sandbox git status failed: ${statusResult.result || "unknown error"}`,
+    throw new Error(
+      `Failed to read sandbox state after exec. No files were pulled back. ` +
+        `(sandbox git status failed: ${statusResult.result || "unknown error"})`,
     );
   }
 
@@ -266,10 +251,9 @@ export async function pullSandboxChanges(
   if (total === 0) return { pulled: [], deleted: [] };
 
   if (total > DIRTY_FILE_LIMIT) {
-    throw new SandboxError(
+    throw new Error(
       `Sandbox has ${total} changed files, exceeding the ${DIRTY_FILE_LIMIT}-file sync limit. ` +
         `Add build artifacts to .gitignore or clean up before the command exits.`,
-      `pull rejected: ${total} changed files (limit ${DIRTY_FILE_LIMIT})`,
     );
   }
 
@@ -279,10 +263,7 @@ export async function pullSandboxChanges(
   const allPaths = [...downloads, ...localDeletes];
   for (const f of allPaths) {
     if (!resolve(cwd, f).startsWith(cwdPrefix)) {
-      throw new SandboxError(
-        `Sandbox produced a file path that escapes the worktree ("${f}"). Pull aborted.`,
-        `pull rejected: path traversal detected in "${f}"`,
-      );
+      throw new Error(`Sandbox produced a file path that escapes the worktree ("${f}"). Pull aborted.`);
     }
   }
 
@@ -295,10 +276,9 @@ export async function pullSandboxChanges(
       for (const line of sizeCheck.result.split("\n")) {
         const match = line.match(/^(\d+)\s+(.+)$/);
         if (match && Number(match[1]) > FILE_SIZE_LIMIT) {
-          throw new SandboxError(
+          throw new Error(
             `Sandbox file "${match[2]}" is ${formatBytes(Number(match[1]))}, exceeding the 100 MB sync limit. ` +
               `Add it to .gitignore or delete it before the command exits.`,
-            `pull rejected: ${match[2]} is ${match[1]} bytes (limit ${FILE_SIZE_LIMIT})`,
           );
         }
       }
@@ -341,10 +321,7 @@ async function bundleAndUpload(
     );
 
     if ((bundleResult.exitCode ?? 0) !== 0) {
-      throw new SandboxError(
-        "Failed to prepare code sync",
-        `git bundle create failed: ${bundleResult.stderr || bundleResult.stdout}`,
-      );
+      throw new Error(`git bundle create failed: ${bundleResult.stderr || bundleResult.stdout}`);
     }
 
     await sandbox.fs.uploadFile(localBundlePath, SANDBOX_SYNC_BUNDLE_PATH);
@@ -364,13 +341,10 @@ async function bundleAndUpload(
 
     const execResult = await sandbox.process.executeCommand(resetCmd);
     if (execResult.exitCode !== 0) {
-      throw new SandboxError(
-        "Failed to sync code to sandbox",
-        `sandbox unbundle/reset failed: ${execResult.result}`,
-      );
+      throw new Error(`sandbox unbundle/reset failed: ${execResult.result}`);
     }
   } catch (err) {
-    throw toSandboxError(err, "Failed to upload code to sandbox");
+    rethrowError(err);
   } finally {
     await rm(localBundlePath, { force: true }).catch(() => {});
   }
@@ -418,7 +392,7 @@ export async function deleteSandbox(sandboxId: string): Promise<void> {
     if (isNotFoundError(err)) {
       return;
     }
-    throw toSandboxError(err, "Sandbox service error");
+    rethrowError(err);
   }
 }
 
@@ -445,7 +419,7 @@ async function listSandboxesByLabels(labels: Record<string, string>): Promise<Sa
     const page = await getDaytona().list(labels, 1, 100);
     return page.items || [];
   } catch (err) {
-    throw toSandboxError(err, "Sandbox service unavailable");
+    rethrowError(err);
   }
 }
 
@@ -453,7 +427,7 @@ async function getSandboxById(sandboxId: string): Promise<Sandbox> {
   try {
     return await getDaytona().get(sandboxId);
   } catch (err) {
-    throw toSandboxError(err, "Sandbox service unavailable");
+    rethrowError(err);
   }
 }
 
@@ -463,37 +437,6 @@ async function safeDeleteSandbox(sandbox: Sandbox): Promise<void> {
   } catch {
     // Best effort cleanup
   }
-}
-
-function toSandboxError(err: unknown, fallbackUserMessage: string): SandboxError {
-  if (err instanceof SandboxError) {
-    return err;
-  }
-
-  const adminDetail = err instanceof Error ? err.message : String(err);
-  const lower = adminDetail.toLowerCase();
-
-  if (lower.includes("auth") || lower.includes("401") || lower.includes("403")) {
-    return new SandboxError(
-      "Sandbox auth failed, check DAYTONA_API_KEY",
-      adminDetail,
-      err instanceof Error ? { cause: err } : undefined,
-    );
-  }
-
-  if (lower.includes("timeout")) {
-    return new SandboxError(
-      "Sandbox creation timed out",
-      adminDetail,
-      err instanceof Error ? { cause: err } : undefined,
-    );
-  }
-
-  return new SandboxError(
-    fallbackUserMessage,
-    adminDetail,
-    err instanceof Error ? { cause: err } : undefined,
-  );
 }
 
 function isNotFoundError(err: unknown): boolean {
