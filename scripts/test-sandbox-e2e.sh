@@ -575,13 +575,22 @@ else
       -H 'Content-Type: application/json' \
       -d "{\"mode\":\"stop\",\"cwd\":\"$SBX_WORKTREE_DIR\"}" 2>/dev/null >/dev/null
     sleep 2
-    # Exec again — should auto-recreate
-    sbx_recreate_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
-      -H 'Content-Type: application/json' \
-      -d "{\"mode\":\"exec\",\"args\":[\"echo\",\"post-recreate\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
-      2>/dev/null)
-    sbx_recreate_exit=$(echo "$sbx_recreate_raw" | sandbox_exec_exit)
-    sbx_recreate_stdout=$(echo "$sbx_recreate_raw" | sandbox_exec_stdout)
+    # Exec again — should auto-recreate. Retry for the Daytona boot race: the
+    # command itself succeeds, but the post-exec pull-back (git status in the
+    # freshly recreated sandbox) can transiently fail before the box is ready,
+    # flipping the reported exit to 1. Re-exec of echo is side-effect-free.
+    sbx_recreate_exit=""
+    sbx_recreate_stdout=""
+    for _sbx_retry in 1 2 3; do
+      sbx_recreate_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+        -H 'Content-Type: application/json' \
+        -d "{\"mode\":\"exec\",\"args\":[\"echo\",\"post-recreate\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+        2>/dev/null)
+      sbx_recreate_exit=$(echo "$sbx_recreate_raw" | sandbox_exec_exit)
+      sbx_recreate_stdout=$(echo "$sbx_recreate_raw" | sandbox_exec_stdout)
+      [[ "$sbx_recreate_exit" == "0" ]] && break
+      sleep 2
+    done
     assert '[[ "$sbx_recreate_exit" == "0" ]]' \
       "auto-recreate after disappear succeeded" \
       "exitCode='$sbx_recreate_exit'"
