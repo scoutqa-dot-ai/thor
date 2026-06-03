@@ -66,7 +66,7 @@ export type {
   ValidationIssue,
   ValidationResult,
 } from "./workspace-config.ts";
-export type { ProxyName } from "./proxies.ts";
+export type { ProxyName, ProxyUpstream } from "./proxies.ts";
 export { writeToolCallLog, appendJsonlWorklog } from "./worklog.ts";
 export type { ToolCallLogEntry, InboundWebhookHistoryEntry } from "./worklog.ts";
 export {

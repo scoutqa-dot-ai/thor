@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { appendAlias, appendSessionEvent, formatThorContextFooter } from "@thor/common";
-import type { WorkspaceConfig } from "@thor/common";
+import type { ProxyUpstream, WorkspaceConfig } from "@thor/common";
 import type { ToolCallLogEntry } from "@thor/common";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { createRemoteCliApp } from "./index.ts";
@@ -178,10 +178,13 @@ describe("remote-cli MCP endpoints", () => {
         },
         connectUpstreamFn: async (
           name: string,
-          upstreamConfig: { headers?: Record<string, string> },
+          upstreamConfig: ProxyUpstream,
         ): Promise<UpstreamConnection> => {
           connectedUpstreams.push(name);
-          upstreamConfigs.push({ name, headers: upstreamConfig.headers });
+          upstreamConfigs.push({
+            name,
+            headers: upstreamConfig.kind === "http" ? upstreamConfig.headers : undefined,
+          });
           return {
             tools,
             client: {

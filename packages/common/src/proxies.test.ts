@@ -97,6 +97,7 @@ describe("proxy registry", () => {
     // A full profile bundle routes its own creds at its own host, distinct target key.
     const eu = resolveProxyConfig("langfuse", "EU", env);
     expect(eu?.upstream).toEqual({
+      kind: "http",
       url: "https://cloud.langfuse.com/api/public/mcp",
       headers: { Authorization: `Basic ${Buffer.from("pk-eu:sk-eu").toString("base64")}` },
     });

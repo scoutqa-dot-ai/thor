@@ -38,7 +38,7 @@ import {
   validatePolicy,
 } from "./policy-mcp.ts";
 import { unwrapResult } from "./unwrap-result.ts";
-import { connectUpstream, type UpstreamConnection } from "./upstream.ts";
+import { connectUpstream, upstreamTarget, type UpstreamConnection } from "./upstream.ts";
 import { attributionFields, resolveTriggerUser } from "./attribution.ts";
 import { postSlackMessageApi } from "./slack-post-message.ts";
 
@@ -215,6 +215,9 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   const instances = new Map<string, ProxyInstance>();
   const connecting = new Map<string, Promise<ProxyInstance>>();
   const approvalStores = new Map<string, ApprovalStore>();
+  // Set by closeAll() so a disconnect during shutdown does not respawn an
+  // upstream (for stdio that would orphan a child process nothing will reap).
+  let closing = false;
   const resolvingApprovals = new Map<
     string,
     {
@@ -290,12 +293,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     name: ProxyName,
     proxyDef: NonNullable<ReturnType<typeof resolveProxyConfig>>,
   ): Promise<ProxyInstance> {
-    const upstreamConfig = {
-      url: proxyDef.upstream.url,
-      headers: proxyDef.upstream.headers,
-    };
+    const upstreamConfig = proxyDef.upstream;
 
     function scheduleReconnect(attempt: number): void {
+      if (closing) return;
       const instance = instances.get(proxyDef.target.key);
       if (!instance) return;
       if (attempt > MAX_RECONNECT_ATTEMPTS) {
@@ -313,6 +314,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       const delay = Math.min(BASE_DELAY_MS * 2 ** (attempt - 1), MAX_DELAY_MS);
       logInfo(log, "upstream_reconnecting", { name, attempt, delayMs: delay });
       setTimeout(() => {
+        if (closing) return;
         connectUpstreamFn(name, upstreamConfig, () => scheduleReconnect(1))
           .then((newUpstream) => {
             instance.upstream = newUpstream;
@@ -334,7 +336,8 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       name,
       targetKey: proxyDef.target.key,
       profile: proxyDef.target.profile,
-      url: proxyDef.upstream.url,
+      transport: proxyDef.upstream.kind,
+      target: upstreamTarget(proxyDef.upstream),
     });
     const upstream = await connectUpstreamFn(name, upstreamConfig, () => scheduleReconnect(1));
 
@@ -974,7 +977,12 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
     let lookup: JiraLookupResult;
     try {
-      lookup = await lookupJiraAccountIdViaUpstream(instance, cloudId, resolved.user.email, profile);
+      lookup = await lookupJiraAccountIdViaUpstream(
+        instance,
+        cloudId,
+        resolved.user.email,
+        profile,
+      );
     } catch {
       logInfo(log, "attribution_applied", {
         surface: "jira",
@@ -1046,6 +1054,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     },
 
     async closeAll(): Promise<void> {
+      closing = true;
       await Promise.allSettled(
         [...instances.values()].map((instance) => instance.upstream.client.close()),
       );

@@ -5,11 +5,17 @@ export const PROXY_NAMES = ["atlassian", "grafana", "langfuse", "posthog"] as co
 
 export type ProxyName = (typeof PROXY_NAMES)[number];
 
+/**
+ * How remote-cli reaches an upstream MCP server: a remote HTTP endpoint, or a
+ * local child process spoken to over stdio (which gives each profile its own
+ * single-tenant instance).
+ */
+export type ProxyUpstream =
+  | { kind: "http"; url: string; headers?: Record<string, string> }
+  | { kind: "stdio"; command: string; args: string[]; env: Record<string, string> };
+
 export interface ResolvedProxyConfig {
-  upstream: {
-    url: string;
-    headers?: Record<string, string>;
-  };
+  upstream: ProxyUpstream;
   allow: string[];
   approve: string[];
   target: {
@@ -161,6 +167,7 @@ export function resolveProxyConfig(
     if (!auth.value) return undefined;
     return {
       upstream: {
+        kind: "http",
         url: "https://mcp.atlassian.com/v1/mcp",
         headers: { Authorization: auth.value },
       },
@@ -179,6 +186,7 @@ export function resolveProxyConfig(
     if (!apiKey.value) return undefined;
     return {
       upstream: {
+        kind: "http",
         url: "https://mcp.posthog.com/mcp",
         headers: { Authorization: `Bearer ${apiKey.value}` },
       },
@@ -215,6 +223,7 @@ export function resolveProxyConfig(
     const token = Buffer.from(`${publicKey}:${secretKey}`).toString("base64");
     return {
       upstream: {
+        kind: "http",
         url: `${envBaseUrl(env, baseUrlVar)}/api/public/mcp`,
         headers: { Authorization: `Basic ${token}` },
       },
@@ -250,6 +259,7 @@ export function resolveProxyConfig(
   const orgId = useScoped ? scopedOrg : envValue(env, "GRAFANA_ORG_ID");
   return {
     upstream: {
+      kind: "http",
       url: "http://grafana-mcp:8000/mcp",
       headers: {
         "X-Grafana-URL": url,
