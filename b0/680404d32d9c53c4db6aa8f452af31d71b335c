@@ -1,0 +1,23 @@
+docs/plan/2026060301_grafana-mcp-per-profile.md
+  0db2e5ae7461c4cf 1-263
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b0680404d32d9c53c4db6aa8f452af31d71b335c",
+  "prompts": {
+    "0db2e5ae7461c4cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f04ca88-25b3-4d8a-a5b6-d40caeff0874",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 282,
+      "total_deletions": 19,
+      "accepted_lines": 263,
+      "overriden_lines": 0
+    }
+  }
+}
