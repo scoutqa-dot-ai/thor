@@ -7,8 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendAlias, resolveSessionForCorrelationKey } from "@thor/common";
 
-import { createRemoteCliApp } from "./index.js";
-import type { SlackPostMessageDeps } from "./slack-post-message.js";
+import { createRemoteCliApp } from "./index.ts";
+import type { SlackPostMessageDeps } from "./slack-post-message.ts";
 
 describe("remote-cli slack-post-message endpoint", () => {
   let server: Server;

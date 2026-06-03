@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ProgressEventSchema } from "./progress-events.js";
+import { ProgressEventSchema } from "./progress-events.ts";
 
 describe("ProgressEventSchema", () => {
   it("accepts context-window progress events", () => {

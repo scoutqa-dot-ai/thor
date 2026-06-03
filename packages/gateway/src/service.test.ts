@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { RunnerDeps } from "./service.js";
-import type { SlackDeps } from "./slack-api.js";
-import type { GitHubWebhookEvent } from "./github.js";
+import type { RunnerDeps } from "./service.ts";
+import type { SlackDeps } from "./slack-api.ts";
+import type { GitHubWebhookEvent } from "./github.ts";
 
 const mockHasSessionForCorrelationKey = vi.fn<(key: string | string[]) => boolean>(() => false);
 
@@ -82,7 +82,7 @@ describe("resolveApproval", () => {
       .mockRejectedValueOnce(new Error("socket hang up"))
       .mockResolvedValue(jsonResponse({ stdout: "ok", stderr: "", exitCode: 0 }));
 
-    const { resolveApproval } = await import("./service.js");
+    const { resolveApproval } = await import("./service.ts");
     const result = await resolveApproval(
       "act-1",
       "approved",
@@ -121,7 +121,7 @@ describe("triggerRunnerSlack edge cases", () => {
     mockRunnerFetch.mockResolvedValue(textResponse("bad request", 400));
     const onRejected = vi.fn();
 
-    const { triggerRunnerSlack } = await import("./service.js");
+    const { triggerRunnerSlack } = await import("./service.ts");
     const result = await triggerRunnerSlack(
       [slackEvent],
       "key1",
@@ -141,7 +141,7 @@ describe("triggerRunnerSlack edge cases", () => {
   it("throws for 5xx errors (retryable)", async () => {
     mockRunnerFetch.mockResolvedValue(textResponse("internal error", 500));
 
-    const { triggerRunnerSlack } = await import("./service.js");
+    const { triggerRunnerSlack } = await import("./service.ts");
     await expect(
       triggerRunnerSlack([slackEvent], "key1", runnerDeps, slackDeps, false, undefined, () => ({
         directory: "/workspace/repos/my-repo",
@@ -164,7 +164,7 @@ describe("triggerRunnerCron", () => {
   it("batches multiple cron payloads that share a correlation key", async () => {
     mockFetch.mockResolvedValue(jsonResponse({ accepted: true }));
 
-    const { triggerRunnerCron } = await import("./service.js");
+    const { triggerRunnerCron } = await import("./service.ts");
     const result = await triggerRunnerCron(
       [
         { prompt: "do something", directory: "/workspace/repos/test" },
@@ -201,7 +201,7 @@ describe("triggerRunnerGitHub", () => {
       .mockResolvedValueOnce(jsonResponse({ accepted: true }));
 
     const onAccepted = vi.fn();
-    const { triggerRunnerGitHub } = await import("./service.js");
+    const { triggerRunnerGitHub } = await import("./service.ts");
     const result = await triggerRunnerGitHub(
       [githubEventBase],
       "pending:branch-resolve:delivery-1",
@@ -252,7 +252,7 @@ describe("triggerRunnerGitHub", () => {
       },
     } satisfies GitHubWebhookEvent;
 
-    const { triggerRunnerGitHub } = await import("./service.js");
+    const { triggerRunnerGitHub } = await import("./service.ts");
     const result = await triggerRunnerGitHub(
       [pureIssue],
       "github:issue:thor:scoutqa-dot-ai/thor#42",
@@ -285,7 +285,7 @@ describe("triggerRunnerGitHub", () => {
     mockFetch.mockResolvedValueOnce(execResponse("", "HTTP 403: forbidden", 1));
     const onRejected = vi.fn();
 
-    const { triggerRunnerGitHub } = await import("./service.js");
+    const { triggerRunnerGitHub } = await import("./service.ts");
     const result = await triggerRunnerGitHub(
       [githubEventBase],
       "pending:branch-resolve:delivery-1",
@@ -314,7 +314,7 @@ describe("triggerRunnerGitHub", () => {
       .mockResolvedValueOnce(jsonResponse({ accepted: true }));
     const onRejected = vi.fn();
 
-    const { triggerRunnerGitHub } = await import("./service.js");
+    const { triggerRunnerGitHub } = await import("./service.ts");
     const result = await triggerRunnerGitHub(
       [githubEventBase],
       "pending:branch-resolve:delivery-1",
@@ -335,7 +335,7 @@ describe("triggerRunnerGitHub", () => {
     mockFetch.mockResolvedValueOnce(jsonResponse({ busy: true }));
     const onAccepted = vi.fn();
 
-    const { triggerRunnerGitHub } = await import("./service.js");
+    const { triggerRunnerGitHub } = await import("./service.ts");
     const result = await triggerRunnerGitHub(
       [githubReviewCommentPayload()],
       "git:branch:thor:main",
@@ -356,7 +356,7 @@ describe("triggerRunnerGitHub", () => {
 describe("approval outcome prompts", () => {
   it("includes approval guidance when slack events and approval outcomes share a batch", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ busy: true }));
-    const { triggerRunnerSlack } = await import("./service.js");
+    const { triggerRunnerSlack } = await import("./service.ts");
 
     const result = await triggerRunnerSlack(
       [
@@ -369,7 +369,7 @@ describe("approval outcome prompts", () => {
           thread_ts: "1710000000.001",
         },
       ],
-      "slack:thread:1710000000.001",
+      "slack:thread:C123/1710000000.001",
       { runnerUrl: "http://runner:3000", fetchImpl },
       noopSlackDeps(),
       false,
@@ -420,7 +420,7 @@ describe("planBatchDispatch", () => {
   });
 
   function planSlackDispatch() {
-    return import("./service.js").then(({ planBatchDispatch }) =>
+    return import("./service.ts").then(({ planBatchDispatch }) =>
       planBatchDispatch({
         slackEvents,
         cronEvents: [],
@@ -468,7 +468,7 @@ describe("planBatchDispatch", () => {
     }
 
     beforeEach(async () => {
-      const { __resetSlackChannelGateCacheForTests } = await import("./slack-api.js");
+      const { __resetSlackChannelGateCacheForTests } = await import("./slack-api.ts");
       __resetSlackChannelGateCacheForTests();
     });
 
@@ -484,7 +484,7 @@ describe("planBatchDispatch", () => {
       slackDeps: SlackDeps;
       workspaceConfigLoader?: () => unknown;
     }) {
-      const { planBatchDispatch } = await import("./service.js");
+      const { planBatchDispatch } = await import("./service.ts");
       return planBatchDispatch({
         slackEvents: [pendingEvent],
         cronEvents: [],
@@ -526,7 +526,7 @@ describe("planBatchDispatch", () => {
 
       const plan = await planPendingPrivacy({
         slackDeps: slackDepsWith(client),
-        workspaceConfigLoader: () => ({ slack: { private_channel_allowlist: ["C_DEFER"] } }),
+        workspaceConfigLoader: () => ({ profiles: { QA: { channels: ["C_DEFER"] } } }),
       });
 
       expect(plan.kind).toBe("reroute");
@@ -642,7 +642,7 @@ describe("triggerRunnerApprovalOutcomes", () => {
   it("returns after acceptance without waiting for the runner body to finish", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ accepted: true }));
     const onAccepted = vi.fn();
-    const { triggerRunnerApprovalOutcomes } = await import("./service.js");
+    const { triggerRunnerApprovalOutcomes } = await import("./service.ts");
 
     const resultPromise = triggerRunnerApprovalOutcomes(
       [
@@ -654,7 +654,7 @@ describe("triggerRunnerApprovalOutcomes", () => {
           threadTs: "1710000000.001",
         },
       ],
-      "slack:thread:1710000000.001",
+      "slack:thread:C123/1710000000.001",
       { runnerUrl: "http://runner:3000", fetchImpl },
       noopSlackDeps(),
       false,

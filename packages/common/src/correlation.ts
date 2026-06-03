@@ -1,12 +1,18 @@
 import { z } from "zod/v4";
-import { appendAlias, currentSessionForAnchor, mintAnchor, resolveAlias } from "./event-log.js";
-import type { AliasRecord } from "./event-log.js";
-import { withKeyLock } from "./key-lock.js";
+import {
+  appendAlias,
+  currentSessionForAnchor,
+  mintAnchor,
+  resolveAlias,
+  resolveSessionAnchorId,
+} from "./event-log.ts";
+import type { AliasRecord } from "./event-log.ts";
+import { withKeyLock } from "./key-lock.ts";
 
 const SLACK_THREAD_PREFIX = "slack:thread:";
 const GIT_BRANCH_PREFIX = "git:branch:";
 const GITHUB_ISSUE_PREFIX = "github:issue:";
-export const ANCHOR_LOCK_PREFIX = "anchor:";
+const ANCHOR_LOCK_PREFIX = "anchor:";
 export const SESSION_LOCK_PREFIX = "session:";
 
 const SlackPostMessageInput = z.object({
@@ -61,36 +67,31 @@ export function computeSlackCorrelationKey(
 ): string | undefined {
   const input = SlackPostMessageInput.safeParse(toolArgs);
   if (!input.success) return undefined;
-  const channel = input.data.channel;
+  const channelFromArgs = input.data.channel;
   if (input.data.thread_ts) {
-    return buildSlackThreadCorrelationKey(channel, input.data.thread_ts);
+    if (!channelFromArgs) return undefined;
+    return buildSlackCorrelationKey(channelFromArgs, input.data.thread_ts);
   }
 
   try {
     const output = SlackPostMessageOutput.safeParse(JSON.parse(result));
     if (!output.success) return undefined;
-    return buildSlackThreadCorrelationKey(channel ?? output.data.channel, output.data.ts);
+    const channel = channelFromArgs ?? output.data.channel;
+    if (!channel) return undefined;
+    return buildSlackCorrelationKey(channel, output.data.ts);
   } catch {
     return undefined;
   }
 }
 
 /**
- * Build Slack thread correlation key(s). Returns the new
- * `slack:thread:<channel>/<ts>` form when channel is known, plus the legacy
- * `slack:thread:<ts>` form for back-compat resolution against pre-existing
- * aliases.
+ * Build the channel-qualified `slack:thread:<channel>/<ts>` correlation key.
+ * Channel is required — anchor binding under the strict channel/profile model
+ * has no meaning without a channel, so callers that may not have one must
+ * guard before calling.
  */
-export function buildSlackCorrelationKeys(channel: string | undefined, threadTs: string): string[] {
-  const legacy = `${SLACK_THREAD_PREFIX}${threadTs}`;
-  if (!channel) return [legacy];
-  return [`${SLACK_THREAD_PREFIX}${channel}/${threadTs}`, legacy];
-}
-
-function buildSlackThreadCorrelationKey(channel: string | undefined, threadTs: string): string {
-  return channel
-    ? `${SLACK_THREAD_PREFIX}${channel}/${threadTs}`
-    : `${SLACK_THREAD_PREFIX}${threadTs}`;
+export function buildSlackCorrelationKey(channel: string, threadTs: string): string {
+  return `${SLACK_THREAD_PREFIX}${channel}/${threadTs}`;
 }
 
 /** Bind a correlation-key alias directly to a known anchor id. */
@@ -126,12 +127,7 @@ export function ensureAnchorForCorrelationKey(key: string): Promise<EnsureAnchor
  */
 export function appendCorrelationAlias(sessionId: string, correlationKey: string): void {
   if (!aliasForCorrelationKey(correlationKey)) return;
-  // Delegated subagents run under an opencode.subsession; fall back so their
-  // git/Slack producer calls bind to the parent's anchor instead of being
-  // silently dropped.
-  const anchorId =
-    resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId }) ??
-    resolveAlias({ aliasType: "opencode.subsession", aliasValue: sessionId });
+  const anchorId = resolveSessionAnchorId(sessionId);
   if (!anchorId) {
     throw new Error(
       `cannot bind correlation alias: session ${sessionId} has no anchor binding yet`,
@@ -165,13 +161,8 @@ export function resolveCorrelationLockKey(key: string): string {
 function aliasForCorrelationKey(key: string): CorrelationAlias | undefined {
   if (key.startsWith(SLACK_THREAD_PREFIX)) {
     const suffix = key.slice(SLACK_THREAD_PREFIX.length);
-    // New shape: "<channel>/<thread_ts>". Legacy: "<thread_ts>" only.
-    // Channel ids and Slack ts strings never contain "/", so the separator
-    // is unambiguous.
-    if (suffix.includes("/")) {
-      return { aliasType: "slack.thread", aliasValue: suffix };
-    }
-    return { aliasType: "slack.thread_id", aliasValue: suffix };
+    if (!suffix.includes("/")) return undefined;
+    return { aliasType: "slack.thread", aliasValue: suffix };
   }
   if (key.startsWith(GIT_BRANCH_PREFIX)) {
     return {

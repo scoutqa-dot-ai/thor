@@ -7,12 +7,12 @@ const { execCommandMock } = vi.hoisted(() => ({
   execCommandMock: vi.fn(),
 }));
 
-vi.mock("./exec.js", () => ({
+vi.mock("./exec.ts", () => ({
   execCommand: execCommandMock,
   execCommandStream: vi.fn(),
 }));
 
-import { createRemoteCliApp } from "./index.js";
+import { createRemoteCliApp } from "./index.ts";
 
 describe("remote-cli ldcli endpoint", () => {
   let server: Server;

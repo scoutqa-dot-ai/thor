@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isOmittedMarker, parseOpencodeEvent, projectOpencodeEvent } from "./opencode-event.js";
+import { isOmittedMarker, parseOpencodeEvent, projectOpencodeEvent } from "./opencode-event.ts";
 
 describe("parseOpencodeEvent", () => {
   it("parses a message.part.updated event with a tool part", () => {
@@ -259,6 +259,33 @@ describe("projectOpencodeEvent", () => {
     const part = props.part as { state?: { raw?: unknown } };
     expect(isOmittedMarker(props.metadata)).toBe(true);
     expect(isOmittedMarker(part.state?.raw)).toBe(true);
+  });
+
+  it("preserves step-finish cost and token accounting in projections", () => {
+    expect(
+      projectOpencodeEvent({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "prt_step_finish",
+            type: "step-finish",
+            cost: 0.0123,
+            tokens: { input: 10, output: 20, reasoning: 3, cache: { read: 4, write: 5 } },
+            vendorPayload: "dropped",
+          },
+        },
+      }),
+    ).toMatchObject({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "prt_step_finish",
+          type: "step-finish",
+          cost: 0.0123,
+          tokens: { input: 10, output: 20, reasoning: 3, cache: { read: 4, write: 5 } },
+        },
+      },
+    });
   });
 
   it("preserves compact session status and error fields", () => {

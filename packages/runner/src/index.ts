@@ -11,7 +11,7 @@ import type {
   ToolStateCompleted,
   ToolStateError,
 } from "@opencode-ai/sdk";
-import { EventBusRegistry, waitForSessionSettled } from "./event-bus.js";
+import { EventBusRegistry, waitForSessionSettled } from "./event-bus.ts";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
@@ -22,23 +22,21 @@ import {
   truncate,
   isAllowedDirectory,
   extractRepoFromCwd,
-  ANCHOR_LOCK_PREFIX,
   SESSION_LOCK_PREFIX,
   appendSessionEvent,
   appendAlias,
+  anchorHasExternalKeyType,
   appendCorrelationAliasForAnchor,
   currentSessionForAnchor,
   ensureAnchorForCorrelationKey,
   isUuidV7,
   mintAnchor,
-  mintTriggerId,
   reverseLookupAnchor,
   resolveAlias,
   resolveAnchorForCorrelationKey,
   resolveCorrelationLockKey,
   readTriggerSlice,
   sessionLogPath,
-  getWorklogDir,
   SessionEventLogRecordSchema,
   loadRunnerEnv,
   matchesInternalSecret,
@@ -68,14 +66,13 @@ import type {
 } from "@thor/common";
 import type { ReverseAnchorEntry, SessionEventLogRecord } from "@thor/common";
 import type { ProgressEvent, ProgressTarget, ProgressTransport } from "@thor/common";
-import { buildToolInstructions } from "./tool-instructions.js";
-import { getMemoryProgressEvents } from "./memory-progress.js";
+import { getMemoryProgressEvents } from "./memory-progress.ts";
 import { pathToFileURL } from "node:url";
 import {
   createSlackProgressTransport,
   resolveSlackProgressTarget,
   type SlackProgressTransportTarget,
-} from "./slack-progress.js";
+} from "./slack-progress.ts";
 
 const log = createLogger("runner");
 
@@ -142,14 +139,6 @@ function readRepoMemory(directory: string, memoryDir = MEMORY_DIR): string | und
   const repo = extractRepoFromCwd(directory);
   if (!repo) return undefined;
   return readMemoryFile(`${memoryDir}/${repo}/README.md`);
-}
-
-function getToolInstructions(directory: string): string | undefined {
-  try {
-    return buildToolInstructions(directory);
-  } catch {
-    return undefined;
-  }
 }
 
 const defaultWorkspaceConfigLoader = createConfigLoader(WORKSPACE_CONFIG_PATH);
@@ -235,6 +224,7 @@ function bindSessionToAnchor(args: {
   anchorId: string;
   sessionId: string;
   correlationKey?: string;
+  repoDirectory?: string;
 }): void {
   if (
     resolveAlias({ aliasType: "opencode.session", aliasValue: args.sessionId }) !== args.anchorId
@@ -250,6 +240,17 @@ function bindSessionToAnchor(args: {
     resolveAnchorForCorrelationKey(args.correlationKey) !== args.anchorId
   ) {
     appendCorrelationAliasForAnchor(args.anchorId, args.correlationKey);
+  }
+  // Stamp the anchor's repo once, from the trusted trigger-time directory. This
+  // lets non-Slack/cron sessions (which carry no slack.thread alias) resolve a
+  // profile, and lets the approval-click path re-resolve without a live
+  // directory. Stamp only when the anchor has no repo yet so a resumed session
+  // keeps its original repo even if a later trigger's directory differs.
+  if (args.repoDirectory) {
+    const repo = extractRepoFromCwd(args.repoDirectory);
+    if (repo && !anchorHasExternalKeyType(args.anchorId, "repo")) {
+      appendAlias({ aliasType: "repo", aliasValue: repo, anchorId: args.anchorId });
+    }
   }
 }
 
@@ -427,7 +428,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         }
 
         const sessionId = parsed.data.sessionId ?? `e2e-${randomUUID()}`;
-        const triggerId = mintTriggerId();
+        const triggerId = mintAnchor();
         const anchorId = mintAnchor();
         bindSessionToAnchor({
           anchorId,
@@ -558,8 +559,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
      *  text and status from the trigger call. */
     stream: z.boolean().optional(),
   });
-
-  type TriggerRequest = z.infer<typeof TriggerRequestSchema>;
 
   // ---------------------------------------------------------------------------
   // Event filtering — what gets a JSON file, what gets a stdout log, what's ignored
@@ -838,7 +837,12 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
         // session_stale recreate appends a fresh opencode.session alongside
         // the old; original Slack/git aliases keep pointing at the same anchor.
-        bindSessionToAnchor({ anchorId, sessionId: id, correlationKey });
+        bindSessionToAnchor({
+          anchorId,
+          sessionId: id,
+          correlationKey,
+          repoDirectory: sessionDirectory,
+        });
 
         return { sessionId: id, resumed: didResume, anchorId };
       };
@@ -925,13 +929,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           }
         }
 
-        // Tool instructions: inject MCP tool list from config
-        const toolInstructions = getToolInstructions(sessionDirectory);
-        if (toolInstructions) {
-          prompt = `${toolInstructions}\n\n${prompt}`;
-          logInfo(log, "tool_instructions_injected", { directory: sessionDirectory });
-        }
-
         const triggeringUserBlock = buildTriggeringUserPromptBlock(workspaceConfigLoader, {
           triggerSlackId: parsed.data.triggerSlackId,
           triggerGithubLogin: parsed.data.triggerGithubLogin,
@@ -951,7 +948,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       // Subscribe to event bus BEFORE sending the prompt
       const subscription = await eventBuses.subscribe([sessionId]);
 
-      const triggerId = mintTriggerId();
+      const triggerId = mintAnchor();
       inflightTriggerId = triggerId;
       startTrigger(sessionId, triggerId, {
         correlationKey,
@@ -1510,7 +1507,6 @@ const KNOWN_BINS: Record<string, number> = {
   corepack: 2,
   gh: 2,
   git: 2,
-  langfuse: 4,
   ldcli: 2,
   mcp: 3,
   metabase: 2,
@@ -1527,7 +1523,7 @@ const KNOWN_BINS: Record<string, number> = {
   perl: 1,
   pip3: 2,
   prettier: 1,
-  python3: 2,
+  python3: 1,
   rg: 1,
   ruff: 2,
   shfmt: 1,
@@ -1936,6 +1932,10 @@ function consumePartStats(part: ViewerPart, ledger: AgentLedger): void {
     }
     const breakdown = extractTokenCounts(part.tokens);
     if (breakdown) addTokenCounts(ledger.tokens, breakdown);
+    if (typeof part.cost === "number" && Number.isFinite(part.cost)) {
+      ledger.costUsd += part.cost;
+      ledger.hasCost = true;
+    }
   }
 }
 
@@ -2041,7 +2041,6 @@ function renderInlineSubagent(
   ctx: SubAgentCtx,
   window: { start: number; end?: number } | undefined,
   label: string,
-  modelId: string | undefined,
 ): { html: string | undefined; ledger: AgentLedger } | undefined {
   if (ctx.visited.has(sessionId)) return undefined;
   // Without a time window we can't tell which subagent events belong to THIS
@@ -2091,11 +2090,7 @@ function renderInlineSubagent(
     visited: new Set([...ctx.visited, sessionId]),
   };
 
-  // The subagent's model id comes from the parent's `task` tool part metadata
-  // (OpenCode tags the spawn with the child's model). Records inside the
-  // subagent's own session don't carry it on step-finish parts, and any
-  // modelID seen there would be a *grandchild's* model (another task tool).
-  const ledger = emptyLedger(label, sessionId, modelId ? [modelId] : []);
+  const ledger = emptyLedger(label, sessionId);
   const rows = renderActivity(records, ledger, nextCtx);
   const html = rows.length
     ? `<details><summary>subagent activity (${rows.length} row${rows.length === 1 ? "" : "s"})</summary><ul class="events sub-events">${rows.join("")}</ul></details>`
@@ -2136,17 +2131,7 @@ function renderTaskCard(
   let subActivity = "";
   if (subSession) {
     const ledgerLabel = subagent ? `task · ${subagent}` : "task";
-    // OpenCode tags the `task` tool part with the *child's* model — that's
-    // the reliable source for the subagent's model id.
-    const taskModelInfo = metadata && isRecord(metadata.model) ? metadata.model : undefined;
-    const childModelId = taskModelInfo ? safeStr(taskModelInfo.modelID) : undefined;
-    const result = renderInlineSubagent(
-      subSession,
-      ctx,
-      partTimeWindow(part),
-      ledgerLabel,
-      childModelId,
-    );
+    const result = renderInlineSubagent(subSession, ctx, partTimeWindow(part), ledgerLabel);
     if (result) {
       parentLedger.children.push(result.ledger);
       subActivity = result.html ?? "";
@@ -2233,44 +2218,14 @@ function extractTokenCounts(tokens: unknown): TokenCounts | undefined {
   return counts;
 }
 
-/**
- * Per-million-token USD prices for the model ids Thor currently runs against.
- *
- * Source: https://models.dev/api.json (snapshot 2026-05-15). To refresh:
- *   curl -s https://models.dev/api.json | jq '.openai.models["gpt-5.4","gpt-5.5"]'
- *
- * Only the exact ids Thor uses are listed; any other model id renders without
- * a cost estimate so we never surface guessed numbers. The 200k+ context tier
- * (which roughly doubles the published prices) is intentionally ignored — we
- * render the base-tier estimate and prefix it with `~`.
- */
-const MODEL_PRICING_USD_PER_M: Record<
-  string,
-  { input: number; output: number; cacheRead?: number }
-> = {
-  "gpt-5.4": { input: 2.5, output: 15, cacheRead: 0.25 },
-  "gpt-5.5": { input: 5, output: 30, cacheRead: 0.5 },
-};
-
-function estimateCostUsd(tokens: TokenCounts, modelId: string | undefined): number | undefined {
-  if (!modelId) return undefined;
-  const pricing = MODEL_PRICING_USD_PER_M[modelId];
-  if (!pricing) return undefined;
-  const cacheRead = pricing.cacheRead ?? pricing.input;
-  // Reasoning tokens are billed at the completion (output) rate.
-  return (
-    (tokens.input * pricing.input +
-      (tokens.output + tokens.reasoning) * pricing.output +
-      tokens.cacheRead * cacheRead) /
-    1_000_000
-  );
-}
-
 type AgentLedger = {
   label: string;
   sessionId: string;
-  modelIds: Set<string>;
   tokens: TokenCounts;
+  /** Sum of persisted `step-finish.cost` values. */
+  costUsd: number;
+  /** True once any step-finish carries a finite cost, including zero. */
+  hasCost: boolean;
   children: AgentLedger[];
   /** Bumped per rendered tool part. */
   toolParts: number;
@@ -2279,20 +2234,17 @@ type AgentLedger = {
   /** Sum of `step-finish` numeric token totals (single-number summary). */
   totalTokens: number;
   /** True once any step-finish has carried token counts. Drives footer
-   *  visibility for model/cost so empty triggers don't surface defaults. */
+   *  visibility so empty triggers don't surface defaults. */
   hasTokens: boolean;
 };
 
-function emptyLedger(
-  label: string,
-  sessionId: string,
-  modelIds: Iterable<string> = [],
-): AgentLedger {
+function emptyLedger(label: string, sessionId: string): AgentLedger {
   return {
     label,
     sessionId,
-    modelIds: new Set(modelIds),
     tokens: emptyTokenCounts(),
+    costUsd: 0,
+    hasCost: false,
     children: [],
     toolParts: 0,
     errorRows: 0,
@@ -2310,10 +2262,6 @@ function addTokenCounts(target: TokenCounts, src: TokenCounts): void {
   target.output += src.output;
   target.reasoning += src.reasoning;
   target.cacheRead += src.cacheRead;
-}
-
-function hasAnyTokens(t: TokenCounts): boolean {
-  return t.input + t.output + t.reasoning + t.cacheRead > 0;
 }
 
 function sumLedgerTokens(node: AgentLedger): TokenCounts {
@@ -2336,12 +2284,6 @@ function flattenLedger(root: AgentLedger): Array<{ ledger: AgentLedger; depth: n
   return out;
 }
 
-function ledgerRowCost(l: AgentLedger): number | undefined {
-  if (l.modelIds.size !== 1) return undefined;
-  const [m] = l.modelIds;
-  return estimateCostUsd(l.tokens, m);
-}
-
 function tokenCell(n: number): string {
   return n > 0 ? escapeHtml(formatTokens(n)) : "—";
 }
@@ -2350,25 +2292,20 @@ function renderTotalsTable(root: AgentLedger): string {
   const flat = flattenLedger(root);
   const total = sumLedgerTokens(root);
   let totalCost = 0;
-  let costPartial = false;
+  let hasTotalCost = false;
   const rows = flat.map(({ ledger, depth }) => {
     const indent = `style="padding-left:${depth * 16 + 8}px"`;
     const prefix = depth > 0 ? "└ " : "";
     const sidChip = ledger.sessionId
       ? ` <code class="ledger-sid" title="${escapeHtml(ledger.sessionId)}">${escapeHtml(ledger.sessionId)}</code>`
       : "";
-    const models = [...ledger.modelIds].sort();
-    const modelCell = models.length ? escapeHtml(models.join(", ")) : "—";
-    const cost = ledgerRowCost(ledger);
-    if (cost !== undefined && cost > 0) {
-      totalCost += cost;
-    } else if (hasAnyTokens(ledger.tokens)) {
-      costPartial = true;
+    if (ledger.hasCost) {
+      totalCost += ledger.costUsd;
+      hasTotalCost = true;
     }
-    const costCell = cost !== undefined && cost > 0 ? `~${formatCostUsd(cost)}` : "—";
+    const costCell = ledger.hasCost ? formatCostUsd(ledger.costUsd) : "—";
     return (
       `<tr><th scope="row" ${indent}>${prefix}${escapeHtml(ledger.label)}${sidChip}</th>` +
-      `<td>${modelCell}</td>` +
       `<td>${tokenCell(ledger.tokens.input)}</td>` +
       `<td>${tokenCell(ledger.tokens.cacheRead)}</td>` +
       `<td>${tokenCell(ledger.tokens.output)}</td>` +
@@ -2376,10 +2313,9 @@ function renderTotalsTable(root: AgentLedger): string {
       `<td>${costCell}</td></tr>`
     );
   });
-  const totalCostCell =
-    totalCost > 0 ? `${costPartial ? "≥ " : ""}~${formatCostUsd(totalCost)}` : "—";
+  const totalCostCell = hasTotalCost ? formatCostUsd(totalCost) : "—";
   const totalRow =
-    `<tr class="totals-total"><th scope="row">Total</th><td>—</td>` +
+    `<tr class="totals-total"><th scope="row">Total</th>` +
     `<td>${tokenCell(total.input)}</td>` +
     `<td>${tokenCell(total.cacheRead)}</td>` +
     `<td>${tokenCell(total.output)}</td>` +
@@ -2387,7 +2323,7 @@ function renderTotalsTable(root: AgentLedger): string {
     `<td>${totalCostCell}</td></tr>`;
   return (
     `<table class="totals-table"><thead><tr>` +
-    `<th>Agent</th><th>Model</th><th>Input</th><th>Cached</th><th>Output</th><th>Reasoning</th><th>Cost</th>` +
+    `<th>Agent</th><th>Input</th><th>Cached</th><th>Output</th><th>Reasoning</th><th>Cost</th>` +
     `</tr></thead><tbody>${rows.join("")}${totalRow}</tbody></table>`
   );
 }
@@ -2424,19 +2360,11 @@ function renderSlicePage(
     ? extractCorrelationKeyPrompt(slice.records, correlationKey)
     : undefined;
 
-  // TODO(model-attribution): the main agent's model isn't recorded anywhere
-  // in the on-disk JSONL today — OpenCode emits it on `message.updated`
-  // events which Thor's runner doesn't subscribe to, and `step-finish` parts
-  // don't carry it. We hardcode `gpt-5.4` (Thor's current default main-agent
-  // model) so the totals/cost stay useful; switch to the real value once
-  // the runner persists `message.updated` events or we call `sessions.get`
-  // at render time.
-  const rootLedger = emptyLedger("main", ownerSessionId, ["gpt-5.4"]);
+  const rootLedger = emptyLedger("main", ownerSessionId);
   const tokenTotals = rootLedger.tokens;
-  const modelIds = rootLedger.modelIds;
   const subAgentCtx: SubAgentCtx = { visited: new Set([ownerSessionId]) };
   const rows = renderActivity(slice.records, rootLedger, subAgentCtx);
-  const { toolParts, errorRows, totalTokens, hasTokens } = rootLedger;
+  const { toolParts, errorRows, totalTokens, hasTokens, costUsd, hasCost } = rootLedger;
 
   const aliases = anchor.externalKeys
     .map(
@@ -2467,9 +2395,8 @@ function renderSlicePage(
     anchor.currentSessionId && anchor.currentSessionId !== ownerSessionId
       ? ` · current <code>${escapeHtml(safeSnippet(anchor.currentSessionId))}</code>`
       : "";
-  // Subagent token rollup: when the trigger spawned subagents, render a table
-  // (one row per agent, indented by depth) so admins can see per-subagent cost
-  // alongside the main trigger. Otherwise keep the single-line footer.
+  // Subagent token/cost rollup: cost is summed from persisted `step-finish.cost`
+  // values only; never infer prices from model ids or token counts.
   let totalsFooter = "";
   if (rootLedger.children.length > 0) {
     totalsFooter = `<div class="totals">${renderTotalsTable(rootLedger)}</div>`;
@@ -2488,22 +2415,8 @@ function renderSlicePage(
           : `Tokens: ${formatTokens(totalTokens)}`,
       );
     }
-    const sortedModelIds = [...modelIds].sort();
-    // Only surface model/cost when we actually saw token data — avoids
-    // confidently displaying the hardcoded `gpt-5.4` default on zero-token
-    // sessions (e.g. an aborted trigger with no step-finish parts).
-    if (hasTokens) {
-      if (sortedModelIds.length === 1) {
-        totalsBits.push(`Model: ${escapeHtml(sortedModelIds[0]!)}`);
-      } else if (sortedModelIds.length > 1) {
-        totalsBits.push(`Models: ${sortedModelIds.map((m) => escapeHtml(m)).join(", ")}`);
-      }
-      if (sortedModelIds.length === 1) {
-        const cost = estimateCostUsd(tokenTotals, sortedModelIds[0]);
-        if (cost !== undefined && cost > 0) {
-          totalsBits.push(`Est cost: ~${formatCostUsd(cost)}`);
-        }
-      }
+    if (hasCost) {
+      totalsBits.push(`Cost: ${formatCostUsd(costUsd)}`);
     }
     totalsFooter = totalsBits.length ? `<p class="totals">${totalsBits.join(" · ")}</p>` : "";
   }

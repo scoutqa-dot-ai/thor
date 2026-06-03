@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatAuthHelperError } from "./auth-helper-format.js";
+import { formatAuthHelperError } from "./auth-helper-format.ts";
 
 describe("formatAuthHelperError", () => {
   it("adds the Thor tag to untagged errors", () => {

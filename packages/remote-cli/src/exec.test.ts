@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { execCommand, execCommandStream } from "./exec.js";
+import { execCommand, execCommandStream } from "./exec.ts";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -52,7 +52,7 @@ describe("execCommand", () => {
       spawn: vi.fn(),
     }));
 
-    const { execCommand: mockedExecCommand } = await import("./exec.js");
+    const { execCommand: mockedExecCommand } = await import("./exec.ts");
     const resultPromise = mockedExecCommand("slow", [], "/tmp");
 
     await vi.advanceTimersByTimeAsync(60_001);
@@ -149,7 +149,7 @@ describe("execCommandStream", () => {
       spawn: vi.fn(() => child),
     }));
 
-    const { execCommandStream: mockedExecCommandStream } = await import("./exec.js");
+    const { execCommandStream: mockedExecCommandStream } = await import("./exec.ts");
     const resultPromise = mockedExecCommandStream("slow", [], "/tmp", {
       onStdout: () => {},
       onStderr: () => {},

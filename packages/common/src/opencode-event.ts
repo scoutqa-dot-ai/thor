@@ -101,12 +101,12 @@ export const ViewerStepFinishPartSchema = BasePartSchema.extend({
   tokens: TokensSchema.optional(),
 });
 
-export const ViewerRetryPartSchema = BasePartSchema.extend({
+const ViewerRetryPartSchema = BasePartSchema.extend({
   type: z.literal("retry"),
   reason: z.string().optional(),
 });
 
-export const ViewerSubtaskPartSchema = BasePartSchema.extend({
+const ViewerSubtaskPartSchema = BasePartSchema.extend({
   type: z.literal("subtask"),
 });
 
@@ -344,6 +344,21 @@ function projectTime(value: unknown): Record<string, number> | undefined {
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function projectTokens(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
+  const out: Record<string, unknown> = {};
+  assignNumber(out, value, "input");
+  assignNumber(out, value, "output");
+  assignNumber(out, value, "reasoning");
+  if (isRecord(value.cache)) {
+    const cache: Record<string, number> = {};
+    assignNumber(cache, value.cache, "read");
+    assignNumber(cache, value.cache, "write");
+    if (Object.keys(cache).length > 0) out.cache = cache;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function projectStatus(value: unknown): unknown {
   if (typeof value === "string") return { type: value };
   if (!isRecord(value)) return undefined;
@@ -391,6 +406,9 @@ function projectPart(value: unknown): Record<string, unknown> | undefined {
   assignString(out, value, "type");
   assignString(out, value, "tool");
   assignString(out, value, "callID");
+  assignNumber(out, value, "cost");
+  const tokens = projectTokens(value.tokens);
+  if (tokens) out.tokens = tokens;
   const state = projectState(value.state);
   if (state) out.state = state;
   assignOmittedMarkers(out, value);
