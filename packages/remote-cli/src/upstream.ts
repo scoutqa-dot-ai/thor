@@ -14,9 +14,13 @@ export interface UpstreamConnection {
   tools: Tool[];
 }
 
-/** A stable, transport-agnostic descriptor for logs and error messages. */
+/**
+ * A stable, transport-agnostic descriptor for logs and error messages. For stdio
+ * the full argv (a long bwrap line) is summarized to keep logs scannable; the
+ * accompanying targetKey/profile fields disambiguate which upstream it is.
+ */
 export function upstreamTarget(config: UpstreamConfig): string {
-  return config.kind === "stdio" ? [config.command, ...config.args].join(" ") : config.url;
+  return config.kind === "stdio" ? `${config.command} (+${config.args.length} args)` : config.url;
 }
 
 function createTransport(config: UpstreamConfig): Transport {

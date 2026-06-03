@@ -12,8 +12,16 @@ const FULL_ENV: NodeJS.ProcessEnv = {
 };
 
 describe("proxy registry", () => {
+  // resolveProxyConfig returns the ProxyUpstream union; these assertions only
+  // concern HTTP upstreams, so narrow once here instead of at every call site.
+  const httpUpstream = (name: string, profile: string | undefined, env: NodeJS.ProcessEnv) => {
+    const upstream = resolveProxyConfig(name, profile, env)?.upstream;
+    if (upstream?.kind !== "http") throw new Error(`expected http upstream for "${name}"`);
+    return upstream;
+  };
+
   it("exposes the expected hardcoded upstreams", () => {
-    expect(resolveProxyConfig("atlassian", undefined, FULL_ENV)?.upstream.url).toBe(
+    expect(httpUpstream("atlassian", undefined, FULL_ENV).url).toBe(
       "https://mcp.atlassian.com/v1/mcp",
     );
     expect(resolveProxyConfig("grafana", undefined, FULL_ENV)?.allow).toEqual(
@@ -30,15 +38,13 @@ describe("proxy registry", () => {
       POSTHOG_API_KEY: "phc_global",
     } as NodeJS.ProcessEnv;
 
-    expect(resolveProxyConfig("atlassian", "LABS", env)?.upstream.headers).toEqual({
+    expect(httpUpstream("atlassian", "LABS", env).headers).toEqual({
       Authorization: "Basic labs",
     });
-    expect(resolveProxyConfig("atlassian", "QA", env)?.upstream.headers).toEqual({
+    expect(httpUpstream("atlassian", "QA", env).headers).toEqual({
       Authorization: "Basic global",
     });
-    expect(resolveProxyConfig("posthog", "LABS", env)?.upstream.headers?.Authorization).toBe(
-      "Bearer phc_global",
-    );
+    expect(httpUpstream("posthog", "LABS", env).headers?.Authorization).toBe("Bearer phc_global");
   });
 
   it("resolves grafana as a sandboxed stdio child with per-profile credential env", () => {
@@ -119,8 +125,9 @@ describe("proxy registry", () => {
 
     // Global creds, host trailing slash trimmed, base64(pk:sk).
     const globalCfg = resolveProxyConfig("langfuse", undefined, env);
-    expect(globalCfg?.upstream.url).toBe("https://us.cloud.langfuse.com/api/public/mcp");
-    expect(globalCfg?.upstream.headers).toEqual({
+    const globalUpstream = httpUpstream("langfuse", undefined, env);
+    expect(globalUpstream.url).toBe("https://us.cloud.langfuse.com/api/public/mcp");
+    expect(globalUpstream.headers).toEqual({
       Authorization: `Basic ${Buffer.from("pk-global:sk-global").toString("base64")}`,
     });
     expect(globalCfg?.approve).toEqual([]);
@@ -135,7 +142,7 @@ describe("proxy registry", () => {
     expect(eu?.target.key).toBe("langfuse:EU");
 
     // A profile with no scoped vars at all falls back to the whole global bundle.
-    expect(resolveProxyConfig("langfuse", "QA", env)?.upstream.url).toBe(
+    expect(httpUpstream("langfuse", "QA", env).url).toBe(
       "https://us.cloud.langfuse.com/api/public/mcp",
     );
     expect(getAvailableProxyNames("QA", env)).toEqual(["langfuse"]);
