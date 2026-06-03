@@ -41,7 +41,7 @@ describe("proxy registry", () => {
     );
   });
 
-  it("resolves grafana as a bundle scoped to the profile suffix", () => {
+  it("resolves grafana as a sandboxed stdio child with per-profile credential env", () => {
     const env = {
       GRAFANA_URL: "https://grafana.global",
       GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
@@ -51,14 +51,24 @@ describe("proxy registry", () => {
       ATLASSIAN_AUTH_LABS: "Basic labs",
     } as NodeJS.ProcessEnv;
 
-    expect(resolveProxyConfig("grafana", "LABS", env)?.upstream.headers).toEqual({
-      "X-Grafana-URL": "https://grafana.labs",
-      "X-Grafana-Service-Account-Token": "labs-token",
-      "X-Grafana-Org-Id": "7",
+    const labs = resolveProxyConfig("grafana", "LABS", env)?.upstream;
+    // Credentials ride in env, never in argv — the token must not be a bwrap arg.
+    expect(labs).toMatchObject({ kind: "stdio", command: "bwrap" });
+    if (labs?.kind !== "stdio") throw new Error("expected stdio upstream");
+    expect(labs.env).toEqual({
+      GRAFANA_URL: "https://grafana.labs",
+      GRAFANA_SERVICE_ACCOUNT_TOKEN: "labs-token",
+      GRAFANA_ORG_ID: "7",
     });
-    expect(resolveProxyConfig("grafana", "QA", env)?.upstream.headers).toEqual({
-      "X-Grafana-URL": "https://grafana.global",
-      "X-Grafana-Service-Account-Token": "global-token",
+    expect(labs.args).toContain("/usr/local/bin/mcp-grafana");
+    expect(labs.args).not.toContain("labs-token");
+
+    // QA has no scoped bundle, so it falls back to the global credentials (no org).
+    const qa = resolveProxyConfig("grafana", "QA", env)?.upstream;
+    if (qa?.kind !== "stdio") throw new Error("expected stdio upstream");
+    expect(qa.env).toEqual({
+      GRAFANA_URL: "https://grafana.global",
+      GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
     });
     expect(getAvailableProxyNames("LABS", env)).toEqual(["atlassian", "grafana"]);
   });

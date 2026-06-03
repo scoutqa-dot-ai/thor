@@ -10,8 +10,10 @@ describe("connectUpstream (stdio transport)", () => {
   });
 
   it("spawns the child, lists its tools, passes config.env, and does not leak parent secrets", async () => {
-    // A secret on remote-cli's own process env must not reach the child: it is
-    // not in the SDK's inherited allowlist and is not in config.env.
+    // Tripwire for the env-scrub the Grafana sandbox depends on: a secret on
+    // remote-cli's own process env must not reach the child (it is not in the
+    // SDK's inherited allowlist and not in config.env). If an SDK bump ever
+    // widened that allowlist to forward arbitrary parent env, this fails.
     process.env.THOR_SECRET_LEAK = "should-not-leak";
 
     const { client, tools } = await connectUpstream("stdio-test", {
