@@ -1,0 +1,23 @@
+.github/workflows/sandbox-e2e.yml
+  dd13ec9689cc787a 54-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "f071f53963a643b33c68ae15f07ce0e9ebb652f3",
+  "prompts": {
+    "dd13ec9689cc787a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26c15958-2540-4aa4-bfb7-6d39c140ad89",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 87,
+      "total_deletions": 2,
+      "accepted_lines": 87,
+      "overriden_lines": 0
+    }
+  }
+}
