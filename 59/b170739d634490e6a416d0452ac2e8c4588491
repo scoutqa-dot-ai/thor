@@ -1,0 +1,23 @@
+docker-compose.e2e.yml
+  0db2e5ae7461c4cf 2-3,5-13,18-19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "59b170739d634490e6a416d0452ac2e8c4588491",
+  "prompts": {
+    "0db2e5ae7461c4cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f04ca88-25b3-4d8a-a5b6-d40caeff0874",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 14,
+      "total_deletions": 8,
+      "accepted_lines": 13,
+      "overriden_lines": 1
+    }
+  }
+}
