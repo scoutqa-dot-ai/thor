@@ -308,7 +308,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       }
       const delay = Math.min(BASE_DELAY_MS * 2 ** (attempt - 1), MAX_DELAY_MS);
       logInfo(log, "upstream_reconnecting", { name, attempt, delayMs: delay });
-      setTimeout(() => {
+      const reconnectTimer = setTimeout(() => {
         if (closing) return;
         connectUpstreamFn(name, upstreamConfig, () => scheduleReconnect(1))
           .then((newUpstream) => {
@@ -325,6 +325,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
             scheduleReconnect(attempt + 1);
           });
       }, delay);
+      reconnectTimer.unref?.();
     }
 
     if (proxyDef.upstream.kind === "stdio" && proxyDef.upstream.command !== "bwrap") {

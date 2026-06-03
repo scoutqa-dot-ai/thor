@@ -35,11 +35,13 @@ describe("connectUpstream (stdio transport)", () => {
       env: { THOR_STDIO_TOOL: "custom_tool" },
     });
 
-    const toolNames = tools.map((tool) => tool.name);
-    expect(toolNames).toContain("custom_tool"); // config.env reached the child
-    expect(toolNames).not.toContain("LEAKED"); // parent-process secret did not
-
-    await client.close();
+    try {
+      const toolNames = tools.map((tool) => tool.name);
+      expect(toolNames).toContain("custom_tool"); // config.env reached the child
+      expect(toolNames).not.toContain("LEAKED"); // parent-process secret did not
+    } finally {
+      await client.close();
+    }
   });
 
   it("closes the child when tool listing fails during setup", async () => {

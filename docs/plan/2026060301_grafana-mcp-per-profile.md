@@ -90,9 +90,11 @@ behind it changes:
 - `GRAFANA_ALLOW` and the empty `GRAFANA_APPROVE` are unchanged; enabled tool categories
   stay `datasource,prometheus,loki,proxied`.
 
-No new env vars are introduced. The operator-facing change is purely the removal of the
-need for a global `GRAFANA_URL`/token just to boot a sidecar: with only `_<P>` vars set,
-Grafana is available for those profiles and absent globally.
+No new operator-facing Grafana credential vars are introduced. The operator-facing change
+is purely the removal of the need for a global `GRAFANA_URL`/token just to boot a sidecar:
+with only `_<P>` vars set, Grafana is available for those profiles and absent globally.
+The only new env var is `THOR_MCP_DISABLE_SANDBOX`, a CI/test-only escape hatch documented
+in Decision 13.
 
 ## Current-state constraints to replace
 
@@ -279,3 +281,5 @@ remaining repo reference to `grafana-mcp:8000`; env var surfaces updated per AGE
 - 2026-06-03: stdio upstream setup now closes the just-spawned child if `tools/list` or
   pre-registration policy validation fails, so failed setup attempts do not leave
   untracked `mcp-grafana` processes behind.
+- 2026-06-03: reconnect retry timers are `unref()`ed so a pending retry does not hold
+  `remote-cli` open after `closeAll()` starts shutdown.

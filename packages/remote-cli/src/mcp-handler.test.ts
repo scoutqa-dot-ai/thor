@@ -10,6 +10,7 @@ import type { ProxyUpstream, WorkspaceConfig } from "@thor/common";
 import type { ToolCallLogEntry } from "@thor/common";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { createRemoteCliApp } from "./index.ts";
+import { createMcpService } from "./mcp-handler.ts";
 import type { UpstreamConnection } from "./upstream.ts";
 
 const tools: Tool[] = [
@@ -433,6 +434,53 @@ describe("remote-cli MCP endpoints", () => {
     await remoteCli.warmUp();
 
     expect(connectedUpstreams.sort()).toEqual(["atlassian", "grafana", "posthog"]);
+  });
+
+  it("unrefs pending reconnect timers so shutdown is not held open", async () => {
+    let onDisconnect: (() => void) | undefined;
+    const unref = vi.fn();
+    const setTimeoutMock = (
+      handler: Parameters<typeof setTimeout>[0],
+      timeout?: Parameters<typeof setTimeout>[1],
+    ) => {
+      expect(typeof handler).toBe("function");
+      expect(timeout).toBe(1000);
+      return { unref } as unknown as ReturnType<typeof setTimeout>;
+    };
+    const setTimeoutSpy = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation(setTimeoutMock as unknown as typeof setTimeout);
+    const service = createMcpService({
+      approvalsDir,
+      isProduction: true,
+      configLoader: () => workspaceConfig,
+      writeToolCallLogFn: () => {},
+      connectUpstreamFn: async (_name, _upstreamConfig, onClose): Promise<UpstreamConnection> => {
+        onDisconnect = onClose;
+        return {
+          tools,
+          client: {
+            callTool: async () => ({ content: [] }),
+            close: async () => {},
+          } as unknown as UpstreamConnection["client"],
+        };
+      },
+    });
+
+    try {
+      const listed = await service.executeMcp(["atlassian"], { sessionId: "parent-session" });
+
+      expect(listed.exitCode).toBe(0);
+      expect(onDisconnect).toBeDefined();
+
+      onDisconnect?.();
+
+      expect(setTimeoutSpy).toHaveBeenCalledTimes(1);
+      expect(unref).toHaveBeenCalledTimes(1);
+    } finally {
+      await service.closeAll();
+      setTimeoutSpy.mockRestore();
+    }
   });
 
   it("routes Slack-triggered MCP calls through the channel profile credential target", async () => {
