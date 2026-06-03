@@ -666,7 +666,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       ({ profile } = resolveProfileForContext(context));
       instance = await getInstance(upstreamName, profile);
     } catch (err) {
-      return fail(errorMessage(err));
+      return fail(profileDenialMessage(err));
     }
     if (!instance) {
       return fail(`Upstream "${upstreamName}" is not configured for this thread/profile.`);

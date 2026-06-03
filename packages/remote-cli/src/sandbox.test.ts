@@ -383,7 +383,7 @@ describe("/exec/sandbox", () => {
       {
         type: "stderr",
         data:
-          "Failed to read sandbox state after exec. No files were pulled back.: sandbox git status failed: status failed\n",
+          "Failed to read sandbox state after exec. No files were pulled back. (sandbox git status failed: status failed)\n",
       },
       { type: "exit", exitCode: 1 },
     ]);

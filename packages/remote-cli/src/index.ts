@@ -970,12 +970,12 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
             const error =
               pullErr instanceof SandboxError
                 ? new SandboxError(
-                    `${pullErr.userMessage}: ${pullErr.adminDetail}`,
+                    `${pullErr.userMessage} (${pullErr.adminDetail})`,
                     pullErr.adminDetail,
                     { cause: pullErr },
                   )
                 : new SandboxError(
-                    `Failed to pull sandbox changes back to the worktree: ${errorMessage(pullErr)}`,
+                    `Failed to pull sandbox changes back to the worktree (${errorMessage(pullErr)})`,
                     errorMessage(pullErr),
                   );
             logError(log, "sandbox_pull_error", error.adminDetail, thorIds(req));
