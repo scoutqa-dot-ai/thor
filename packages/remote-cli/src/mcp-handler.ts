@@ -13,7 +13,7 @@ import {
   getAvailableProxyNames,
   injectApprovalDisclaimer,
   isProxyName,
-  getRunnerBaseUrl,
+  getIngressPublicUrl,
   ApprovalRequiredEventPayloadSchema,
   logError,
   logInfo,
@@ -56,7 +56,7 @@ function buildUpstreamArgs(action: ApprovalAction): Record<string, unknown> {
       `Approval action ${action.id} is missing origin.trigger for disclaimer injection`,
     );
   }
-  const { footer } = buildThorDisclaimer(trigger, getRunnerBaseUrl());
+  const { footer } = buildThorDisclaimer(trigger, getIngressPublicUrl());
   return injectApprovalDisclaimer(action.tool, action.args, footer);
 }
 

@@ -29,7 +29,7 @@ Ship a self-hosted Netdata agent in `docker-compose.yml` with host-mounted Netda
 - Mount Docker/container metadata needed for cgroup/container monitoring, including Docker socket read-only and host proc/sys views per the chosen Netdata image guidance.
 - Add Netdata health alarm config for Docker container CPU and memory usage over 90%.
 - Add a narrow secret-gated `remote-cli` internal endpoint, `POST /internal/netdata-alert`, that validates a Netdata alert payload and posts a formatted Slack message to `SLACK_SUPPORT_CHANNEL_ID` via `postSlackMessageApi(...)`.
-- Add/update env docs for `SLACK_SUPPORT_CHANNEL_ID`, optional `NETDATA_PUBLIC_URL`, and any Netdata callback URL/notification toggles.
+- Add/update env docs for required `SLACK_SUPPORT_CHANNEL_ID`, required `INGRESS_PUBLIC_URL`, and any Netdata callback URL/notification toggles.
 - Add behavior-focused tests around alert auth, payload validation, Slack success/failure, and compose/config presence where practical.
 
 **Out of scope**
@@ -101,7 +101,7 @@ Changes:
 - Add `POST /internal/netdata-alert` in `packages/remote-cli/src/index.ts`.
 - Authenticate with `x-thor-internal-secret` and `matchesInternalSecret(...)`, matching `/internal/exec` and `/exec/mcp resolve`.
 - Add `SLACK_SUPPORT_CHANNEL_ID` to `loadRemoteCliEnv(...)` or a small alert-specific env loader. Keep `SLACK_BOT_TOKEN` and `SLACK_API_BASE_URL` reused from existing remote-cli env.
-- Consider `NETDATA_PUBLIC_URL` optional for Slack links to the ingress Netdata UI; do not make it required.
+- Derive Slack links to the ingress Netdata UI from `INGRESS_PUBLIC_URL` as `${INGRESS_PUBLIC_URL}/netdata/`.
 - Do not require or synthesize `x-thor-session-id`; no Slack alias should be registered for infrastructure alerts.
 
 Exit criteria:
@@ -132,9 +132,9 @@ Changes:
 
 - Update `.env.example` with a Netdata/monitoring section:
   - `SLACK_SUPPORT_CHANNEL_ID=C0123456789`
-  - optional `NETDATA_PUBLIC_URL=http://localhost:8080/netdata/`
+  - `INGRESS_PUBLIC_URL=http://localhost:8080`
 - Update `README.md`:
-  - Services table: add `netdata` on port `19999` if exposed.
+  - Services table: list `netdata` without a direct host port.
   - Quick Start: pre-create any Netdata writable host directories if required by container user ownership.
   - Deployment Configuration table: add new Netdata vars.
   - Operations Notes: describe where Netdata data/config/cache live and how to test an alert.
@@ -155,7 +155,7 @@ Exit criteria:
 | Variable                   |               Required | Service      | Purpose                                                                                                                  |
 | -------------------------- | ---------------------: | ------------ | ------------------------------------------------------------------------------------------------------------------------ |
 | `SLACK_SUPPORT_CHANNEL_ID` | Yes for alert delivery | `remote-cli` | Slack channel ID where Netdata alerts are posted. Keep destination enforcement in `remote-cli`, not in Netdata payloads. |
-| `NETDATA_PUBLIC_URL`       |                     No | `remote-cli` | Optional base URL included in Slack alerts so operators can click through to Netdata.                                    |
+| `INGRESS_PUBLIC_URL`       |                    Yes | `remote-cli` | Public ingress base URL used for Thor links and to derive Netdata alert links as `${INGRESS_PUBLIC_URL}/netdata/`.       |
 
 The Netdata service may also receive container-local env such as `NETDATA_ALERT_WEBHOOK_URL=http://remote-cli:3004/internal/netdata-alert`; prefer hardcoding this in compose because it is an internal service URL, not an operator deployment knob.
 
@@ -177,7 +177,7 @@ The Netdata service may also receive container-local env such as `NETDATA_ALERT_
 - **Alert noise from transient spikes.** A raw `>90%` threshold can flap. Use sustained windows/hysteresis and document repeat/recovery behavior.
 - **Secret exposure in Netdata scripts.** Notification scripts need `THOR_INTERNAL_SECRET`; keep it in env only, avoid `set -x`, and do not log request headers.
 - **Docker socket read-only is still sensitive.** Netdata needs the socket for container metadata, but even read-only socket access exposes container inventory. Keep Netdata trusted and do not expose its UI publicly.
-- **Compose alerting depends on monitoring env.** If `SLACK_SUPPORT_CHANNEL_ID` is missing, the endpoint returns a deterministic failure and Netdata records notification delivery failure; existing deployments should add it before relying on alerts.
+- **Compose alerting depends on monitoring env.** If `SLACK_SUPPORT_CHANNEL_ID` or `INGRESS_PUBLIC_URL` is missing, Compose/remote-cli fails fast; existing deployments should add them before relying on alerts.
 
 ## Verification expectations
 

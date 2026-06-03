@@ -47,8 +47,8 @@ export function envBaseUrl(env: EnvSource, name: string, defaultValue?: string):
   return envString(env, name, defaultValue).replace(/\/+$/, "");
 }
 
-export function getRunnerBaseUrl(env: EnvSource = process.env): string {
-  return envBaseUrl(env, "RUNNER_BASE_URL");
+export function getIngressPublicUrl(env: EnvSource = process.env): string {
+  return envBaseUrl(env, "INGRESS_PUBLIC_URL");
 }
 
 export function matchesInternalSecret(

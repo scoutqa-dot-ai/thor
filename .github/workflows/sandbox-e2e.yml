@@ -36,14 +36,15 @@ jobs:
       # cron/internal auth, so fixed fake values are sufficient.
       CRON_SECRET: ci-fake
       THOR_INTERNAL_SECRET: ci-fake
-      # Required by remote-cli for disclaimer URLs; sandbox e2e does not create
-      # GitHub/Jira content, so a local fake satisfies compose/startup checks.
-      RUNNER_BASE_URL: http://localhost:3000
+      # Required by remote-cli for public Thor/Netdata URLs; sandbox e2e does
+      # not create GitHub/Jira content, so a local fake satisfies startup checks.
+      INGRESS_PUBLIC_URL: http://localhost:3000
       # Fakes: services not exercised by sandbox e2e, but referenced at compose startup.
       SLACK_BOT_TOKEN: ci-fake
       SLACK_BOT_USER_ID: U000000000
       SLACK_DEFAULT_REPO: ci-fake
       SLACK_SIGNING_SECRET: ci-fake
+      SLACK_SUPPORT_CHANNEL_ID: C000000000
       GRAFANA_URL: http://grafana-mcp:8000
       GRAFANA_SERVICE_ACCOUNT_TOKEN: ci-fake
       ATLASSIAN_AUTH: ci-fake

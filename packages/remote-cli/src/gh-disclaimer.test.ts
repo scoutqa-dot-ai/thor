@@ -14,7 +14,7 @@ import {
 
 vi.hoisted(() => {
   process.env.WORKLOG_DIR = "/tmp/thor-remote-cli-gh-test/worklog";
-  process.env.RUNNER_BASE_URL = "https://thor.example.com";
+  process.env.INGRESS_PUBLIC_URL = "https://thor.example.com";
 });
 
 const execCalls = vi.hoisted(() => [] as Array<{ bin: string; args: string[]; cwd: string }>);

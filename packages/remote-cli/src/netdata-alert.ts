@@ -5,7 +5,7 @@ export interface NetdataAlertEnv {
   SLACK_BOT_TOKEN?: string;
   SLACK_API_BASE_URL?: string;
   SLACK_SUPPORT_CHANNEL_ID?: string;
-  NETDATA_PUBLIC_URL?: string;
+  INGRESS_PUBLIC_URL?: string;
 }
 
 export interface NetdataAlertDeps {
@@ -65,8 +65,13 @@ export function formatNetdataAlertText(body: Record<string, unknown>, publicUrl 
   if (value) lines.push(`*Current value:* ${value}`);
   if (duration) lines.push(`*Duration:* ${duration}`);
   if (summary) lines.push(`*Summary:* ${truncate(summary, 500)}`);
-  if (publicUrl.trim()) lines.push(`*Netdata:* ${publicUrl.trim().replace(/\/$/, "")}`);
+  if (publicUrl.trim()) lines.push(`*Netdata:* ${publicUrl.trim()}`);
   return truncate(lines.join("\n"), MAX_ALERT_TEXT_BYTES);
+}
+
+function netdataUrlFromIngress(ingressPublicUrl = ""): string {
+  const base = ingressPublicUrl.trim().replace(/\/+$/, "");
+  return base ? `${base}/netdata/` : "";
 }
 
 export async function handleNetdataAlert(
@@ -90,7 +95,7 @@ export async function handleNetdataAlert(
   const slackResult = await postSlackMessageApi(
     {
       channel: env.SLACK_SUPPORT_CHANNEL_ID,
-      text: formatNetdataAlertText(validated.body, env.NETDATA_PUBLIC_URL),
+      text: formatNetdataAlertText(validated.body, netdataUrlFromIngress(env.INGRESS_PUBLIC_URL)),
     },
     {
       fetch: deps.fetch,

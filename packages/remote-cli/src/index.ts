@@ -8,7 +8,7 @@ import {
   computeGitCorrelationKey,
   createConfigLoader,
   createLogger,
-  getRunnerBaseUrl,
+  getIngressPublicUrl,
   logError,
   logInfo,
   loadRemoteCliAppEnv,
@@ -347,7 +347,7 @@ function withGhDisclaimer(args: string[], sessionId?: string): string[] | { erro
   if (!eligible) return args;
   let footer: string;
   try {
-    footer = `\n${buildThorDisclaimerForSession(sessionId, getRunnerBaseUrl()).footer}`;
+    footer = `\n${buildThorDisclaimerForSession(sessionId, getIngressPublicUrl()).footer}`;
   } catch (err) {
     return {
       error:
@@ -1167,7 +1167,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
               SLACK_BOT_TOKEN: envConfig.slackBotToken,
               SLACK_API_BASE_URL: envConfig.slackApiBaseUrl,
               SLACK_SUPPORT_CHANNEL_ID: envConfig.slackSupportChannelId,
-              NETDATA_PUBLIC_URL: envConfig.netdataPublicUrl,
+              INGRESS_PUBLIC_URL: envConfig.ingressPublicUrl,
             }
           : undefined),
     });

@@ -41,7 +41,7 @@ export {
   envInt,
   envCsv,
   envBaseUrl,
-  getRunnerBaseUrl,
+  getIngressPublicUrl,
   matchesInternalSecret,
 } from "./env.ts";
 export type { EnvSource } from "./env.ts";

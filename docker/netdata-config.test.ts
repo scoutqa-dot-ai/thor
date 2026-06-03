@@ -43,9 +43,22 @@ describe("Netdata docker wiring", () => {
       "./docker/netdata/health.d/thor-containers.conf:/etc/netdata/health.d/thor-containers.conf:ro",
     );
     expect(block).toContain("/var/run/docker.sock:/var/run/docker.sock:ro");
+    expect(block).not.toContain("cap_add:");
+    expect(block).not.toContain("SYS_ADMIN");
+    expect(block).not.toContain("SYS_PTRACE");
+    expect(block).not.toContain("apparmor:unconfined");
     expect(block).toContain("remote-cli:");
     expect(block).toContain("condition: service_healthy");
     expect(block).not.toMatch(/\n\s+ports:/);
+  });
+
+  it("requires ingress and support-channel env while deriving Netdata links from ingress", () => {
+    const block = serviceBlock("remote-cli");
+
+    expect(block).toContain("SLACK_SUPPORT_CHANNEL_ID=${SLACK_SUPPORT_CHANNEL_ID:?set SLACK_SUPPORT_CHANNEL_ID}");
+    expect(block).toContain("INGRESS_PUBLIC_URL=${INGRESS_PUBLIC_URL:?set INGRESS_PUBLIC_URL}");
+    expect(block).not.toContain(["RUNNER", "BASE", "URL"].join("_"));
+    expect(block).not.toContain(["NETDATA", "PUBLIC", "URL"].join("_"));
   });
 
   it("keeps /netdata/ behind ingress Vouch/admin auth", () => {

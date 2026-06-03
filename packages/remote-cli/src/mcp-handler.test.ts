@@ -115,7 +115,7 @@ describe("remote-cli MCP endpoints", () => {
     vi.stubEnv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "grafana-token");
     vi.stubEnv("THOR_INTERNAL_SECRET", "resolve-secret");
     vi.stubEnv("WORKLOG_DIR", worklogDir);
-    vi.stubEnv("RUNNER_BASE_URL", "https://thor.example.com/");
+    vi.stubEnv("INGRESS_PUBLIC_URL", "https://thor.example.com/");
     rmSync("/tmp/thor-remote-cli-mcp-test", { recursive: true, force: true });
     approvalsDir = mkdtempSync(join(tmpdir(), "remote-cli-mcp-"));
     toolCalls = [];
@@ -158,7 +158,7 @@ describe("remote-cli MCP endpoints", () => {
         slackBotToken: "xoxb-test",
         slackApiBaseUrl: "https://slack.test/api",
         slackSupportChannelId: "COPS",
-        netdataPublicUrl: "https://thor.test/netdata/",
+        ingressPublicUrl: "https://thor.test",
         thorInternalSecret: "resolve-secret",
         githubAppId: "app-id",
         githubAppSlug: "thor-github-app",

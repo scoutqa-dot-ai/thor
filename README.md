@@ -23,7 +23,7 @@ ingress -> gateway -> runner -> opencode -> codex-lb -> ChatGPT
 | `codex-lb`    | 2455  | Docker image       | ChatGPT-backed OpenAI-compatible proxy      |
 | `cron`        | -     | `docker/cron`      | Scheduled prompts                           |
 | `mitmproxy`   | 3080  | `docker/mitmproxy` | Explicit outbound HTTP(S) proxy             |
-| `netdata`     | 19999 | Docker image       | Compose container resource monitoring       |
+| `netdata`     | -     | Docker image       | Compose container resource monitoring via ingress `/netdata/` |
 | `gateway`     | 3002  | `@thor/gateway`    | Slack/GitHub webhook ingestion and batching |
 | `remote-cli`  | 3004  | `@thor/remote-cli` | CLI + MCP policy gateway                    |
 | `admin`       | 3005  | `@thor/admin`      | Admin dashboard and workspace configuration |
@@ -107,10 +107,9 @@ Integration-specific env vars live in each integration's doc. Cross-cutting vars
 | `THOR_ADMIN_EMAILS`             | Yes      | `ingress`                   | Comma-separated authenticated Google emails allowed for OpenCode-backed and `/admin/` ingress routes                            |
 | `THOR_INTERNAL_SECRET`          | Yes      | `remote-cli`, `gateway`     | Secret-gates gateway↔remote-cli internal APIs                                                                                   |
 | `THOR_E2E_TEST_HELPERS`         | No       | `runner`                    | Enables secret-gated deterministic runner e2e helpers                                                                           |
-| `RUNNER_BASE_URL`               | Yes      | `remote-cli`                | Public base URL for Thor trigger viewer links in PR/Jira content                                                                |
+| `INGRESS_PUBLIC_URL`            | Yes      | `remote-cli`                | Public ingress base URL for Thor trigger viewer links and Netdata alert links; Netdata uses `${INGRESS_PUBLIC_URL}/netdata/`    |
 | `INGRESS_PORT`                  | No       | `ingress`                   | Host port for the reverse proxy                                                                                                 |
 | `SLACK_SUPPORT_CHANNEL_ID`      | Yes      | `remote-cli`                | Slack channel ID for Netdata infrastructure alerts                                                                              |
-| `NETDATA_PUBLIC_URL`            | No       | `remote-cli`                | Browser URL included in Netdata alert messages; defaults by convention to ingress `/netdata/`                                   |
 | `ATLASSIAN_AUTH`                | No       | `remote-cli`, `mitmproxy`   | Global Atlassian MCP auth header and mitmproxy default injection; profile suffixes are MCP-only                                 |
 | `POSTHOG_API_KEY`               | No       | `remote-cli`                | Global PostHog MCP auth; profile variants use `_<PROFILE_NAME>` suffixes                                                        |
 | `GRAFANA_URL`                   | No       | `grafana-mcp`, `remote-cli` | Global Grafana instance URL; profile variants use `_<PROFILE_NAME>` suffixes                                                    |
@@ -167,7 +166,7 @@ The registry is maintained by operators from team Slack and GitHub membership re
 - Repos under `/workspace/repos` are mounted read-only into OpenCode. Thor creates edits in `/workspace/worktrees`.
 - OpenCode and remote-cli share the same `/tmp` volume so temporary artifacts referenced by absolute path, such as `slack-post-message --blocks-file /tmp/...`, are readable by the posting service.
 - Scheduled prompts live in `docker-volumes/workspace/cron/crontab`.
-- Netdata config, lib, and cache persist under `docker-volumes/netdata/{config,lib,cache}`. The repo-owned defaults in `docker/netdata/` add >90% container CPU/memory alarms and a custom notifier to `remote-cli` (`POST /internal/netdata-alert` with `x-thor-internal-secret`). The Netdata UI is not published as a direct host port; use ingress `/netdata/` after Vouch/admin auth.
+- Netdata config, lib, and cache persist under `docker-volumes/netdata/{config,lib,cache}`. The repo-owned defaults in `docker/netdata/` add >90% container CPU/memory alarms and a custom notifier to `remote-cli` (`POST /internal/netdata-alert` with `x-thor-internal-secret`). The Netdata UI is not published as `localhost:19999`; use ingress `/netdata/` after Vouch/admin auth. Container CPU/memory collection uses read-only host `/proc`, `/sys`, and Docker socket mounts without extra Linux capabilities or `apparmor:unconfined`.
 
 ## Security Model
 

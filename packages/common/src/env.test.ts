@@ -5,7 +5,7 @@ import {
   envInt,
   envOptionalString,
   envString,
-  getRunnerBaseUrl,
+  getIngressPublicUrl,
   matchesInternalSecret,
 } from "./env.ts";
 
@@ -35,11 +35,11 @@ describe("env loader", () => {
     expect(envCsv(env, "LIST")).toEqual(["a", "b", "c"]);
   });
 
-  it("reads RUNNER_BASE_URL", () => {
-    expect(getRunnerBaseUrl({ RUNNER_BASE_URL: "https://thor.example.com" })).toBe(
+  it("reads INGRESS_PUBLIC_URL", () => {
+    expect(getIngressPublicUrl({ INGRESS_PUBLIC_URL: "https://thor.example.com" })).toBe(
       "https://thor.example.com",
     );
-    expect(() => getRunnerBaseUrl({})).toThrow("Missing required env var RUNNER_BASE_URL");
+    expect(() => getIngressPublicUrl({})).toThrow("Missing required env var INGRESS_PUBLIC_URL");
   });
 
   it("strips trailing slashes from base URLs so callers can safely append paths", () => {
@@ -52,7 +52,7 @@ describe("env loader", () => {
     expect(envBaseUrl({}, "API_URL", "https://default.example.com/")).toBe(
       "https://default.example.com",
     );
-    expect(getRunnerBaseUrl({ RUNNER_BASE_URL: "https://thor.example.com/" })).toBe(
+    expect(getIngressPublicUrl({ INGRESS_PUBLIC_URL: "https://thor.example.com/" })).toBe(
       "https://thor.example.com",
     );
   });

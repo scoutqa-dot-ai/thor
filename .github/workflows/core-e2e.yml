@@ -64,7 +64,8 @@ jobs:
       METABASE_API_KEY: ci-fake
       METABASE_DATABASE_ID: "1"
       METABASE_ALLOWED_SCHEMAS: public
-      RUNNER_BASE_URL: http://localhost:3000
+      INGRESS_PUBLIC_URL: http://localhost:3000
+      SLACK_SUPPORT_CHANNEL_ID: C000000000
       THOR_E2E_TEST_HELPERS: "1"
       VOUCH_GOOGLE_CLIENT_ID: ci-fake
       VOUCH_GOOGLE_CLIENT_SECRET: ci-fake

@@ -20,7 +20,7 @@ describe("remote-cli internal Netdata alert endpoint", () => {
         slackBotToken: "xoxb-test",
         slackApiBaseUrl: "https://slack.test/api",
         slackSupportChannelId: "COPS",
-        netdataPublicUrl: "https://thor.example.com/netdata/",
+        ingressPublicUrl: "https://thor.example.com/",
       } as any,
       netdataAlert: { fetch: fetchMock as unknown as typeof fetch },
     });
@@ -68,7 +68,7 @@ describe("remote-cli internal Netdata alert endpoint", () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as { text: string };
     expect(body.text).toContain("Netdata CRITICAL: container_cpu_usage");
     expect(body.text).toContain("opencode / cgroup_opencode.cpu");
-    expect(body.text).toContain("https://thor.example.com/netdata");
+    expect(body.text).toContain("https://thor.example.com/netdata/");
   });
 
   it("returns a bad-gateway response when Slack rejects the post", async () => {

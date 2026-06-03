@@ -81,14 +81,14 @@ describe("service env", () => {
         THOR_INTERNAL_SECRET: "secret",
         SLACK_BOT_TOKEN: "xoxb-test",
         SLACK_SUPPORT_CHANNEL_ID: "COPS",
-        NETDATA_PUBLIC_URL: "https://thor.example.com/netdata/",
+        INGRESS_PUBLIC_URL: "https://thor.example.com/",
       }),
     ).toMatchObject({
       port: 3004,
       slackBotToken: "xoxb-test",
       slackApiBaseUrl: "https://slack.com/api",
       slackSupportChannelId: "COPS",
-      netdataPublicUrl: "https://thor.example.com/netdata/",
+      ingressPublicUrl: "https://thor.example.com",
       gitIdentityName: "thor-app[bot]",
       gitIdentityEmail: "12345+thor-app[bot]@users.noreply.github.com",
     });
