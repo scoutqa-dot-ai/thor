@@ -405,7 +405,11 @@ async function streamNdjsonResponse(
   try {
     await withNdjsonHeartbeat(write, () => fn(write));
   } catch (err) {
-    onError(err);
+    try {
+      onError(err);
+    } catch {
+      // Logging/telemetry failures must not break the NDJSON response shape.
+    }
     write({ type: "stderr", data: `${errorMessage(err)}\n` });
     write({ type: "exit", exitCode: 1 });
   } finally {

@@ -3,10 +3,16 @@ import { once } from "node:events";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
-const { execCommandMock, execCommandStreamMock } = vi.hoisted(() => ({
+const { execCommandMock, execCommandStreamMock, logErrorMock } = vi.hoisted(() => ({
   execCommandMock: vi.fn(),
   execCommandStreamMock: vi.fn(),
+  logErrorMock: vi.fn(),
 }));
+
+vi.mock("@thor/common", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@thor/common")>();
+  return { ...actual, logError: logErrorMock };
+});
 
 vi.mock("./exec.ts", () => ({
   execCommand: execCommandMock,
@@ -29,6 +35,7 @@ describe("remote-cli ldcli endpoint", () => {
   beforeEach(async () => {
     execCommandMock.mockReset();
     execCommandStreamMock.mockReset();
+    logErrorMock.mockReset();
     process.env.LD_ACCESS_TOKEN = "ld-token";
     process.env.LD_BASE_URI = "https://app.launchdarkly.test";
     process.env.LD_PROJECT = "default";
@@ -220,6 +227,24 @@ describe("remote-cli ldcli endpoint", () => {
     expect(response.headers.get("content-type")).toContain("application/x-ndjson");
     expect(events).toEqual([
       { type: "stderr", data: "scoutqa auth missing at /workspace/.scoutqa\n" },
+      { type: "exit", exitCode: 1 },
+    ]);
+  });
+
+  it("keeps NDJSON error shape when stream error logging throws", async () => {
+    execCommandStreamMock.mockRejectedValue(new Error("scoutqa failed before logging"));
+    logErrorMock.mockImplementation(() => {
+      throw new Error("logger unavailable");
+    });
+
+    const response = await postJson("/exec/scoutqa", {
+      args: ["list-executions"],
+    });
+    const events = await readNdjson(response);
+
+    expect(response.status).toBe(200);
+    expect(events).toEqual([
+      { type: "stderr", data: "scoutqa failed before logging\n" },
       { type: "exit", exitCode: 1 },
     ]);
   });
