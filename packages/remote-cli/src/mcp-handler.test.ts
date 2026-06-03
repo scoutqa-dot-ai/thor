@@ -157,6 +157,8 @@ describe("remote-cli MCP endpoints", () => {
         nodeEnv: "test",
         slackBotToken: "xoxb-test",
         slackApiBaseUrl: "https://slack.test/api",
+        slackSupportChannelId: "COPS",
+        netdataPublicUrl: "https://thor.test/netdata/",
         thorInternalSecret: "resolve-secret",
         githubAppId: "app-id",
         githubAppSlug: "thor-github-app",

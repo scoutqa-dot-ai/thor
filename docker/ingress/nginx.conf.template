@@ -13,6 +13,11 @@ map $auth_user $codex_lb_admin_upstream {
     default "http://127.0.0.1:8080/__opencode_admin_forbidden";
 }
 
+map $auth_user $netdata_admin_upstream {
+    ~^(${THOR_ADMIN_EMAILS_REGEX})$ "http://netdata:19999";
+    default "http://127.0.0.1:8080/__opencode_admin_forbidden";
+}
+
 server {
     listen 8080;
 
@@ -147,6 +152,19 @@ server {
         proxy_set_header X-Vouch-User $auth_user;
 
         proxy_pass $codex_lb_admin_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+    }
+
+    # Netdata UI — protected by Google SSO and admin email. Netdata itself is
+    # not host-published; ingress is the only browser-facing route.
+    location /netdata/ {
+        auth_request /vouch/validate;
+
+        auth_request_set $auth_user $upstream_http_x_vouch_user;
+        proxy_set_header X-Vouch-User $auth_user;
+
+        proxy_pass $netdata_admin_upstream;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
     }

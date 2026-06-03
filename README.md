@@ -14,22 +14,24 @@ ingress -> gateway -> runner -> opencode -> codex-lb -> ChatGPT
 - `runner` manages OpenCode session continuity and Slack progress updates.
 - `remote-cli` exposes `POST /exec/*` endpoints for git, gh, sandbox, scoutqa, metabase, MCP tool calls (Atlassian, Grafana, PostHog, Langfuse), direct Slack approval-card posting, and approval status/resolution.
 - `codex-lb` is an OpenAI-compatible proxy that fronts ChatGPT for opencode, pooling one or more ChatGPT account credentials so no paid OpenAI API key is needed. Its account/quota dashboard sits behind the same SSO + admin-email gate as `/admin/`.
+- `netdata` monitors Compose container CPU/memory and sends >90% alerts through secret-gated `remote-cli` to Slack.
 
 ## Services
 
-| Service       | Port | Package            | Role                                        |
-| ------------- | ---- | ------------------ | ------------------------------------------- |
-| `codex-lb`    | 2455 | Docker image       | ChatGPT-backed OpenAI-compatible proxy      |
-| `cron`        | -    | `docker/cron`      | Scheduled prompts                           |
-| `mitmproxy`   | 3080 | `docker/mitmproxy` | Explicit outbound HTTP(S) proxy             |
-| `gateway`     | 3002 | `@thor/gateway`    | Slack/GitHub webhook ingestion and batching |
-| `remote-cli`  | 3004 | `@thor/remote-cli` | CLI + MCP policy gateway                    |
-| `admin`       | 3005 | `@thor/admin`      | Admin dashboard and workspace configuration |
-| `grafana-mcp` | 8000 | Docker image       | Grafana MCP server                          |
-| `ingress`     | 8080 | `docker/ingress`   | Reverse proxy + Vouch integration           |
-| `opencode`    | 4096 | Docker image       | Headless agent runtime                      |
-| `runner`      | 3000 | `@thor/runner`     | Session lifecycle + Slack progress updates  |
-| `vouch`       | 9090 | Docker image       | OAuth/SSO proxy                             |
+| Service       | Port  | Package            | Role                                        |
+| ------------- | ----- | ------------------ | ------------------------------------------- |
+| `codex-lb`    | 2455  | Docker image       | ChatGPT-backed OpenAI-compatible proxy      |
+| `cron`        | -     | `docker/cron`      | Scheduled prompts                           |
+| `mitmproxy`   | 3080  | `docker/mitmproxy` | Explicit outbound HTTP(S) proxy             |
+| `netdata`     | 19999 | Docker image       | Compose container resource monitoring       |
+| `gateway`     | 3002  | `@thor/gateway`    | Slack/GitHub webhook ingestion and batching |
+| `remote-cli`  | 3004  | `@thor/remote-cli` | CLI + MCP policy gateway                    |
+| `admin`       | 3005  | `@thor/admin`      | Admin dashboard and workspace configuration |
+| `grafana-mcp` | 8000  | Docker image       | Grafana MCP server                          |
+| `ingress`     | 8080  | `docker/ingress`   | Reverse proxy + Vouch integration           |
+| `opencode`    | 4096  | Docker image       | Headless agent runtime                      |
+| `runner`      | 3000  | `@thor/runner`     | Session lifecycle + Slack progress updates  |
+| `vouch`       | 9090  | Docker image       | OAuth/SSO proxy                             |
 
 ## Quick Start
 
@@ -65,7 +67,7 @@ curl http://localhost:8080/global/health
 
 6. Link a ChatGPT account so opencode has an upstream model:
 
-   Visit `http://localhost:8080/dashboard` (admin-gated by Vouch + `THOR_ADMIN_EMAILS`), sign in with Google, and add a ChatGPT account from the codex-lb dashboard. Once linked, opencode picks the model from its UI (the provider whitelist surfaces `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5`).
+   Visit `http://localhost:8080/dashboard` (admin-gated by Vouch + `THOR_ADMIN_EMAILS`), sign in with Google, and add a ChatGPT account from the codex-lb dashboard. Once linked, opencode picks the model from its UI (the provider whitelist surfaces `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5`). Netdata is available at `http://localhost:8080/netdata/` behind the same Vouch/admin gate.
 
 ## Integrations
 
@@ -107,6 +109,8 @@ Integration-specific env vars live in each integration's doc. Cross-cutting vars
 | `THOR_E2E_TEST_HELPERS`         | No       | `runner`                    | Enables secret-gated deterministic runner e2e helpers                                                                           |
 | `RUNNER_BASE_URL`               | Yes      | `remote-cli`                | Public base URL for Thor trigger viewer links in PR/Jira content                                                                |
 | `INGRESS_PORT`                  | No       | `ingress`                   | Host port for the reverse proxy                                                                                                 |
+| `SLACK_SUPPORT_CHANNEL_ID`      | Yes      | `remote-cli`                | Slack channel ID for Netdata infrastructure alerts                                                                              |
+| `NETDATA_PUBLIC_URL`            | No       | `remote-cli`                | Browser URL included in Netdata alert messages; defaults by convention to ingress `/netdata/`                                   |
 | `ATLASSIAN_AUTH`                | No       | `remote-cli`, `mitmproxy`   | Global Atlassian MCP auth header and mitmproxy default injection; profile suffixes are MCP-only                                 |
 | `POSTHOG_API_KEY`               | No       | `remote-cli`                | Global PostHog MCP auth; profile variants use `_<PROFILE_NAME>` suffixes                                                        |
 | `GRAFANA_URL`                   | No       | `grafana-mcp`, `remote-cli` | Global Grafana instance URL; profile variants use `_<PROFILE_NAME>` suffixes                                                    |
@@ -163,6 +167,7 @@ The registry is maintained by operators from team Slack and GitHub membership re
 - Repos under `/workspace/repos` are mounted read-only into OpenCode. Thor creates edits in `/workspace/worktrees`.
 - OpenCode and remote-cli share the same `/tmp` volume so temporary artifacts referenced by absolute path, such as `slack-post-message --blocks-file /tmp/...`, are readable by the posting service.
 - Scheduled prompts live in `docker-volumes/workspace/cron/crontab`.
+- Netdata config, lib, and cache persist under `docker-volumes/netdata/{config,lib,cache}`. The repo-owned defaults in `docker/netdata/` add >90% container CPU/memory alarms and a custom notifier to `remote-cli` (`POST /internal/netdata-alert` with `x-thor-internal-secret`). The Netdata UI is not published as a direct host port; use ingress `/netdata/` after Vouch/admin auth.
 
 ## Security Model
 

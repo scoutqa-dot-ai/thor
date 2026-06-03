@@ -10,8 +10,8 @@ x-mitmproxy-egress-env: &mitmproxy-egress-env
   https_proxy: http://mitmproxy:8080
   HTTP_PROXY: http://mitmproxy:8080
   HTTPS_PROXY: http://mitmproxy:8080
-  no_proxy: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb"
-  NO_PROXY: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb"
+  no_proxy: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb,netdata"
+  NO_PROXY: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb,netdata"
 
 services:
   remote-cli:
@@ -30,7 +30,9 @@ services:
       - GITHUB_API_URL=${GITHUB_API_URL:-}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:?set SLACK_BOT_TOKEN}
       - SLACK_API_BASE_URL
+      - SLACK_SUPPORT_CHANNEL_ID=${SLACK_SUPPORT_CHANNEL_ID:-}
       - THOR_INTERNAL_SECRET=${THOR_INTERNAL_SECRET:?set THOR_INTERNAL_SECRET}
+      - NETDATA_PUBLIC_URL=${NETDATA_PUBLIC_URL:-}
       - SCOUT_API_KEY=${SCOUT_API_KEY:-}
       - LD_ACCESS_TOKEN=${LD_ACCESS_TOKEN:-}
       - LD_BASE_URI=${LD_BASE_URI:-}
@@ -83,6 +85,36 @@ services:
       retries: 5
       start_period: 10s
       start_interval: 2s
+
+  netdata:
+    image: netdata/netdata:v2.7.2
+    restart: unless-stopped
+    hostname: thor-compose
+    cap_add:
+      - SYS_PTRACE
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    environment:
+      - NETDATA_ALERT_WEBHOOK_URL=http://remote-cli:3004/internal/netdata-alert
+      - THOR_INTERNAL_SECRET=${THOR_INTERNAL_SECRET:?set THOR_INTERNAL_SECRET}
+      - DO_NOT_TRACK=1
+    volumes:
+      - ./docker-volumes/netdata/config:/etc/netdata
+      - ./docker-volumes/netdata/lib:/var/lib/netdata
+      - ./docker-volumes/netdata/cache:/var/cache/netdata
+      - ./docker/netdata/netdata.conf:/etc/netdata/netdata.conf:ro
+      - ./docker/netdata/health_alarm_notify.conf:/etc/netdata/health_alarm_notify.conf:ro
+      - ./docker/netdata/health.d/thor-containers.conf:/etc/netdata/health.d/thor-containers.conf:ro
+      - /etc/passwd:/host/etc/passwd:ro
+      - /etc/group:/host/etc/group:ro
+      - /etc/os-release:/host/etc/os-release:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      remote-cli:
+        condition: service_healthy
 
   mitmproxy:
     build:
@@ -313,6 +345,8 @@ services:
         condition: service_healthy
       admin:
         condition: service_healthy
+      netdata:
+        condition: service_started
       vouch:
         condition: service_healthy
       codex-lb:
