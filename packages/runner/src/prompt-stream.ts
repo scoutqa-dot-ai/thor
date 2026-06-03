@@ -268,10 +268,6 @@ function eventSessionId(event: Event): string | undefined {
   return undefined;
 }
 
-function isSessionEvent(event: Event, sessionId: string): boolean {
-  return eventSessionId(event) === sessionId;
-}
-
 /**
  * Live context-window occupancy: input + output + reasoning + cache reads.
  * A runtime heuristic for the context-usage progress event — deliberately
@@ -287,9 +283,9 @@ function contextTokenTotal(tokens: unknown): number | undefined {
   return total === 0 ? undefined : total;
 }
 
-function assistantMessageUpdateSummary(event: Event): AssistantMessageSummary | undefined {
-  const info = messageUpdatedInfo(event);
-  if (!info) return undefined;
+function assistantMessageSummaryFromInfo(
+  info: Record<string, unknown>,
+): AssistantMessageSummary | undefined {
   const role = safeStr(info.role) ?? safeStr(info.type);
   if (role && role !== "assistant") return undefined;
   const id =
@@ -305,13 +301,11 @@ function assistantMessageUpdateSummary(event: Event): AssistantMessageSummary | 
   };
 }
 
-function emitContextProgressFromMessage(
-  event: Event,
+function emitContextProgressFromInfo(
+  info: Record<string, unknown>,
   limits: ModelContextLimits,
   emit: (event: ProgressEvent) => void,
 ): void {
-  const info = messageUpdatedInfo(event);
-  if (!info) return;
   const role = safeStr(info.role) ?? safeStr(info.type);
   if (role && role !== "assistant") return;
   const tokens = contextTokenTotal(info.tokens);
@@ -382,7 +376,7 @@ export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStr
   const emittedToolStarts = new Set<string>();
 
   function emitToolProgress(toolPart: ToolPart, status: "running" | "completed" | "error"): void {
-    const key = [toolPart.sessionID, toolPart.messageID, toolPart.callID].join("|");
+    const key = `${toolPart.sessionID}|${toolPart.messageID}|${toolPart.callID}`;
     if (emittedToolStarts.has(key)) return;
     emittedToolStarts.add(key);
     const displayName = toolDisplayName(toolPart);
@@ -399,7 +393,7 @@ export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStr
     const agent = raw.trim();
     if (!agent) return;
 
-    const key = [toolPart.sessionID, toolPart.messageID, toolPart.callID].join("|");
+    const key = `${toolPart.sessionID}|${toolPart.messageID}|${toolPart.callID}`;
     if (emittedTaskDelegates.has(key)) return;
     emittedTaskDelegates.add(key);
 
@@ -425,18 +419,25 @@ export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStr
       const event = next.value;
 
       // Child sub-session events land in the child's own log so the
-      // viewer's owner-only slice never surfaces them.
-      const originSessionId = eventSessionId(event) ?? sessionId;
+      // viewer's owner-only slice never surfaces them. Resolve the session id
+      // once — both the origin-routing above and the parent check below need it.
+      const resolvedSessionId = eventSessionId(event);
+      const originSessionId = resolvedSessionId ?? sessionId;
       appendSessionEvent(originSessionId, { type: "opencode_event", event });
 
-      const isParent = isSessionEvent(event, sessionId);
+      const isParent = resolvedSessionId === sessionId;
 
       if (isParent && event.type === "message.updated") {
-        const assistantMessage = assistantMessageUpdateSummary(event);
-        if (assistantMessage) {
-          autoResume.onAssistantMessageUpdate(assistantMessage);
+        // Parse the event payload once and feed both consumers — auto-resume
+        // tracking and the context-usage progress event.
+        const info = messageUpdatedInfo(event);
+        if (info) {
+          const assistantMessage = assistantMessageSummaryFromInfo(info);
+          if (assistantMessage) {
+            autoResume.onAssistantMessageUpdate(assistantMessage);
+          }
+          emitContextProgressFromInfo(info, deps.modelContextLimits(), emit);
         }
-        emitContextProgressFromMessage(event, deps.modelContextLimits(), emit);
       }
 
       // Forward tool progress from child sessions so
