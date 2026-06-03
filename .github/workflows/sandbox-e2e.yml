@@ -243,7 +243,7 @@ jobs:
             printf 'GRAFANA_ORG_ID=%s\n' "${GRAFANA_ORG_ID:-1}"
             # CI cannot host a rootless bwrap sandbox; run mcp-grafana unsandboxed
             # so remote-cli starts cleanly. Safe here: credentials are fakes.
-            printf 'THOR_GRAFANA_DISABLE_SANDBOX=1\n'
+            printf 'THOR_MCP_DISABLE_SANDBOX=1\n'
           } > .env
 
           echo "DAYTONA_SNAPSHOT=$DAYTONA_SNAPSHOT" >> "$GITHUB_ENV"

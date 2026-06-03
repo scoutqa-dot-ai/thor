@@ -340,7 +340,7 @@ export function resolveProxyConfig(
   // (e.g. a container-in-container CI runner): run mcp-grafana directly. This
   // removes the isolation around the foreign binary, so it is ONLY safe where
   // remote-cli holds no real secrets (fake CI credentials). Never set in prod.
-  const unsandboxed = Boolean(envValue(env, "THOR_GRAFANA_DISABLE_SANDBOX"));
+  const unsandboxed = Boolean(envValue(env, "THOR_MCP_DISABLE_SANDBOX"));
   return {
     upstream: unsandboxed
       ? { kind: "stdio", command: MCP_GRAFANA_BIN, args: GRAFANA_MCP_ARGS, env: grafanaEnv }

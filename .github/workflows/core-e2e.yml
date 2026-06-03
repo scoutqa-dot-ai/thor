@@ -120,7 +120,7 @@ jobs:
             printf 'GRAFANA_ORG_ID=%s\n' "${GRAFANA_ORG_ID:-1}"
             # CI cannot host a rootless bwrap sandbox (container-in-container);
             # run mcp-grafana unsandboxed. Safe here: credentials are fakes.
-            printf 'THOR_GRAFANA_DISABLE_SANDBOX=1\n'
+            printf 'THOR_MCP_DISABLE_SANDBOX=1\n'
             printf 'LANGFUSE_PUBLIC_KEY=%s\n' "$LANGFUSE_PUBLIC_KEY"
             printf 'LANGFUSE_SECRET_KEY=%s\n' "$LANGFUSE_SECRET_KEY"
             printf 'LANGFUSE_BASE_URL=https://%s\n' "$LANGFUSE_HOST"

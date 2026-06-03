@@ -73,11 +73,11 @@ describe("proxy registry", () => {
     expect(getAvailableProxyNames("LABS", env)).toEqual(["atlassian", "grafana"]);
   });
 
-  it("runs mcp-grafana directly (no bwrap) only when THOR_GRAFANA_DISABLE_SANDBOX is set", () => {
+  it("runs mcp-grafana directly (no bwrap) only when THOR_MCP_DISABLE_SANDBOX is set", () => {
     const env = {
       GRAFANA_URL: "https://grafana.global",
       GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
-      THOR_GRAFANA_DISABLE_SANDBOX: "1",
+      THOR_MCP_DISABLE_SANDBOX: "1",
     } as NodeJS.ProcessEnv;
 
     const unsandboxed = resolveProxyConfig("grafana", undefined, env)?.upstream;
