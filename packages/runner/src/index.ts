@@ -2,7 +2,7 @@ import express from "express";
 import { createOpencodeClient } from "@opencode-ai/sdk";
 import { z } from "zod/v4";
 import type { TextPartInput } from "@opencode-ai/sdk";
-import { EventBusRegistry, waitForSessionSettled } from "./event-bus.ts";
+import { EventBusRegistry, SessionSubscription, waitForSessionSettled } from "./event-bus.ts";
 import { runPromptStream } from "./prompt-stream.ts";
 import { contextLimitKey, isRecord, safeStr, type ModelContextLimits } from "./opencode-events.ts";
 import { readFileSync } from "node:fs";
@@ -679,52 +679,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       // prompt-send. Awaited later before the stream loop reads the cache.
       const warmModelLimits = warmModelContextLimits({ client, opencodeUrl });
 
-      // --- If resuming a busy session, abort or bail ---
-      if (resumed) {
-        const statusResult = await client.session.status({});
-        const sessionStatus = statusResult.data?.[sessionId];
-
-        if (sessionStatus?.type === "busy") {
-          // Non-interrupt triggers don't abort — return busy so gateway can re-enqueue.
-          const shouldInterrupt = parsed.data.interrupt === true;
-          if (!shouldInterrupt) {
-            logInfo(log, "session_busy_nointerrupt", { sessionId, correlationKey });
-            res.json({ busy: true });
-            return;
-          }
-
-          // End any in-flight trigger this process owns for the session before aborting,
-          // so the prior trigger renders as `aborted` rather than `completed`.
-          const priorTriggerId = findInflightTriggerForSession(sessionId);
-          if (priorTriggerId) {
-            endTrigger(priorTriggerId, "aborted", { reason: "user_interrupt" });
-          }
-
-          logInfo(log, "session_busy_aborting", { sessionId, correlationKey });
-          await client.session.abort({ path: { id: sessionId } });
-
-          const abortSub = await eventBuses.subscribe([sessionId]);
-          const aborted = await waitForSessionSettled(abortSub, ABORT_TIMEOUT);
-          abortSub.close();
-
-          if (!aborted) {
-            logError(
-              log,
-              "session_abort_timeout",
-              `Session did not idle within ${ABORT_TIMEOUT}ms`,
-              { sessionId },
-            );
-            res.status(503).json({ error: "Session abort did not settle", sessionId });
-            return;
-          }
-          logInfo(log, "session_abort_complete", { sessionId });
-        }
-      }
-
-      // Block briefly so the first trigger after process start sees populated
-      // limits; subsequent calls within the cache TTL resolve immediately.
-      await warmModelLimits;
-
       const bootstrapMemoryPaths: string[] = [];
 
       // --- Memory: inject into new or stale sessions ---
@@ -766,34 +720,111 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
       const parts: TextPartInput[] = [{ type: "text", text: prompt }];
 
-      // Subscribe to event bus BEFORE sending the prompt
-      const subscription = await eventBuses.subscribe([sessionId]);
+      // Serialize the busy check and the prompt send under a session-scoped lock.
+      // The idle auto-resume "Continue" (sent from a prior trigger's stream loop)
+      // holds the same lock, so it cannot slip a second prompt into the session in
+      // the gap between our status read and our send. The lock is held only across
+      // the dispatch — a stalled stream never pins it — and the gate relies on
+      // OpenCode's live status, never on inflightTriggers (which can leak on
+      // dropped events).
+      const sessionSendKey = `${SESSION_LOCK_PREFIX}${sessionId}`;
+      type SendOutcome =
+        | { kind: "busy" }
+        | { kind: "abort_timeout" }
+        | { kind: "send_error"; triggerId: string; error: unknown }
+        | { kind: "ok"; subscription: SessionSubscription; triggerId: string; promptStart: number };
+      const outcome = await withKeyLock(
+        correlationKeyLocks,
+        sessionSendKey,
+        async (): Promise<SendOutcome> => {
+          // --- If resuming a busy session, abort or bail ---
+          if (resumed) {
+            const statusResult = await client.session.status({});
+            const sessionStatus = statusResult.data?.[sessionId];
 
-      const triggerId = mintAnchor();
-      inflightTriggerId = triggerId;
-      startTrigger(sessionId, triggerId, {
-        correlationKey,
-        triggerSlackId: parsed.data.triggerSlackId,
-        triggerGithubLogin: parsed.data.triggerGithubLogin,
-      });
+            if (sessionStatus?.type === "busy") {
+              // Non-interrupt triggers don't abort — return busy so gateway can re-enqueue.
+              const shouldInterrupt = parsed.data.interrupt === true;
+              if (!shouldInterrupt) {
+                logInfo(log, "session_busy_nointerrupt", { sessionId, correlationKey });
+                return { kind: "busy" };
+              }
 
-      const promptStart = Date.now();
-      const asyncResult = await client.session.promptAsync({
-        path: { id: sessionId },
-        body: { parts },
-      });
+              // End any in-flight trigger this process owns for the session before aborting,
+              // so the prior trigger renders as `aborted` rather than `completed`.
+              const priorTriggerId = findInflightTriggerForSession(sessionId);
+              if (priorTriggerId) {
+                endTrigger(priorTriggerId, "aborted", { reason: "user_interrupt" });
+              }
 
-      if (asyncResult.error) {
-        endTrigger(triggerId, "error", { error: JSON.stringify(asyncResult.error) });
+              logInfo(log, "session_busy_aborting", { sessionId, correlationKey });
+              await client.session.abort({ path: { id: sessionId } });
+
+              const abortSub = await eventBuses.subscribe([sessionId]);
+              const aborted = await waitForSessionSettled(abortSub, ABORT_TIMEOUT);
+              abortSub.close();
+
+              if (!aborted) {
+                logError(
+                  log,
+                  "session_abort_timeout",
+                  `Session did not idle within ${ABORT_TIMEOUT}ms`,
+                  { sessionId },
+                );
+                return { kind: "abort_timeout" };
+              }
+              logInfo(log, "session_abort_complete", { sessionId });
+            }
+          }
+
+          // Subscribe to event bus BEFORE sending the prompt
+          const subscription = await eventBuses.subscribe([sessionId]);
+
+          const triggerId = mintAnchor();
+          inflightTriggerId = triggerId;
+          startTrigger(sessionId, triggerId, {
+            correlationKey,
+            triggerSlackId: parsed.data.triggerSlackId,
+            triggerGithubLogin: parsed.data.triggerGithubLogin,
+          });
+
+          const promptStart = Date.now();
+          const asyncResult = await client.session.promptAsync({
+            path: { id: sessionId },
+            body: { parts },
+          });
+
+          if (asyncResult.error) {
+            return { kind: "send_error", triggerId, error: asyncResult.error };
+          }
+
+          logInfo(log, "prompt_sent", { sessionId });
+          return { kind: "ok", subscription, triggerId, promptStart };
+        },
+      );
+
+      if (outcome.kind === "busy") {
+        res.json({ busy: true });
+        return;
+      }
+      if (outcome.kind === "abort_timeout") {
+        res.status(503).json({ error: "Session abort did not settle", sessionId });
+        return;
+      }
+      if (outcome.kind === "send_error") {
+        endTrigger(outcome.triggerId, "error", { error: JSON.stringify(outcome.error) });
         res.status(500).json({
           error: "Failed to send prompt",
-          detail: asyncResult.error,
+          detail: outcome.error,
           sessionId,
         });
         return;
       }
+      const { subscription, triggerId, promptStart } = outcome;
 
-      logInfo(log, "prompt_sent", { sessionId });
+      // Block briefly so the first trigger after process start sees populated
+      // limits; subsequent calls within the cache TTL resolve immediately.
+      await warmModelLimits;
 
       const progressTarget = resolveSlackProgressTarget(correlationKey);
       let progressChain = Promise.resolve();
@@ -865,6 +896,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             emit,
             sessionErrorGraceMs: SESSION_ERROR_GRACE_MS,
             modelContextLimits: currentModelContextLimits,
+            sendLock: (fn) => withKeyLock(correlationKeyLocks, sessionSendKey, fn),
           });
 
           const durationMs = Date.now() - promptStart;

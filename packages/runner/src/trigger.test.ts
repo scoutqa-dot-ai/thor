@@ -213,7 +213,12 @@ function stepFinishPartRecord(
           messageID: `m-${sessionId}`,
           reason: "stop",
           ...(opts.cost !== undefined ? { cost: opts.cost } : {}),
-          tokens: opts.tokens ?? { input: 1000, output: 2000, reasoning: 300, cache: { read: 400 } },
+          tokens: opts.tokens ?? {
+            input: 1000,
+            output: 2000,
+            reasoning: 300,
+            cache: { read: 400 },
+          },
         },
       },
     },
@@ -1576,6 +1581,50 @@ describe("runner /trigger orchestration", () => {
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
         status: "completed",
         response: "continued ok",
+      });
+    });
+  });
+
+  it("skips the auto-resume Continue when a concurrent send drove the session busy", async () => {
+    const busySessions = new Set<string>();
+    let promptCalls = 0;
+    const h = createHarness({
+      busySessions,
+      promptEvents: (sessionId) => {
+        promptCalls++;
+        if (promptCalls === 1) {
+          // Simulate a concurrent trigger winning the send lock and driving the
+          // session busy in the gap between session.idle and the auto-resume's
+          // locked status re-check. The re-check must see busy and skip Continue.
+          busySessions.add(sessionId);
+          return [
+            messageUpdatedEvent(sessionId, {
+              id: "msg-failed-busy",
+              finish: "error",
+              providerID: "openai",
+              modelID: "gpt-5.5",
+              tokens: { input: 0, output: 0, reasoning: 0 },
+              role: "assistant",
+            }),
+            idleEvent(sessionId),
+          ];
+        }
+        return [textEvent(sessionId, "continued ok"), idleEvent(sessionId)];
+      },
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "start",
+        correlationKey: "slack:thread:1710000000.207",
+      });
+
+      // Only the original prompt was sent — no Continue double-send into the
+      // already-busy session. This run ends as the failed idle it was.
+      expect(h.prompts).toHaveLength(1);
+      expect(h.prompts).not.toContain("Continue");
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        status: "error",
       });
     });
   });

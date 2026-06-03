@@ -339,6 +339,12 @@ export interface PromptStreamDeps {
   sessionErrorGraceMs: number;
   /** Current model context-window limits, read fresh per message update. */
   modelContextLimits: () => ModelContextLimits;
+  /**
+   * Serialize a session-scoped send against concurrent trigger sends. The idle
+   * auto-resume "Continue" uses this so it can't double-send into a session a
+   * new trigger already drove busy; the trigger handler holds the same lock.
+   */
+  sendLock: <T>(fn: () => Promise<T>) => Promise<T>;
 }
 
 export interface PromptStreamResult {
@@ -557,15 +563,31 @@ export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStr
           // held session.error must not throttle/terminate the continued
           // response via a stale grace window timed from the original error.
           errorGrace.clear();
-          const continueResult = await client.session.promptAsync({
-            path: { id: sessionId },
-            body: { parts: [{ type: "text", text: "Continue" }] },
+          // Serialize against concurrent trigger sends and re-check status under
+          // the lock: if a new prompt already drove the session busy in the gap
+          // since session.idle, skip the Continue rather than double-send. The
+          // new trigger's own stream carries that prompt; this run ends as the
+          // failed idle it already was.
+          const continueResult = await deps.sendLock(async () => {
+            const liveStatus = (await client.session.status({})).data?.[sessionId];
+            if (liveStatus?.type === "busy") return undefined;
+            return client.session.promptAsync({
+              path: { id: sessionId },
+              body: { parts: [{ type: "text", text: "Continue" }] },
+            });
           });
-          if (!continueResult.error) continue;
-          logError(log, "session_idle_auto_resume_failed", JSON.stringify(continueResult.error), {
-            sessionId,
-            messageId: resumeMessageId,
-          });
+          if (continueResult && !continueResult.error) continue;
+          if (continueResult?.error) {
+            logError(log, "session_idle_auto_resume_failed", JSON.stringify(continueResult.error), {
+              sessionId,
+              messageId: resumeMessageId,
+            });
+          } else if (!continueResult) {
+            logInfo(log, "session_idle_auto_resume_skipped_busy", {
+              sessionId,
+              messageId: resumeMessageId,
+            });
+          }
         }
         terminalError =
           errorGrace.error ?? (failedAssistantIdle ? ASSISTANT_EMPTY_ERROR_OUTPUT : undefined);
