@@ -39,7 +39,6 @@ import {
   listSandboxes,
   overlayDirtyFiles,
   pullSandboxChanges,
-  SandboxError,
   shellQuote,
   syncSandbox,
   withCwdLock,
@@ -450,25 +449,16 @@ async function resolveWorktreeRoot(cwd: string): Promise<{ root: string; subpath
 
   const result = await execCommand("git", ["rev-parse", "--show-toplevel"], gitCwd);
   if ((result.exitCode ?? 0) !== 0 || !result.stdout.trim()) {
-    throw new SandboxError(
-      "Failed to resolve worktree root",
-      `git rev-parse --show-toplevel failed for ${cwd}`,
-    );
+    throw new Error(`git rev-parse --show-toplevel failed for ${cwd}`);
   }
   const root = result.stdout.trim();
   if (!isValidWorktreeTopLevel(root)) {
-    throw new SandboxError(
-      "Failed to resolve worktree root",
-      `git toplevel is not a valid worktree path: ${root}`,
-    );
+    throw new Error(`git toplevel is not a valid worktree path: ${root}`);
   }
 
   const containingRoot = await findContainingWorktreeRoot(root);
   if (containingRoot) {
-    throw new SandboxError(
-      "Failed to resolve worktree root",
-      `git toplevel is nested under another working tree: ${root} (parent ${containingRoot})`,
-    );
+    throw new Error(`git toplevel is nested under another working tree: ${root} (parent ${containingRoot})`);
   }
 
   const subpath = cwd.startsWith(root + "/") ? cwd.slice(root.length + 1) : "";
@@ -599,17 +589,11 @@ async function prepareSandbox(
 async function resolveHead(cwd: string): Promise<string> {
   const gitSha = await execCommand("git", ["rev-parse", "HEAD"], cwd);
   if ((gitSha.exitCode ?? 0) !== 0) {
-    throw new SandboxError(
-      "Failed to resolve worktree HEAD",
-      `git rev-parse HEAD failed: ${gitSha.stderr || gitSha.stdout}`,
-    );
+    throw new Error(`git rev-parse HEAD failed: ${gitSha.stderr || gitSha.stdout}`);
   }
   const sha = gitSha.stdout.trim();
   if (!sha) {
-    throw new SandboxError(
-      "Failed to resolve worktree HEAD",
-      "git rev-parse HEAD returned empty SHA",
-    );
+    throw new Error("git rev-parse HEAD returned empty SHA");
   }
   return sha;
 }
@@ -967,19 +951,9 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
               });
             }
           } catch (pullErr) {
-            const error =
-              pullErr instanceof SandboxError
-                ? new SandboxError(
-                    `${pullErr.userMessage} (${pullErr.adminDetail})`,
-                    pullErr.adminDetail,
-                    { cause: pullErr },
-                  )
-                : new SandboxError(
-                    `Failed to pull sandbox changes back to the worktree (${errorMessage(pullErr)})`,
-                    errorMessage(pullErr),
-                  );
-            logError(log, "sandbox_pull_error", error.adminDetail, thorIds(req));
-            writeNdjson({ type: "stderr", data: `${error.userMessage}\n` });
+            const message = errorMessage(pullErr);
+            logError(log, "sandbox_pull_error", message, thorIds(req));
+            writeNdjson({ type: "stderr", data: `${message}\n` });
             finalExitCode = 1;
           }
         }
@@ -988,14 +962,13 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       });
       res.end();
     } catch (err) {
-      const error =
-        err instanceof SandboxError ? err : new SandboxError(errorMessage(err), errorMessage(err));
-      logError(log, "exec_sandbox_error", error.adminDetail, thorIds(req));
+      const message = errorMessage(err);
+      logError(log, "exec_sandbox_error", message, thorIds(req));
 
       if (!res.headersSent) {
-        res.status(500).json({ stdout: "", stderr: error.userMessage, exitCode: 1 });
+        res.status(500).json({ stdout: "", stderr: message, exitCode: 1 });
       } else {
-        writeNdjson({ type: "stderr", data: `${error.userMessage}\n` });
+        writeNdjson({ type: "stderr", data: `${message}\n` });
         writeNdjson({ type: "exit", exitCode: 1 });
         res.end();
       }

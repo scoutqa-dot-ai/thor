@@ -330,7 +330,7 @@ describe("/exec/sandbox", () => {
 
     expect(response.status).toBe(500);
     const body = (await response.json()) as { stderr: string };
-    expect(body.stderr).toContain("Failed to resolve worktree root");
+    expect(body.stderr).toContain("git toplevel is not a valid worktree path");
   });
 
   it("rejects git toplevels nested under another working tree", async () => {
@@ -350,7 +350,7 @@ describe("/exec/sandbox", () => {
 
     expect(response.status).toBe(500);
     const body = (await response.json()) as { stderr: string };
-    expect(body.stderr).toContain("Failed to resolve worktree root");
+    expect(body.stderr).toContain("git toplevel is nested under another working tree");
   });
 
   it("reports pullback failures as exec failures", async () => {
