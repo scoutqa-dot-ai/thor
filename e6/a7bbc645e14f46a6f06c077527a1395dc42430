@@ -1,0 +1,27 @@
+.github/workflows/core-e2e.yml
+  0db2e5ae7461c4cf 29-32
+docker-compose.e2e.yml
+  0db2e5ae7461c4cf 1-13
+.github/workflows/sandbox-e2e.yml
+  0db2e5ae7461c4cf 24-25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "e6a7bbc645e14f46a6f06c077527a1395dc42430",
+  "prompts": {
+    "0db2e5ae7461c4cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f04ca88-25b3-4d8a-a5b6-d40caeff0874",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 20,
+      "total_deletions": 0,
+      "accepted_lines": 19,
+      "overriden_lines": 0
+    }
+  }
+}
