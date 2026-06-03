@@ -100,13 +100,14 @@ Pinning `DAYTONA_SNAPSHOT` to a snapshot built from a specific `:<sha>` tag give
 
 ## Troubleshooting
 
-| Symptom                                      | Likely cause                            | Fix                                                                         |
-| -------------------------------------------- | --------------------------------------- | --------------------------------------------------------------------------- |
-| `Sandbox auth failed, check DAYTONA_API_KEY` | Env var not set or empty                | Set `DAYTONA_API_KEY` in `.env`, restart `remote-cli`.                      |
-| `Sandbox service unavailable`                | Daytona API transient failure           | Retry in a few minutes.                                                     |
-| `Sandbox creation timed out`                 | Daytona provisioning slow               | Retry. Next call creates a fresh sandbox.                                   |
-| `java: command not found` (or similar)       | Using `daytona-medium`, missing runtime | Publish the custom image (above) and set `DAYTONA_SNAPSHOT`.                |
-| `File "…" is NNN MB, exceeding 100 MB`       | Large artifact in dirty worktree        | Commit, `.gitignore`, or remove the file before running `sandbox`.          |
-| `… exceeds the 100-file sync limit`          | Too many dirty files                    | Commit or clean up the worktree; the sync refuses to guess what to include. |
+| Symptom                                                         | Likely cause                               | Fix                                                                         |
+| --------------------------------------------------------------- | ------------------------------------------ | --------------------------------------------------------------------------- |
+| `DAYTONA_API_KEY is not configured`                             | Env var not set or empty                   | Set `DAYTONA_API_KEY` in `.env`, restart `remote-cli`.                      |
+| Raw provider auth text, such as `401`, `403`, or `unauthorized` | Daytona credential or permission issue     | Check the Daytona API key scopes and restart `remote-cli` after changes.    |
+| Raw provider timeout or network text                            | Daytona API/provisioning transient failure | Retry in a few minutes. If repeated, inspect the Daytona dashboard.         |
+| `no space left on device` or quota text                         | Provider-side capacity/quota issue         | Free space/quota in Daytona or choose a larger provider resource.           |
+| `java: command not found` (or similar)                          | Using `daytona-medium`, missing runtime    | Publish the custom image (above) and set `DAYTONA_SNAPSHOT`.                |
+| `File "..." is NNN MB, exceeding 100 MB`                        | Large artifact in dirty worktree           | Commit, `.gitignore`, or remove the file before running `sandbox`.          |
+| `... exceeds the 100-file sync limit`                           | Too many dirty files                       | Commit or clean up the worktree; the sync refuses to guess what to include. |
 
 To inspect or clean up sandboxes directly, use the Daytona dashboard or the `@daytonaio/sdk`.
