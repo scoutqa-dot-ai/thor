@@ -51,9 +51,11 @@ For a profile `LABS`:
 
 - PostHog: `POSTHOG_API_KEY_LABS` → fallback `POSTHOG_API_KEY` → disabled if neither exists.
 - Grafana: resolve the full bundle by suffix first, then global fallback:
-  - `GRAFANA_URL_LABS` + `GRAFANA_SERVICE_ACCOUNT_TOKEN_LABS` (+ optional `GRAFANA_ORG_ID_LABS`)
-  - else `GRAFANA_URL` + `GRAFANA_SERVICE_ACCOUNT_TOKEN` (+ optional `GRAFANA_ORG_ID`)
+  - `GRAFANA_URL_LABS` + `GRAFANA_SERVICE_ACCOUNT_TOKEN_LABS` + `GRAFANA_ORG_ID_LABS`
+  - else `GRAFANA_URL` + `GRAFANA_SERVICE_ACCOUNT_TOKEN` + `GRAFANA_ORG_ID`
   - else disabled.
+  - All three are required together (org ID is no longer optional — see Decision 14 of
+    `2026060301_grafana-mcp-per-profile.md`).
 
 Rules:
 
@@ -152,7 +154,7 @@ Hardens the model against silent profile flips by enumerating every Slack alias 
   4. Returns `{ profile: undefined }` if there are no Slack bindings; `{ profile: name }` if exactly one distinct profile is detected; `AmbiguousProfileError` if the set contains more than one distinct value (including any mix of "in profile" + "not in any profile" channels).
 - **Drop `slack.thread_id` entirely.** Remove from `ALIAS_TYPES`, stop emitting it in `aliasForCorrelationKey`, simplify `buildSlackCorrelationKeys` to a single channel-qualified key, drop the admin views legacy chip, and migrate tests to the channel-qualified form. Old session-log lines with `aliasType: "slack.thread_id"` are tolerated implicitly because both readers use `safeParse` and skip unknown types — they just stop binding anchors.
 - **Single-var env resolution stays soft.** `POSTHOG_API_KEY_<PROFILE>` missing while `POSTHOG_API_KEY` is set still falls back to global. Atlassian MCP follows the same fallback, but direct Atlassian HTTP egress remains global-only through mitmproxy until the follow-up profile-routing work lands.
-- **Multi-var bundles fail on partial profile coverage.** In `resolveProxyConfig` for Grafana, if any of `GRAFANA_URL_<PROFILE>` / `GRAFANA_SERVICE_ACCOUNT_TOKEN_<PROFILE>` / `GRAFANA_ORG_ID_<PROFILE>` is set but the URL+token pair is incomplete, throw — do not silently use the unsuffixed bundle. All-three-unset still falls back cleanly.
+- **Multi-var bundles fail on partial profile coverage.** In `resolveProxyConfig` for Grafana, if any of `GRAFANA_URL_<PROFILE>` / `GRAFANA_SERVICE_ACCOUNT_TOKEN_<PROFILE>` / `GRAFANA_ORG_ID_<PROFILE>` is set but the full three-var bundle is incomplete, throw — do not silently use the unsuffixed bundle. All-three-unset still falls back cleanly. (Updated: `GRAFANA_ORG_ID` is now a required member of the bundle, not optional — see Decision 14 of `2026060301_grafana-mcp-per-profile.md`.)
 - **Drop the approval `routing` snapshot.** Remove the `routing` field from the approval schema (greenfield — ignore any stored data with that field). At approval-click time, re-resolve profile via the strict resolver using `action.origin.sessionId`. If the resolver returns ambiguous or the integration's env bundle won't load for the resolved profile, mark the action `rejected` with a system reason and surface it via the existing Slack rejection path. Otherwise execute against the freshly resolved target.
 - **Surface ambiguity loudly in MCP listing and call paths.** `resolveProfileForContext` must return a result type the caller can fail on, not silently fall back to globals. Existing fallback-on-error behavior is preserved only for transient errors (config load failure), not for `AmbiguousProfileError`.
 

@@ -113,6 +113,7 @@ describe("remote-cli MCP endpoints", () => {
     vi.stubEnv("POSTHOG_API_KEY", "test-posthog-key");
     vi.stubEnv("GRAFANA_URL", "https://grafana.example.com");
     vi.stubEnv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "grafana-token");
+    vi.stubEnv("GRAFANA_ORG_ID", "1");
     vi.stubEnv("THOR_INTERNAL_SECRET", "resolve-secret");
     vi.stubEnv("WORKLOG_DIR", worklogDir);
     vi.stubEnv("RUNNER_BASE_URL", "https://thor.example.com/");

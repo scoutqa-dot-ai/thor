@@ -81,11 +81,12 @@ header-vs-boot-config ambiguity that made the shared sidecar unfit for profiles.
 The env contract from the profile-routing plan is preserved verbatim — only the transport
 behind it changes:
 
-- `GRAFANA_URL_<P>` + `GRAFANA_SERVICE_ACCOUNT_TOKEN_<P>` (+ optional `GRAFANA_ORG_ID_<P>`)
+- `GRAFANA_URL_<P>` + `GRAFANA_SERVICE_ACCOUNT_TOKEN_<P>` + `GRAFANA_ORG_ID_<P>`
   → that profile's instance; else global `GRAFANA_URL` + `GRAFANA_SERVICE_ACCOUNT_TOKEN`
-  (+ optional `GRAFANA_ORG_ID`); else disabled.
+  - `GRAFANA_ORG_ID`; else disabled. All three are required together (org ID is no longer
+    optional — see Decision 14).
 - Multi-var bundle still fails hard on a partial profile suffix (Decision 12 of the
-  profile-routing plan).
+  profile-routing plan), now including a missing `GRAFANA_ORG_ID_<P>`.
 - `GRAFANA_ALLOW` and the empty `GRAFANA_APPROVE` are unchanged; enabled tool categories
   stay `datasource,prometheus,loki,proxied`.
 
@@ -123,6 +124,7 @@ Grafana is available for those profiles and absent globally.
 | 13  | CI runs mcp-grafana **without** bwrap via a `THOR_MCP_DISABLE_SANDBOX` flag set only in the e2e `.env`; production keeps the sandbox (flag unset, default).                                                                   | The GitHub Actions runner is a container-in-container that cannot host rootless bwrap at all: AppArmor `docker-default` denies the mount step (`Failed to make / slave`), and even with `CAP_SYS_ADMIN` the nested userns cannot map uids (`setting up uid map: Permission denied`) — verified empirically; relaxing both LSMs did not work and the only rung left was `--privileged`. Rather than escalate CI privileges, the flag drops the sandbox in CI so the real `mcp-grafana` binary still spawns and lists tools (better coverage than skipping). Safe **only** because CI credentials are fakes — no real secrets for the unsandboxed binary to reach; remote-cli logs `mcp_sandbox_disabled` whenever it is active. Production never sets it and is validated by the Phase 1 `run.sh` sandbox checks. | `apparmor=unconfined` + `CAP_SYS_ADMIN` CI override (tried — `uid_map` still denied); `--privileged` in CI (large hole, uncertain); probe-and-skip (loses real-spawn coverage) |
 | 12  | Bind host `/proc` is safe **because** `--unshare-pid` puts the child in a fresh PID namespace                                                                                                                                 | An adversarial review flagged that a bind-mounted host `/proc` could expose remote-cli's `/proc/<pid>/environ` (→ `THOR_INTERNAL_SECRET`) and `/proc/<pid>/root` (→ GitHub App key). Verified empirically it does not: procfs renders only PIDs that exist in the **reader's** namespace, so a process in the child PID namespace sees only the sandbox's own processes; host PIDs are unresolvable and `/proc/1` is the sandbox init, not remote-cli's. `--unshare-user` additionally remaps the uid. The spike's confinement checks were extended to assert the `/proc/<host-pid>/environ` and `/proc/1/root` bypass paths are blocked.                                                                                                                                                                        | Assume the bind is unsafe and block on a fresh `--proc` that Docker rejects (would force the Option B fallback unnecessarily)                                                  |
 | 9   | Keep Grafana → Grafana egress direct (not through mitmproxy), unchanged from the sidecar                                                                                                                                      | MCP-path egress is not proxied today; the security model only routes OpenCode's own clients through mitmproxy, and already accepts MCP-path profile creds bypassing it. No regression.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Route child egress through mitmproxy in this plan (out of scope; would need profile-aware addon)                                                                               |
+| 14  | Make `GRAFANA_ORG_ID` a required member of the Grafana bundle (scoped and global), not an optional override that fell back to mcp-grafana's default                                                                           | An implicit org default silently routes queries at whichever org the token happens to land on; for a multi-org/multi-profile instance that is the same silent-wrong-instance failure Decision 1 set out to remove. Requiring it forces the operator to state the org explicitly per bundle and makes the bundle all-or-nothing like Langfuse. Resolution now disables Grafana (global) or fails hard (partial profile) when the org ID is absent.                                                                                                                                                                                                                                                                                                                                                                | Keep org ID optional with a `1` default (silent wrong-org risk); make it required only for profile suffixes but optional globally (asymmetric, surprising)                     |
 
 ## Phases
 
@@ -154,7 +156,7 @@ bwrap --unshare-user --unshare-pid --unshare-ipc --unshare-uts --new-session --d
 ```
 
 The parent spawn environment for this command supplies `GRAFANA_URL`,
-`GRAFANA_SERVICE_ACCOUNT_TOKEN`, and optional `GRAFANA_ORG_ID`. Do not pass Grafana
+`GRAFANA_SERVICE_ACCOUNT_TOKEN`, and `GRAFANA_ORG_ID` (all three required). Do not pass Grafana
 credentials through `bwrap --setenv`; those values would be visible in
 `/proc/<pid>/cmdline`.
 
@@ -190,7 +192,7 @@ upstream (spawn → list tools → policy validate → reconnect-on-exit), using
 - In `proxies.ts`, change the Grafana branch of `resolveProxyConfig` to return
   `upstream: { kind: "stdio", command: "bwrap", args: [...confinement..., mcp-grafana,
 -transport, stdio, -enabled-tools, ...], env: { GRAFANA_URL, GRAFANA_SERVICE_ACCOUNT_TOKEN,
-GRAFANA_ORG_ID?, PATH } }`. The profile-suffix resolution, bundle-partial fail-hard, and
+GRAFANA_ORG_ID, PATH } }`. The profile-suffix resolution, bundle-partial fail-hard, and
   `target.key` are unchanged; only the `upstream` shape changes.
 - The other three integrations keep returning `kind: "http"`.
 - Centralize the `bwrap` arg construction (single helper) so the confinement set has one

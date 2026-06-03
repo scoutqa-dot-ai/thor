@@ -6,6 +6,7 @@ const FULL_ENV: NodeJS.ProcessEnv = {
   POSTHOG_API_KEY: "phc_global",
   GRAFANA_URL: "https://grafana.global",
   GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
+  GRAFANA_ORG_ID: "1",
   LANGFUSE_PUBLIC_KEY: "pk-global",
   LANGFUSE_SECRET_KEY: "sk-global",
   LANGFUSE_BASE_URL: "https://us.cloud.langfuse.com",
@@ -51,6 +52,7 @@ describe("proxy registry", () => {
     const env = {
       GRAFANA_URL: "https://grafana.global",
       GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
+      GRAFANA_ORG_ID: "1",
       GRAFANA_URL_LABS: "https://grafana.labs",
       GRAFANA_SERVICE_ACCOUNT_TOKEN_LABS: "labs-token",
       GRAFANA_ORG_ID_LABS: "7",
@@ -69,12 +71,13 @@ describe("proxy registry", () => {
     expect(labs.args).toContain("/usr/local/bin/mcp-grafana");
     expect(labs.args).not.toContain("labs-token");
 
-    // QA has no scoped bundle, so it falls back to the global credentials (no org).
+    // QA has no scoped bundle, so it falls back to the global credentials.
     const qa = resolveProxyConfig("grafana", "QA", env)?.upstream;
     if (qa?.kind !== "stdio") throw new Error("expected stdio upstream");
     expect(qa.env).toEqual({
       GRAFANA_URL: "https://grafana.global",
       GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
+      GRAFANA_ORG_ID: "1",
     });
     expect(getAvailableProxyNames("LABS", env)).toEqual(["atlassian", "grafana"]);
   });
@@ -83,6 +86,7 @@ describe("proxy registry", () => {
     const env = {
       GRAFANA_URL: "https://grafana.global",
       GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
+      GRAFANA_ORG_ID: "1",
       THOR_MCP_DISABLE_SANDBOX: "1",
     } as NodeJS.ProcessEnv;
 
@@ -96,12 +100,14 @@ describe("proxy registry", () => {
     const sandboxed = resolveProxyConfig("grafana", undefined, {
       GRAFANA_URL: "https://grafana.global",
       GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
+      GRAFANA_ORG_ID: "1",
     } as NodeJS.ProcessEnv)?.upstream;
     expect(sandboxed).toMatchObject({ kind: "stdio", command: "bwrap" });
 
     const falseyString = resolveProxyConfig("grafana", undefined, {
       GRAFANA_URL: "https://grafana.global",
       GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
+      GRAFANA_ORG_ID: "1",
       THOR_MCP_DISABLE_SANDBOX: "false",
     } as NodeJS.ProcessEnv)?.upstream;
     expect(falseyString).toMatchObject({ kind: "stdio", command: "bwrap" });
@@ -111,6 +117,7 @@ describe("proxy registry", () => {
     const env = {
       GRAFANA_URL: "https://grafana.global",
       GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
+      GRAFANA_ORG_ID: "1",
       GRAFANA_URL_QA: "https://grafana.qa",
       // GRAFANA_SERVICE_ACCOUNT_TOKEN_QA intentionally missing.
     } as NodeJS.ProcessEnv;
@@ -118,6 +125,26 @@ describe("proxy registry", () => {
     expect(() => resolveProxyConfig("grafana", "QA", env)).toThrow(
       /partial grafana profile bundle/i,
     );
+
+    // Org id is now part of the required bundle: URL + token without it still fails.
+    expect(() =>
+      resolveProxyConfig("grafana", "QA", {
+        GRAFANA_URL_QA: "https://grafana.qa",
+        GRAFANA_SERVICE_ACCOUNT_TOKEN_QA: "qa-token",
+        // GRAFANA_ORG_ID_QA intentionally missing.
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/GRAFANA_ORG_ID_QA/);
+  });
+
+  it("disables grafana when GRAFANA_ORG_ID is missing from the global bundle", () => {
+    const env = {
+      GRAFANA_URL: "https://grafana.global",
+      GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
+      // GRAFANA_ORG_ID intentionally missing.
+    } as NodeJS.ProcessEnv;
+
+    expect(resolveProxyConfig("grafana", undefined, env)).toBeUndefined();
+    expect(getAvailableProxyNames(undefined, env)).not.toContain("grafana");
   });
 
   it("resolves langfuse as a per-profile base64 basic-auth bundle with its own host", () => {

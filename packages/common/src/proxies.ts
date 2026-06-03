@@ -317,24 +317,25 @@ export function resolveProxyConfig(
     : undefined;
   const scopedOrg = profile ? envValue(env, `GRAFANA_ORG_ID_${profile}`) : undefined;
   const anyScoped = Boolean(scopedUrl || scopedToken || scopedOrg);
-  const useScoped = Boolean(scopedUrl && scopedToken);
+  const useScoped = Boolean(scopedUrl && scopedToken && scopedOrg);
   if (profile && anyScoped && !useScoped) {
     const missing = [
       !scopedUrl ? `GRAFANA_URL_${profile}` : undefined,
       !scopedToken ? `GRAFANA_SERVICE_ACCOUNT_TOKEN_${profile}` : undefined,
+      !scopedOrg ? `GRAFANA_ORG_ID_${profile}` : undefined,
     ].filter(Boolean);
     throw new Error(
-      `partial grafana profile bundle for "${profile}": missing ${missing.join(", ")}. Set the whole bundle or none of it.`,
+      `partial grafana profile bundle for "${profile}": missing ${missing.join(", ")}. Set GRAFANA_URL_${profile}, GRAFANA_SERVICE_ACCOUNT_TOKEN_${profile}, and GRAFANA_ORG_ID_${profile} together, or none of them.`,
     );
   }
   const url = useScoped ? scopedUrl : envValue(env, "GRAFANA_URL");
   const token = useScoped ? scopedToken : envValue(env, "GRAFANA_SERVICE_ACCOUNT_TOKEN");
-  if (!url || !token) return undefined;
   const orgId = useScoped ? scopedOrg : envValue(env, "GRAFANA_ORG_ID");
+  if (!url || !token || !orgId) return undefined;
   const grafanaEnv = {
     GRAFANA_URL: url,
     GRAFANA_SERVICE_ACCOUNT_TOKEN: token,
-    ...(orgId ? { GRAFANA_ORG_ID: orgId } : {}),
+    GRAFANA_ORG_ID: orgId,
   };
   // Escape hatch for environments that cannot host a rootless bwrap sandbox
   // (e.g. a container-in-container CI runner): run mcp-grafana directly. This
