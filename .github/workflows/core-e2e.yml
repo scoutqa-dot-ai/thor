@@ -53,8 +53,9 @@ jobs:
       DAYTONA_SNAPSHOT: ${{ vars.DAYTONA_SNAPSHOT }}
       ATLASSIAN_AUTH: ${{ secrets.ATLASSIAN_AUTH }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
-      # Grafana uses the local MCP sidecar; catalog/schema checks do not query Grafana Cloud.
-      GRAFANA_URL: http://grafana-mcp:8000
+      # Grafana MCP runs as a bwrap-sandboxed child of remote-cli; tool listing
+      # works against a placeholder URL without reaching a real Grafana.
+      GRAFANA_URL: http://grafana.invalid
       GRAFANA_SERVICE_ACCOUNT_TOKEN: ci-fake
       LANGFUSE_PUBLIC_KEY: ${{ vars.LANGFUSE_PUBLIC_KEY }}
       LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}

@@ -10,8 +10,8 @@ x-mitmproxy-egress-env: &mitmproxy-egress-env
   https_proxy: http://mitmproxy:8080
   HTTP_PROXY: http://mitmproxy:8080
   HTTPS_PROXY: http://mitmproxy:8080
-  no_proxy: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb"
-  NO_PROXY: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb"
+  no_proxy: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb"
+  NO_PROXY: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb"
 
 services:
   remote-cli:
@@ -19,6 +19,11 @@ services:
       context: .
       target: remote-cli
     restart: unless-stopped
+    # Additive seccomp profile (Docker default + the syscalls bwrap needs to
+    # build a rootless sandbox: unshare/clone/setns/mount/pivot_root/...). Lets
+    # remote-cli confine the per-profile mcp-grafana child without CAP_SYS_ADMIN.
+    security_opt:
+      - seccomp=./docker/remote-cli/seccomp-bwrap.json
     ports:
       - "127.0.0.1:3004:3004"
     environment:
@@ -51,38 +56,12 @@ services:
       - ./docker-volumes/workspace:/workspace
       - ./docker-volumes/github-app:/var/lib/remote-cli/github-app
       - shared-tmp:/tmp
-    depends_on:
-      grafana-mcp:
-        condition: service_healthy
     healthcheck:
       test:
         ["CMD", "node", "-e", "fetch('http://localhost:3004/health').then(r=>{if(!r.ok)throw 1})"]
       interval: 5s
       timeout: 3s
       retries: 10
-
-  grafana-mcp:
-    image: grafana/mcp-grafana:0.14.0
-    restart: unless-stopped
-    entrypoint:
-      [
-        "/app/mcp-grafana",
-        "-transport",
-        "streamable-http",
-        "-address",
-        "0.0.0.0:8000",
-        "-enabled-tools",
-        "datasource,prometheus,loki,proxied",
-      ]
-    env_file:
-      - .env
-    healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8000"]
-      interval: 30s
-      timeout: 3s
-      retries: 5
-      start_period: 10s
-      start_interval: 2s
 
   mitmproxy:
     build:

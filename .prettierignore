@@ -1,3 +1,5 @@
 dist/
 node_modules/
 pnpm-lock.yaml
+# Vendored Docker default seccomp profile + bwrap allowlist; keep upstream formatting.
+docker/remote-cli/seccomp-bwrap.json
