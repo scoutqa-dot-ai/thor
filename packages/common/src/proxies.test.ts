@@ -79,7 +79,7 @@ describe("proxy registry", () => {
     expect(getAvailableProxyNames("LABS", env)).toEqual(["atlassian", "grafana"]);
   });
 
-  it("runs mcp-grafana directly (no bwrap) only when THOR_MCP_DISABLE_SANDBOX is set", () => {
+  it("runs mcp-grafana directly (no bwrap) only when THOR_MCP_DISABLE_SANDBOX=1", () => {
     const env = {
       GRAFANA_URL: "https://grafana.global",
       GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
@@ -98,6 +98,13 @@ describe("proxy registry", () => {
       GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
     } as NodeJS.ProcessEnv)?.upstream;
     expect(sandboxed).toMatchObject({ kind: "stdio", command: "bwrap" });
+
+    const falseyString = resolveProxyConfig("grafana", undefined, {
+      GRAFANA_URL: "https://grafana.global",
+      GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
+      THOR_MCP_DISABLE_SANDBOX: "false",
+    } as NodeJS.ProcessEnv)?.upstream;
+    expect(falseyString).toMatchObject({ kind: "stdio", command: "bwrap" });
   });
 
   it("fails hard on a partial grafana profile bundle instead of silently using globals", () => {

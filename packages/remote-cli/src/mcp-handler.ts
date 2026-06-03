@@ -336,7 +336,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       logWarn(log, "mcp_sandbox_disabled", {
         name,
         targetKey: proxyDef.target.key,
-        reason: "THOR_MCP_DISABLE_SANDBOX is set — stdio MCP server runs unsandboxed",
+        reason: "THOR_MCP_DISABLE_SANDBOX=1 — stdio MCP server runs unsandboxed",
       });
     }
     logInfo(log, "connecting_upstream", {
@@ -349,6 +349,18 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     const upstream = await connectUpstreamFn(name, upstreamConfig, () => scheduleReconnect(1));
 
     const allToolNames = upstream.tools.map((tool) => tool.name);
+    async function closeUpstreamOnSetupFailure(err: unknown): Promise<never> {
+      await upstream.client.close().catch((closeErr) => {
+        logError(
+          log,
+          "upstream_close_failed",
+          closeErr instanceof Error ? closeErr.message : String(closeErr),
+          { name, targetKey: proxyDef.target.key },
+        );
+      });
+      throw err;
+    }
+
     try {
       validatePolicy(proxyDef.allow, proxyDef.approve ?? [], allToolNames);
     } catch (err) {
@@ -356,12 +368,12 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         if (deps.isProduction) {
           logWarn(log, "policy_drift", { name, orphans: err.orphans });
         } else {
-          throw err;
+          await closeUpstreamOnSetupFailure(err);
         }
       } else if (err instanceof PolicyOverlapError) {
-        throw err;
+        await closeUpstreamOnSetupFailure(err);
       } else {
-        throw err;
+        await closeUpstreamOnSetupFailure(err);
       }
     }
 

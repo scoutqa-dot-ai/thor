@@ -264,3 +264,11 @@ remaining repo reference to `grafana-mcp:8000`; env var surfaces updated per AGE
   volume is associated with it, so removal is clean.
 - No flag day: the change is internal to `remote-cli`; profile membership and credentials
   are unchanged.
+
+## Review fixes
+
+- 2026-06-03: `THOR_MCP_DISABLE_SANDBOX` must be exactly `1`; values like `false` or `0`
+  keep the bwrap sandbox enabled.
+- 2026-06-03: stdio upstream setup now closes the just-spawned child if `tools/list` or
+  pre-registration policy validation fails, so failed setup attempts do not leave
+  untracked `mcp-grafana` processes behind.

@@ -60,6 +60,22 @@ export async function connectUpstream(
   }
   logInfo(log, "upstream_connected", { name, transport: config.kind, target });
 
+  let tools: Tool[];
+  try {
+    ({ tools } = await client.listTools());
+  } catch (err) {
+    await client.close().catch((closeErr) => {
+      logError(
+        log,
+        "upstream_close_failed",
+        closeErr instanceof Error ? closeErr.message : String(closeErr),
+        { name, target },
+      );
+    });
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Connected to "${name}" at ${target} but failed to list tools: ${msg}`);
+  }
+
   client.onclose = () => {
     logError(log, "upstream_disconnected", "upstream closed unexpectedly", {
       name,
@@ -67,14 +83,6 @@ export async function connectUpstream(
     });
     onDisconnect?.();
   };
-
-  let tools: Tool[];
-  try {
-    ({ tools } = await client.listTools());
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Connected to "${name}" at ${target} but failed to list tools: ${msg}`);
-  }
   logInfo(log, "upstream_tools_listed", {
     name,
     toolCount: tools.length,
