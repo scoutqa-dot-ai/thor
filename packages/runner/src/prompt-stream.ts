@@ -543,11 +543,12 @@ export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStr
           errorDetail: JSON.stringify(errorProps.error),
         });
       } else if (event.type === "session.idle") {
-        if (!sawParentMessagePart) {
+        const failedAssistantIdle = autoResume.isFailedAssistantIdle();
+        const resumeMessageId = autoResume.decideResume();
+        if (!sawParentMessagePart && !failedAssistantIdle) {
           logInfo(log, "stale_session_idle_ignored", { sessionId });
           continue;
         }
-        const resumeMessageId = autoResume.decideResume();
         if (resumeMessageId) {
           autoResume.markResumed(resumeMessageId);
           logInfo(log, "session_idle_auto_resume", {
@@ -565,8 +566,7 @@ export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStr
           });
         }
         terminalError =
-          errorGrace.error ??
-          (autoResume.isFailedAssistantIdle() ? ASSISTANT_EMPTY_ERROR_OUTPUT : undefined);
+          errorGrace.error ?? (failedAssistantIdle ? ASSISTANT_EMPTY_ERROR_OUTPUT : undefined);
         break;
       }
     }

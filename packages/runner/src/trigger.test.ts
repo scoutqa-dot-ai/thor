@@ -1580,6 +1580,43 @@ describe("runner /trigger orchestration", () => {
     });
   });
 
+  it("intercepts bad idle even when no parent message part was emitted", async () => {
+    let promptCalls = 0;
+    const h = createHarness({
+      promptEvents: (sessionId) => {
+        promptCalls++;
+        if (promptCalls === 1) {
+          return [
+            messageUpdatedEvent(sessionId, {
+              id: "msg-failed-before-parts",
+              finish: "error",
+              providerID: "openai",
+              modelID: "gpt-5.5",
+              tokens: { input: 0, output: 0, reasoning: 0 },
+              role: "assistant",
+            }),
+            idleEvent(sessionId),
+          ];
+        }
+        return [textEvent(sessionId, "continued ok"), idleEvent(sessionId)];
+      },
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "start",
+        correlationKey: "slack:thread:1710000000.204",
+      });
+
+      expect(h.prompts).toHaveLength(2);
+      expect(h.prompts[1]).toBe("Continue");
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        status: "completed",
+        response: "continued ok",
+      });
+    });
+  });
+
   it("does not retry the same failed message id twice", async () => {
     let promptCalls = 0;
     const failedUpdate = (sessionId: string) =>
