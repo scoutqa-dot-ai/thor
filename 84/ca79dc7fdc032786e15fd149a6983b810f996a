@@ -1,0 +1,27 @@
+docs/plan/2026060301_katalon-mcp.md
+  dd13ec9689cc787a 1-226
+packages/common/src/proxies.ts
+  dd13ec9689cc787a 4,110-157,165,280-312
+packages/common/src/proxies.test.ts
+  dd13ec9689cc787a 12-13,141-191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "84ca79dc7fdc032786e15fd149a6983b810f996a",
+  "prompts": {
+    "dd13ec9689cc787a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26c15958-2540-4aa4-bfb7-6d39c140ad89",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 362,
+      "total_deletions": 1,
+      "accepted_lines": 362,
+      "overriden_lines": 0
+    }
+  }
+}
