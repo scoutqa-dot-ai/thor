@@ -419,8 +419,7 @@ export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStr
       const event = next.value;
 
       // Child sub-session events land in the child's own log so the
-      // viewer's owner-only slice never surfaces them. Resolve the session id
-      // once — both the origin-routing above and the parent check below need it.
+      // viewer's owner-only slice never surfaces them.
       const resolvedSessionId = eventSessionId(event);
       const originSessionId = resolvedSessionId ?? sessionId;
       appendSessionEvent(originSessionId, { type: "opencode_event", event });
@@ -428,8 +427,6 @@ export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStr
       const isParent = resolvedSessionId === sessionId;
 
       if (isParent && event.type === "message.updated") {
-        // Parse the event payload once and feed both consumers — auto-resume
-        // tracking and the context-usage progress event.
         const info = messageUpdatedInfo(event);
         if (info) {
           const assistantMessage = assistantMessageSummaryFromInfo(info);
@@ -560,24 +557,15 @@ export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStr
           // held session.error must not throttle/terminate the continued
           // response via a stale grace window timed from the original error.
           errorGrace.clear();
-          try {
-            const continueResult = await client.session.promptAsync({
-              path: { id: sessionId },
-              body: { parts: [{ type: "text", text: "Continue" }] },
-            });
-            if (!continueResult.error) continue;
-            logError(log, "session_idle_auto_resume_failed", JSON.stringify(continueResult.error), {
-              sessionId,
-              messageId: resumeMessageId,
-            });
-          } catch (err) {
-            logError(
-              log,
-              "session_idle_auto_resume_failed",
-              err instanceof Error ? err.message : String(err),
-              { sessionId, messageId: resumeMessageId },
-            );
-          }
+          const continueResult = await client.session.promptAsync({
+            path: { id: sessionId },
+            body: { parts: [{ type: "text", text: "Continue" }] },
+          });
+          if (!continueResult.error) continue;
+          logError(log, "session_idle_auto_resume_failed", JSON.stringify(continueResult.error), {
+            sessionId,
+            messageId: resumeMessageId,
+          });
         }
         terminalError =
           errorGrace.error ?? (failedAssistantIdle ? ASSISTANT_EMPTY_ERROR_OUTPUT : undefined);

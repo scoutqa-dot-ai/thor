@@ -96,7 +96,6 @@ export class IdleAutoResume {
     return id;
   }
 
-  /** Mark a failed message id as resumed and disarm until the session recovers. */
   markResumed(messageId: string): void {
     this.#resumedFailedMessageIds.add(messageId);
     this.#resumeCount++;

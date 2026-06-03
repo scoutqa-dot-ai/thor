@@ -24,12 +24,10 @@ export class SessionErrorGrace {
     this.#now = now;
   }
 
-  /** Whether an unrecovered session error is currently being held. */
   get pending(): boolean {
     return this.#error !== undefined;
   }
 
-  /** The held error message, or undefined when none is pending. */
   get error(): string | undefined {
     return this.#error;
   }
@@ -44,7 +42,6 @@ export class SessionErrorGrace {
     return this.#graceMs - (this.#now() - this.#errorAt);
   }
 
-  /** Record a session.error observed at the given stream seq. */
   record(message: string, seq: number): void {
     this.#error = message;
     this.#errorSeq = seq;
