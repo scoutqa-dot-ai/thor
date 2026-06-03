@@ -3,6 +3,10 @@
   "permission": "allow",
   "plugin": ["./plugins/thor.js"],
   "small_model": "openai/gpt-5.4-mini",
+  "snapshot": false,
+  "lsp": false,
+  "share": "disabled",
+  "autoupdate": false,
   "provider": {
     "openai": {
       "name": "codex-lb",
