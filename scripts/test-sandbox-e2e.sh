@@ -624,18 +624,24 @@ else
         "worktree 2 sandbox has correct SHA (isolated)" \
         "expected='${SBX_NEW_SHA:0:12}', got='${sbx_iso2_sha:0:12}'"
 
-      # Verify list shows both
-      sbx_list_both=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
-        -H 'Content-Type: application/json' \
-        -d '{"mode":"list"}' 2>/dev/null)
-      sbx_list_both_count=$(echo "$sbx_list_both" | node -e "
-        const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
-        const list = JSON.parse(d.stdout || '[]');
-        const ours = list.filter(s =>
-          s.cwd === '$SBX_WORKTREE_DIR' || s.cwd === '$SBX_WORKTREE_DIR2'
-        );
-        console.log(ours.length);
-      " 2>/dev/null || echo "0")
+      # Verify list shows both (retry for Daytona API eventual consistency —
+      # a freshly created sandbox can lag before appearing in list results)
+      sbx_list_both_count="0"
+      for _sbx_retry in 1 2 3; do
+        sbx_list_both=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+          -H 'Content-Type: application/json' \
+          -d '{"mode":"list"}' 2>/dev/null)
+        sbx_list_both_count=$(echo "$sbx_list_both" | node -e "
+          const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+          const list = JSON.parse(d.stdout || '[]');
+          const ours = list.filter(s =>
+            s.cwd === '$SBX_WORKTREE_DIR' || s.cwd === '$SBX_WORKTREE_DIR2'
+          );
+          console.log(ours.length);
+        " 2>/dev/null || echo "0")
+        [[ "$sbx_list_both_count" == "2" ]] && break
+        sleep 2
+      done
       assert '[[ "$sbx_list_both_count" == "2" ]]' \
         "list shows both sandboxes" \
         "count='$sbx_list_both_count'"
