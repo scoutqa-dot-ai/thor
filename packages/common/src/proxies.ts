@@ -1,7 +1,7 @@
 import { APPROVAL_TOOL_NAMES } from "./approval-events.ts";
 import { envBaseUrl } from "./env.ts";
 
-export const PROXY_NAMES = ["atlassian", "grafana", "langfuse", "posthog"] as const;
+export const PROXY_NAMES = ["atlassian", "grafana", "katalon", "langfuse", "posthog"] as const;
 
 export type ProxyName = (typeof PROXY_NAMES)[number];
 
@@ -107,6 +107,54 @@ const LANGFUSE_ALLOW = [
 ];
 const LANGFUSE_APPROVE: string[] = [];
 
+// Read-only Katalon True Platform tools (list/find/read/fetch families). Every
+// create/update/delete/move/manage/schedule tool and the write-workflow
+// scaffolding tools (build_*/prepare_*/get_upload_*) are intentionally omitted →
+// they classify as `hidden` and are unreachable. Derived from the live tools/list
+// and cross-checked at connect time by validatePolicy.
+const KATALON_ALLOW = [
+  "list_projects",
+  "list_repositories",
+  "find_iterations",
+  "find_requirements",
+  "read_requirement",
+  "find_test_cases",
+  "read_test_cases",
+  "find_test_cases_by_requirement",
+  "find_test_suites",
+  "read_test_suite",
+  "find_test_suite_collections",
+  "find_test_folders",
+  "read_test_result",
+  "find_test_results",
+  "list_alm_integrations",
+  "list_test_cloud_environments",
+  "list_test_cloud_agents",
+  "list_test_cloud_apps",
+  "list_test_cloud_tunnels",
+  "list_executions",
+  "read_execution",
+  "list_execution_outputs",
+  "find_execution_profiles",
+  "read_execution_test_results",
+  "list_schedule",
+  "read_schedule_detail",
+  "read_auts",
+  "read_manual_ai_session",
+  "fetch_requirement_data",
+  "fetch_defect_data",
+  "fetch_test_configuration_data",
+  "fetch_test_case_data",
+  "fetch_test_stability_data",
+  "read_manual_test_run_detail_by_order",
+];
+const KATALON_APPROVE: string[] = [];
+
+// The Katalon MCP server authenticates via HTTP Basic auth with the API key in
+// the password position; the username is ignored by the server, so we send a
+// fixed, non-empty label rather than leaking the key into the username.
+const KATALON_BASIC_USER = "thor";
+
 // Tool policy stays global per integration (profiles only re-route credentials),
 // so the approve inventory is the union of the per-upstream approve lists. Assert
 // at load time that it matches the typed approval events; a drift means an
@@ -114,6 +162,7 @@ const LANGFUSE_APPROVE: string[] = [];
 const APPROVED_PROXY_TOOLS = [
   ...ATLASSIAN_APPROVE,
   ...GRAFANA_APPROVE,
+  ...KATALON_APPROVE,
   ...LANGFUSE_APPROVE,
   ...POSTHOG_APPROVE,
 ].sort();
@@ -220,6 +269,39 @@ export function resolveProxyConfig(
       },
       allow: LANGFUSE_ALLOW,
       approve: LANGFUSE_APPROVE,
+      target: {
+        key: targetKey(name, profile, useScoped ? "profile" : "global"),
+        name,
+        ...(profile && { profile }),
+      },
+    };
+  }
+
+  if (name === "katalon") {
+    const scopedKey = profile ? envValue(env, `KATALON_API_KEY_${profile}`) : undefined;
+    const scopedBaseUrl = profile ? envValue(env, `KATALON_BASE_URL_${profile}`) : undefined;
+    const anyScoped = Boolean(scopedKey || scopedBaseUrl);
+    const useScoped = Boolean(scopedKey && scopedBaseUrl);
+    if (profile && anyScoped && !useScoped) {
+      const missing = [
+        !scopedKey ? `KATALON_API_KEY_${profile}` : undefined,
+        !scopedBaseUrl ? `KATALON_BASE_URL_${profile}` : undefined,
+      ].filter(Boolean);
+      throw new Error(
+        `partial katalon profile bundle for "${profile}": missing ${missing.join(", ")}. Set KATALON_API_KEY_${profile} and KATALON_BASE_URL_${profile} together, or neither.`,
+      );
+    }
+    const baseUrlVar = useScoped ? `KATALON_BASE_URL_${profile}` : "KATALON_BASE_URL";
+    const apiKey = useScoped ? scopedKey : envValue(env, "KATALON_API_KEY");
+    if (!apiKey || !envValue(env, baseUrlVar)) return undefined;
+    const token = Buffer.from(`${KATALON_BASIC_USER}:${apiKey}`).toString("base64");
+    return {
+      upstream: {
+        url: `${envBaseUrl(env, baseUrlVar)}/mcp`,
+        headers: { Authorization: `Basic ${token}` },
+      },
+      allow: KATALON_ALLOW,
+      approve: KATALON_APPROVE,
       target: {
         key: targetKey(name, profile, useScoped ? "profile" : "global"),
         name,

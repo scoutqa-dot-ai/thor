@@ -9,6 +9,8 @@ const FULL_ENV: NodeJS.ProcessEnv = {
   LANGFUSE_PUBLIC_KEY: "pk-global",
   LANGFUSE_SECRET_KEY: "sk-global",
   LANGFUSE_BASE_URL: "https://us.cloud.langfuse.com",
+  KATALON_API_KEY: "kat-global",
+  KATALON_BASE_URL: "https://acme.katalon.io",
 };
 
 describe("proxy registry", () => {
@@ -134,6 +136,61 @@ describe("proxy registry", () => {
     );
     expect(() => resolveProxyConfig("langfuse", "QA", env)).toThrow(/LANGFUSE_SECRET_KEY_QA/);
     expect(() => resolveProxyConfig("langfuse", "QA", env)).toThrow(/LANGFUSE_BASE_URL_QA/);
+  });
+
+  it("resolves katalon as a per-profile api-key basic-auth bundle with its own host", () => {
+    const env = {
+      KATALON_API_KEY: "kat-global",
+      KATALON_BASE_URL: "https://acme.katalon.io/",
+      KATALON_API_KEY_EU: "kat-eu",
+      KATALON_BASE_URL_EU: "https://acme-eu.katalon.io",
+    } as NodeJS.ProcessEnv;
+
+    // Global creds, host trailing slash trimmed, base64(thor:apiKey), url = ${base}/mcp.
+    const globalCfg = resolveProxyConfig("katalon", undefined, env);
+    expect(globalCfg?.upstream.url).toBe("https://acme.katalon.io/mcp");
+    expect(globalCfg?.upstream.headers).toEqual({
+      Authorization: `Basic ${Buffer.from("thor:kat-global").toString("base64")}`,
+    });
+    expect(globalCfg?.approve).toEqual([]);
+    expect(globalCfg?.allow).toContain("list_projects");
+    // Write tools are not in the allow list (classify as hidden downstream).
+    expect(globalCfg?.allow).not.toContain("create_test_case");
+
+    // A full profile bundle routes its own creds at its own host, distinct target key.
+    const eu = resolveProxyConfig("katalon", "EU", env);
+    expect(eu?.upstream).toEqual({
+      url: "https://acme-eu.katalon.io/mcp",
+      headers: { Authorization: `Basic ${Buffer.from("thor:kat-eu").toString("base64")}` },
+    });
+    expect(eu?.target.key).toBe("katalon:EU");
+
+    // A profile with no scoped vars at all falls back to the whole global bundle.
+    expect(resolveProxyConfig("katalon", "QA", env)?.upstream.url).toBe(
+      "https://acme.katalon.io/mcp",
+    );
+    expect(getAvailableProxyNames("QA", env)).toEqual(["katalon"]);
+  });
+
+  it("disables katalon when the required KATALON_BASE_URL is unset", () => {
+    const env = { KATALON_API_KEY: "kat-global" } as NodeJS.ProcessEnv;
+
+    expect(resolveProxyConfig("katalon", undefined, env)).toBeUndefined();
+    expect(getAvailableProxyNames(undefined, env)).not.toContain("katalon");
+  });
+
+  it("fails hard on a partial katalon profile bundle instead of silently using globals", () => {
+    const env = {
+      KATALON_API_KEY: "kat-global",
+      KATALON_BASE_URL: "https://acme.katalon.io",
+      KATALON_API_KEY_QA: "kat-qa",
+      // KATALON_BASE_URL_QA intentionally missing.
+    } as NodeJS.ProcessEnv;
+
+    expect(() => resolveProxyConfig("katalon", "QA", env)).toThrow(
+      /partial katalon profile bundle/i,
+    );
+    expect(() => resolveProxyConfig("katalon", "QA", env)).toThrow(/KATALON_BASE_URL_QA/);
   });
 
   it("keeps allow and approve sets disjoint for each upstream", () => {

@@ -70,7 +70,7 @@ For any Slack task beyond a simple post, use the `slack` skill.
 
 ### MCP tools
 
-MCP tools such as Atlassian, Grafana, PostHog, and Langfuse are accessed via the `mcp` CLI. Discover what is available in the current session — the listings reflect this thread's access — and call tools with it:
+MCP tools such as Atlassian, Grafana, PostHog, Langfuse, and Katalon are accessed via the `mcp` CLI. Discover what is available in the current session — the listings reflect this thread's access — and call tools with it:
 
 ```
 mcp                                    # list upstreams available to this session
