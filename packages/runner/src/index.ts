@@ -83,6 +83,7 @@ const OPENCODE_CONNECT_TIMEOUT = config.opencodeConnectTimeout;
 const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 const ABORT_TIMEOUT = config.abortTimeout;
 const SESSION_ERROR_GRACE_MS = config.sessionErrorGraceMs;
+const ASSISTANT_EMPTY_ERROR_OUTPUT = "Assistant message failed before producing output";
 
 /** Memory directory root. */
 const MEMORY_DIR = "/workspace/memory";
@@ -1181,6 +1182,9 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                     collectedTextParts.push(textPart.text);
                     if (textPart.text.trim().length > 0) {
                       messageIdsWithAssistantOutput.add(textPart.messageID);
+                      latestAssistantMessage = undefined;
+                      autoResumeArmed = true;
+                      autoResumeDisarmedAfterMessageId = undefined;
                     }
                   } else if (part.type === "tool") {
                     const toolPart = part as ToolPart;
@@ -1253,12 +1257,14 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                   }
                   const latestAssistant = latestAssistantMessage;
                   const failedMessageId = latestAssistant?.id;
-                  if (
-                    autoResumeArmed &&
-                    failedMessageId &&
+                  const failedAssistantIdle =
+                    !!failedMessageId &&
                     latestAssistant?.finish === "error" &&
                     (latestAssistant.tokenTotal ?? 0) <= 0 &&
-                    !messageIdsWithAssistantOutput.has(failedMessageId) &&
+                    !messageIdsWithAssistantOutput.has(failedMessageId);
+                  if (
+                    autoResumeArmed &&
+                    failedAssistantIdle &&
                     !autoResumedFailedMessageIds.has(failedMessageId)
                   ) {
                     autoResumedFailedMessageIds.add(failedMessageId);
@@ -1283,7 +1289,9 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                       },
                     );
                   }
-                  terminalError = latestSessionError;
+                  terminalError =
+                    latestSessionError ??
+                    (failedAssistantIdle ? ASSISTANT_EMPTY_ERROR_OUTPUT : undefined);
                   break;
                 }
               }

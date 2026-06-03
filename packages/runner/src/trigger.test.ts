@@ -1611,6 +1611,10 @@ describe("runner /trigger orchestration", () => {
       expect(h.prompts).toHaveLength(2);
       expect(h.prompts[1]).toBe("Continue");
       expect(result.events.filter((e) => e.type === "done")).toHaveLength(1);
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        status: "error",
+        error: expect.stringContaining("failed before producing output"),
+      });
     });
   });
 
