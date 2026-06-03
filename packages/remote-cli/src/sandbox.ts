@@ -27,6 +27,10 @@ let daytonaSingleton: Daytona | null = null;
 let daytonaEnv: ReturnType<typeof loadDaytonaEnv> | null = null;
 const cwdLocks = new Map<string, Promise<unknown>>();
 
+function rethrowError(err: unknown): never {
+  throw err instanceof Error ? err : new Error(errorMessage(err));
+}
+
 export function withCwdLock<T>(cwd: string, fn: () => Promise<T>): Promise<T> {
   return withKeyLock(cwdLocks, cwd, fn);
 }
@@ -79,7 +83,7 @@ export async function createSandbox(
     if (sandbox) {
       await safeDeleteSandbox(sandbox);
     }
-    throw new Error(errorMessage(err));
+    rethrowError(err);
   }
 }
 
@@ -340,7 +344,7 @@ async function bundleAndUpload(
       throw new Error(`sandbox unbundle/reset failed: ${execResult.result}`);
     }
   } catch (err) {
-    throw new Error(errorMessage(err));
+    rethrowError(err);
   } finally {
     await rm(localBundlePath, { force: true }).catch(() => {});
   }
@@ -388,7 +392,7 @@ export async function deleteSandbox(sandboxId: string): Promise<void> {
     if (isNotFoundError(err)) {
       return;
     }
-    throw new Error(errorMessage(err));
+    rethrowError(err);
   }
 }
 
@@ -415,7 +419,7 @@ async function listSandboxesByLabels(labels: Record<string, string>): Promise<Sa
     const page = await getDaytona().list(labels, 1, 100);
     return page.items || [];
   } catch (err) {
-    throw new Error(errorMessage(err));
+    rethrowError(err);
   }
 }
 
@@ -423,7 +427,7 @@ async function getSandboxById(sandboxId: string): Promise<Sandbox> {
   try {
     return await getDaytona().get(sandboxId);
   } catch (err) {
-    throw new Error(errorMessage(err));
+    rethrowError(err);
   }
 }
 
