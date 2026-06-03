@@ -311,12 +311,12 @@ Each repo can influence Thor's behavior in two ways:
 
 **Memory (Thor only, outside the repo):**
 
-- Global memory: `/workspace/memory/README.md` — injected into every new session. Use only for rare cross-cutting Thor context, critical durable corrections, and workspace-wide operating notes. Keep short.
-- Channel memory: `/workspace/memory/channels/<channel-id>.md` — injected into new Slack thread sessions when the correlation key is `slack:thread:<channel>/<ts>`. Use for durable channel/team preferences, recurring workflows, and channel-specific norms.
-- Person memory: `/workspace/memory/people/<email-local-part>.md` — injected into new sessions when the triggering actor resolves through `/workspace/config/thor.json` `users[]`. Use the lowercased email local-part from `users[].email` (for example `john.doe@example.com` → `people/john.doe.md`, `acme@example.com` → `people/acme.md`). Use for durable user preferences and identity context.
+- Global memory: `/workspace/memory/README.md` — injected into every new or stale session. Use only for rare cross-cutting Thor context, critical durable corrections, and workspace-wide operating notes. Keep short.
+- Channel memory: `/workspace/memory/channels/<channel-id>.md` — injected into new or stale Slack thread sessions when the correlation key is `slack:thread:<channel>/<ts>`. Use for durable channel/team preferences, recurring workflows, and channel-specific norms.
+- Person memory: `/workspace/memory/people/<email-local-part>.md` — injected into new or stale sessions when the triggering actor resolves through `/workspace/config/thor.json` `users[]`. Use the lowercased email local-part from `users[].email` (for example `john.doe@example.com` → `people/john.doe.md`, `acme@example.com` → `people/acme.md`). Use for durable user preferences and identity context.
 - Repo-scoped context: use repo-local `AGENTS.md`, `CLAUDE.md`, and in-repo docs for repo/product facts, codebase conventions, runbooks, and anything humans should also see.
 
-**Reading:** the runner injects global/channel/person memory on new sessions only. For additional Thor-only context, check relevant files under `/workspace/memory/`. For non-trivial recurring work, search `/workspace/runs/` first because it has denser reusable task context than worklog. Use `/workspace/worklog/` for prior-session continuity when the prompt points at a worklog note or when you need the execution/audit trail.
+**Reading:** the runner injects global/channel/person memory on new or stale sessions. For additional Thor-only context, check relevant files under `/workspace/memory/`. For non-trivial recurring work, search `/workspace/runs/` first because it has denser reusable task context than worklog. Use `/workspace/worklog/` for prior-session continuity when the prompt points at a worklog note or when you need the execution/audit trail.
 
 **Writing:** global memory is rare and cross-cutting; channel memory is durable channel/team context; person memory is durable user preference or identity context. Prefer in-repo docs for anything humans should also see. Use memory for Thor-only context that doesn't belong in the codebase. Do not store ephemeral task state, raw tool output, secrets, repo facts, or anything already in the repo.
 

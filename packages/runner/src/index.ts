@@ -130,7 +130,7 @@ function readMemoryFile(filePath: string): string | undefined {
 }
 
 /** Read global memory file, returns content or undefined. */
-function readRootMemory(memoryDir = MEMORY_DIR): string | undefined {
+function readGlobalMemory(memoryDir = MEMORY_DIR): string | undefined {
   return readMemoryFile(`${memoryDir}/README.md`);
 }
 
@@ -946,10 +946,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       // --- Memory: inject into new or stale sessions ---
       if (!resumed) {
         const bootstrapBlocks: string[] = [];
-        const rootMemory = readRootMemory(memoryDir);
-        if (rootMemory) {
+        const globalMemory = readGlobalMemory(memoryDir);
+        if (globalMemory) {
           bootstrapBlocks.push(
-            `[Global memory — important context from prior sessions]\n${rootMemory}`,
+            `[Global memory — important context from prior sessions]\n${globalMemory}`,
           );
           bootstrapMemoryPaths.push(`${memoryDir}/README.md`);
         } else {
