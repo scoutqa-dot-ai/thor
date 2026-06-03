@@ -1,0 +1,23 @@
+scripts/test-sandbox-e2e.sh
+  7dbd4a88a0522b6c 627-630,642-644
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "29ff59cc11ff68081cba674fb88a07fe501106f5",
+  "prompts": {
+    "7dbd4a88a0522b6c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "99d21592-edcb-4a0b-8bed-38f0e64320e7",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 18,
+      "total_deletions": 12,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    }
+  }
+}
