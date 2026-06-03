@@ -21,6 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
+      # CI-only AppArmor relaxation for remote-cli (see docker-compose.e2e.yml).
+      COMPOSE_FILE: docker-compose.yml:docker-compose.e2e.yml
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       GITHUB_APP_ID: ${{ vars.THOR_GITHUB_APP_ID }}
       GITHUB_APP_PRIVATE_KEY_FILE: /var/lib/remote-cli/github-app/private-key.pem

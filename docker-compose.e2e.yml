@@ -1,0 +1,13 @@
+# E2E-only overrides. Used in CI via COMPOSE_FILE=docker-compose.yml:docker-compose.e2e.yml.
+# NOT applied in production.
+#
+# The GitHub Actions runner's AppArmor docker-default profile denies the mount
+# operations bwrap needs to build its sandbox (the production grafana MCP child),
+# so the in-container bwrap fails with "Failed to make / slave: Permission denied".
+# The production deploy target does not impose this (validated in Phase 1), so we
+# relax AppArmor for remote-cli only in CI — the additive seccomp profile from the
+# base compose file still applies, and production keeps both LSM layers.
+services:
+  remote-cli:
+    security_opt:
+      - apparmor=unconfined

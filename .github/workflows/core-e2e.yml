@@ -26,6 +26,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      # CI relaxes AppArmor for remote-cli so the bwrap-sandboxed grafana child
+      # can mount its namespace (the runner's docker-default profile denies it).
+      # Production keeps docker-default; this override is CI-only.
+      COMPOSE_FILE: docker-compose.yml:docker-compose.e2e.yml
       OPENCODE_AUTH_JSON: ${{ secrets.OPENCODE_AUTH_JSON }}
       SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
       SLACK_BOT_USER_ID: ${{ vars.SLACK_BOT_USER_ID }}
