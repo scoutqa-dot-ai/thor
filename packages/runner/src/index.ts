@@ -1,19 +1,10 @@
 import express from "express";
 import { createOpencodeClient } from "@opencode-ai/sdk";
 import { z } from "zod/v4";
-import type {
-  Event,
-  Part,
-  TextPartInput,
-  ToolPart,
-  TextPart,
-  StepFinishPart,
-  ToolStateCompleted,
-  ToolStateError,
-} from "@opencode-ai/sdk";
+import type { TextPartInput } from "@opencode-ai/sdk";
 import { EventBusRegistry, waitForSessionSettled } from "./event-bus.ts";
-import { IdleAutoResume } from "./idle-auto-resume.ts";
-import { SessionErrorGrace } from "./session-error-grace.ts";
+import { runPromptStream } from "./prompt-stream.ts";
+import { contextLimitKey, isRecord, safeStr, type ModelContextLimits } from "./opencode-events.ts";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
@@ -21,7 +12,6 @@ import {
   logInfo,
   logWarn,
   logError,
-  truncate,
   isAllowedDirectory,
   extractRepoFromCwd,
   SESSION_LOCK_PREFIX,
@@ -68,7 +58,6 @@ import type {
 } from "@thor/common";
 import type { ReverseAnchorEntry, SessionEventLogRecord } from "@thor/common";
 import type { ProgressEvent, ProgressTarget, ProgressTransport } from "@thor/common";
-import { getMemoryProgressEvents } from "./memory-progress.ts";
 import { pathToFileURL } from "node:url";
 import {
   createSlackProgressTransport,
@@ -85,7 +74,6 @@ const OPENCODE_CONNECT_TIMEOUT = config.opencodeConnectTimeout;
 const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 const ABORT_TIMEOUT = config.abortTimeout;
 const SESSION_ERROR_GRACE_MS = config.sessionErrorGraceMs;
-const ASSISTANT_EMPTY_ERROR_OUTPUT = "Assistant message failed before producing output";
 
 /** Memory directory root. */
 const MEMORY_DIR = "/workspace/memory";
@@ -94,7 +82,6 @@ const MEMORY_DIR = "/workspace/memory";
 const defaultEventBuses = new EventBusRegistry(OPENCODE_URL);
 
 type OpencodeClient = ReturnType<typeof createOpencodeClient>;
-type ModelContextLimits = Map<string, number>;
 const EMPTY_MODEL_CONTEXT_LIMITS: ModelContextLimits = new Map();
 const MODEL_CONTEXT_LIMIT_CACHE_TTL_MS = 5 * 60_000;
 let cachedModelContextLimits:
@@ -563,175 +550,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
     stream: z.boolean().optional(),
   });
 
-  // ---------------------------------------------------------------------------
-  // Event filtering — what gets a JSON file, what gets a stdout log, what's ignored
-  // ---------------------------------------------------------------------------
-  //
-  // | Part type       | JSON file? | Stdout log?             | Why                                   |
-  // |-----------------|------------|-------------------------|---------------------------------------|
-  // | tool completed  | Yes        | Yes (name + duration)   | The actual useful event                |
-  // | tool error      | Yes        | Yes (name + error)      | Something failed                       |
-  // | tool pending    | No         | No                      | Immediately followed by running        |
-  // | tool running    | No         | No                      | Immediately followed by result         |
-  // | step-finish     | Yes        | Yes (cost/token summary) | Step boundary with cost data          |
-  // | text            | Yes        | Yes (length only)       | Assistant response, don't dump content |
-  // | step-start      | No         | No                      | Pure noise                             |
-  // | reasoning       | No         | No                      | Internal CoT, fires many times         |
-  // | snapshot/patch  | No         | No                      | Infrastructure noise                   |
-  // | compaction      | No         | No                      | Infrastructure noise                   |
-
-  /**
-   * Extract a short display name from a tool part.
-   * For bash, show the wrapper binary (e.g. "git checkout") when the command starts
-   * with one of our known wrappers; otherwise show "bash".
-   */
-  function toolDisplayName(toolPart: ToolPart): string {
-    if (toolPart.tool !== "bash") return toolPart.tool;
-
-    const input = toolPart.state.input as { command?: string } | undefined;
-    const command = input?.command;
-    if (!command) return "bash";
-
-    const parts = command.trimStart().split(/\s+/);
-    const cmd = parts[0];
-    if (!cmd) return "bash";
-
-    const depth = KNOWN_BINS[cmd];
-    if (depth === undefined) return "bash";
-    return parts.slice(0, depth).join(" ");
-  }
-
-  function emitMemoryEventsFromToolPart(
-    toolPart: ToolPart,
-    emit: (event: ProgressEvent) => void,
-  ): void {
-    const status = toolPart.state.status;
-    const input = (toolPart.state as { input?: unknown }).input;
-    for (const event of getMemoryProgressEvents({ tool: toolPart.tool, status, input })) {
-      emit(event);
-    }
-  }
-
-  function sessionErrorMessage(error: unknown): string {
-    if (!error || typeof error !== "object") return "Unknown error";
-
-    const candidate = error as {
-      name?: string;
-      message?: string;
-      data?: { name?: string; message?: string };
-    };
-
-    return (
-      candidate.data?.message ||
-      candidate.message ||
-      candidate.data?.name ||
-      candidate.name ||
-      "Unknown error"
-    );
-  }
-
-  async function nextWithTimeout(
-    iterator: AsyncIterator<Event>,
-    timeoutMs: number,
-  ): Promise<IteratorResult<Event> | "timeout"> {
-    if (timeoutMs <= 0) return "timeout";
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([
-        iterator.next(),
-        new Promise<"timeout">((resolve) => {
-          timeout = setTimeout(() => resolve("timeout"), timeoutMs);
-        }),
-      ]);
-    } finally {
-      if (timeout) clearTimeout(timeout);
-    }
-  }
-
-  /** Log a part to stdout if it's interesting. */
-  function logPartToStdout(sessionId: string, part: Part): void {
-    const sid = sessionId.slice(0, 12);
-
-    if (part.type === "tool") {
-      const toolPart = part as ToolPart;
-      const status = toolPart.state.status;
-      const tool = toolDisplayName(toolPart);
-
-      if (status === "completed") {
-        const completed = toolPart.state as ToolStateCompleted;
-        const durationMs = completed.time.end - completed.time.start;
-        const extra: Record<string, unknown> = {
-          sessionId: sid,
-          tool,
-          durationMs,
-        };
-        // For long-running tools (task, bash), include an output snippet to aid debugging.
-        if (toolPart.tool === "task" || durationMs > 60_000) {
-          const raw = typeof completed.output === "string" ? completed.output : "";
-          if (raw.length > 0) {
-            extra.outputSnippet = truncate(raw, 400);
-          }
-        }
-        logInfo(log, "tool_completed", extra);
-      } else if (status === "error") {
-        const errState = toolPart.state as ToolStateError;
-        logWarn(log, "tool_error", {
-          sessionId: sid,
-          tool,
-          error: String(errState.error),
-        });
-      }
-      // pending/running — silent
-      return;
-    }
-
-    if (part.type === "text") {
-      const textPart = part as TextPart;
-      logInfo(log, "text", {
-        sessionId: sid,
-        length: textPart.text.length,
-      });
-      return;
-    }
-
-    if (part.type === "step-finish") {
-      const sf = part as StepFinishPart;
-      logInfo(log, "step_finish", {
-        sessionId: sid,
-        reason: sf.reason,
-        cost: sf.cost,
-        tokens: sf.tokens,
-      });
-      return;
-    }
-
-    if (part.type === "retry") {
-      // RetryPart has attempt and error fields
-      const retryPart = part as Part & {
-        type: "retry";
-        attempt: number;
-        error: { message: string };
-      };
-      logError(log, "retry", retryPart.error.message, {
-        sessionId: sid,
-        attempt: retryPart.attempt,
-      });
-      return;
-    }
-
-    if (part.type === "subtask") {
-      const subtaskPart = part as Part & { type: "subtask"; description: string; agent: string };
-      logInfo(log, "subtask", {
-        sessionId: sid,
-        description: subtaskPart.description,
-        agent: subtaskPart.agent,
-      });
-      return;
-    }
-
-    // Everything else (step-start, reasoning, snapshot, patch, compaction, agent) — silent
-  }
-
   /**
    * Stream-based prompt handler.
    *
@@ -1039,224 +857,15 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       const backgroundTask = (async () => {
         try {
           // --- Stream processing ---
-
-          let seq = 0;
-          const collectedTextParts: string[] = [];
-          const collectedToolCalls: Array<{ tool: string; state: string }> = [];
-          let terminalError: string | undefined;
-          const errorGrace = new SessionErrorGrace(SESSION_ERROR_GRACE_MS);
-          const autoResume = new IdleAutoResume();
-          let sawParentMessagePart = false;
-          // Track child session IDs for progress forwarding.
-          const childSessionIds = new Set<string>();
-          // Dedupe task delegate emissions across repeated part updates.
-          const emittedTaskDelegates = new Set<string>();
-          // Dedupe tool progress emissions — emit once per call when it starts running.
-          const emittedToolStarts = new Set<string>();
-
-          function emitToolProgress(
-            toolPart: ToolPart,
-            status: "running" | "completed" | "error",
-          ): void {
-            const key = [toolPart.sessionID, toolPart.messageID, toolPart.callID].join("|");
-            if (emittedToolStarts.has(key)) return;
-            emittedToolStarts.add(key);
-            const displayName = toolDisplayName(toolPart);
-            emit({ type: "tool", tool: displayName, status });
-          }
-
-          function emitTaskDelegateProgress(toolPart: ToolPart): void {
-            if (toolPart.tool !== "task") return;
-
-            const input = (toolPart.state as { input?: unknown }).input;
-            if (!isRecord(input)) return;
-            const raw = input.subagent_type;
-            if (typeof raw !== "string") return;
-            const agent = raw.trim();
-            if (!agent) return;
-
-            const key = [toolPart.sessionID, toolPart.messageID, toolPart.callID].join("|");
-            if (emittedTaskDelegates.has(key)) return;
-            emittedTaskDelegates.add(key);
-
-            emit({ type: "delegate", agent });
-          }
-
-          {
-            const iterator = subscription[Symbol.asyncIterator]();
-            try {
-              while (true) {
-                const next = errorGrace.pending
-                  ? await nextWithTimeout(iterator, errorGrace.remainingMs())
-                  : await iterator.next();
-
-                if (next === "timeout") {
-                  terminalError = errorGrace.error;
-                  break;
-                }
-                if (next.done) {
-                  terminalError = errorGrace.error;
-                  break;
-                }
-
-                const event = next.value;
-
-                // Child sub-session events land in the child's own log so the
-                // viewer's owner-only slice never surfaces them.
-                const originSessionId = eventSessionId(event) ?? sessionId;
-                appendSessionEvent(originSessionId, { type: "opencode_event", event });
-
-                const isParent = isSessionEvent(event, sessionId);
-
-                if (isParent && event.type === "message.updated") {
-                  const assistantMessage = assistantMessageUpdateSummary(event);
-                  if (assistantMessage) {
-                    autoResume.onAssistantMessageUpdate(assistantMessage);
-                  }
-                  emitContextProgressFromMessage(event, currentModelContextLimits(), emit);
-                }
-
-                // Forward tool progress from child sessions so
-                // Slack progress isn't silent while a task runs. Non-parent
-                // events must never drive parent terminal handling below — a
-                // child's session.idle / session.error would otherwise end the
-                // parent run before its final answer is emitted.
-                if (!isParent) {
-                  if (
-                    event.type === "message.part.updated" &&
-                    childSessionIds.has(event.properties.part.sessionID)
-                  ) {
-                    const part = event.properties.part;
-                    if (part.type === "tool") {
-                      const toolPart = part as ToolPart;
-                      emitTaskDelegateProgress(toolPart);
-                      const status = toolPart.state.status;
-                      if (status === "running") {
-                        emitToolProgress(toolPart, "running");
-                      } else if (status === "completed" || status === "error") {
-                        emitToolProgress(toolPart, status);
-                        emitMemoryEventsFromToolPart(toolPart, emit);
-                      }
-                    }
-                  }
-                  continue;
-                }
-
-                if (event.type === "message.part.updated") {
-                  sawParentMessagePart = true;
-                  const part = event.properties.part;
-                  seq++;
-
-                  errorGrace.clearIfRecovered(seq);
-
-                  // Stdout logging (selective)
-                  logPartToStdout(sessionId, part);
-
-                  // Accumulate data for response regardless of filtering
-                  if (part.type === "text") {
-                    const textPart = part as TextPart;
-                    collectedTextParts.push(textPart.text);
-                    autoResume.onAssistantText(textPart.messageID, textPart.text.trim().length > 0);
-                  } else if (part.type === "tool") {
-                    const toolPart = part as ToolPart;
-                    emitTaskDelegateProgress(toolPart);
-                    const status = toolPart.state.status;
-
-                    // Discover child sessions when a task tool starts running.
-                    if (toolPart.tool === "task" && status === "running") {
-                      client.session
-                        .children({ path: { id: sessionId } })
-                        .then((resp) => {
-                          if (!resp.data) return;
-                          for (const child of resp.data) {
-                            if (childSessionIds.has(child.id)) continue;
-                            childSessionIds.add(child.id);
-                            subscription.addSessionId(child.id);
-                            try {
-                              appendAlias({
-                                aliasType: "opencode.subsession",
-                                aliasValue: child.id,
-                                anchorId,
-                              });
-                            } catch (err) {
-                              logError(
-                                log,
-                                "opencode_subsession_alias_write_failed",
-                                err instanceof Error ? err.message : String(err),
-                                { sessionId, anchorId, childId: child.id },
-                              );
-                            }
-                          }
-                        })
-                        .catch((err) => {
-                          logError(
-                            log,
-                            "child_session_discovery_failed",
-                            err instanceof Error ? err.message : String(err),
-                            { sessionId, anchorId },
-                          );
-                        });
-                    }
-
-                    if (status === "running") {
-                      emitToolProgress(toolPart, "running");
-                    }
-
-                    if (status === "completed" || status === "error") {
-                      const displayName = toolDisplayName(toolPart);
-                      collectedToolCalls.push({ tool: displayName, state: status });
-                      emitToolProgress(toolPart, status);
-                      emitMemoryEventsFromToolPart(toolPart, emit);
-                    }
-                  }
-                } else if (event.type === "session.error") {
-                  const errorProps = event.properties;
-                  const errorMessage = sessionErrorMessage(errorProps.error);
-                  errorGrace.record(errorMessage, seq);
-                  collectedToolCalls.push({ tool: "error", state: "error" });
-                  emit({ type: "tool", tool: "error", status: "error" });
-                  logError(log, "session_error", errorMessage, {
-                    sessionId,
-                    errorDetail: JSON.stringify(errorProps.error),
-                  });
-                } else if (event.type === "session.idle") {
-                  if (!sawParentMessagePart) {
-                    logInfo(log, "stale_session_idle_ignored", { sessionId });
-                    continue;
-                  }
-                  const resumeMessageId = autoResume.decideResume();
-                  if (resumeMessageId) {
-                    autoResume.markResumed(resumeMessageId);
-                    logInfo(log, "session_idle_auto_resume", {
-                      sessionId,
-                      messageId: resumeMessageId,
-                    });
-                    const continueResult = await client.session.promptAsync({
-                      path: { id: sessionId },
-                      body: { parts: [{ type: "text", text: "Continue" }] },
-                    });
-                    if (!continueResult.error) continue;
-                    logError(
-                      log,
-                      "session_idle_auto_resume_failed",
-                      JSON.stringify(continueResult.error),
-                      {
-                        sessionId,
-                        messageId: resumeMessageId,
-                      },
-                    );
-                  }
-                  terminalError =
-                    errorGrace.error ??
-                    (autoResume.isFailedAssistantIdle() ? ASSISTANT_EMPTY_ERROR_OUTPUT : undefined);
-                  break;
-                }
-              }
-            } finally {
-              await iterator.return?.();
-              subscription.close();
-            }
-          }
+          const { terminalError, textParts, toolCalls, totalParts } = await runPromptStream({
+            client,
+            subscription,
+            sessionId,
+            anchorId,
+            emit,
+            sessionErrorGraceMs: SESSION_ERROR_GRACE_MS,
+            modelContextLimits: currentModelContextLimits,
+          });
 
           const durationMs = Date.now() - promptStart;
           endTrigger(
@@ -1268,9 +877,9 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           logInfo(log, "session_done", {
             sessionId,
             status: terminalError ? "error" : "completed",
-            textParts: collectedTextParts.length,
-            toolCalls: collectedToolCalls.length,
-            totalParts: seq,
+            textParts: textParts.length,
+            toolCalls: toolCalls.length,
+            totalParts,
             durationMs,
           });
 
@@ -1282,8 +891,8 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             resumed,
             status: terminalError ? "error" : "completed",
             ...(terminalError ? { error: terminalError } : {}),
-            response: collectedTextParts.join("\n\n"),
-            toolCalls: collectedToolCalls,
+            response: textParts.join("\n\n"),
+            toolCalls,
             durationMs,
           });
           await progressChain;
@@ -1324,26 +933,6 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 }
 
 // --- Helpers ---
-
-function eventSessionId(event: Event): string | undefined {
-  if (event.type === "message.part.updated") return event.properties.part.sessionID;
-  if (event.type === "message.updated") {
-    const info = messageUpdatedInfo(event);
-    return safeStr(info?.sessionID) ?? safeStr(info?.sessionId);
-  }
-  if (
-    event.type === "session.idle" ||
-    event.type === "session.status" ||
-    event.type === "session.error"
-  ) {
-    return event.properties.sessionID;
-  }
-  return undefined;
-}
-
-function contextLimitKey(providerID: string, modelID: string): string {
-  return `${providerID}/${modelID}`;
-}
 
 async function resolveModelContextLimits(client: OpencodeClient): Promise<ModelContextLimits> {
   const limits: ModelContextLimits = new Map();
@@ -1398,66 +987,6 @@ function warmModelContextLimits(input: {
   return cachedModelContextLimitsPending;
 }
 
-function messageUpdatedInfo(event: Event): Record<string, unknown> | undefined {
-  const properties = (event as unknown as { properties?: unknown }).properties;
-  if (!isRecord(properties)) return undefined;
-  const info = properties.info ?? properties.message;
-  return isRecord(info) ? info : undefined;
-}
-
-function assistantMessageUpdateSummary(
-  event: Event,
-): { id: string; finish: string | undefined; tokenTotal: number | undefined } | undefined {
-  const info = messageUpdatedInfo(event);
-  if (!info) return undefined;
-  const role = safeStr(info.role) ?? safeStr(info.type);
-  if (role && role !== "assistant") return undefined;
-  const id =
-    safeStr(info.id) ??
-    safeStr(info.messageID) ??
-    safeStr(info.messageId) ??
-    safeStr(info.message_id);
-  if (!id) return undefined;
-  return {
-    id,
-    finish: safeStr(info.finish) ?? safeStr(info.finishReason) ?? safeStr(info.finish_reason),
-    tokenTotal: contextTokenTotal(info.tokens),
-  };
-}
-
-function emitContextProgressFromMessage(
-  event: Event,
-  limits: ModelContextLimits,
-  emit: (event: ProgressEvent) => void,
-): void {
-  const info = messageUpdatedInfo(event);
-  if (!info) return;
-  const role = safeStr(info.role) ?? safeStr(info.type);
-  if (role && role !== "assistant") return;
-  const tokens = contextTokenTotal(info.tokens);
-  if (tokens === undefined) return;
-  const tokenTotal = Math.max(0, Math.floor(tokens));
-  if (tokenTotal <= 0) return;
-  const providerID = safeStr(info.providerID) ?? safeStr(info.providerId);
-  const modelID = safeStr(info.modelID) ?? safeStr(info.modelId);
-  if (!providerID || !modelID) return;
-  const limit = limits.get(contextLimitKey(providerID, modelID));
-  if (!limit) return;
-  const usagePercent = Math.round((tokenTotal * 100) / limit);
-  emit({
-    type: "context",
-    providerID,
-    modelID,
-    tokens: tokenTotal,
-    limit,
-    usagePercent,
-  });
-}
-
-function isSessionEvent(event: Event, sessionId: string): boolean {
-  return eventSessionId(event) === sessionId;
-}
-
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -1466,51 +995,6 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
-
-const KNOWN_BINS: Record<string, number> = {
-  approval: 2,
-  corepack: 2,
-  gh: 2,
-  git: 2,
-  ldcli: 2,
-  mcp: 3,
-  metabase: 2,
-  npm: 2,
-  npx: 2,
-  pnpm: 2,
-  pnpx: 2,
-  sandbox: 2,
-  scoutqa: 2,
-  "slack-upload": 1,
-  curl: 1,
-  jq: 1,
-  node: 1,
-  perl: 1,
-  pip3: 2,
-  prettier: 1,
-  python3: 1,
-  rg: 1,
-  ruff: 2,
-  shfmt: 1,
-  awk: 1,
-  cat: 1,
-  cp: 1,
-  diff: 1,
-  find: 1,
-  grep: 1,
-  gunzip: 1,
-  gzip: 1,
-  head: 1,
-  ls: 1,
-  mkdir: 1,
-  mktemp: 1,
-  mv: 1,
-  rm: 1,
-  sed: 1,
-  tail: 1,
-  tar: 1,
-  wc: 1,
-};
 
 function safeSnippet(value: string | undefined): string {
   // Debugging UI: no redaction, no length cap. Newlines/tabs are collapsed
@@ -1633,14 +1117,6 @@ function sourceFrom(correlationKey: string | undefined): string {
 }
 
 type DecodedSource = { icon: string; label: string; href?: string };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
-function safeStr(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
 
 function tryParseJsonObject(value: string | undefined): Record<string, unknown> | undefined {
   if (!value) return undefined;
@@ -2136,10 +1612,27 @@ function numericTokenTotal(tokens: unknown): number | undefined {
   return found ? total : undefined;
 }
 
-function contextTokenTotal(tokens: unknown): number | undefined {
-  const counts = extractTokenCounts(tokens);
-  if (!counts) return undefined;
-  return counts.input + counts.output + counts.reasoning + counts.cacheRead;
+type TokenCounts = { input: number; output: number; reasoning: number; cacheRead: number };
+
+/**
+ * Structured token breakdown for the per-agent ledger the viewer renders from
+ * persisted step-finish payloads. Viewer-only — the runtime stream path needs
+ * just a scalar total (see contextTokenTotal in prompt-stream.ts).
+ */
+function extractTokenCounts(tokens: unknown): TokenCounts | undefined {
+  if (!isRecord(tokens)) return undefined;
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const cache = isRecord(tokens.cache) ? tokens.cache : undefined;
+  const counts: TokenCounts = {
+    input: num(tokens.input),
+    output: num(tokens.output),
+    reasoning: num(tokens.reasoning),
+    cacheRead: cache ? num(cache.read) : 0,
+  };
+  if (counts.input + counts.output + counts.reasoning + counts.cacheRead === 0) {
+    return undefined;
+  }
+  return counts;
 }
 
 /**
@@ -2163,24 +1656,6 @@ function extractCorrelationKeyPrompt(
     return text.slice(prefix.length).replace(/^\s+/, "");
   }
   return undefined;
-}
-
-type TokenCounts = { input: number; output: number; reasoning: number; cacheRead: number };
-
-function extractTokenCounts(tokens: unknown): TokenCounts | undefined {
-  if (!isRecord(tokens)) return undefined;
-  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-  const cache = isRecord(tokens.cache) ? tokens.cache : undefined;
-  const counts: TokenCounts = {
-    input: num(tokens.input),
-    output: num(tokens.output),
-    reasoning: num(tokens.reasoning),
-    cacheRead: cache ? num(cache.read) : 0,
-  };
-  if (counts.input + counts.output + counts.reasoning + counts.cacheRead === 0) {
-    return undefined;
-  }
-  return counts;
 }
 
 type AgentLedger = {
