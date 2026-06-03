@@ -170,7 +170,7 @@ Loop:
 Rules:
 
 - Worktree must match the branch: `/workspace/worktrees/<repo>/<branch>`. Reuse existing worktrees across sessions.
-- `/workspace/runs/` is active scratch and a searchable archive — scan it before serious work; reuse a prior run dir when it fits, else cite the prior `Run-ID` in the new one. `worklog/` is the durable session index. `memory/` is distilled knowledge. Do not mix.
+- `/workspace/runs/` is active scratch and a searchable archive — scan it before serious work; reuse a prior run dir when it fits, else cite the prior `Run-ID` in the new one. `worklog/` is the durable session index. `memory/` is distilled knowledge.
 - Per-repo conventions always win. If the target repo has `AGENTS.md`, `CLAUDE.md`, or `docs/plan/`, follow them and link the resulting artifacts from the run README.
 - Recover prior context from `/workspace/worklog/` before re-investigating a previous session.
 - Verify the intended branch before drawing code-state conclusions; do not assume `main` is the right source when repos have active side branches.
@@ -279,9 +279,7 @@ Each repo can influence Thor's behavior in two ways:
 - Person memory: `/workspace/memory/people/<email-local-part>.md` — applies to sessions triggered by a known user. Use the lowercased email local-part (for example `john.doe@example.com` → `people/john.doe.md`, `acme@example.com` → `people/acme.md`). Use for durable user preferences and identity context.
 - Repo-scoped context: use repo-local `AGENTS.md`, `CLAUDE.md`, and in-repo docs for repo/product facts, codebase conventions, runbooks, and anything humans should also see.
 
-**Reading:** the runner injects global/channel/person memory on new sessions only. For additional Thor-only context, check relevant files under `/workspace/memory/`. For non-trivial recurring work, search `/workspace/runs/` first because it has denser reusable task context than worklog. Use `/workspace/worklog/` for prior-session continuity when the prompt points at a worklog note or when you need the execution/audit trail.
-
-**Writing:** global memory is rare and cross-cutting; channel memory is durable channel/team context; person memory is durable user preference or identity context. Prefer in-repo docs for anything humans should also see. Use memory for Thor-only context that doesn't belong in the codebase. Do not store ephemeral task state, raw tool output, secrets, repo facts, or anything already in the repo.
+For additional context, check relevant files under `/workspace/memory/`. For non-trivial recurring work, search `/workspace/runs/` first because it has denser reusable task context than worklog. Use `/workspace/worklog/` for prior-session continuity when the prompt points at a worklog note or when you need the execution/audit trail.
 
 ## Final Rule
 
