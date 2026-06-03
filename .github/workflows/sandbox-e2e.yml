@@ -6,6 +6,8 @@ on:
       - "docker/sandbox/**"
       - "scripts/test-sandbox-e2e.sh"
       - ".github/workflows/sandbox-e2e.yml"
+      - docker-compose.yml
+      - docker-compose.e2e.yml
   workflow_dispatch:
 
 permissions:

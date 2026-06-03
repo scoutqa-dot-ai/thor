@@ -10,6 +10,7 @@ on:
       - "packages/**"
       - "docker/**"
       - docker-compose.yml
+      - docker-compose.e2e.yml
       - Dockerfile
       - pnpm-lock.yaml
   workflow_dispatch:
