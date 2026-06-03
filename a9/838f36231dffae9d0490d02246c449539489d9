@@ -1,0 +1,35 @@
+Dockerfile
+  0db2e5ae7461c4cf 124,129-132
+.prettierignore
+  0db2e5ae7461c4cf 4-5
+.env.example
+  0db2e5ae7461c4cf 48-51,56-61
+.github/workflows/core-e2e.yml
+  0db2e5ae7461c4cf 56-58
+.github/workflows/sandbox-e2e.yml
+  0db2e5ae7461c4cf 47
+docker-compose.yml
+  0db2e5ae7461c4cf 13-14,22-26
+docs/plan/2026031602_grafana-mcp.md
+  0db2e5ae7461c4cf 4-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "a9838f36231dffae9d0490d02246c449539489d9",
+  "prompts": {
+    "0db2e5ae7461c4cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f04ca88-25b3-4d8a-a5b6-d40caeff0874",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 39,
+      "total_deletions": 38,
+      "accepted_lines": 34,
+      "overriden_lines": 2
+    }
+  }
+}
