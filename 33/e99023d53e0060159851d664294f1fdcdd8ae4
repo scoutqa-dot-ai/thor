@@ -1,0 +1,27 @@
+.env.example
+  dd13ec9689cc787a 82-94
+README.md
+  dd13ec9689cc787a 15,88,119-120
+docker/opencode/config/agents/build.md
+  dd13ec9689cc787a 73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "33e99023d53e0060159851d664294f1fdcdd8ae4",
+  "prompts": {
+    "dd13ec9689cc787a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26c15958-2540-4aa4-bfb7-6d39c140ad89",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 18,
+      "total_deletions": 2,
+      "accepted_lines": 18,
+      "overriden_lines": 0
+    }
+  }
+}
