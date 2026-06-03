@@ -12,6 +12,8 @@ import type {
   ToolStateError,
 } from "@opencode-ai/sdk";
 import { EventBusRegistry, waitForSessionSettled } from "./event-bus.ts";
+import { IdleAutoResume } from "./idle-auto-resume.ts";
+import { SessionErrorGrace } from "./session-error-grace.ts";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
@@ -1042,17 +1044,9 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           const collectedTextParts: string[] = [];
           const collectedToolCalls: Array<{ tool: string; state: string }> = [];
           let terminalError: string | undefined;
-          let latestSessionError: string | undefined;
-          let latestSessionErrorSeq: number | undefined;
-          let latestSessionErrorAt: number | undefined;
+          const errorGrace = new SessionErrorGrace(SESSION_ERROR_GRACE_MS);
+          const autoResume = new IdleAutoResume();
           let sawParentMessagePart = false;
-          let latestAssistantMessage:
-            | { id: string; finish: string | undefined; tokenTotal: number | undefined }
-            | undefined;
-          let autoResumeArmed = true;
-          let autoResumeDisarmedAfterMessageId: string | undefined;
-          const autoResumedFailedMessageIds = new Set<string>();
-          const messageIdsWithAssistantOutput = new Set<string>();
           // Track child session IDs for progress forwarding.
           const childSessionIds = new Set<string>();
           // Dedupe task delegate emissions across repeated part updates.
@@ -1092,22 +1086,16 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             const iterator = subscription[Symbol.asyncIterator]();
             try {
               while (true) {
-                const remainingSessionErrorGraceMs = latestSessionErrorAt
-                  ? SESSION_ERROR_GRACE_MS - (Date.now() - latestSessionErrorAt)
-                  : undefined;
-                const next = latestSessionError
-                  ? await nextWithTimeout(
-                      iterator,
-                      remainingSessionErrorGraceMs ?? SESSION_ERROR_GRACE_MS,
-                    )
+                const next = errorGrace.pending
+                  ? await nextWithTimeout(iterator, errorGrace.remainingMs())
                   : await iterator.next();
 
                 if (next === "timeout") {
-                  terminalError = latestSessionError;
+                  terminalError = errorGrace.error;
                   break;
                 }
                 if (next.done) {
-                  terminalError = latestSessionError;
+                  terminalError = errorGrace.error;
                   break;
                 }
 
@@ -1123,15 +1111,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                 if (isParent && event.type === "message.updated") {
                   const assistantMessage = assistantMessageUpdateSummary(event);
                   if (assistantMessage) {
-                    latestAssistantMessage = assistantMessage;
-                    if (
-                      !autoResumeArmed &&
-                      assistantMessage.id !== autoResumeDisarmedAfterMessageId &&
-                      (assistantMessage.tokenTotal ?? 0) > 0
-                    ) {
-                      autoResumeArmed = true;
-                      autoResumeDisarmedAfterMessageId = undefined;
-                    }
+                    autoResume.onAssistantMessageUpdate(assistantMessage);
                   }
                   emitContextProgressFromMessage(event, currentModelContextLimits(), emit);
                 }
@@ -1167,11 +1147,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                   const part = event.properties.part;
                   seq++;
 
-                  if (latestSessionErrorSeq !== undefined && seq > latestSessionErrorSeq) {
-                    latestSessionError = undefined;
-                    latestSessionErrorSeq = undefined;
-                    latestSessionErrorAt = undefined;
-                  }
+                  errorGrace.clearIfRecovered(seq);
 
                   // Stdout logging (selective)
                   logPartToStdout(sessionId, part);
@@ -1180,12 +1156,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                   if (part.type === "text") {
                     const textPart = part as TextPart;
                     collectedTextParts.push(textPart.text);
-                    if (textPart.text.trim().length > 0) {
-                      messageIdsWithAssistantOutput.add(textPart.messageID);
-                      latestAssistantMessage = undefined;
-                      autoResumeArmed = true;
-                      autoResumeDisarmedAfterMessageId = undefined;
-                    }
+                    autoResume.onAssistantText(textPart.messageID, textPart.text.trim().length > 0);
                   } else if (part.type === "tool") {
                     const toolPart = part as ToolPart;
                     emitTaskDelegateProgress(toolPart);
@@ -1241,9 +1212,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                 } else if (event.type === "session.error") {
                   const errorProps = event.properties;
                   const errorMessage = sessionErrorMessage(errorProps.error);
-                  latestSessionError = errorMessage;
-                  latestSessionErrorSeq = seq;
-                  latestSessionErrorAt = Date.now();
+                  errorGrace.record(errorMessage, seq);
                   collectedToolCalls.push({ tool: "error", state: "error" });
                   emit({ type: "tool", tool: "error", status: "error" });
                   logError(log, "session_error", errorMessage, {
@@ -1255,24 +1224,12 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                     logInfo(log, "stale_session_idle_ignored", { sessionId });
                     continue;
                   }
-                  const latestAssistant = latestAssistantMessage;
-                  const failedMessageId = latestAssistant?.id;
-                  const failedAssistantIdle =
-                    !!failedMessageId &&
-                    latestAssistant?.finish === "error" &&
-                    (latestAssistant.tokenTotal ?? 0) <= 0 &&
-                    !messageIdsWithAssistantOutput.has(failedMessageId);
-                  if (
-                    autoResumeArmed &&
-                    failedAssistantIdle &&
-                    !autoResumedFailedMessageIds.has(failedMessageId)
-                  ) {
-                    autoResumedFailedMessageIds.add(failedMessageId);
-                    autoResumeArmed = false;
-                    autoResumeDisarmedAfterMessageId = failedMessageId;
+                  const resumeMessageId = autoResume.decideResume();
+                  if (resumeMessageId) {
+                    autoResume.markResumed(resumeMessageId);
                     logInfo(log, "session_idle_auto_resume", {
                       sessionId,
-                      messageId: failedMessageId,
+                      messageId: resumeMessageId,
                     });
                     const continueResult = await client.session.promptAsync({
                       path: { id: sessionId },
@@ -1285,13 +1242,13 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
                       JSON.stringify(continueResult.error),
                       {
                         sessionId,
-                        messageId: failedMessageId,
+                        messageId: resumeMessageId,
                       },
                     );
                   }
                   terminalError =
-                    latestSessionError ??
-                    (failedAssistantIdle ? ASSISTANT_EMPTY_ERROR_OUTPUT : undefined);
+                    errorGrace.error ??
+                    (autoResume.isFailedAssistantIdle() ? ASSISTANT_EMPTY_ERROR_OUTPUT : undefined);
                   break;
                 }
               }
