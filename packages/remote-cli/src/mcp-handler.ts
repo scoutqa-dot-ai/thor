@@ -31,12 +31,7 @@ import {
 } from "@thor/common";
 import type { ApprovalRequiredEventPayload } from "@thor/common";
 import { ApprovalStore, type ApprovalAction } from "./approval-store.ts";
-import {
-  classifyTool,
-  PolicyDriftError,
-  PolicyOverlapError,
-  validatePolicy,
-} from "./policy-mcp.ts";
+import { classifyTool, PolicyDriftError, validatePolicy } from "./policy-mcp.ts";
 import { unwrapResult } from "./unwrap-result.ts";
 import { connectUpstream, upstreamTarget, type UpstreamConnection } from "./upstream.ts";
 import { attributionFields, resolveTriggerUser } from "./attribution.ts";
@@ -364,14 +359,9 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     try {
       validatePolicy(proxyDef.allow, proxyDef.approve ?? [], allToolNames);
     } catch (err) {
-      if (err instanceof PolicyDriftError) {
-        if (deps.isProduction) {
-          logWarn(log, "policy_drift", { name, orphans: err.orphans });
-        } else {
-          await closeUpstreamOnSetupFailure(err);
-        }
-      } else if (err instanceof PolicyOverlapError) {
-        await closeUpstreamOnSetupFailure(err);
+      const tolerated = err instanceof PolicyDriftError && deps.isProduction;
+      if (tolerated) {
+        logWarn(log, "policy_drift", { name, orphans: err.orphans });
       } else {
         await closeUpstreamOnSetupFailure(err);
       }
