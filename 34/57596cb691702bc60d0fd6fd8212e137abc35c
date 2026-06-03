@@ -1,0 +1,29 @@
+packages/runner/src/prompt-stream.ts
+  22eeed2d62b18d14 342-347,566-577,579-586,590
+packages/runner/src/trigger.test.ts
+  22eeed2d62b18d14 1588-1631
+docs/plan/2026060301_runner-idle-auto-resume.md
+  22eeed2d62b18d14 74-76,78-91,106,137-138,149-160
+packages/runner/src/index.ts
+  22eeed2d62b18d14 5,723-745,750-751,760-762,766,774,779-791,795-804,806,810,814-815,818,823,899
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "3457596cb691702bc60d0fd6fd8212e137abc35c",
+  "prompts": {
+    "22eeed2d62b18d14": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01e5b692-3af6-45c4-99f8-0349362eba4a",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 209,
+      "total_deletions": 81,
+      "accepted_lines": 167,
+      "overriden_lines": 2
+    }
+  }
+}
