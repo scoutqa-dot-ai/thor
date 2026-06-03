@@ -6,10 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { appendAlias, appendSessionEvent, formatThorContextFooter } from "@thor/common";
-import type { WorkspaceConfig } from "@thor/common";
+import type { ProxyUpstream, WorkspaceConfig } from "@thor/common";
 import type { ToolCallLogEntry } from "@thor/common";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { createRemoteCliApp } from "./index.ts";
+import { createMcpService } from "./mcp-handler.ts";
 import type { UpstreamConnection } from "./upstream.ts";
 
 const tools: Tool[] = [
@@ -113,6 +114,7 @@ describe("remote-cli MCP endpoints", () => {
     vi.stubEnv("POSTHOG_API_KEY", "test-posthog-key");
     vi.stubEnv("GRAFANA_URL", "https://grafana.example.com");
     vi.stubEnv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "grafana-token");
+    vi.stubEnv("GRAFANA_ORG_ID", "1");
     vi.stubEnv("THOR_INTERNAL_SECRET", "resolve-secret");
     vi.stubEnv("WORKLOG_DIR", worklogDir);
     vi.stubEnv("RUNNER_BASE_URL", "https://thor.example.com/");
@@ -178,10 +180,13 @@ describe("remote-cli MCP endpoints", () => {
         },
         connectUpstreamFn: async (
           name: string,
-          upstreamConfig: { headers?: Record<string, string> },
+          upstreamConfig: ProxyUpstream,
         ): Promise<UpstreamConnection> => {
           connectedUpstreams.push(name);
-          upstreamConfigs.push({ name, headers: upstreamConfig.headers });
+          upstreamConfigs.push({
+            name,
+            headers: upstreamConfig.kind === "http" ? upstreamConfig.headers : undefined,
+          });
           return {
             tools,
             client: {
@@ -429,6 +434,53 @@ describe("remote-cli MCP endpoints", () => {
     await remoteCli.warmUp();
 
     expect(connectedUpstreams.sort()).toEqual(["atlassian", "grafana", "posthog"]);
+  });
+
+  it("unrefs pending reconnect timers so shutdown is not held open", async () => {
+    let onDisconnect: (() => void) | undefined;
+    const unref = vi.fn();
+    const setTimeoutMock = (
+      handler: Parameters<typeof setTimeout>[0],
+      timeout?: Parameters<typeof setTimeout>[1],
+    ) => {
+      expect(typeof handler).toBe("function");
+      expect(timeout).toBe(1000);
+      return { unref } as unknown as ReturnType<typeof setTimeout>;
+    };
+    const setTimeoutSpy = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation(setTimeoutMock as unknown as typeof setTimeout);
+    const service = createMcpService({
+      approvalsDir,
+      isProduction: true,
+      configLoader: () => workspaceConfig,
+      writeToolCallLogFn: () => {},
+      connectUpstreamFn: async (_name, _upstreamConfig, onClose): Promise<UpstreamConnection> => {
+        onDisconnect = onClose;
+        return {
+          tools,
+          client: {
+            callTool: async () => ({ content: [] }),
+            close: async () => {},
+          } as unknown as UpstreamConnection["client"],
+        };
+      },
+    });
+
+    try {
+      const listed = await service.executeMcp(["atlassian"], { sessionId: "parent-session" });
+
+      expect(listed.exitCode).toBe(0);
+      expect(onDisconnect).toBeDefined();
+
+      onDisconnect?.();
+
+      expect(setTimeoutSpy).toHaveBeenCalledTimes(1);
+      expect(unref).toHaveBeenCalledTimes(1);
+    } finally {
+      await service.closeAll();
+      setTimeoutSpy.mockRestore();
+    }
   });
 
   it("routes Slack-triggered MCP calls through the channel profile credential target", async () => {

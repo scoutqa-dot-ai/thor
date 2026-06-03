@@ -5,11 +5,17 @@ export const PROXY_NAMES = ["atlassian", "grafana", "langfuse", "posthog"] as co
 
 export type ProxyName = (typeof PROXY_NAMES)[number];
 
+/**
+ * How remote-cli reaches an upstream MCP server: a remote HTTP endpoint, or a
+ * local child process spoken to over stdio (which gives each profile its own
+ * single-tenant instance).
+ */
+export type ProxyUpstream =
+  | { kind: "http"; url: string; headers?: Record<string, string> }
+  | { kind: "stdio"; command: string; args: string[]; env: Record<string, string> };
+
 export interface ResolvedProxyConfig {
-  upstream: {
-    url: string;
-    headers?: Record<string, string>;
-  };
+  upstream: ProxyUpstream;
   allow: string[];
   approve: string[];
   target: {
@@ -59,6 +65,80 @@ const GRAFANA_ALLOW = [
   "tempo_docs-traceql",
 ];
 const GRAFANA_APPROVE: string[] = [];
+
+// Grafana runs as a per-profile child: the mcp-grafana binary speaking MCP over
+// stdio, confined by bwrap. The arg set is static — only the credential env
+// (see the stdio spec below) varies per profile. Credentials are passed via env,
+// never as bwrap `--setenv` args, so the service-account token never appears in
+// the child's argv. Requires the bundled mcp-grafana binary + bubblewrap in the
+// remote-cli image and the additive seccomp profile (see docs/plan).
+const MCP_GRAFANA_BIN = "/usr/local/bin/mcp-grafana";
+const GRAFANA_MCP_ARGS = [
+  "-transport",
+  "stdio",
+  "-enabled-tools",
+  "datasource,prometheus,loki,proxied",
+];
+const GRAFANA_SANDBOX_ARGS = [
+  // Rootless namespaces; tear the child down with remote-cli. --unshare-user
+  // remaps the uid so the child cannot ptrace/read remote-cli's processes.
+  "--unshare-user",
+  "--unshare-pid",
+  "--unshare-ipc",
+  "--unshare-uts",
+  "--new-session",
+  "--die-with-parent",
+  // Pin a deterministic env inside the sandbox (non-secret values, so argv-safe).
+  // Credentials are NOT set here — they arrive via the child's env (see the spec
+  // below) so the service-account token never lands in argv / /proc/<pid>/cmdline.
+  "--setenv",
+  "PATH",
+  "/usr/local/bin:/usr/bin:/bin",
+  "--setenv",
+  "HOME",
+  "/tmp",
+  // Read-only system dirs only. Nothing binds /var/lib/remote-cli (GitHub App
+  // key) or /workspace, so the child cannot read remote-cli's secrets or repos.
+  "--ro-bind",
+  "/usr",
+  "/usr",
+  "--ro-bind",
+  "/bin",
+  "/bin",
+  "--ro-bind",
+  "/lib",
+  "/lib",
+  "--ro-bind-try",
+  "/lib64",
+  "/lib64",
+  "--ro-bind",
+  "/etc/ssl",
+  "/etc/ssl",
+  "--ro-bind-try",
+  "/etc/resolv.conf",
+  "/etc/resolv.conf",
+  "--ro-bind-try",
+  "/etc/nsswitch.conf",
+  "/etc/nsswitch.conf",
+  "--ro-bind-try",
+  "/etc/hosts",
+  "/etc/hosts",
+  // Bind the host /proc rather than mounting a fresh one (a fresh `--proc` is
+  // rejected on container kernels with a masked /proc). This is safe because
+  // --unshare-pid puts the child in a new PID namespace: procfs only renders
+  // PIDs that exist in the reader's namespace, so the child sees only its own
+  // sandbox processes — host PIDs (and their environ/cmdline/root) are not
+  // resolvable. /proc/1 inside is the sandbox init, not remote-cli's PID 1.
+  "--bind",
+  "/proc",
+  "/proc",
+  "--dev",
+  "/dev",
+  "--tmpfs",
+  "/tmp",
+  MCP_GRAFANA_BIN,
+  ...GRAFANA_MCP_ARGS,
+];
 
 const POSTHOG_ALLOW = [
   "docs-search",
@@ -161,6 +241,7 @@ export function resolveProxyConfig(
     if (!auth.value) return undefined;
     return {
       upstream: {
+        kind: "http",
         url: "https://mcp.atlassian.com/v1/mcp",
         headers: { Authorization: auth.value },
       },
@@ -179,6 +260,7 @@ export function resolveProxyConfig(
     if (!apiKey.value) return undefined;
     return {
       upstream: {
+        kind: "http",
         url: "https://mcp.posthog.com/mcp",
         headers: { Authorization: `Bearer ${apiKey.value}` },
       },
@@ -215,6 +297,7 @@ export function resolveProxyConfig(
     const token = Buffer.from(`${publicKey}:${secretKey}`).toString("base64");
     return {
       upstream: {
+        kind: "http",
         url: `${envBaseUrl(env, baseUrlVar)}/api/public/mcp`,
         headers: { Authorization: `Basic ${token}` },
       },
@@ -234,29 +317,35 @@ export function resolveProxyConfig(
     : undefined;
   const scopedOrg = profile ? envValue(env, `GRAFANA_ORG_ID_${profile}`) : undefined;
   const anyScoped = Boolean(scopedUrl || scopedToken || scopedOrg);
-  const useScoped = Boolean(scopedUrl && scopedToken);
+  const useScoped = Boolean(scopedUrl && scopedToken && scopedOrg);
   if (profile && anyScoped && !useScoped) {
     const missing = [
       !scopedUrl ? `GRAFANA_URL_${profile}` : undefined,
       !scopedToken ? `GRAFANA_SERVICE_ACCOUNT_TOKEN_${profile}` : undefined,
+      !scopedOrg ? `GRAFANA_ORG_ID_${profile}` : undefined,
     ].filter(Boolean);
     throw new Error(
-      `partial grafana profile bundle for "${profile}": missing ${missing.join(", ")}. Set the whole bundle or none of it.`,
+      `partial grafana profile bundle for "${profile}": missing ${missing.join(", ")}. Set GRAFANA_URL_${profile}, GRAFANA_SERVICE_ACCOUNT_TOKEN_${profile}, and GRAFANA_ORG_ID_${profile} together, or none of them.`,
     );
   }
   const url = useScoped ? scopedUrl : envValue(env, "GRAFANA_URL");
   const token = useScoped ? scopedToken : envValue(env, "GRAFANA_SERVICE_ACCOUNT_TOKEN");
-  if (!url || !token) return undefined;
   const orgId = useScoped ? scopedOrg : envValue(env, "GRAFANA_ORG_ID");
+  if (!url || !token || !orgId) return undefined;
+  const grafanaEnv = {
+    GRAFANA_URL: url,
+    GRAFANA_SERVICE_ACCOUNT_TOKEN: token,
+    GRAFANA_ORG_ID: orgId,
+  };
+  // Escape hatch for environments that cannot host a rootless bwrap sandbox
+  // (e.g. a container-in-container CI runner): run mcp-grafana directly. This
+  // removes the isolation around the foreign binary, so it is ONLY safe where
+  // remote-cli holds no real secrets (fake CI credentials). Never set in prod.
+  const unsandboxed = envValue(env, "THOR_MCP_DISABLE_SANDBOX") === "1";
   return {
-    upstream: {
-      url: "http://grafana-mcp:8000/mcp",
-      headers: {
-        "X-Grafana-URL": url,
-        "X-Grafana-Service-Account-Token": token,
-        ...(orgId ? { "X-Grafana-Org-Id": orgId } : {}),
-      },
-    },
+    upstream: unsandboxed
+      ? { kind: "stdio", command: MCP_GRAFANA_BIN, args: GRAFANA_MCP_ARGS, env: grafanaEnv }
+      : { kind: "stdio", command: "bwrap", args: GRAFANA_SANDBOX_ARGS, env: grafanaEnv },
     allow: GRAFANA_ALLOW,
     approve: GRAFANA_APPROVE,
     target: {
