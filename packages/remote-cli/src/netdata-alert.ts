@@ -1,4 +1,4 @@
-import { truncate } from "@thor/common";
+import { stripTrailingSlashes, truncate } from "@thor/common";
 import { postSlackMessageApi, type SlackPostMessageDeps } from "./slack-post-message.ts";
 
 export interface NetdataAlertEnv {
@@ -19,7 +19,7 @@ export interface NetdataAlertResult {
   body: { ok: boolean; error?: string };
 }
 
-const MAX_ALERT_TEXT_BYTES = 8192;
+const MAX_ALERT_TEXT_CHARACTERS = 8192;
 
 function stringField(body: Record<string, unknown>, names: string[]): string | undefined {
   for (const name of names) {
@@ -66,11 +66,11 @@ export function formatNetdataAlertText(body: Record<string, unknown>, publicUrl 
   if (duration) lines.push(`*Duration:* ${duration}`);
   if (summary) lines.push(`*Summary:* ${truncate(summary, 500)}`);
   if (publicUrl.trim()) lines.push(`*Netdata:* ${publicUrl.trim()}`);
-  return truncate(lines.join("\n"), MAX_ALERT_TEXT_BYTES);
+  return truncate(lines.join("\n"), MAX_ALERT_TEXT_CHARACTERS);
 }
 
 function netdataUrlFromIngress(ingressPublicUrl = ""): string {
-  const base = ingressPublicUrl.trim().replace(/\/+$/, "");
+  const base = stripTrailingSlashes(ingressPublicUrl.trim());
   return base ? `${base}/netdata/` : "";
 }
 

@@ -7,6 +7,7 @@ import {
   envString,
   getIngressPublicUrl,
   matchesInternalSecret,
+  stripTrailingSlashes,
 } from "./env.ts";
 
 describe("env loader", () => {
@@ -43,6 +44,9 @@ describe("env loader", () => {
   });
 
   it("strips trailing slashes from base URLs so callers can safely append paths", () => {
+    expect(stripTrailingSlashes("https://api.example.com/path///")).toBe(
+      "https://api.example.com/path",
+    );
     expect(envBaseUrl({ API_URL: "https://api.example.com/" }, "API_URL")).toBe(
       "https://api.example.com",
     );

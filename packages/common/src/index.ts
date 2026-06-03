@@ -40,6 +40,7 @@ export {
   envString,
   envInt,
   envCsv,
+  stripTrailingSlashes,
   envBaseUrl,
   getIngressPublicUrl,
   matchesInternalSecret,

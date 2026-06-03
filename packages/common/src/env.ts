@@ -38,13 +38,19 @@ export function envCsv(env: EnvSource, name: string): string[] {
     .filter(Boolean);
 }
 
+export function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+  return end === value.length ? value : value.slice(0, end);
+}
+
 /**
  * Read a base URL env var with any trailing slashes stripped, so callers can
  * safely build URLs as `${base}/path`. Operators sometimes paste URLs with a
  * trailing `/`; normalize at the boundary instead of relying on every caller.
  */
 export function envBaseUrl(env: EnvSource, name: string, defaultValue?: string): string {
-  return envString(env, name, defaultValue).replace(/\/+$/, "");
+  return stripTrailingSlashes(envString(env, name, defaultValue));
 }
 
 export function getIngressPublicUrl(env: EnvSource = process.env): string {
