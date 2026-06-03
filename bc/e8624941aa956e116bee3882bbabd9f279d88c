@@ -1,0 +1,29 @@
+packages/runner/src/session-error-grace.ts
+  89c625a1ba63d48f 1-62
+packages/runner/src/index.ts
+  89c625a1ba63d48f 15-16,1047-1048,1089-1090,1094,1098,1114,1150,1215,1227-1229,1232,1245,1250-1251
+packages/runner/src/idle-auto-resume.ts
+  89c625a1ba63d48f 1-102
+packages/runner/src/idle-auto-resume.test.ts
+  89c625a1ba63d48f 1-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "bce8624941aa956e116bee3882bbabd9f279d88c",
+  "prompts": {
+    "89c625a1ba63d48f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0fd7101a-b341-46b9-89f0-fc378d85c679",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 338,
+      "total_deletions": 122,
+      "accepted_lines": 274,
+      "overriden_lines": 0
+    }
+  }
+}
