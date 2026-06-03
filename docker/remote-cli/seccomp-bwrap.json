@@ -9,30 +9,6 @@
     {
       "architecture": "SCMP_ARCH_AARCH64",
       "subArchitectures": ["SCMP_ARCH_ARM"]
-    },
-    {
-      "architecture": "SCMP_ARCH_MIPS64",
-      "subArchitectures": ["SCMP_ARCH_MIPS", "SCMP_ARCH_MIPS64N32"]
-    },
-    {
-      "architecture": "SCMP_ARCH_MIPS64N32",
-      "subArchitectures": ["SCMP_ARCH_MIPS", "SCMP_ARCH_MIPS64"]
-    },
-    {
-      "architecture": "SCMP_ARCH_MIPSEL64",
-      "subArchitectures": ["SCMP_ARCH_MIPSEL", "SCMP_ARCH_MIPSEL64N32"]
-    },
-    {
-      "architecture": "SCMP_ARCH_MIPSEL64N32",
-      "subArchitectures": ["SCMP_ARCH_MIPSEL", "SCMP_ARCH_MIPSEL64"]
-    },
-    {
-      "architecture": "SCMP_ARCH_S390X",
-      "subArchitectures": ["SCMP_ARCH_S390"]
-    },
-    {
-      "architecture": "SCMP_ARCH_RISCV64",
-      "subArchitectures": null
     }
   ],
   "syscalls": [
@@ -472,13 +448,6 @@
       ]
     },
     {
-      "names": ["sync_file_range2", "swapcontext"],
-      "action": "SCMP_ACT_ALLOW",
-      "includes": {
-        "arches": ["ppc64le"]
-      }
-    },
-    {
       "names": [
         "arm_fadvise64_64",
         "arm_sync_file_range",
@@ -507,187 +476,10 @@
       }
     },
     {
-      "names": ["s390_pci_mmio_read", "s390_pci_mmio_write", "s390_runtime_instr"],
-      "action": "SCMP_ACT_ALLOW",
-      "includes": {
-        "arches": ["s390", "s390x"]
-      }
-    },
-    {
-      "names": ["riscv_flush_icache"],
-      "action": "SCMP_ACT_ALLOW",
-      "includes": {
-        "arches": ["riscv64"]
-      }
-    },
-    {
-      "names": ["open_by_handle_at"],
-      "action": "SCMP_ACT_ALLOW",
-      "includes": {
-        "caps": ["CAP_DAC_READ_SEARCH"]
-      }
-    },
-    {
-      "names": [
-        "bpf",
-        "clone",
-        "clone3",
-        "fanotify_init",
-        "fsconfig",
-        "fsmount",
-        "fsopen",
-        "fspick",
-        "lookup_dcookie",
-        "mount",
-        "mount_setattr",
-        "move_mount",
-        "open_tree",
-        "perf_event_open",
-        "quotactl",
-        "quotactl_fd",
-        "setdomainname",
-        "sethostname",
-        "setns",
-        "syslog",
-        "umount",
-        "umount2",
-        "unshare"
-      ],
-      "action": "SCMP_ACT_ALLOW",
-      "includes": {
-        "caps": ["CAP_SYS_ADMIN"]
-      }
-    },
-    {
-      "names": ["clone"],
-      "action": "SCMP_ACT_ALLOW",
-      "args": [
-        {
-          "index": 0,
-          "value": 2114060288,
-          "op": "SCMP_CMP_MASKED_EQ"
-        }
-      ],
-      "excludes": {
-        "caps": ["CAP_SYS_ADMIN"],
-        "arches": ["s390", "s390x"]
-      }
-    },
-    {
-      "names": ["clone"],
-      "action": "SCMP_ACT_ALLOW",
-      "args": [
-        {
-          "index": 1,
-          "value": 2114060288,
-          "op": "SCMP_CMP_MASKED_EQ"
-        }
-      ],
-      "comment": "s390 parameter ordering for clone is different",
-      "includes": {
-        "arches": ["s390", "s390x"]
-      },
-      "excludes": {
-        "caps": ["CAP_SYS_ADMIN"]
-      }
-    },
-    {
-      "names": ["clone3"],
-      "action": "SCMP_ACT_ERRNO",
-      "errnoRet": 38,
-      "excludes": {
-        "caps": ["CAP_SYS_ADMIN"]
-      }
-    },
-    {
-      "names": ["reboot"],
-      "action": "SCMP_ACT_ALLOW",
-      "includes": {
-        "caps": ["CAP_SYS_BOOT"]
-      }
-    },
-    {
       "names": ["chroot"],
       "action": "SCMP_ACT_ALLOW",
       "includes": {
         "caps": ["CAP_SYS_CHROOT"]
-      }
-    },
-    {
-      "names": ["delete_module", "init_module", "finit_module"],
-      "action": "SCMP_ACT_ALLOW",
-      "includes": {
-        "caps": ["CAP_SYS_MODULE"]
-      }
-    },
-    {
-      "names": ["acct"],
-      "action": "SCMP_ACT_ALLOW",
-      "includes": {
-        "caps": ["CAP_SYS_PACCT"]
-      }
-    },
-    {
-      "names": [
-        "kcmp",
-        "pidfd_getfd",
-        "process_madvise",
-        "process_vm_readv",
-        "process_vm_writev",
-        "ptrace"
-      ],
-      "action": "SCMP_ACT_ALLOW",
-      "includes": {
-        "caps": ["CAP_SYS_PTRACE"]
-      }
-    },
-    {
-      "names": ["iopl", "ioperm"],
-      "action": "SCMP_ACT_ALLOW",
-      "includes": {
-        "caps": ["CAP_SYS_RAWIO"]
-      }
-    },
-    {
-      "names": ["settimeofday", "stime", "clock_settime", "clock_settime64"],
-      "action": "SCMP_ACT_ALLOW",
-      "includes": {
-        "caps": ["CAP_SYS_TIME"]
-      }
-    },
-    {
-      "names": ["vhangup"],
-      "action": "SCMP_ACT_ALLOW",
-      "includes": {
-        "caps": ["CAP_SYS_TTY_CONFIG"]
-      }
-    },
-    {
-      "names": ["get_mempolicy", "mbind", "set_mempolicy", "set_mempolicy_home_node"],
-      "action": "SCMP_ACT_ALLOW",
-      "includes": {
-        "caps": ["CAP_SYS_NICE"]
-      }
-    },
-    {
-      "names": ["syslog"],
-      "action": "SCMP_ACT_ALLOW",
-      "includes": {
-        "caps": ["CAP_SYSLOG"]
-      }
-    },
-    {
-      "names": ["bpf"],
-      "action": "SCMP_ACT_ALLOW",
-      "includes": {
-        "caps": ["CAP_BPF"]
-      }
-    },
-    {
-      "names": ["perf_event_open"],
-      "action": "SCMP_ACT_ALLOW",
-      "includes": {
-        "caps": ["CAP_PERFMON"]
       }
     }
   ]

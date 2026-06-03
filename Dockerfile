@@ -126,9 +126,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
 RUN npm i -g @scoutqa/cli@latest @launchdarkly/ldcli@2.2.0
-# Per-profile Grafana MCP runs as a bwrap-confined child of remote-cli (see
-# packages/common/src/proxies.ts GRAFANA_SANDBOX_ARGS). Pin the binary to the
-# same version the sidecar used; bump deliberately like the OpenCode SDK.
 COPY --from=grafana/mcp-grafana:0.14.0 /app/mcp-grafana /usr/local/bin/mcp-grafana
 
 FROM remote-cli-tools AS remote-cli
