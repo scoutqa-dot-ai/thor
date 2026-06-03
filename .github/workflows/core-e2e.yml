@@ -59,6 +59,9 @@ jobs:
       LANGFUSE_PUBLIC_KEY: ${{ vars.LANGFUSE_PUBLIC_KEY }}
       LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
       LANGFUSE_HOST: ${{ vars.LANGFUSE_HOST }}
+      # Katalon stays disabled unless both vars are configured; absence is a no-op.
+      KATALON_API_KEY: ${{ secrets.KATALON_API_KEY }}
+      KATALON_BASE_URL: ${{ vars.KATALON_BASE_URL }}
       # Fakes: services not exercised by e2e, but referenced at compose startup.
       METABASE_URL: http://localhost
       METABASE_API_KEY: ci-fake
@@ -120,6 +123,8 @@ jobs:
             printf 'LANGFUSE_PUBLIC_KEY=%s\n' "$LANGFUSE_PUBLIC_KEY"
             printf 'LANGFUSE_SECRET_KEY=%s\n' "$LANGFUSE_SECRET_KEY"
             printf 'LANGFUSE_BASE_URL=https://%s\n' "$LANGFUSE_HOST"
+            printf 'KATALON_API_KEY=%s\n' "$KATALON_API_KEY"
+            printf 'KATALON_BASE_URL=%s\n' "$KATALON_BASE_URL"
           } > .env
 
           export CRON_SECRET="$(openssl rand -hex 32)"

@@ -51,6 +51,8 @@ jobs:
       LANGFUSE_PUBLIC_KEY: ${{ vars.LANGFUSE_PUBLIC_KEY }}
       LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
       LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
+      KATALON_API_KEY: ${{ secrets.KATALON_API_KEY }}
+      KATALON_BASE_URL: ${{ vars.KATALON_BASE_URL }}
       METABASE_URL: http://localhost
       METABASE_API_KEY: ci-fake
       METABASE_DATABASE_ID: "1"
