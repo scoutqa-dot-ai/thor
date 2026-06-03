@@ -332,6 +332,16 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       }, delay);
     }
 
+    if (
+      name === "grafana" &&
+      proxyDef.upstream.kind === "stdio" &&
+      proxyDef.upstream.command !== "bwrap"
+    ) {
+      logWarn(log, "grafana_sandbox_disabled", {
+        targetKey: proxyDef.target.key,
+        reason: "THOR_GRAFANA_DISABLE_SANDBOX is set — mcp-grafana runs unsandboxed",
+      });
+    }
     logInfo(log, "connecting_upstream", {
       name,
       targetKey: proxyDef.target.key,

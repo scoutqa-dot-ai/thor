@@ -73,6 +73,12 @@ const GRAFANA_APPROVE: string[] = [];
 // the child's argv. Requires the bundled mcp-grafana binary + bubblewrap in the
 // remote-cli image and the additive seccomp profile (see docs/plan).
 const MCP_GRAFANA_BIN = "/usr/local/bin/mcp-grafana";
+const GRAFANA_MCP_ARGS = [
+  "-transport",
+  "stdio",
+  "-enabled-tools",
+  "datasource,prometheus,loki,proxied",
+];
 const GRAFANA_SANDBOX_ARGS = [
   // Rootless namespaces; tear the child down with remote-cli. --unshare-user
   // remaps the uid so the child cannot ptrace/read remote-cli's processes.
@@ -131,10 +137,7 @@ const GRAFANA_SANDBOX_ARGS = [
   "--tmpfs",
   "/tmp",
   MCP_GRAFANA_BIN,
-  "-transport",
-  "stdio",
-  "-enabled-tools",
-  "datasource,prometheus,loki,proxied",
+  ...GRAFANA_MCP_ARGS,
 ];
 
 const POSTHOG_ALLOW = [
@@ -328,17 +331,20 @@ export function resolveProxyConfig(
   const token = useScoped ? scopedToken : envValue(env, "GRAFANA_SERVICE_ACCOUNT_TOKEN");
   if (!url || !token) return undefined;
   const orgId = useScoped ? scopedOrg : envValue(env, "GRAFANA_ORG_ID");
+  const grafanaEnv = {
+    GRAFANA_URL: url,
+    GRAFANA_SERVICE_ACCOUNT_TOKEN: token,
+    ...(orgId ? { GRAFANA_ORG_ID: orgId } : {}),
+  };
+  // Escape hatch for environments that cannot host a rootless bwrap sandbox
+  // (e.g. a container-in-container CI runner): run mcp-grafana directly. This
+  // removes the isolation around the foreign binary, so it is ONLY safe where
+  // remote-cli holds no real secrets (fake CI credentials). Never set in prod.
+  const unsandboxed = Boolean(envValue(env, "THOR_GRAFANA_DISABLE_SANDBOX"));
   return {
-    upstream: {
-      kind: "stdio",
-      command: "bwrap",
-      args: GRAFANA_SANDBOX_ARGS,
-      env: {
-        GRAFANA_URL: url,
-        GRAFANA_SERVICE_ACCOUNT_TOKEN: token,
-        ...(orgId ? { GRAFANA_ORG_ID: orgId } : {}),
-      },
-    },
+    upstream: unsandboxed
+      ? { kind: "stdio", command: MCP_GRAFANA_BIN, args: GRAFANA_MCP_ARGS, env: grafanaEnv }
+      : { kind: "stdio", command: "bwrap", args: GRAFANA_SANDBOX_ARGS, env: grafanaEnv },
     allow: GRAFANA_ALLOW,
     approve: GRAFANA_APPROVE,
     target: {
