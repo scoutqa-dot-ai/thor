@@ -1,0 +1,27 @@
+packages/runner/src/prompt-stream.ts
+  89c625a1ba63d48f 1-584
+packages/runner/src/index.ts
+  89c625a1ba63d48f 6-7,860-862,866-867,880-881,894,1615-1635
+packages/runner/src/opencode-events.ts
+  89c625a1ba63d48f 1-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "cde6c0a13a3cc209bf6e1572917d5b5d416d654c",
+  "prompts": {
+    "89c625a1ba63d48f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0fd7101a-b341-46b9-89f0-fc378d85c679",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 695,
+      "total_deletions": 610,
+      "accepted_lines": 638,
+      "overriden_lines": 0
+    }
+  }
+}
