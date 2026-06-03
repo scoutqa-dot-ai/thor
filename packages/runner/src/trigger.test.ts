@@ -1350,19 +1350,57 @@ describe("runner /trigger orchestration", () => {
   });
 
   it("injects memory/tool bootstrap instructions only on new sessions", async () => {
+    mkdirSync(`${memoryDir}/channels`, { recursive: true });
+    mkdirSync(`${memoryDir}/people`, { recursive: true });
     mkdirSync(`${memoryDir}/runner-trigger-test`, { recursive: true });
-    writeFileSync(`${memoryDir}/README.md`, "root memory text");
-    writeFileSync(`${memoryDir}/runner-trigger-test/README.md`, "repo memory text");
-    const h = createHarness();
+    writeFileSync(`${memoryDir}/README.md`, "global memory text");
+    writeFileSync(`${memoryDir}/channels/C123.md`, "channel memory text");
+    writeFileSync(`${memoryDir}/people/son.dao.md`, "person memory text");
+    writeFileSync(`${memoryDir}/runner-trigger-test/README.md`, "legacy repo memory text");
+    const h = createHarness({
+      workspaceConfig: {
+        users: [
+          {
+            name: "Son Dao",
+            email: "Son.Dao@example.com",
+            slack: "UABCDEF1",
+            github: "son-dao-gh",
+          },
+        ],
+      },
+    });
 
     await withServer(h.app, async (url) => {
       const first = await trigger(url, {
         prompt: "first",
         correlationKey: "slack:thread:C123/1710000000.005",
+        triggerSlackId: "UABCDEF1",
       });
-      expect(first.events.filter((e) => e.type === "memory")).toHaveLength(2);
-      expect(h.prompts[0]).toContain("root memory text");
-      expect(h.prompts[0]).toContain("repo memory text");
+      expect(first.events.filter((e) => e.type === "memory")).toEqual([
+        {
+          type: "memory",
+          action: "read",
+          path: `${memoryDir}/README.md`,
+          source: "bootstrap",
+        },
+        {
+          type: "memory",
+          action: "read",
+          path: `${memoryDir}/channels/C123.md`,
+          source: "bootstrap",
+        },
+        {
+          type: "memory",
+          action: "read",
+          path: `${memoryDir}/people/son.dao.md`,
+          source: "bootstrap",
+        },
+      ]);
+      expect(h.prompts[0]).toContain("global memory text");
+      expect(h.prompts[0]).toContain("channel memory text");
+      expect(h.prompts[0]).toContain("person memory text");
+      expect(h.prompts[0]).not.toContain("legacy repo memory text");
+      expect(h.prompts[0]).not.toContain("Repo memory");
       const firstLogRecords = readFileSync(sessionLogPath("session-1"), "utf8")
         .trim()
         .split("\n")
@@ -1375,16 +1413,92 @@ describe("runner /trigger orchestration", () => {
         correlationKey: "slack:thread:C123/1710000000.005",
       });
       expect(firstTriggerStart).not.toHaveProperty("promptPreview");
-      expect(JSON.stringify(firstTriggerStart)).not.toContain("root memory text");
-      expect(JSON.stringify(firstTriggerStart)).not.toContain("repo memory text");
+      expect(JSON.stringify(firstTriggerStart)).not.toContain("global memory text");
+      expect(JSON.stringify(firstTriggerStart)).not.toContain("channel memory text");
+      expect(JSON.stringify(firstTriggerStart)).not.toContain("person memory text");
 
       await trigger(url, {
         prompt: "second",
         correlationKey: "slack:thread:C123/1710000000.005",
+        triggerSlackId: "UABCDEF1",
       });
-      expect(h.prompts[1]).not.toContain("root memory text");
-      expect(h.prompts[1]).not.toContain("repo memory text");
+      expect(h.prompts[1]).not.toContain("global memory text");
+      expect(h.prompts[1]).not.toContain("channel memory text");
+      expect(h.prompts[1]).not.toContain("person memory text");
     });
+  });
+
+  it("skips channel and person memory when they are not addressable", async () => {
+    mkdirSync(`${memoryDir}/channels`, { recursive: true });
+    mkdirSync(`${memoryDir}/people`, { recursive: true });
+    writeFileSync(`${memoryDir}/README.md`, "global memory text");
+    writeFileSync(`${memoryDir}/channels/C123.md`, "channel memory text");
+    writeFileSync(`${memoryDir}/people/alice.md`, "person memory text");
+    const h = createHarness({ workspaceConfig: { users: [] } });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "first",
+        correlationKey: "slack:thread:1710000000.005",
+        triggerSlackId: "UUNKNOWN",
+      });
+      expect(result.events.filter((e) => e.type === "memory")).toEqual([
+        {
+          type: "memory",
+          action: "read",
+          path: `${memoryDir}/README.md`,
+          source: "bootstrap",
+        },
+      ]);
+    });
+
+    expect(h.prompts[0]).toContain("global memory text");
+    expect(h.prompts[0]).not.toContain("channel memory text");
+    expect(h.prompts[0]).not.toContain("person memory text");
+    expect(h.prompts[0]).not.toContain("Channel memory");
+    expect(h.prompts[0]).not.toContain("Person memory");
+  });
+
+  it("resolves person memory from github login when slack id is absent", async () => {
+    mkdirSync(`${memoryDir}/people`, { recursive: true });
+    writeFileSync(`${memoryDir}/README.md`, "global memory text");
+    writeFileSync(`${memoryDir}/people/son.dao.md`, "person memory text");
+    const h = createHarness({
+      workspaceConfig: {
+        users: [
+          {
+            name: "Son Dao",
+            email: "Son.Dao@example.com",
+            github: "sonkatalon",
+          },
+        ],
+      },
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "first",
+        correlationKey: "git:branch:thor:feat/memory-tiers",
+        triggerGithubLogin: "sonkatalon",
+      });
+      expect(result.events.filter((e) => e.type === "memory")).toEqual([
+        {
+          type: "memory",
+          action: "read",
+          path: `${memoryDir}/README.md`,
+          source: "bootstrap",
+        },
+        {
+          type: "memory",
+          action: "read",
+          path: `${memoryDir}/people/son.dao.md`,
+          source: "bootstrap",
+        },
+      ]);
+    });
+
+    expect(h.prompts[0]).toContain("person memory text");
+    expect(h.prompts[0]).toContain("github: sonkatalon");
   });
 
   it("emits context progress from assistant message updates using configured model limits", async () => {
