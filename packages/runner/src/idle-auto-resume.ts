@@ -17,7 +17,13 @@
  *  - A given failed message id is resumed at most once, ever.
  *  - A message id that ever produced non-empty text is never treated as a
  *    failed idle, even if a later zero-token error update arrives for it.
+ *  - At most {@link MAX_RESUMES} resumes per run, regardless of message id — a
+ *    flapping provider that emits tokens then a zero-token error on an
+ *    ever-new id would otherwise re-arm and loop "Continue" without bound.
  */
+
+/** Hard ceiling on auto-resumes per run, across all message ids. */
+export const MAX_RESUMES = 3;
 
 export interface AssistantMessageSummary {
   id: string;
@@ -28,6 +34,7 @@ export interface AssistantMessageSummary {
 export class IdleAutoResume {
   #armed = true;
   #disarmedAfterMessageId: string | undefined;
+  #resumeCount = 0;
   readonly #resumedFailedMessageIds = new Set<string>();
   readonly #messageIdsWithOutput = new Set<string>();
   #latest: AssistantMessageSummary | undefined;
@@ -82,6 +89,7 @@ export class IdleAutoResume {
    * state — call {@link markResumed} once the Continue prompt is sent.
    */
   decideResume(): string | undefined {
+    if (this.#resumeCount >= MAX_RESUMES) return undefined;
     if (!this.#armed || !this.isFailedAssistantIdle()) return undefined;
     const id = this.#latest!.id;
     if (this.#resumedFailedMessageIds.has(id)) return undefined;
@@ -91,6 +99,7 @@ export class IdleAutoResume {
   /** Mark a failed message id as resumed and disarm until the session recovers. */
   markResumed(messageId: string): void {
     this.#resumedFailedMessageIds.add(messageId);
+    this.#resumeCount++;
     this.#armed = false;
     this.#disarmedAfterMessageId = messageId;
   }

@@ -555,15 +555,28 @@ export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStr
             sessionId,
             messageId: resumeMessageId,
           });
-          const continueResult = await client.session.promptAsync({
-            path: { id: sessionId },
-            body: { parts: [{ type: "text", text: "Continue" }] },
-          });
-          if (!continueResult.error) continue;
-          logError(log, "session_idle_auto_resume_failed", JSON.stringify(continueResult.error), {
-            sessionId,
-            messageId: resumeMessageId,
-          });
+          // We're deliberately keeping the run alive with a fresh prompt, so any
+          // held session.error must not throttle/terminate the continued
+          // response via a stale grace window timed from the original error.
+          errorGrace.clear();
+          try {
+            const continueResult = await client.session.promptAsync({
+              path: { id: sessionId },
+              body: { parts: [{ type: "text", text: "Continue" }] },
+            });
+            if (!continueResult.error) continue;
+            logError(log, "session_idle_auto_resume_failed", JSON.stringify(continueResult.error), {
+              sessionId,
+              messageId: resumeMessageId,
+            });
+          } catch (err) {
+            logError(
+              log,
+              "session_idle_auto_resume_failed",
+              err instanceof Error ? err.message : String(err),
+              { sessionId, messageId: resumeMessageId },
+            );
+          }
         }
         terminalError =
           errorGrace.error ?? (failedAssistantIdle ? ASSISTANT_EMPTY_ERROR_OUTPUT : undefined);

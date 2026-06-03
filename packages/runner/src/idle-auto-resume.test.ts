@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { IdleAutoResume, type AssistantMessageSummary } from "./idle-auto-resume.ts";
+import { IdleAutoResume, MAX_RESUMES, type AssistantMessageSummary } from "./idle-auto-resume.ts";
 
 const failed = (id: string): AssistantMessageSummary => ({
   id,
@@ -35,5 +35,24 @@ describe("IdleAutoResume", () => {
     ar.onAssistantMessageUpdate({ id: "m2", finish: undefined, tokenTotal: 10 });
     ar.onAssistantMessageUpdate(failed("m2"));
     expect(ar.decideResume()).toBe("m2");
+  });
+
+  it("stops resuming once the global cap is hit, even with ever-new message ids", () => {
+    // A flapping provider re-arms via tokens>0 on a new id, then fails with zero
+    // tokens — without a global cap this loops forever. Cap bounds total resumes.
+    const ar = new IdleAutoResume();
+    for (let i = 0; i < MAX_RESUMES; i++) {
+      const id = `m${i}`;
+      ar.onAssistantMessageUpdate({ id, finish: undefined, tokenTotal: 10 });
+      ar.onAssistantMessageUpdate(failed(id));
+      expect(ar.decideResume()).toBe(id);
+      ar.markResumed(id);
+    }
+    // One more genuine recovery + failure: still classified as a failed idle,
+    // but the cap suppresses the resume.
+    ar.onAssistantMessageUpdate({ id: "m-final", finish: undefined, tokenTotal: 10 });
+    ar.onAssistantMessageUpdate(failed("m-final"));
+    expect(ar.isFailedAssistantIdle()).toBe(true);
+    expect(ar.decideResume()).toBeUndefined();
   });
 });

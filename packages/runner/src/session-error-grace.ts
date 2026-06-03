@@ -54,9 +54,18 @@ export class SessionErrorGrace {
   /** Clear the held error once a later part (higher seq) proves recovery. */
   clearIfRecovered(seq: number): void {
     if (this.#errorSeq !== undefined && seq > this.#errorSeq) {
-      this.#error = undefined;
-      this.#errorSeq = undefined;
-      this.#errorAt = undefined;
+      this.clear();
     }
+  }
+
+  /**
+   * Drop the held error unconditionally. Used when the run is deliberately kept
+   * alive by a fresh prompt (idle auto-resume): the old error must not throttle
+   * or terminate the continued response via a stale grace window.
+   */
+  clear(): void {
+    this.#error = undefined;
+    this.#errorSeq = undefined;
+    this.#errorAt = undefined;
   }
 }
