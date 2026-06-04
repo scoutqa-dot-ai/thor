@@ -66,7 +66,7 @@ describe("proxy registry", () => {
       GRAFANA_URL_LABS: "https://grafana.labs",
       GRAFANA_SERVICE_ACCOUNT_TOKEN_LABS: "labs-token",
       GRAFANA_ORG_ID_LABS: "7",
-      ATLASSIAN_AUTH_LABS: "Basic labs",
+      ATLASSIAN_AUTH: "Basic global",
       ATLASSIAN_CLOUD_ID: "acme.atlassian.net",
     } as NodeJS.ProcessEnv;
 
@@ -158,18 +158,60 @@ describe("proxy registry", () => {
     expect(getAvailableProxyNames(undefined, env)).not.toContain("grafana");
   });
 
-  it("requires ATLASSIAN_CLOUD_ID whenever Atlassian auth is configured", () => {
+  it("disables atlassian when the global auth+cloud-id bundle is incomplete", () => {
     expect(resolveProxyConfig("atlassian", undefined, {} as NodeJS.ProcessEnv)).toBeUndefined();
-    expect(() =>
+    // Auth without cloud id is an incomplete global bundle: unavailable, not a throw.
+    expect(
       resolveProxyConfig("atlassian", undefined, {
         ATLASSIAN_AUTH: "Basic global",
       } as NodeJS.ProcessEnv),
-    ).toThrow(/ATLASSIAN_CLOUD_ID is required/);
+    ).toBeUndefined();
+    expect(
+      resolveProxyConfig("atlassian", undefined, {
+        ATLASSIAN_CLOUD_ID: "acme.atlassian.net",
+      } as NodeJS.ProcessEnv),
+    ).toBeUndefined();
+  });
+
+  it("fails hard on a partial atlassian profile bundle instead of silently using globals", () => {
+    // Scoped auth without scoped cloud id must not mix with the global cloud id.
+    expect(() =>
+      resolveProxyConfig("atlassian", "QA", {
+        ATLASSIAN_AUTH: "Basic global",
+        ATLASSIAN_CLOUD_ID: "acme.atlassian.net",
+        ATLASSIAN_AUTH_QA: "Basic qa",
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/partial atlassian profile bundle/i);
     expect(() =>
       resolveProxyConfig("atlassian", "QA", {
         ATLASSIAN_AUTH_QA: "Basic qa",
       } as NodeJS.ProcessEnv),
-    ).toThrow(/ATLASSIAN_CLOUD_ID_QA or ATLASSIAN_CLOUD_ID is required/);
+    ).toThrow(/ATLASSIAN_CLOUD_ID_QA/);
+    // The reverse leg (scoped cloud id, scoped auth missing) fails the same way.
+    expect(() =>
+      resolveProxyConfig("atlassian", "QA", {
+        ATLASSIAN_CLOUD_ID_QA: "qa.atlassian.net",
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/ATLASSIAN_AUTH_QA/);
+  });
+
+  it("routes a full scoped atlassian bundle at its own profile target key", () => {
+    const env = {
+      ATLASSIAN_AUTH: "Basic global",
+      ATLASSIAN_CLOUD_ID: "acme.atlassian.net",
+      ATLASSIAN_AUTH_QA: "Basic qa",
+      ATLASSIAN_CLOUD_ID_QA: "qa.atlassian.net",
+    } as NodeJS.ProcessEnv;
+
+    const qa = resolveProxyConfig("atlassian", "QA", env);
+    expect(qa?.upstream).toMatchObject({ headers: { Authorization: "Basic qa" } });
+    expect(qa?.target.key).toBe("atlassian:QA");
+    expect(resolveAtlassianCloudId("QA", env).value).toBe("qa.atlassian.net");
+
+    // A profile with no scoped vars falls back to the whole global bundle.
+    const other = resolveProxyConfig("atlassian", "OTHER", env);
+    expect(other?.upstream).toMatchObject({ headers: { Authorization: "Basic global" } });
+    expect(other?.target.key).toBe("atlassian:GLOBAL");
   });
 
   it("resolves langfuse as a per-profile base64 basic-auth bundle with its own host", () => {

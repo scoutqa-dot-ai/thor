@@ -244,25 +244,32 @@ export function resolveProxyConfig(
   if (!isProxyName(name)) return undefined;
 
   if (name === "atlassian") {
-    const auth = scopedEnv(env, "ATLASSIAN_AUTH", profile);
-    if (!auth.value) return undefined;
-    const cloudId = resolveAtlassianCloudId(profile, env);
-    if (!cloudId.value) {
-      const scopedVar = profile ? `ATLASSIAN_CLOUD_ID_${profile}` : undefined;
+    const scopedAuth = profile ? envValue(env, `ATLASSIAN_AUTH_${profile}`) : undefined;
+    const scopedCloudId = profile ? envValue(env, `ATLASSIAN_CLOUD_ID_${profile}`) : undefined;
+    const anyScoped = Boolean(scopedAuth || scopedCloudId);
+    const useScoped = Boolean(scopedAuth && scopedCloudId);
+    if (profile && anyScoped && !useScoped) {
+      const missing = [
+        !scopedAuth ? `ATLASSIAN_AUTH_${profile}` : undefined,
+        !scopedCloudId ? `ATLASSIAN_CLOUD_ID_${profile}` : undefined,
+      ].filter(Boolean);
       throw new Error(
-        `${scopedVar ? `${scopedVar} or ` : ""}ATLASSIAN_CLOUD_ID is required when ATLASSIAN_AUTH is configured for Atlassian MCP`,
+        `partial atlassian profile bundle for "${profile}": missing ${missing.join(", ")}. Set ATLASSIAN_AUTH_${profile} and ATLASSIAN_CLOUD_ID_${profile} together, or none of them.`,
       );
     }
+    const auth = useScoped ? scopedAuth : envValue(env, "ATLASSIAN_AUTH");
+    const cloudId = useScoped ? scopedCloudId : envValue(env, "ATLASSIAN_CLOUD_ID");
+    if (!auth || !cloudId) return undefined;
     return {
       upstream: {
         kind: "http",
         url: "https://mcp.atlassian.com/v1/mcp",
-        headers: { Authorization: auth.value },
+        headers: { Authorization: auth },
       },
       allow: ATLASSIAN_ALLOW,
       approve: ATLASSIAN_APPROVE,
       target: {
-        key: targetKey(name, profile, auth.scope),
+        key: targetKey(name, profile, useScoped ? "profile" : "global"),
         name,
         ...(profile && { profile }),
       },
