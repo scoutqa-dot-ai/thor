@@ -354,12 +354,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
             logInfo(log, "upstream_reconnected", { name, afterAttempt: attempt });
           })
           .catch((err) => {
-            logError(
-              log,
-              "upstream_reconnect_failed",
-              errorMessage(err),
-              { name, attempt },
-            );
+            logError(log, "upstream_reconnect_failed", errorMessage(err), { name, attempt });
             scheduleReconnect(attempt + 1);
           });
       }, delay);
@@ -413,12 +408,12 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       approve: (proxyDef.approve ?? []).length,
     });
 
-      return {
-        name,
-        targetKey: proxyDef.target.key,
-        upstream,
-        approvalStore: getApprovalStore(name),
-      };
+    return {
+      name,
+      targetKey: proxyDef.target.key,
+      upstream,
+      approvalStore: getApprovalStore(name),
+    };
   }
 
   async function getInstance(name: string, profile?: string): Promise<ProxyInstance | undefined> {
@@ -655,7 +650,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
 
       const stdout = unwrapResult(result);
       if (toolName === "post_message" && opts.sessionId) {
-        const correlationKey = computeSlackCorrelationKey(callArgs, stdout);
+        const correlationKey = computeSlackCorrelationKey(args, stdout);
         if (correlationKey) {
           try {
             appendCorrelationAlias(opts.sessionId, correlationKey);
@@ -665,15 +660,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
               source: "mcp:post_message",
             });
           } catch (err) {
-            logError(
-              log,
-              "alias_registration_error",
-              errorMessage(err),
-              {
-                sessionId: opts.sessionId,
-                correlationKey,
-              },
-            );
+            logError(log, "alias_registration_error", errorMessage(err), {
+              sessionId: opts.sessionId,
+              correlationKey,
+            });
           }
         }
       }
@@ -681,12 +671,6 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     } catch (err) {
       const duration = Date.now() - start;
       const message = errorMessage(err);
-      let logArgs = args;
-      try {
-        logArgs = outboundArgs(instance, args, profile);
-      } catch {
-        // Preserve the original call arguments if computing integration overrides failed.
-      }
       logError(log, logEvent, message, {
         upstream: instance.name,
         tool: toolName,
@@ -700,7 +684,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         decision,
         targetKey: targetKey ?? instance.targetKey,
         profile,
-        args: logArgs,
+        args,
         durationMs: duration,
         error: message,
       });
@@ -731,13 +715,14 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     if (!instance) {
       return fail(`Upstream "${upstreamName}" is not configured for this thread/profile.`);
     }
+
     if (toolInfo.classification === "approve") {
       const approvalRequired = ApprovalRequiredEventPayloadSchema.safeParse({
         type: "approval_required",
         actionId: "_pending",
         proxyName: instance.name,
         tool: toolInfo.name,
-        args: upstreamName === "atlassian" ? withoutCloudId(args) : args,
+        args,
       });
       if (!approvalRequired.success) {
         return fail(
