@@ -209,7 +209,6 @@ function buildTriggeringUserPromptBlock(
   return [
     "[Triggering user]",
     user ? `Run triggered by ${formatTriggeringUser(user)}.` : `Run triggered by ${actorId}.`,
-    `User directory: ${WORKSPACE_CONFIG_PATH} users[] (re-read it if you need more user details later).`,
   ].join("\n");
 }
 
@@ -721,15 +720,14 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       // --- Memory: inject into new or stale sessions ---
       if (!resumed) {
         const bootstrapBlocks: string[] = [];
+        const globalMemoryPath = `${memoryDir}/README.md`;
         const globalMemory = readGlobalMemory(memoryDir);
         if (globalMemory) {
-          bootstrapBlocks.push(
-            `[Global memory — important context from prior sessions]\n${globalMemory}`,
-          );
-          bootstrapMemoryPaths.push(`${memoryDir}/README.md`);
+          bootstrapBlocks.push(`[Global memory at ${globalMemoryPath}]\n${globalMemory}`);
+          bootstrapMemoryPaths.push(globalMemoryPath);
         } else {
           bootstrapBlocks.push(
-            `[Global memory: none yet — write to ${memoryDir}/README.md to persist cross-cutting context]`,
+            `[Global memory: none yet — write to ${globalMemoryPath} to persist cross-cutting context]`,
           );
         }
 
@@ -737,12 +735,12 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         if (channelMemory) {
           if (channelMemory.content) {
             bootstrapBlocks.push(
-              `[Channel memory — context for Slack channel ${channelMemory.channelId}]\n${channelMemory.content}`,
+              `[Channel memory at ${channelMemory.path}]\n${channelMemory.content}`,
             );
             bootstrapMemoryPaths.push(channelMemory.path);
           } else {
             bootstrapBlocks.push(
-              `[Channel memory: none yet — write to ${channelMemory.path} to persist durable channel/team context]`,
+              `[Channel memory: none yet — write to ${channelMemory.path} to persist durable channel context]`,
             );
           }
         }
@@ -755,7 +753,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         if (personMemory) {
           if (personMemory.content) {
             bootstrapBlocks.push(
-              `[Person memory — context for ${personMemory.slug}]\n${personMemory.content}`,
+              `[Person memory at ${personMemory.path}]\n${personMemory.content}`,
             );
             bootstrapMemoryPaths.push(personMemory.path);
           } else {
