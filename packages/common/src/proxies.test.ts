@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { getAvailableProxyNames, PROXY_NAMES, resolveProxyConfig } from "./proxies.ts";
+import {
+  getAvailableProxyNames,
+  PROXY_NAMES,
+  resolveAtlassianCloudId,
+  resolveProxyConfig,
+} from "./proxies.ts";
 
 const FULL_ENV: NodeJS.ProcessEnv = {
   ATLASSIAN_AUTH: "Basic global",
-  ATLASSIAN_CLOUD_ID: "katalon.atlassian.net",
+  ATLASSIAN_CLOUD_ID: "acme.atlassian.net",
   POSTHOG_API_KEY: "phc_global",
   GRAFANA_URL: "https://grafana.global",
   GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
@@ -26,9 +31,6 @@ describe("proxy registry", () => {
     expect(httpUpstream("atlassian", undefined, FULL_ENV).url).toBe(
       "https://mcp.atlassian.com/v1/mcp",
     );
-    expect(resolveProxyConfig("atlassian", undefined, FULL_ENV)?.atlassianCloudId).toBe(
-      "katalon.atlassian.net",
-    );
     expect(resolveProxyConfig("grafana", undefined, FULL_ENV)?.allow).toEqual(
       expect.arrayContaining(["query_prometheus", "list_prometheus_metric_names"]),
     );
@@ -40,7 +42,8 @@ describe("proxy registry", () => {
     const env = {
       ATLASSIAN_AUTH: "Basic global",
       ATLASSIAN_AUTH_LABS: "Basic labs",
-      ATLASSIAN_CLOUD_ID: "katalon.atlassian.net",
+      ATLASSIAN_CLOUD_ID: "acme.atlassian.net",
+      ATLASSIAN_CLOUD_ID_LABS: "labs.atlassian.net",
       POSTHOG_API_KEY: "phc_global",
     } as NodeJS.ProcessEnv;
 
@@ -50,6 +53,8 @@ describe("proxy registry", () => {
     expect(httpUpstream("atlassian", "QA", env).headers).toEqual({
       Authorization: "Basic global",
     });
+    expect(resolveAtlassianCloudId("LABS", env).value).toBe("labs.atlassian.net");
+    expect(resolveAtlassianCloudId("QA", env).value).toBe("acme.atlassian.net");
     expect(httpUpstream("posthog", "LABS", env).headers?.Authorization).toBe("Bearer phc_global");
   });
 
@@ -62,7 +67,7 @@ describe("proxy registry", () => {
       GRAFANA_SERVICE_ACCOUNT_TOKEN_LABS: "labs-token",
       GRAFANA_ORG_ID_LABS: "7",
       ATLASSIAN_AUTH_LABS: "Basic labs",
-      ATLASSIAN_CLOUD_ID: "katalon.atlassian.net",
+      ATLASSIAN_CLOUD_ID: "acme.atlassian.net",
     } as NodeJS.ProcessEnv;
 
     const labs = resolveProxyConfig("grafana", "LABS", env)?.upstream;
@@ -164,7 +169,7 @@ describe("proxy registry", () => {
       resolveProxyConfig("atlassian", "QA", {
         ATLASSIAN_AUTH_QA: "Basic qa",
       } as NodeJS.ProcessEnv),
-    ).toThrow(/ATLASSIAN_CLOUD_ID is required/);
+    ).toThrow(/ATLASSIAN_CLOUD_ID_QA or ATLASSIAN_CLOUD_ID is required/);
   });
 
   it("resolves langfuse as a per-profile base64 basic-auth bundle with its own host", () => {

@@ -18,7 +18,6 @@ export interface ResolvedProxyConfig {
   upstream: ProxyUpstream;
   allow: string[];
   approve: string[];
-  atlassianCloudId?: string;
   target: {
     key: string;
     name: ProxyName;
@@ -230,6 +229,13 @@ function targetKey(name: ProxyName, profile: string | undefined, scope: "profile
   return `${name}:${profile && scope === "profile" ? profile : "GLOBAL"}`;
 }
 
+export function resolveAtlassianCloudId(
+  profile: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): { value?: string; scope: "profile" | "global" } {
+  return scopedEnv(env, "ATLASSIAN_CLOUD_ID", profile);
+}
+
 export function resolveProxyConfig(
   name: string,
   profile?: string,
@@ -240,10 +246,11 @@ export function resolveProxyConfig(
   if (name === "atlassian") {
     const auth = scopedEnv(env, "ATLASSIAN_AUTH", profile);
     if (!auth.value) return undefined;
-    const cloudId = envValue(env, "ATLASSIAN_CLOUD_ID");
-    if (!cloudId) {
+    const cloudId = resolveAtlassianCloudId(profile, env);
+    if (!cloudId.value) {
+      const scopedVar = profile ? `ATLASSIAN_CLOUD_ID_${profile}` : undefined;
       throw new Error(
-        "ATLASSIAN_CLOUD_ID is required when ATLASSIAN_AUTH is configured for Atlassian MCP",
+        `${scopedVar ? `${scopedVar} or ` : ""}ATLASSIAN_CLOUD_ID is required when ATLASSIAN_AUTH is configured for Atlassian MCP`,
       );
     }
     return {
@@ -254,7 +261,6 @@ export function resolveProxyConfig(
       },
       allow: ATLASSIAN_ALLOW,
       approve: ATLASSIAN_APPROVE,
-      atlassianCloudId: cloudId,
       target: {
         key: targetKey(name, profile, auth.scope),
         name,

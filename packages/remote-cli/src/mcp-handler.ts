@@ -20,6 +20,7 @@ import {
   logInfo,
   logWarn,
   PROXY_NAMES,
+  resolveAtlassianCloudId,
   resolveProxyConfig,
   resolveSessionAnchorId,
   resolveSlackThreadTargetFromTrigger,
@@ -139,7 +140,6 @@ function parseJiraAccountLookupStdout(stdout: string): JiraLookupResult {
 interface ProxyInstance {
   name: string;
   targetKey: string;
-  atlassianCloudId?: string;
   upstream: UpstreamConnection;
   approvalStore: ApprovalStore;
 }
@@ -413,13 +413,12 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       approve: (proxyDef.approve ?? []).length,
     });
 
-    return {
-      name,
-      targetKey: proxyDef.target.key,
-      atlassianCloudId: proxyDef.atlassianCloudId,
-      upstream,
-      approvalStore: getApprovalStore(name),
-    };
+      return {
+        name,
+        targetKey: proxyDef.target.key,
+        upstream,
+        approvalStore: getApprovalStore(name),
+      };
   }
 
   async function getInstance(name: string, profile?: string): Promise<ProxyInstance | undefined> {
@@ -602,12 +601,17 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     onError?: (message: string) => void;
   }
 
-  function outboundArgs(instance: ProxyInstance, args: Record<string, unknown>): Record<string, unknown> {
+  function outboundArgs(
+    instance: ProxyInstance,
+    args: Record<string, unknown>,
+    profile: string | undefined,
+  ): Record<string, unknown> {
     if (instance.name !== "atlassian") return args;
-    if (!instance.atlassianCloudId) {
+    const cloudId = resolveAtlassianCloudId(profile).value;
+    if (!cloudId) {
       throw new Error("Atlassian cloud ID is not configured");
     }
-    return { ...args, cloudId: instance.atlassianCloudId };
+    return { ...args, cloudId };
   }
 
   async function executeUpstreamCall(opts: UpstreamCallOpts): Promise<McpExecResult> {
@@ -624,7 +628,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     } = opts;
     const start = Date.now();
     try {
-      const callArgs = outboundArgs(instance, args);
+      const callArgs = outboundArgs(instance, args, profile);
       const result = await instance.upstream.client.callTool({
         name: toolName,
         arguments: callArgs,
@@ -679,7 +683,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       const message = errorMessage(err);
       let logArgs = args;
       try {
-        logArgs = outboundArgs(instance, args);
+        logArgs = outboundArgs(instance, args, profile);
       } catch {
         // Preserve the original call arguments if computing integration overrides failed.
       }
@@ -727,15 +731,13 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     if (!instance) {
       return fail(`Upstream "${upstreamName}" is not configured for this thread/profile.`);
     }
-    const userVisibleArgs = upstreamName === "atlassian" ? withoutCloudId(args) : args;
-
     if (toolInfo.classification === "approve") {
       const approvalRequired = ApprovalRequiredEventPayloadSchema.safeParse({
         type: "approval_required",
         actionId: "_pending",
         proxyName: instance.name,
         tool: toolInfo.name,
-        args: userVisibleArgs,
+        args: upstreamName === "atlassian" ? withoutCloudId(args) : args,
       });
       if (!approvalRequired.success) {
         return fail(
@@ -822,7 +824,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     return executeUpstreamCall({
       instance,
       toolName: toolInfo.name,
-      args: userVisibleArgs,
+      args,
       profile,
       logEvent: "tool_call",
       decision: "allowed",

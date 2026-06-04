@@ -68,7 +68,8 @@ const activeTriggerId = "00000000-0000-7000-8000-000000000101";
 const githubTriggerId = "00000000-0000-7000-8000-000000000102";
 const activeAnchorId = "00000000-0000-7000-8000-0000000004a1";
 const activeSlackCorrelationKey = "slack:thread:C123/1710000000.001";
-const configuredCloudId = "configured-cloud-id";
+const configuredCloudId = "acme.atlassian.net";
+const configuredQaCloudId = "qa.atlassian.net";
 
 function jiraLookupResponse(users: Array<{ accountId: string; displayName?: string }>) {
   return {
@@ -528,6 +529,7 @@ describe("remote-cli MCP endpoints", () => {
 
   it("routes Slack-triggered MCP calls through the channel profile credential target", async () => {
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    vi.stubEnv("ATLASSIAN_CLOUD_ID_QA", configuredQaCloudId);
     workspaceConfig = {
       ...workspaceConfig,
       profiles: { QA: { channels: ["C123"] } },
@@ -553,6 +555,7 @@ describe("remote-cli MCP endpoints", () => {
         decision: "allowed",
         targetKey: "atlassian:QA",
         profile: "QA",
+        args: { cloudId: configuredQaCloudId },
       }),
     );
   });
