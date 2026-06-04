@@ -99,16 +99,6 @@ sandbox bash -c 'sdk use java 17.0.18-tem && mvn test'
 sandbox bash -c 'nvm use 20 && npm test'
 ```
 
-### PHP versions on demand
-
-PHP 8.4 is preinstalled. Other `ondrej/php` versions can be installed inside the
-sandbox with `sudo apt-get`, then selected through `update-alternatives`:
-
-```bash
-sandbox bash -lc 'sudo apt-get update && sudo apt-get install -y php8.3-cli php8.3-mbstring php8.3-xml php8.3-curl'
-sandbox bash -lc 'sudo update-alternatives --set php /usr/bin/php8.3 && php --version'
-```
-
 ---
 
 ## Notes
