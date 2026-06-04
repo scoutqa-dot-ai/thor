@@ -1,0 +1,23 @@
+pnpm-workspace.yaml
+  1dafc9316ce3c359 3-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "ee4bcfcfca2068329899bef056d05aac0ad33af0",
+  "prompts": {
+    "1dafc9316ce3c359": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eaf67490-efbe-4eaa-94cc-fb70756695be",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 13,
+      "total_deletions": 12,
+      "accepted_lines": 4,
+      "overriden_lines": 4
+    }
+  }
+}
