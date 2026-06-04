@@ -69,6 +69,7 @@ The sandbox image is intentionally slim. Preinstalled by default:
 - **Node**: 22 (default), 20 via nvm. pnpm available via corepack.
 - **Java**: 21 (default), 17 (Temurin) via SDKMAN. Maven and Gradle included.
 - **Python**: 3.12 (default) via pyenv. `uv` available for fast installs.
+- **PHP**: 8.4 (default) via `ondrej/php`, with common CLI extensions installed.
 - **Docker**: Docker CE with docker compose. Start the daemon with `sudo dockerd &` before use.
 - **Browser automation/recording**: `agent-browser` with Chrome for Testing preinstalled, plus `ffmpeg`, `xvfb`, `xdotool`, `tree`, and ImageMagick (`identify`, `convert`, `compare`).
 
@@ -96,6 +97,16 @@ sandbox mvn test
 # Inline (one-off version switch + command)
 sandbox bash -c 'sdk use java 17.0.18-tem && mvn test'
 sandbox bash -c 'nvm use 20 && npm test'
+```
+
+### PHP versions on demand
+
+PHP 8.4 is preinstalled. Other `ondrej/php` versions can be installed inside the
+sandbox with `sudo apt-get`, then selected through `update-alternatives`:
+
+```bash
+sandbox bash -lc 'sudo apt-get update && sudo apt-get install -y php8.3-cli php8.3-mbstring php8.3-xml php8.3-curl'
+sandbox bash -lc 'sudo update-alternatives --set php /usr/bin/php8.3 && php --version'
 ```
 
 ---
