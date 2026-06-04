@@ -252,6 +252,19 @@ function messageUpdatedInfo(event: Event): Record<string, unknown> | undefined {
   return isRecord(info) ? info : undefined;
 }
 
+function messageInfoId(info: Record<string, unknown>): string | undefined {
+  return (
+    safeStr(info.id) ??
+    safeStr(info.messageID) ??
+    safeStr(info.messageId) ??
+    safeStr(info.message_id)
+  );
+}
+
+function messageInfoRole(info: Record<string, unknown>): string | undefined {
+  return safeStr(info.role) ?? safeStr(info.type);
+}
+
 function eventSessionId(event: Event): string | undefined {
   if (event.type === "message.part.updated") return event.properties.part.sessionID;
   if (event.type === "message.updated") {
@@ -286,13 +299,9 @@ function contextTokenTotal(tokens: unknown): number | undefined {
 function assistantMessageSummaryFromInfo(
   info: Record<string, unknown>,
 ): AssistantMessageSummary | undefined {
-  const role = safeStr(info.role) ?? safeStr(info.type);
+  const role = messageInfoRole(info);
   if (role && role !== "assistant") return undefined;
-  const id =
-    safeStr(info.id) ??
-    safeStr(info.messageID) ??
-    safeStr(info.messageId) ??
-    safeStr(info.message_id);
+  const id = messageInfoId(info);
   if (!id) return undefined;
   return {
     id,
@@ -306,7 +315,7 @@ function emitContextProgressFromInfo(
   limits: ModelContextLimits,
   emit: (event: ProgressEvent) => void,
 ): void {
-  const role = safeStr(info.role) ?? safeStr(info.type);
+  const role = messageInfoRole(info);
   if (role && role !== "assistant") return;
   const tokens = contextTokenTotal(info.tokens);
   if (tokens === undefined) return;
@@ -380,6 +389,10 @@ export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStr
   const emittedTaskDelegates = new Set<string>();
   // Dedupe tool progress emissions — emit once per call when it starts running.
   const emittedToolStarts = new Set<string>();
+  // Text parts are roleless; learn parent message roles from message.updated
+  // before allowing text to re-arm idle auto-resume.
+  const parentMessageRoles = new Map<string, string>();
+  const pendingNonEmptyTextMessageIds = new Set<string>();
 
   function emitToolProgress(toolPart: ToolPart, status: "running" | "completed" | "error"): void {
     const key = `${toolPart.sessionID}|${toolPart.messageID}|${toolPart.callID}`;
@@ -435,6 +448,16 @@ export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStr
       if (isParent && event.type === "message.updated") {
         const info = messageUpdatedInfo(event);
         if (info) {
+          const messageId = messageInfoId(info);
+          const role = messageInfoRole(info);
+          if (messageId && role) {
+            parentMessageRoles.set(messageId, role);
+            if (role === "assistant" && pendingNonEmptyTextMessageIds.delete(messageId)) {
+              autoResume.onAssistantText(messageId, true);
+            } else if (role !== "assistant") {
+              pendingNonEmptyTextMessageIds.delete(messageId);
+            }
+          }
           const assistantMessage = assistantMessageSummaryFromInfo(info);
           if (assistantMessage) {
             autoResume.onAssistantMessageUpdate(assistantMessage);
@@ -483,7 +506,15 @@ export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStr
         if (part.type === "text") {
           const textPart = part as TextPart;
           collectedTextParts.push(textPart.text);
-          autoResume.onAssistantText(textPart.messageID, textPart.text.trim().length > 0);
+          const hasContent = textPart.text.trim().length > 0;
+          if (hasContent) {
+            const role = parentMessageRoles.get(textPart.messageID);
+            if (role === "assistant") {
+              autoResume.onAssistantText(textPart.messageID, true);
+            } else if (!role) {
+              pendingNonEmptyTextMessageIds.add(textPart.messageID);
+            }
+          }
         } else if (part.type === "tool") {
           const toolPart = part as ToolPart;
           emitTaskDelegateProgress(toolPart);

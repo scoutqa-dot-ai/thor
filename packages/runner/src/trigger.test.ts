@@ -75,14 +75,14 @@ class FakeEventBuses {
   }
 }
 
-function textEvent(sessionId: string, text: string): Event {
+function textEvent(sessionId: string, text: string, messageID = `m-${sessionId}`): Event {
   return {
     type: "message.part.updated",
     properties: {
       part: {
         type: "text",
         sessionID: sessionId,
-        messageID: `m-${sessionId}`,
+        messageID,
         text,
       } as TextPart,
     },
@@ -1680,7 +1680,17 @@ describe("runner /trigger orchestration", () => {
             idleEvent(sessionId),
           ];
         }
-        return [textEvent(sessionId, "continued ok"), idleEvent(sessionId)];
+        return [
+          messageUpdatedEvent(sessionId, {
+            id: "msg-continued-ok",
+            providerID: "openai",
+            modelID: "gpt-5.5",
+            tokens: undefined,
+            role: "assistant",
+          }),
+          textEvent(sessionId, "continued ok", "msg-continued-ok"),
+          idleEvent(sessionId),
+        ];
       },
     });
 
@@ -1723,7 +1733,17 @@ describe("runner /trigger orchestration", () => {
             idleEvent(sessionId),
           ];
         }
-        return [textEvent(sessionId, "continued ok"), idleEvent(sessionId)];
+        return [
+          messageUpdatedEvent(sessionId, {
+            id: "msg-continued-ok",
+            providerID: "openai",
+            modelID: "gpt-5.5",
+            tokens: undefined,
+            role: "assistant",
+          }),
+          textEvent(sessionId, "continued ok", "msg-continued-ok"),
+          idleEvent(sessionId),
+        ];
       },
     });
 
@@ -1761,7 +1781,17 @@ describe("runner /trigger orchestration", () => {
             idleEvent(sessionId),
           ];
         }
-        return [textEvent(sessionId, "continued ok"), idleEvent(sessionId)];
+        return [
+          messageUpdatedEvent(sessionId, {
+            id: "msg-continued-ok",
+            providerID: "openai",
+            modelID: "gpt-5.5",
+            tokens: undefined,
+            role: "assistant",
+          }),
+          textEvent(sessionId, "continued ok", "msg-continued-ok"),
+          idleEvent(sessionId),
+        ];
       },
     });
 
@@ -1860,7 +1890,17 @@ describe("runner /trigger orchestration", () => {
             idleEvent(sessionId),
           ];
         }
-        return [textEvent(sessionId, "second continue ok"), idleEvent(sessionId)];
+        return [
+          messageUpdatedEvent(sessionId, {
+            id: "msg-second-continue-ok",
+            providerID: "openai",
+            modelID: "gpt-5.5",
+            tokens: undefined,
+            role: "assistant",
+          }),
+          textEvent(sessionId, "second continue ok", "msg-second-continue-ok"),
+          idleEvent(sessionId),
+        ];
       },
     });
 
@@ -1875,6 +1915,122 @@ describe("runner /trigger orchestration", () => {
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
         status: "completed",
         response: "second continue ok",
+      });
+    });
+  });
+
+  it("does not re-arm auto-resume from a user Continue text part", async () => {
+    let promptCalls = 0;
+    const failedUpdate = (sessionId: string, id: string) =>
+      messageUpdatedEvent(sessionId, {
+        id,
+        finish: "error",
+        providerID: "openai",
+        modelID: "gpt-5.5",
+        tokens: { input: 0, output: 0, reasoning: 0 },
+        role: "assistant",
+      });
+    const h = createHarness({
+      promptEvents: (sessionId) => {
+        promptCalls++;
+        if (promptCalls === 1) {
+          return [
+            toolEvent(sessionId, "bash", "running", { command: "first" }),
+            failedUpdate(sessionId, "msg-fail-1"),
+            idleEvent(sessionId),
+          ];
+        }
+        return [
+          textEvent(sessionId, "Continue", "msg-user-continue"),
+          messageUpdatedEvent(sessionId, {
+            id: "msg-user-continue",
+            providerID: "openai",
+            modelID: "gpt-5.5",
+            tokens: undefined,
+            role: "user",
+          }),
+          failedUpdate(sessionId, "msg-fail-2"),
+          idleEvent(sessionId),
+        ];
+      },
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "start",
+        correlationKey: "slack:thread:1710000000.208",
+      });
+
+      expect(h.prompts).toHaveLength(2);
+      expect(h.prompts[1]).toBe("Continue");
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        status: "error",
+        error: expect.stringContaining("failed before producing output"),
+      });
+    });
+  });
+
+  it("re-arms from assistant text even when the role update arrives later", async () => {
+    let promptCalls = 0;
+    const failedUpdate = (sessionId: string, id: string) =>
+      messageUpdatedEvent(sessionId, {
+        id,
+        finish: "error",
+        providerID: "openai",
+        modelID: "gpt-5.5",
+        tokens: { input: 0, output: 0, reasoning: 0 },
+        role: "assistant",
+      });
+    const h = createHarness({
+      promptEvents: (sessionId) => {
+        promptCalls++;
+        if (promptCalls === 1) {
+          return [
+            toolEvent(sessionId, "bash", "running", { command: "first" }),
+            failedUpdate(sessionId, "msg-fail-1"),
+            idleEvent(sessionId),
+          ];
+        }
+        if (promptCalls === 2) {
+          return [
+            textEvent(sessionId, "made progress", "msg-assistant-progress"),
+            messageUpdatedEvent(sessionId, {
+              id: "msg-assistant-progress",
+              providerID: "openai",
+              modelID: "gpt-5.5",
+              tokens: undefined,
+              role: "assistant",
+            }),
+            toolEvent(sessionId, "bash", "running", { command: "second" }),
+            failedUpdate(sessionId, "msg-fail-2"),
+            idleEvent(sessionId),
+          ];
+        }
+        return [
+          messageUpdatedEvent(sessionId, {
+            id: "msg-final",
+            providerID: "openai",
+            modelID: "gpt-5.5",
+            tokens: undefined,
+            role: "assistant",
+          }),
+          textEvent(sessionId, "second continue ok", "msg-final"),
+          idleEvent(sessionId),
+        ];
+      },
+    });
+
+    await withServer(h.app, async (url) => {
+      const result = await trigger(url, {
+        prompt: "start",
+        correlationKey: "slack:thread:1710000000.209",
+      });
+
+      expect(h.prompts).toHaveLength(3);
+      expect(h.prompts.slice(1)).toEqual(["Continue", "Continue"]);
+      expect(result.events.find((e) => e.type === "done")).toMatchObject({
+        status: "completed",
+        response: "made progress\n\nsecond continue ok",
       });
     });
   });
