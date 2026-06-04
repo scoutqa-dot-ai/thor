@@ -1,0 +1,31 @@
+docs/plan/2026032001_atlassian-mcp.md
+  68b67734023cc233 88
+packages/remote-cli/src/mcp-handler.test.ts
+  68b67734023cc233 598,636,683,749,810,812,867,879,881,932,934,968,998,1038
+README.md
+  68b67734023cc233 99,109-110
+docs/feat/profile.md
+  68b67734023cc233 39-41
+.env.example
+  68b67734023cc233 38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "2450c54ca7d7e806ba1a037db30fd40e782ed711",
+  "prompts": {
+    "68b67734023cc233": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "59fd9049-5115-4a21-8f1a-a5fb557d55e3",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 42,
+      "total_deletions": 24,
+      "accepted_lines": 22,
+      "overriden_lines": 0
+    }
+  }
+}
