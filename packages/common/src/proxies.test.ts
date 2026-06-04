@@ -3,6 +3,7 @@ import { getAvailableProxyNames, PROXY_NAMES, resolveProxyConfig } from "./proxi
 
 const FULL_ENV: NodeJS.ProcessEnv = {
   ATLASSIAN_AUTH: "Basic global",
+  ATLASSIAN_CLOUD_ID: "katalon.atlassian.net",
   POSTHOG_API_KEY: "phc_global",
   GRAFANA_URL: "https://grafana.global",
   GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
@@ -25,6 +26,9 @@ describe("proxy registry", () => {
     expect(httpUpstream("atlassian", undefined, FULL_ENV).url).toBe(
       "https://mcp.atlassian.com/v1/mcp",
     );
+    expect(resolveProxyConfig("atlassian", undefined, FULL_ENV)?.atlassianCloudId).toBe(
+      "katalon.atlassian.net",
+    );
     expect(resolveProxyConfig("grafana", undefined, FULL_ENV)?.allow).toEqual(
       expect.arrayContaining(["query_prometheus", "list_prometheus_metric_names"]),
     );
@@ -36,6 +40,7 @@ describe("proxy registry", () => {
     const env = {
       ATLASSIAN_AUTH: "Basic global",
       ATLASSIAN_AUTH_LABS: "Basic labs",
+      ATLASSIAN_CLOUD_ID: "katalon.atlassian.net",
       POSTHOG_API_KEY: "phc_global",
     } as NodeJS.ProcessEnv;
 
@@ -57,6 +62,7 @@ describe("proxy registry", () => {
       GRAFANA_SERVICE_ACCOUNT_TOKEN_LABS: "labs-token",
       GRAFANA_ORG_ID_LABS: "7",
       ATLASSIAN_AUTH_LABS: "Basic labs",
+      ATLASSIAN_CLOUD_ID: "katalon.atlassian.net",
     } as NodeJS.ProcessEnv;
 
     const labs = resolveProxyConfig("grafana", "LABS", env)?.upstream;
@@ -145,6 +151,20 @@ describe("proxy registry", () => {
 
     expect(resolveProxyConfig("grafana", undefined, env)).toBeUndefined();
     expect(getAvailableProxyNames(undefined, env)).not.toContain("grafana");
+  });
+
+  it("requires ATLASSIAN_CLOUD_ID whenever Atlassian auth is configured", () => {
+    expect(resolveProxyConfig("atlassian", undefined, {} as NodeJS.ProcessEnv)).toBeUndefined();
+    expect(() =>
+      resolveProxyConfig("atlassian", undefined, {
+        ATLASSIAN_AUTH: "Basic global",
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/ATLASSIAN_CLOUD_ID is required/);
+    expect(() =>
+      resolveProxyConfig("atlassian", "QA", {
+        ATLASSIAN_AUTH_QA: "Basic qa",
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/ATLASSIAN_CLOUD_ID is required/);
   });
 
   it("resolves langfuse as a per-profile base64 basic-auth bundle with its own host", () => {

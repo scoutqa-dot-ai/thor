@@ -48,7 +48,7 @@ jobs:
       ATTRIBUTION_E2E_NAME: ${{ vars.THOR_E2E_JIRA_NAME || 'Thor E2E Reviewer' }}
       ATTRIBUTION_E2E_GITHUB: ${{ github.actor }}
       THOR_E2E_JIRA_EMAIL: ${{ vars.THOR_E2E_JIRA_EMAIL || 'thor-e2e-reviewer@example.com' }}
-      JIRA_CLOUD_ID: ${{ vars.JIRA_CLOUD_ID }}
+      ATLASSIAN_CLOUD_ID: ${{ vars.ATLASSIAN_CLOUD_ID }}
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       DAYTONA_SNAPSHOT: ${{ vars.DAYTONA_SNAPSHOT }}
       ATLASSIAN_AUTH: ${{ secrets.ATLASSIAN_AUTH }}
@@ -114,6 +114,7 @@ jobs:
           # MCP credentials are passed to compose services through env_file.
           {
             printf 'ATLASSIAN_AUTH=%s\n' "$ATLASSIAN_AUTH"
+            printf 'ATLASSIAN_CLOUD_ID=%s\n' "$ATLASSIAN_CLOUD_ID"
             printf 'POSTHOG_API_KEY=%s\n' "$POSTHOG_API_KEY"
             printf 'GRAFANA_URL=%s\n' "$GRAFANA_URL"
             printf 'GRAFANA_SERVICE_ACCOUNT_TOKEN=%s\n' "$GRAFANA_SERVICE_ACCOUNT_TOKEN"

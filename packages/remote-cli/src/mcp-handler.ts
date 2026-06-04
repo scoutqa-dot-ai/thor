@@ -68,6 +68,30 @@ function buildUpstreamArgs(action: ApprovalAction): Record<string, unknown> {
   return injectApprovalDisclaimer(action.tool, action.args, footer);
 }
 
+function withoutCloudId(args: Record<string, unknown>): Record<string, unknown> {
+  const { cloudId: _cloudId, ...rest } = args;
+  return rest;
+}
+
+function sanitizeAtlassianInputSchema(inputSchema: unknown): unknown {
+  if (!inputSchema || typeof inputSchema !== "object" || Array.isArray(inputSchema)) {
+    return inputSchema;
+  }
+  const schema = inputSchema as Record<string, unknown>;
+  const properties =
+    schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)
+      ? withoutCloudId(schema.properties as Record<string, unknown>)
+      : schema.properties;
+  const required = Array.isArray(schema.required)
+    ? schema.required.filter((field) => field !== "cloudId")
+    : schema.required;
+  return {
+    ...schema,
+    ...(properties !== undefined ? { properties } : {}),
+    ...(required !== undefined ? { required } : {}),
+  };
+}
+
 type JiraLookupResult = { ok: true; accountId: string } | { ok: false; reason: string };
 const JIRA_ACCOUNT_LOOKUP_TOOL = "lookupJiraAccountId";
 const JiraAccountLookupUserSchema = z.object({ accountId: z.string().min(1) }).passthrough();
@@ -115,6 +139,7 @@ function parseJiraAccountLookupStdout(stdout: string): JiraLookupResult {
 interface ProxyInstance {
   name: string;
   targetKey: string;
+  atlassianCloudId?: string;
   upstream: UpstreamConnection;
   approvalStore: ApprovalStore;
 }
@@ -391,6 +416,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     return {
       name,
       targetKey: proxyDef.target.key,
+      atlassianCloudId: proxyDef.atlassianCloudId,
       upstream,
       approvalStore: getApprovalStore(name),
     };
@@ -452,7 +478,6 @@ export function createMcpService(deps: McpServiceDeps): McpService {
 
   async function lookupJiraAccountIdViaUpstream(
     instance: ProxyInstance,
-    cloudId: string,
     email: string,
     profile: string | undefined,
   ): Promise<JiraLookupResult> {
@@ -462,7 +487,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     const result = await executeUpstreamCall({
       instance,
       toolName: JIRA_ACCOUNT_LOOKUP_TOOL,
-      args: { cloudId, searchString: email },
+      args: { searchString: email },
       profile,
       logEvent: "jira_account_lookup",
       decision: "allowed",
@@ -501,7 +526,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       .map((tool) => ({
         name: tool.name,
         description: tool.description,
-        inputSchema: tool.inputSchema,
+        inputSchema:
+          upstreamName === "atlassian"
+            ? sanitizeAtlassianInputSchema(tool.inputSchema)
+            : tool.inputSchema,
         classification: classifyTool(allow, approve, tool.name),
       }))
       .filter((tool) => tool.classification !== "hidden");
@@ -574,6 +602,14 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     onError?: (message: string) => void;
   }
 
+  function outboundArgs(instance: ProxyInstance, args: Record<string, unknown>): Record<string, unknown> {
+    if (instance.name !== "atlassian") return args;
+    if (!instance.atlassianCloudId) {
+      throw new Error("Atlassian cloud ID is not configured");
+    }
+    return { ...args, cloudId: instance.atlassianCloudId };
+  }
+
   async function executeUpstreamCall(opts: UpstreamCallOpts): Promise<McpExecResult> {
     const {
       instance,
@@ -588,9 +624,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     } = opts;
     const start = Date.now();
     try {
+      const callArgs = outboundArgs(instance, args);
       const result = await instance.upstream.client.callTool({
         name: toolName,
-        arguments: args,
+        arguments: callArgs,
       });
       const duration = Date.now() - start;
       logInfo(log, logEvent, {
@@ -606,7 +643,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         decision,
         targetKey: targetKey ?? instance.targetKey,
         profile,
-        args,
+        args: callArgs,
         result,
         durationMs: duration,
       });
@@ -614,7 +651,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
 
       const stdout = unwrapResult(result);
       if (toolName === "post_message" && opts.sessionId) {
-        const correlationKey = computeSlackCorrelationKey(args, stdout);
+        const correlationKey = computeSlackCorrelationKey(callArgs, stdout);
         if (correlationKey) {
           try {
             appendCorrelationAlias(opts.sessionId, correlationKey);
@@ -640,6 +677,12 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     } catch (err) {
       const duration = Date.now() - start;
       const message = errorMessage(err);
+      let logArgs = args;
+      try {
+        logArgs = outboundArgs(instance, args);
+      } catch {
+        // Preserve the original call arguments if computing integration overrides failed.
+      }
       logError(log, logEvent, message, {
         upstream: instance.name,
         tool: toolName,
@@ -653,7 +696,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         decision,
         targetKey: targetKey ?? instance.targetKey,
         profile,
-        args,
+        args: logArgs,
         durationMs: duration,
         error: message,
       });
@@ -684,6 +727,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     if (!instance) {
       return fail(`Upstream "${upstreamName}" is not configured for this thread/profile.`);
     }
+    const userVisibleArgs = upstreamName === "atlassian" ? withoutCloudId(args) : args;
 
     if (toolInfo.classification === "approve") {
       const approvalRequired = ApprovalRequiredEventPayloadSchema.safeParse({
@@ -691,7 +735,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         actionId: "_pending",
         proxyName: instance.name,
         tool: toolInfo.name,
-        args,
+        args: userVisibleArgs,
       });
       if (!approvalRequired.success) {
         return fail(
@@ -778,7 +822,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     return executeUpstreamCall({
       instance,
       toolName: toolInfo.name,
-      args,
+      args: userVisibleArgs,
       profile,
       logEvent: "tool_call",
       decision: "allowed",
@@ -988,25 +1032,9 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       });
       return args;
     }
-    const cloudId =
-      typeof args.cloudId === "string" && args.cloudId.length > 0 ? args.cloudId : undefined;
-    if (!cloudId) {
-      logInfo(log, "attribution_applied", {
-        surface: "jira",
-        outcome: "api_rejected",
-        reason: "lookup_missing_cloud_id",
-        ...attributionFields(resolved.actor, resolved.user),
-      });
-      return args;
-    }
     let lookup: JiraLookupResult;
     try {
-      lookup = await lookupJiraAccountIdViaUpstream(
-        instance,
-        cloudId,
-        resolved.user.email,
-        profile,
-      );
+      lookup = await lookupJiraAccountIdViaUpstream(instance, resolved.user.email, profile);
     } catch {
       logInfo(log, "attribution_applied", {
         surface: "jira",

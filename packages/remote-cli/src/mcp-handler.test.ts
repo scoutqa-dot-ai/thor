@@ -22,10 +22,14 @@ const tools: Tool[] = [
   {
     name: "createJiraIssue",
     description: "Create a Jira issue",
-    inputSchema: {
-      type: "object",
-      properties: { projectKey: { type: "string" }, summary: { type: "string" } },
-      required: ["projectKey", "summary"],
+      inputSchema: {
+        type: "object",
+        properties: {
+          cloudId: { type: "string" },
+          projectKey: { type: "string" },
+          summary: { type: "string" },
+        },
+        required: ["cloudId", "projectKey", "summary"],
       additionalProperties: false,
     },
   },
@@ -38,8 +42,9 @@ const tools: Tool[] = [
         outwardIssueIdOrKey: { type: "string" },
         inwardIssueIdOrKey: { type: "string" },
         linkType: { type: "string" },
+        cloudId: { type: "string" },
       },
-      required: ["outwardIssueIdOrKey", "inwardIssueIdOrKey", "linkType"],
+      required: ["cloudId", "outwardIssueIdOrKey", "inwardIssueIdOrKey", "linkType"],
       additionalProperties: false,
     },
   },
@@ -63,6 +68,7 @@ const activeTriggerId = "00000000-0000-7000-8000-000000000101";
 const githubTriggerId = "00000000-0000-7000-8000-000000000102";
 const activeAnchorId = "00000000-0000-7000-8000-0000000004a1";
 const activeSlackCorrelationKey = "slack:thread:C123/1710000000.001";
+const configuredCloudId = "configured-cloud-id";
 
 function jiraLookupResponse(users: Array<{ accountId: string; displayName?: string }>) {
   return {
@@ -112,6 +118,7 @@ describe("remote-cli MCP endpoints", () => {
 
   beforeEach(async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic dGVzdA==");
+    vi.stubEnv("ATLASSIAN_CLOUD_ID", configuredCloudId);
     vi.stubEnv("POSTHOG_API_KEY", "test-posthog-key");
     vi.stubEnv("GRAFANA_URL", "https://grafana.example.com");
     vi.stubEnv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "grafana-token");
@@ -326,6 +333,20 @@ describe("remote-cli MCP endpoints", () => {
       "createIssueLink",
     ]);
 
+    const toolHelp = await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian", "createJiraIssue", "--help"],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const toolHelpBody = (await toolHelp.json()) as { stdout: string };
+    const toolHelpJson = JSON.parse(toolHelpBody.stdout) as {
+      inputSchema: { properties?: Record<string, unknown>; required?: string[] };
+    };
+    expect(toolHelpJson.inputSchema.properties).not.toHaveProperty("cloudId");
+    expect(toolHelpJson.inputSchema.required).not.toContain("cloudId");
+
     const hiddenLookup = await postJson(
       "/exec/mcp",
       {
@@ -366,7 +387,7 @@ describe("remote-cli MCP endpoints", () => {
       stderr: "",
       exitCode: 0,
     });
-    expect(toolCalls).toEqual([{ name: "getJiraIssue", arguments: {} }]);
+    expect(toolCalls).toEqual([{ name: "getJiraIssue", arguments: { cloudId: configuredCloudId } }]);
     expect(toolCallLogs).toContainEqual(
       expect.objectContaining({
         tool: "getJiraIssue",
@@ -1137,7 +1158,6 @@ describe("remote-cli MCP endpoints", () => {
       command: string;
     };
     const cleanArgs = {
-      cloudId: "cloud-1",
       projectKey: "THOR",
       issueTypeName: "Task",
       summary: "Fix it",
@@ -1145,6 +1165,7 @@ describe("remote-cli MCP endpoints", () => {
     };
     const upstreamArgs = {
       ...cleanArgs,
+      cloudId: configuredCloudId,
       description: `body\n${formatThorContextFooter(`https://thor.example.com/runner/v/${activeAnchorId}/${activeTriggerId}`)}`,
     };
     expect(approvalOutput).toMatchObject({
@@ -1253,7 +1274,9 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(pending.status).toBe(200);
     expect(pendingBody).toEqual({ stdout: "linked", stderr: "", exitCode: 0 });
-    expect(toolCalls).toEqual([{ name: "createIssueLink", arguments: cleanArgs }]);
+    expect(toolCalls).toEqual([
+      { name: "createIssueLink", arguments: { ...cleanArgs, cloudId: configuredCloudId } },
+    ]);
     expect(slackFetch).not.toHaveBeenCalled();
   });
 
@@ -1432,7 +1455,7 @@ describe("remote-cli MCP endpoints", () => {
       '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
     );
 
-    expect(jiraLookups).toEqual([{ cloudId: "cloud-1", searchString: "alice@example.com" }]);
+    expect(jiraLookups).toEqual([{ cloudId: configuredCloudId, searchString: "alice@example.com" }]);
     expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
     expect(toolCalls[1].arguments).toMatchObject({
       description: `body\n${formatThorContextFooter(`https://thor.example.com/runner/v/${activeAnchorId}/${activeTriggerId}`)}`,
@@ -1486,14 +1509,14 @@ describe("remote-cli MCP endpoints", () => {
     expect(toolCalls[1].arguments?.assignee_account_id).toBeUndefined();
   });
 
-  it("keeps Jira issue creation best-effort when cloudId is missing", async () => {
+  it("injects configured cloudId for Jira attribution when caller omits cloudId", async () => {
     await approveJiraCreate(
       '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
     );
 
-    expect(jiraLookups).toEqual([]);
-    expect(toolCalls).toHaveLength(1);
-    expect(toolCalls[0].arguments?.assignee_account_id).toBeUndefined();
+    expect(jiraLookups).toEqual([{ cloudId: configuredCloudId, searchString: "alice@example.com" }]);
+    expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
+    expect(toolCalls[1].arguments?.assignee_account_id).toBe("jira-account-1");
   });
 
   it("blocks Jira approvals when contentFormat is not markdown", async () => {

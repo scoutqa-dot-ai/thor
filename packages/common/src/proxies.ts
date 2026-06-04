@@ -18,6 +18,7 @@ export interface ResolvedProxyConfig {
   upstream: ProxyUpstream;
   allow: string[];
   approve: string[];
+  atlassianCloudId?: string;
   target: {
     key: string;
     name: ProxyName;
@@ -239,6 +240,12 @@ export function resolveProxyConfig(
   if (name === "atlassian") {
     const auth = scopedEnv(env, "ATLASSIAN_AUTH", profile);
     if (!auth.value) return undefined;
+    const cloudId = envValue(env, "ATLASSIAN_CLOUD_ID");
+    if (!cloudId) {
+      throw new Error(
+        "ATLASSIAN_CLOUD_ID is required when ATLASSIAN_AUTH is configured for Atlassian MCP",
+      );
+    }
     return {
       upstream: {
         kind: "http",
@@ -247,6 +254,7 @@ export function resolveProxyConfig(
       },
       allow: ATLASSIAN_ALLOW,
       approve: ATLASSIAN_APPROVE,
+      atlassianCloudId: cloudId,
       target: {
         key: targetKey(name, profile, auth.scope),
         name,

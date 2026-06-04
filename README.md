@@ -106,7 +106,8 @@ Integration-specific env vars live in each integration's doc. Cross-cutting vars
 | `THOR_E2E_TEST_HELPERS`         | No       | `runner`                  | Enables secret-gated deterministic runner e2e helpers                                                                           |
 | `RUNNER_BASE_URL`               | Yes      | `remote-cli`              | Public base URL for Thor trigger viewer links in PR/Jira content                                                                |
 | `INGRESS_PORT`                  | No       | `ingress`                 | Host port for the reverse proxy                                                                                                 |
-| `ATLASSIAN_AUTH`                | No       | `remote-cli`, `mitmproxy` | Global Atlassian MCP auth header and mitmproxy default injection; profile suffixes are MCP-only                                 |
+| `ATLASSIAN_AUTH`                | No       | `remote-cli`, `mitmproxy` | Global Atlassian MCP auth header and mitmproxy default injection; requires `ATLASSIAN_CLOUD_ID` for Atlassian MCP               |
+| `ATLASSIAN_CLOUD_ID`            | No       | `remote-cli`              | Required with `ATLASSIAN_AUTH`; injected server-side into outbound Atlassian MCP calls and hidden from model-facing tool schemas |
 | `POSTHOG_API_KEY`               | No       | `remote-cli`              | Global PostHog MCP auth; profile variants use `_<PROFILE_NAME>` suffixes                                                        |
 | `GRAFANA_URL`                   | No       | `remote-cli`              | Grafana instance URL; required (with token + org ID) to enable Grafana; profile variants use `_<PROFILE_NAME>` suffixes         |
 | `GRAFANA_SERVICE_ACCOUNT_TOKEN` | No       | `remote-cli`              | Grafana service account token; required (with URL + org ID) to enable Grafana; profile variants use `_<PROFILE_NAME>` suffixes  |

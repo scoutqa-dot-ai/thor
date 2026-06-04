@@ -45,6 +45,7 @@ services:
       - DAYTONA_API_KEY=${DAYTONA_API_KEY:-}
       - DAYTONA_API_URL=${DAYTONA_API_URL:-https://app.daytona.io/api}
       - DAYTONA_SNAPSHOT=${DAYTONA_SNAPSHOT:-}
+      - ATLASSIAN_CLOUD_ID=${ATLASSIAN_CLOUD_ID:-}
       - RUNNER_BASE_URL=${RUNNER_BASE_URL:?set RUNNER_BASE_URL}
     env_file:
       - .env
