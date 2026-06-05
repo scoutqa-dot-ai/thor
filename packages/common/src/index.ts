@@ -13,12 +13,8 @@ export {
   getInstallationIdForOwner,
   findUserBySlack,
   findUserByGithub,
-  getProfileForSlackChannel,
-  getProfileForRepo,
-  isSlackChannelInProfile,
   getSlackPrivateChannelAllowlist,
   isSlackPrivateChannelAllowed,
-  resolveStrictProfileForSession,
 } from "./workspace-config.ts";
 export { PROXY_NAMES, isProxyName, resolveProxyConfig, getAvailableProxyNames } from "./proxies.ts";
 export {
@@ -61,7 +57,6 @@ export {
 } from "./service-env.ts";
 export type {
   WorkspaceConfig,
-  ProfileConfig,
   ConfigLoader,
   OwnerConfig,
   UserRecord,

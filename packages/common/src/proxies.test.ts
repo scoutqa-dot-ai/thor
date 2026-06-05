@@ -32,7 +32,7 @@ describe("proxy registry", () => {
     expect(resolveProxyConfig("unknown", undefined, FULL_ENV)).toBeUndefined();
   });
 
-  it("resolves profile-scoped auth with global fallback", () => {
+  it("resolves single-var profile auth exactly without global fallback", () => {
     const env = {
       ATLASSIAN_AUTH: "Basic global",
       ATLASSIAN_AUTH_LABS: "Basic labs",
@@ -42,10 +42,8 @@ describe("proxy registry", () => {
     expect(httpUpstream("atlassian", "LABS", env).headers).toEqual({
       Authorization: "Basic labs",
     });
-    expect(httpUpstream("atlassian", "QA", env).headers).toEqual({
-      Authorization: "Basic global",
-    });
-    expect(httpUpstream("posthog", "LABS", env).headers?.Authorization).toBe("Bearer phc_global");
+    expect(resolveProxyConfig("atlassian", "QA", env)).toBeUndefined();
+    expect(resolveProxyConfig("posthog", "LABS", env)).toBeUndefined();
   });
 
   it("resolves grafana as a sandboxed stdio child with per-profile credential env", () => {
@@ -71,14 +69,7 @@ describe("proxy registry", () => {
     expect(labs.args).toContain("/usr/local/bin/mcp-grafana");
     expect(labs.args).not.toContain("labs-token");
 
-    // QA has no scoped bundle, so it falls back to the global credentials.
-    const qa = resolveProxyConfig("grafana", "QA", env)?.upstream;
-    if (qa?.kind !== "stdio") throw new Error("expected stdio upstream");
-    expect(qa.env).toEqual({
-      GRAFANA_URL: "https://grafana.global",
-      GRAFANA_SERVICE_ACCOUNT_TOKEN: "global-token",
-      GRAFANA_ORG_ID: "1",
-    });
+    expect(resolveProxyConfig("grafana", "QA", env)).toBeUndefined();
     expect(getAvailableProxyNames("LABS", env)).toEqual(["atlassian", "grafana"]);
   });
 
@@ -175,11 +166,8 @@ describe("proxy registry", () => {
     });
     expect(eu?.target.key).toBe("langfuse:EU");
 
-    // A profile with no scoped vars at all falls back to the whole global bundle.
-    expect(httpUpstream("langfuse", "QA", env).url).toBe(
-      "https://us.cloud.langfuse.com/api/public/mcp",
-    );
-    expect(getAvailableProxyNames("QA", env)).toEqual(["langfuse"]);
+    expect(resolveProxyConfig("langfuse", "QA", env)).toBeUndefined();
+    expect(getAvailableProxyNames("QA", env)).toEqual([]);
   });
 
   it("disables langfuse when the required LANGFUSE_BASE_URL is unset", () => {

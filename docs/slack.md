@@ -63,19 +63,13 @@ Public, non-shared channels can trigger Thor without configuration. Private chan
 {
   "slack": {
     "private_channel_allowlist": ["G0123456789", "D0123456789"]
-  },
-  "profiles": {
-    "QA": {
-      "channels": ["C0123456789"],
-      "repos": ["qa-sandbox"]
-    }
   }
 }
 ```
 
 Allowlist edits hot-reload — no service restart needed. Events from gated channels that are not listed in `slack.private_channel_allowlist` are dropped with `private_channel_not_allowlisted` (§10). The key name predates the broader rule; DM and MPIM ids belong in the same list.
 
-Profiles are separate from Slack admission. `profiles.<name>.channels[]` and `repos[]` select profile-scoped MCP credentials when present; they do **not** admit gated Slack surfaces. Repo fallback, channel/repo conflicts, mixed profile behavior, and profile-suffixed environment variables are documented in [`feat/profile.md`](feat/profile.md).
+MCP profiles are separate from Slack admission and are never inferred from the Slack channel. Use `mcp --profile NAME` explicitly when a profiled endpoint bundle is needed; see [`feat/profile.md`](feat/profile.md).
 
 ## 6) Per-channel repo override
 

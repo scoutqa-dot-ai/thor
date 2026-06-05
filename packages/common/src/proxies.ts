@@ -219,8 +219,7 @@ function scopedEnv(
   profile: string | undefined,
 ): { value?: string; scope: "profile" | "global" } {
   if (profile) {
-    const scoped = envValue(env, `${baseName}_${profile}`);
-    if (scoped) return { value: scoped, scope: "profile" };
+    return { value: envValue(env, `${baseName}_${profile}`), scope: "profile" };
   }
   return { value: envValue(env, baseName), scope: "global" };
 }
@@ -278,21 +277,23 @@ export function resolveProxyConfig(
     const scopedPublic = profile ? envValue(env, `LANGFUSE_PUBLIC_KEY_${profile}`) : undefined;
     const scopedSecret = profile ? envValue(env, `LANGFUSE_SECRET_KEY_${profile}`) : undefined;
     const scopedBaseUrl = profile ? envValue(env, `LANGFUSE_BASE_URL_${profile}`) : undefined;
-    const anyScoped = Boolean(scopedPublic || scopedSecret || scopedBaseUrl);
     const useScoped = Boolean(scopedPublic && scopedSecret && scopedBaseUrl);
-    if (profile && anyScoped && !useScoped) {
+    if (profile && !useScoped) {
       const missing = [
         !scopedPublic ? `LANGFUSE_PUBLIC_KEY_${profile}` : undefined,
         !scopedSecret ? `LANGFUSE_SECRET_KEY_${profile}` : undefined,
         !scopedBaseUrl ? `LANGFUSE_BASE_URL_${profile}` : undefined,
       ].filter(Boolean);
-      throw new Error(
-        `partial langfuse profile bundle for "${profile}": missing ${missing.join(", ")}. Set LANGFUSE_PUBLIC_KEY_${profile}, LANGFUSE_SECRET_KEY_${profile}, and LANGFUSE_BASE_URL_${profile} together, or none of them.`,
-      );
+      if (scopedPublic || scopedSecret || scopedBaseUrl) {
+        throw new Error(
+          `partial langfuse profile bundle for "${profile}": missing ${missing.join(", ")}. Set LANGFUSE_PUBLIC_KEY_${profile}, LANGFUSE_SECRET_KEY_${profile}, and LANGFUSE_BASE_URL_${profile} together.`,
+        );
+      }
+      return undefined;
     }
-    const baseUrlVar = useScoped ? `LANGFUSE_BASE_URL_${profile}` : "LANGFUSE_BASE_URL";
-    const publicKey = useScoped ? scopedPublic : envValue(env, "LANGFUSE_PUBLIC_KEY");
-    const secretKey = useScoped ? scopedSecret : envValue(env, "LANGFUSE_SECRET_KEY");
+    const baseUrlVar = profile ? `LANGFUSE_BASE_URL_${profile}` : "LANGFUSE_BASE_URL";
+    const publicKey = profile ? scopedPublic : envValue(env, "LANGFUSE_PUBLIC_KEY");
+    const secretKey = profile ? scopedSecret : envValue(env, "LANGFUSE_SECRET_KEY");
     if (!publicKey || !secretKey || !envValue(env, baseUrlVar)) return undefined;
     const token = Buffer.from(`${publicKey}:${secretKey}`).toString("base64");
     return {
@@ -304,7 +305,7 @@ export function resolveProxyConfig(
       allow: LANGFUSE_ALLOW,
       approve: LANGFUSE_APPROVE,
       target: {
-        key: targetKey(name, profile, useScoped ? "profile" : "global"),
+        key: targetKey(name, profile, profile ? "profile" : "global"),
         name,
         ...(profile && { profile }),
       },
@@ -316,21 +317,23 @@ export function resolveProxyConfig(
     ? envValue(env, `GRAFANA_SERVICE_ACCOUNT_TOKEN_${profile}`)
     : undefined;
   const scopedOrg = profile ? envValue(env, `GRAFANA_ORG_ID_${profile}`) : undefined;
-  const anyScoped = Boolean(scopedUrl || scopedToken || scopedOrg);
   const useScoped = Boolean(scopedUrl && scopedToken && scopedOrg);
-  if (profile && anyScoped && !useScoped) {
+  if (profile && !useScoped) {
     const missing = [
       !scopedUrl ? `GRAFANA_URL_${profile}` : undefined,
       !scopedToken ? `GRAFANA_SERVICE_ACCOUNT_TOKEN_${profile}` : undefined,
       !scopedOrg ? `GRAFANA_ORG_ID_${profile}` : undefined,
     ].filter(Boolean);
-    throw new Error(
-      `partial grafana profile bundle for "${profile}": missing ${missing.join(", ")}. Set GRAFANA_URL_${profile}, GRAFANA_SERVICE_ACCOUNT_TOKEN_${profile}, and GRAFANA_ORG_ID_${profile} together, or none of them.`,
-    );
+    if (scopedUrl || scopedToken || scopedOrg) {
+      throw new Error(
+        `partial grafana profile bundle for "${profile}": missing ${missing.join(", ")}. Set GRAFANA_URL_${profile}, GRAFANA_SERVICE_ACCOUNT_TOKEN_${profile}, and GRAFANA_ORG_ID_${profile} together.`,
+      );
+    }
+    return undefined;
   }
-  const url = useScoped ? scopedUrl : envValue(env, "GRAFANA_URL");
-  const token = useScoped ? scopedToken : envValue(env, "GRAFANA_SERVICE_ACCOUNT_TOKEN");
-  const orgId = useScoped ? scopedOrg : envValue(env, "GRAFANA_ORG_ID");
+  const url = profile ? scopedUrl : envValue(env, "GRAFANA_URL");
+  const token = profile ? scopedToken : envValue(env, "GRAFANA_SERVICE_ACCOUNT_TOKEN");
+  const orgId = profile ? scopedOrg : envValue(env, "GRAFANA_ORG_ID");
   if (!url || !token || !orgId) return undefined;
   const grafanaEnv = {
     GRAFANA_URL: url,
@@ -349,7 +352,7 @@ export function resolveProxyConfig(
     allow: GRAFANA_ALLOW,
     approve: GRAFANA_APPROVE,
     target: {
-      key: targetKey(name, profile, useScoped ? "profile" : "global"),
+      key: targetKey(name, profile, profile ? "profile" : "global"),
       name,
       ...(profile && { profile }),
     },

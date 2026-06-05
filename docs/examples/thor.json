@@ -15,15 +15,6 @@
   "slack": {
     "private_channel_allowlist": ["G0123456789"]
   },
-  "profiles": {
-    "QA": {
-      "channels": ["C0123456789"],
-      "repos": ["qa-sandbox"]
-    },
-    "LABS": {
-      "repos": ["labs-playground"]
-    }
-  },
   "mitmproxy": [
     {
       "host": "billing.example.com",

@@ -1,86 +1,41 @@
-# Profiles
+# MCP profiles
 
-Stable contract for Thor routing profiles. Profiles choose integration credential targets; they are not agent-facing commands, work-routing policy, or per-profile tool policy.
+MCP profiles are explicit endpoint-bundle selectors passed on the `mcp` command line.
 
-For Slack admission details, see [`../slack.md`](../slack.md). For the remote-cli trust boundary, see [`security-model.md`](./security-model.md).
+## Contract
 
-## Invariants
+- Thor workspace config no longer has a `profiles` block.
+- A profile is requested only with `mcp --profile NAME <upstream> ...` or `mcp --profile=NAME <upstream> ...`.
+- Thor does not infer MCP profiles from Slack channel, repo, current working directory, or session aliases.
+- Profile names use uppercase ASCII letters and underscores, matching env suffixes such as `_QA`.
+- `mcp <upstream>` with no `--profile` uses only the unsuffixed global env bundle.
+- When `--profile NAME` is requested, env resolution is exact: Thor uses only `*_NAME` variables and does not fall back to unsuffixed globals.
+- Session ids are still required for MCP audit logging and approval-thread behavior, but they do not choose the profile.
+- Tool allow/approve/hidden policy stays global per upstream; profiles only select credentials/endpoints.
 
-- A profile must define `channels[]`, `repos[]`, or both.
-- Profile names use uppercase ASCII letters and underscores only. The name is also the environment suffix, such as `POSTHOG_API_KEY_QA`.
-- Each Slack channel id and each repo name can belong to only one profile.
-- `channels[]` selects a credential profile for Slack-bound sessions. It does not admit gated Slack surfaces; admission uses `slack.private_channel_allowlist`.
-- `repos[]` selects a credential profile from the trigger-stamped repo alias. It never admits a gated Slack surface.
-- Profile resolution reads only session-bound aliases: `slack.thread` aliases and runner-stamped `repo` aliases. MCP request bodies and current working directory are not trusted profile inputs. Per-channel repo override files can influence future runner-stamped repo aliases, but MCP does not re-read them live.
-- Slack channel profile is authoritative. A repo may fill in only when the Slack channel signal is silent or unprofiled under the rules below.
-- Channel/repo disagreement fails closed instead of choosing one side.
+## Environment examples
 
-## Config
+Single-value upstreams use the exact suffixed variable when a profile is requested:
 
-```json
-{
-  "profiles": {
-    "QA": {
-      "channels": ["C0123456789"],
-      "repos": ["qa-sandbox"]
-    },
-    "CRON": {
-      "repos": ["nightly-jobs"]
-    },
-    "SUPPORT": {
-      "channels": ["G0123456789"]
-    }
-  }
-}
+```bash
+ATLASSIAN_AUTH_QA="Basic ..." mcp --profile QA atlassian getJiraIssue '{"issueKey":"QA-1"}'
+POSTHOG_API_KEY_QA="phc_..." mcp --profile=QA posthog query-run '{...}'
 ```
 
-Single-value integrations check the profile-suffixed environment variable first, then the unsuffixed global. For example, `POSTHOG_API_KEY_QA` is preferred over `POSTHOG_API_KEY` for profile `QA`. Grafana is a bundle: if any `GRAFANA_*_<PROFILE>` value is set, the profile URL and token must both be set.
+Bundle upstreams require the full suffixed bundle for explicit profiles:
 
-Atlassian profile support is not first class yet. MCP calls can resolve `ATLASSIAN_AUTH_<PROFILE>` before falling back to `ATLASSIAN_AUTH`, but direct Jira/Atlassian HTTP egress through mitmproxy still uses the unsuffixed global `ATLASSIAN_AUTH` because mitmproxy is not profile-aware. Treat Atlassian profile suffixes as best-effort MCP routing until a later mitmproxy profile-routing update lands.
+```bash
+GRAFANA_URL_QA="https://grafana.qa.example"
+GRAFANA_SERVICE_ACCOUNT_TOKEN_QA="..."
+GRAFANA_ORG_ID_QA="1"
 
-## Resolution
+LANGFUSE_BASE_URL_QA="https://cloud.langfuse.com"
+LANGFUSE_PUBLIC_KEY_QA="pk_..."
+LANGFUSE_SECRET_KEY_QA="sk_..."
+```
 
-1. Resolve the session anchor from `x-thor-session-id`.
-2. Enumerate all `slack.thread` aliases on the anchor.
-3. Enumerate all `repo` aliases stamped on the anchor at trigger time.
-4. Collapse each dimension independently. Multiple profiles, or a mix of profiled and unprofiled values in the same dimension, fail closed.
-5. If a Slack channel profile exists, use it.
-6. If a repo profile also exists and differs from the Slack profile, fail closed.
-7. If no Slack binding exists, use the repo profile when present. This covers cron and other non-Slack sessions.
-8. If Slack bindings exist but none are in a profile, allow repo fallback only when the repo resolves to a repo-only profile.
-9. If Slack bindings exist but none are in a profile, block repo fallback into a mixed `channels[]` + `repos[]` profile.
+If any member of a requested profile bundle is present but another is missing, Thor fails hard with the missing variable names. If none of the suffixed variables for that upstream are present, that upstream is unavailable for the requested profile.
 
-## Profile Shapes
+## Approvals
 
-| Shape                    | Intended use                                          | Slack behavior                                                                                                        | Non-Slack behavior                       |
-| ------------------------ | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `channels[]` only        | Slack team or surface profile                         | Listed channels select the profile after Slack admission; gated channels still need `slack.private_channel_allowlist` | Cannot be selected by repo               |
-| `repos[]` only           | Repo-scoped convenience profile, including cron       | Public unlisted channels may use it through their stamped repo; gated channel admission is independent                | Sessions in that repo select the profile |
-| `channels[]` + `repos[]` | Team profile tied to both Slack surface and repo work | Listed channels select it; unlisted public channels cannot borrow it through repo fallback                            | Sessions in that repo select the profile |
-
-## Expected Outcomes
-
-| Scenario                                                                                   | Outcome                                                     |
-| ------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
-| Public channel outside profiles, no profiled repo                                          | Accepted by Slack gate; MCP uses unsuffixed globals         |
-| Public channel outside profiles, repo-only profile                                         | Accepted by Slack gate; MCP uses the repo profile           |
-| Public channel outside profiles, mixed channel+repo profile                                | Accepted by Slack gate; MCP profile resolution fails closed |
-| Public channel listed in a mixed profile, same repo profile                                | Uses that profile                                           |
-| Public channel listed in one profile, repo in another                                      | Fails closed as a channel/repo conflict                     |
-| Private channel, DM, group DM, or shared channel outside `slack.private_channel_allowlist` | Dropped at Slack admission before runner starts             |
-| Cron or other non-Slack session in a profiled repo                                         | Uses that repo profile, including mixed profiles            |
-
-## Abuse Cases
-
-- Public channel self-selects a repo-only team-like profile: expected if the profile is repo-only. Use a mixed profile when the Slack surface matters.
-- Public channel borrows a mixed profile through an agent-writable repo override: blocked at profile resolution because the channel is not listed in the profile.
-- Agent-created cron hop into a profiled repo: expected. Repo-based profile selection exists to support cron and non-Slack sessions.
-- Denial via conflict: by design. If an anchor accumulates channels or repos that imply different profiles, MCP fails closed until the session is separated or the profile config changes.
-- Repo profile leaks beyond the intended team surface: avoid repo-only profiles for team-scoped credentials. Put the intended Slack channels in the same mixed profile so public unlisted channels cannot borrow it through repo fallback.
-
-## Non-Goals
-
-- Profiles do not choose the working repo. Slack work routing still comes from `SLACK_DEFAULT_REPO` and the per-channel repo override.
-- Profiles do not create per-profile MCP tool allowlists or approval policy.
-- Profiles do not admit gated Slack surfaces; `slack.private_channel_allowlist` does.
-- Profiles are not exposed as a direct agent argument.
+When an approve-class tool is called with `mcp --profile NAME`, the pending approval action stores `NAME`. Approval resolution validates the stored session id for audit/thread continuity, then uses the stored profile rather than re-resolving from Slack or repo context.

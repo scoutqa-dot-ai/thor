@@ -106,14 +106,14 @@ Integration-specific env vars live in each integration's doc. Cross-cutting vars
 | `THOR_E2E_TEST_HELPERS`         | No       | `runner`                  | Enables secret-gated deterministic runner e2e helpers                                                                           |
 | `RUNNER_BASE_URL`               | Yes      | `remote-cli`              | Public base URL for Thor trigger viewer links in PR/Jira content                                                                |
 | `INGRESS_PORT`                  | No       | `ingress`                 | Host port for the reverse proxy                                                                                                 |
-| `ATLASSIAN_AUTH`                | No       | `remote-cli`, `mitmproxy` | Global Atlassian MCP auth header and mitmproxy default injection; profile suffixes are MCP-only                                 |
-| `POSTHOG_API_KEY`               | No       | `remote-cli`              | Global PostHog MCP auth; profile variants use `_<PROFILE_NAME>` suffixes                                                        |
-| `GRAFANA_URL`                   | No       | `remote-cli`              | Grafana instance URL; required (with token + org ID) to enable Grafana; profile variants use `_<PROFILE_NAME>` suffixes         |
-| `GRAFANA_SERVICE_ACCOUNT_TOKEN` | No       | `remote-cli`              | Grafana service account token; required (with URL + org ID) to enable Grafana; profile variants use `_<PROFILE_NAME>` suffixes  |
-| `GRAFANA_ORG_ID`                | No       | `remote-cli`              | Grafana org ID; required (with URL + token) to enable Grafana; profile variants use `_<PROFILE_NAME>` suffixes                  |
-| `LANGFUSE_BASE_URL`             | No       | `remote-cli`              | Langfuse MCP base URL; all three `LANGFUSE_*` vars required to enable Langfuse; profile variants use `_<PROFILE_NAME>` suffixes |
-| `LANGFUSE_PUBLIC_KEY`           | No       | `remote-cli`              | Langfuse MCP public key; required (with secret key + host) to enable Langfuse; profile variants use `_<PROFILE_NAME>` suffixes  |
-| `LANGFUSE_SECRET_KEY`           | No       | `remote-cli`              | Langfuse MCP secret key; required (with public key + host) to enable Langfuse; profile variants use `_<PROFILE_NAME>` suffixes  |
+| `ATLASSIAN_AUTH`                | No       | `remote-cli`, `mitmproxy` | Global Atlassian MCP auth header and mitmproxy default injection; explicit profiles use exact `_<PROFILE_NAME>` suffixes        |
+| `POSTHOG_API_KEY`               | No       | `remote-cli`              | Global PostHog MCP auth; explicit profiles use exact `_<PROFILE_NAME>` suffixes                                                 |
+| `GRAFANA_URL`                   | No       | `remote-cli`              | Grafana instance URL; required (with token + org ID) to enable Grafana; explicit profiles use exact `_<PROFILE_NAME>` suffixes  |
+| `GRAFANA_SERVICE_ACCOUNT_TOKEN` | No       | `remote-cli`              | Grafana service account token; required (with URL + org ID); explicit profiles use exact `_<PROFILE_NAME>` suffixes             |
+| `GRAFANA_ORG_ID`                | No       | `remote-cli`              | Grafana org ID; required (with URL + token); explicit profiles use exact `_<PROFILE_NAME>` suffixes                             |
+| `LANGFUSE_BASE_URL`             | No       | `remote-cli`              | Langfuse MCP base URL; explicit profiles use exact `_<PROFILE_NAME>` suffixes                                                   |
+| `LANGFUSE_PUBLIC_KEY`           | No       | `remote-cli`              | Langfuse MCP public key; explicit profiles use exact `_<PROFILE_NAME>` suffixes                                                  |
+| `LANGFUSE_SECRET_KEY`           | No       | `remote-cli`              | Langfuse MCP secret key; explicit profiles use exact `_<PROFILE_NAME>` suffixes                                                  |
 | `METABASE_URL`                  | No       | `remote-cli`              | Metabase instance URL                                                                                                           |
 | `METABASE_API_KEY`              | No       | `remote-cli`              | Metabase API key                                                                                                                |
 | `METABASE_DATABASE_ID`          | No       | `remote-cli`              | Metabase database ID                                                                                                            |
@@ -133,11 +133,10 @@ The file carries operator-maintained registries:
 
 - `owners.<owner>.github_app_installation_id` — GitHub App installation IDs. See [`docs/github.md`](docs/github.md) §2.
 - `slack.private_channel_allowlist[]` — conversation ids allowed to trigger from gated Slack surfaces (private channels, DMs, group DMs, Slack Connect/shared channels). Public non-shared channels do not need this. See [`docs/slack.md`](docs/slack.md) §5.
-- `profiles.<name>.channels[]` / `profiles.<name>.repos[]` — integration credential routing profiles. Profiles do not admit Slack surfaces. Profile shapes, repo fallback, conflict handling, and profile-suffixed environment variables are documented in [`docs/feat/profile.md`](docs/feat/profile.md).
 - `mitmproxy[]` / `mitmproxy_passthrough[]` — outbound credential rules and passthrough hosts. See [`docs/feat/security-model.md`](docs/feat/security-model.md) Layer 1a.
 - `users[]` — human attribution (see below).
 
-Profile edits hot-reload — no service restart needed after `thor.json` changes. Profile selection is entirely harness-side; there is no agent-facing profile argument.
+MCP profiles are not configured in `thor.json`; they are explicit endpoint-bundle choices via `mcp --profile NAME` / `mcp --profile=NAME`. See [`docs/feat/profile.md`](docs/feat/profile.md).
 
 ### Human attribution (`users[]`)
 

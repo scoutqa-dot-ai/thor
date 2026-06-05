@@ -13,6 +13,7 @@ const ApprovalActionSchema = z
     origin: z
       .object({
         sessionId: z.string().min(1).optional(),
+        profile: z.string().min(1).nullable().optional(),
         trigger: z
           .object({
             anchorId: z.string().min(1),
@@ -71,7 +72,7 @@ export class ApprovalStore {
       status: "pending",
       tool,
       args,
-      ...(origin && (origin.sessionId || origin.trigger) && { origin }),
+      ...(origin && (origin.sessionId || "profile" in origin || origin.trigger) && { origin }),
       ...(notification && { notification }),
       createdAt: now.toISOString(),
       dateSegment: now.toISOString().slice(0, 10),

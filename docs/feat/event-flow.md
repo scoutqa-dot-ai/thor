@@ -60,7 +60,7 @@ All external event routes validate shape and origin before queueing work.
 | Cron                   | `POST /cron`                | `Authorization: Bearer <CRON_SECRET>` | caller-supplied or derived `cron:<hash>:<time>`      |
 | Slack approval buttons | `POST /slack/interactivity` | Slack signing secret                  | originating `slack:thread:<channel>/<threadTs>`      |
 
-Slack first-contact work comes from `app_mention` events. Plain `message` events are accepted only after Thor is already engaged in the thread. Public, non-shared channels are admitted by default; private channels, DMs, group DMs, and Slack Connect/shared channels must be listed in `slack.private_channel_allowlist`. Profiles do not affect Slack admission; profile resolution details live in [`profile.md`](./profile.md). Channel classification failures fail closed.
+Slack first-contact work comes from `app_mention` events. Plain `message` events are accepted only after Thor is already engaged in the thread. Public, non-shared channels are admitted by default; private channels, DMs, group DMs, and Slack Connect/shared channels must be listed in `slack.private_channel_allowlist`. MCP profiles do not affect Slack admission and are only selected by explicit `mcp --profile`; details live in [`profile.md`](./profile.md). Channel classification failures fail closed.
 
 GitHub first-contact comments must mention the app unless the event belongs to a Thor-owned PR flow or an already-active issue session. Branch-known events use `git:branch:<repo>:<branch>`. PR issue comments that do not include the branch enqueue under `pending:branch-resolve:<repo>:<number>` until dispatch can resolve the PR head. Pure issue sessions use `github:issue:<localRepo>:<repoFullName>#<issueNumber>`.
 

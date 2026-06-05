@@ -23,7 +23,6 @@ import {
   resolveProxyConfig,
   resolveSessionAnchorId,
   resolveSlackThreadTargetFromTrigger,
-  resolveStrictProfileForSession,
   WORKSPACE_CONFIG_PATH,
   createConfigLoader,
   type ConfigLoader,
@@ -44,6 +43,7 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
 const PROFILE_DENIAL_MESSAGE = "Integration not available in this thread context";
+const PROFILE_NAME_RE = /^[A-Z_]+$/;
 
 class ProfileRoutingDenialError extends Error {
   constructor(message: string) {
@@ -128,6 +128,11 @@ interface McpExecResult {
 interface McpCommandContext {
   sessionId?: string;
   callId?: string;
+}
+
+interface ParsedMcpArgs {
+  profile?: string;
+  args: string[];
 }
 
 export interface McpServiceDeps {
@@ -282,19 +287,33 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     return "error" in result ? result : { ts: result.ts };
   }
 
-  function resolveProfileForContext(context: McpCommandContext): { profile: string | undefined } {
-    const sessionId = requireBoundSessionId({
+  function requireSessionForContext(context: McpCommandContext): void {
+    requireBoundSessionId({
       sessionId: context.sessionId,
       missingMessage:
         "missing Thor session id for MCP routing; use the mcp wrapper so x-thor-session-id is sent",
       invalidMessage: (sessionId) =>
         `invalid Thor session id for MCP routing; no Thor session binding for ${sessionId}`,
     });
+  }
 
-    const config = getConfig();
-    const resolved = resolveStrictProfileForSession(config, sessionId);
-    if (!resolved.ok) throw new ProfileRoutingDenialError(resolved.error);
-    return { profile: resolved.profile };
+  function parseMcpArgs(rawArgs: string[]): ParsedMcpArgs | McpExecResult {
+    const args = [...rawArgs];
+    let profile: string | undefined;
+    if (args[0] === "--profile" || args[0]?.startsWith("--profile=")) {
+      if (args[0] === "--profile") {
+        profile = args[1];
+        args.splice(0, 2);
+      } else {
+        profile = args[0].slice("--profile=".length);
+        args.splice(0, 1);
+      }
+      if (!profile) return fail("Usage: mcp --profile NAME <upstream> [tool] [json-args]\n");
+      if (!PROFILE_NAME_RE.test(profile)) {
+        return fail("MCP profile names must contain only uppercase ASCII letters and underscores\n");
+      }
+    }
+    return { profile, args };
   }
 
   async function connectInstance(
@@ -431,23 +450,22 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
   }
 
-  /**
-   * Re-resolve the profile for an approval action at click time. Approval
-   * actions are write-capable, so a missing or stale Thor session binding fails
-   * closed instead of falling back to global credentials.
+  /** Validate the stored session binding for audit/thread behavior; profile is
+   * the explicit value captured when the action was requested, not session-derived.
    */
   function resolveProfileForAction(action: ApprovalAction): { profile: string | undefined } {
-    const sessionId = requireBoundSessionId({
+    requireBoundSessionId({
       sessionId: action.origin?.sessionId,
       missingMessage: `approval action ${action.id} is missing Thor session id for approval routing`,
       invalidMessage: (sessionId) =>
         `invalid Thor session id for approval routing; no Thor session binding for ${sessionId}`,
     });
-
-    const config = getConfig();
-    const resolved = resolveStrictProfileForSession(config, sessionId);
-    if (!resolved.ok) throw new ProfileRoutingDenialError(resolved.error);
-    return { profile: resolved.profile };
+    if (!action.origin || !("profile" in action.origin)) {
+      throw new ProfileRoutingDenialError(
+        `approval action ${action.id} is missing a stored profile snapshot`,
+      );
+    }
+    return { profile: action.origin.profile ?? undefined };
   }
 
   async function lookupJiraAccountIdViaUpstream(
@@ -672,11 +690,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     toolInfo: ToolInfo,
     args: Record<string, unknown>,
     context: McpCommandContext,
+    profile: string | undefined,
   ): Promise<McpExecResult> {
     let instance: ProxyInstance | undefined;
-    let profile: string | undefined;
     try {
-      ({ profile } = resolveProfileForContext(context));
       instance = await getInstance(upstreamName, profile);
     } catch (err) {
       return fail(profileDenialMessage(err));
@@ -685,7 +702,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return fail(`Upstream "${upstreamName}" is not configured for this thread/profile.`);
     }
 
-    if (toolInfo.classification === "approve") {
+      if (toolInfo.classification === "approve") {
       const approvalRequired = ApprovalRequiredEventPayloadSchema.safeParse({
         type: "approval_required",
         actionId: "_pending",
@@ -719,6 +736,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         approvalArgs,
         {
           sessionId: context.sessionId,
+          profile: profile ?? null,
           trigger: {
             anchorId: anchorContext.anchorId,
             ...(anchorContext.triggerId ? { triggerId: anchorContext.triggerId } : {}),
@@ -1035,15 +1053,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
 
   return {
     getHealth(): Record<string, unknown> {
-      const configured = new Set(getAvailableProxyNames());
-      try {
-        const config = getConfig();
-        for (const profileName of Object.keys(config.profiles ?? {})) {
-          for (const name of getAvailableProxyNames(profileName)) configured.add(name);
-        }
-      } catch {
-        // Best-effort only; health falls back to global-only visibility when config cannot be loaded.
-      }
+        const configured = new Set(getAvailableProxyNames());
       return {
         configured: configured.size,
         connected: new Set([...instances.values()].map((instance) => instance.name)).size,
@@ -1098,9 +1108,19 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         return resolveApprovalAction(args[1], decision, reviewer, reason);
       }
 
+      const parsed = parseMcpArgs(args);
+      if (isExecResult(parsed)) return parsed;
+      ({ args } = parsed);
+      const profile = parsed.profile;
+
+      try {
+        requireSessionForContext(context);
+      } catch (err) {
+        return fail(profileDenialMessage(err));
+      }
+
       if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
         try {
-          const { profile } = resolveProfileForContext(context);
           return listUpstreams(profile);
         } catch (err) {
           return fail(profileDenialMessage(err));
@@ -1117,12 +1137,6 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         );
       }
 
-      let profile: string | undefined;
-      try {
-        profile = resolveProfileForContext(context).profile;
-      } catch (err) {
-        return fail(profileDenialMessage(err));
-      }
       const tools = await listVisibleTools(upstreamName, profile);
       if (!Array.isArray(tools)) return tools;
 
@@ -1140,7 +1154,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       const parsedArgs = parseJsonArgs(args[2], resolvedTool);
       if (isExecResult(parsedArgs)) return parsedArgs;
 
-      return callTool(upstreamName, resolvedTool, parsedArgs, context);
+      return callTool(upstreamName, resolvedTool, parsedArgs, context, profile);
     },
 
     async executeApproval(args: string[]): Promise<McpExecResult> {

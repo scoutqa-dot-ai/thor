@@ -557,7 +557,7 @@ describe("planBatchDispatch", () => {
       });
     });
 
-    it("does not admit a resolved private channel from profile membership alone", async () => {
+    it("does not admit a resolved private channel without the private-channel allowlist", async () => {
       const client: SlackClientLike = {
         conversations: {
           info: vi.fn().mockResolvedValue({ ok: true, channel: { is_private: true } }),
@@ -567,7 +567,7 @@ describe("planBatchDispatch", () => {
 
       const plan = await planPendingPrivacy({
         slackDeps: slackDepsWith(client),
-        workspaceConfigLoader: () => ({ profiles: { QA: { channels: ["C_DEFER"] } } }),
+        workspaceConfigLoader: () => ({}),
       });
 
       expect(plan).toMatchObject({
