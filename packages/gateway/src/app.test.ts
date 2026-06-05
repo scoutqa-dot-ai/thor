@@ -2769,7 +2769,7 @@ describe("gateway", () => {
     });
   });
 
-  it("marks app mentions in unprofiled private channels as policy-blocked", async () => {
+  it("marks app mentions in unallowlisted private channels as policy-blocked", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
     await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
@@ -2803,7 +2803,7 @@ describe("gateway", () => {
     });
   });
 
-  it("allows app mentions in profiled private channels", async () => {
+  it("allows app mentions in allowlisted private channels", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
@@ -2833,7 +2833,7 @@ describe("gateway", () => {
         expect(fetchImpl).toHaveBeenCalledTimes(1);
       },
       {
-        workspaceConfigLoader: () => ({ profiles: { QA: { channels: ["GPRIVATE"] } } }),
+        workspaceConfigLoader: () => ({ slack: { private_channel_allowlist: ["GPRIVATE"] } }),
       },
     );
   });
@@ -2890,7 +2890,7 @@ describe("gateway", () => {
         expect(fetchImpl).toHaveBeenCalledTimes(1);
       },
       {
-        workspaceConfigLoader: () => ({ profiles: { QA: { channels: ["DALLOWED"] } } }),
+        workspaceConfigLoader: () => ({ slack: { private_channel_allowlist: ["DALLOWED"] } }),
       },
     );
   });
@@ -3236,7 +3236,7 @@ describe("gateway", () => {
     });
   });
 
-  it("drops deferred events for unprofiled private channels resolved via conversations.info", async () => {
+  it("drops deferred events for unallowlisted private channels resolved via conversations.info", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 
     await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
@@ -3304,7 +3304,7 @@ describe("gateway", () => {
     });
   });
 
-  it("blocks engaged message continuations in unprofiled private channels", async () => {
+  it("blocks engaged message continuations in unallowlisted private channels", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     sessionKeys.add("slack:thread:GPRIVATE/1710000000.001");
 

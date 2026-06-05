@@ -132,7 +132,8 @@ Lives at `/workspace/config/thor.json` inside containers, `docker-volumes/worksp
 The file carries operator-maintained registries:
 
 - `owners.<owner>.github_app_installation_id` — GitHub App installation IDs. See [`docs/github.md`](docs/github.md) §2.
-- `profiles.<name>.channels[]` / `profiles.<name>.repos[]` — integration credential routing profiles. `channels[]` also admits gated Slack surfaces; `repos[]` never admits Slack by itself. Profile shapes, repo fallback, conflict handling, and profile-suffixed environment variables are documented in [`docs/feat/profile.md`](docs/feat/profile.md). Slack admission details are in [`docs/slack.md`](docs/slack.md) §5.
+- `slack.private_channel_allowlist[]` — conversation ids allowed to trigger from gated Slack surfaces (private channels, DMs, group DMs, Slack Connect/shared channels). Public non-shared channels do not need this. See [`docs/slack.md`](docs/slack.md) §5.
+- `profiles.<name>.channels[]` / `profiles.<name>.repos[]` — integration credential routing profiles. Profiles do not admit Slack surfaces. Profile shapes, repo fallback, conflict handling, and profile-suffixed environment variables are documented in [`docs/feat/profile.md`](docs/feat/profile.md).
 - `mitmproxy[]` / `mitmproxy_passthrough[]` — outbound credential rules and passthrough hosts. See [`docs/feat/security-model.md`](docs/feat/security-model.md) Layer 1a.
 - `users[]` — human attribution (see below).
 

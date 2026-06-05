@@ -12,6 +12,9 @@
       "github": "alice"
     }
   ],
+  "slack": {
+    "private_channel_allowlist": ["G0123456789"]
+  },
   "profiles": {
     "QA": {
       "channels": ["C0123456789"],

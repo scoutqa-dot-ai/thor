@@ -526,7 +526,7 @@ describe("planBatchDispatch", () => {
 
       const plan = await planPendingPrivacy({
         slackDeps: slackDepsWith(client),
-        workspaceConfigLoader: () => ({ profiles: { QA: { channels: ["C_DEFER"] } } }),
+        workspaceConfigLoader: () => ({ slack: { private_channel_allowlist: ["C_DEFER"] } }),
       });
 
       expect(plan.kind).toBe("reroute");
@@ -554,6 +554,25 @@ describe("planBatchDispatch", () => {
         channel: "C_DEFER",
         timestamp: "1710000000.500",
         name: "lock",
+      });
+    });
+
+    it("does not admit a resolved private channel from profile membership alone", async () => {
+      const client: SlackClientLike = {
+        conversations: {
+          info: vi.fn().mockResolvedValue({ ok: true, channel: { is_private: true } }),
+        },
+        reactions: { add: vi.fn() },
+      };
+
+      const plan = await planPendingPrivacy({
+        slackDeps: slackDepsWith(client),
+        workspaceConfigLoader: () => ({ profiles: { QA: { channels: ["C_DEFER"] } } }),
+      });
+
+      expect(plan).toMatchObject({
+        kind: "drop",
+        reason: "private_channel_not_allowlisted",
       });
     });
 

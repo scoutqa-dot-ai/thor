@@ -9,7 +9,7 @@ For Slack admission details, see [`../slack.md`](../slack.md). For the remote-cl
 - A profile must define `channels[]`, `repos[]`, or both.
 - Profile names use uppercase ASCII letters and underscores only. The name is also the environment suffix, such as `POSTHOG_API_KEY_QA`.
 - Each Slack channel id and each repo name can belong to only one profile.
-- `channels[]` selects a credential profile and admits gated Slack surfaces: private channels, DMs, group DMs, and Slack Connect/shared channels.
+- `channels[]` selects a credential profile for Slack-bound sessions. It does not admit gated Slack surfaces; admission uses `slack.private_channel_allowlist`.
 - `repos[]` selects a credential profile from the trigger-stamped repo alias. It never admits a gated Slack surface.
 - Profile resolution reads only session-bound aliases: `slack.thread` aliases and runner-stamped `repo` aliases. MCP request bodies and current working directory are not trusted profile inputs. Per-channel repo override files can influence future runner-stamped repo aliases, but MCP does not re-read them live.
 - Slack channel profile is authoritative. A repo may fill in only when the Slack channel signal is silent or unprofiled under the rules below.
@@ -52,23 +52,23 @@ Atlassian profile support is not first class yet. MCP calls can resolve `ATLASSI
 
 ## Profile Shapes
 
-| Shape                    | Intended use                                          | Slack behavior                                                                                                             | Non-Slack behavior                       |
-| ------------------------ | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `channels[]` only        | Slack team or surface profile                         | Listed channels select the profile; unlisted gated channels are dropped                                                    | Cannot be selected by repo               |
-| `repos[]` only           | Repo-scoped convenience profile, including cron       | Public unlisted channels may use it through their stamped repo; gated channels still need `channels[]` admission elsewhere | Sessions in that repo select the profile |
-| `channels[]` + `repos[]` | Team profile tied to both Slack surface and repo work | Listed channels select it; unlisted public channels cannot borrow it through repo fallback                                 | Sessions in that repo select the profile |
+| Shape                    | Intended use                                          | Slack behavior                                                                                                        | Non-Slack behavior                       |
+| ------------------------ | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `channels[]` only        | Slack team or surface profile                         | Listed channels select the profile after Slack admission; gated channels still need `slack.private_channel_allowlist` | Cannot be selected by repo               |
+| `repos[]` only           | Repo-scoped convenience profile, including cron       | Public unlisted channels may use it through their stamped repo; gated channel admission is independent                | Sessions in that repo select the profile |
+| `channels[]` + `repos[]` | Team profile tied to both Slack surface and repo work | Listed channels select it; unlisted public channels cannot borrow it through repo fallback                            | Sessions in that repo select the profile |
 
 ## Expected Outcomes
 
-| Scenario                                                                        | Outcome                                                     |
-| ------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Public channel outside profiles, no profiled repo                               | Accepted by Slack gate; MCP uses unsuffixed globals         |
-| Public channel outside profiles, repo-only profile                              | Accepted by Slack gate; MCP uses the repo profile           |
-| Public channel outside profiles, mixed channel+repo profile                     | Accepted by Slack gate; MCP profile resolution fails closed |
-| Public channel listed in a mixed profile, same repo profile                     | Uses that profile                                           |
-| Public channel listed in one profile, repo in another                           | Fails closed as a channel/repo conflict                     |
-| Private channel, DM, group DM, or shared channel outside all `channels[]` lists | Dropped at Slack admission before runner starts             |
-| Cron or other non-Slack session in a profiled repo                              | Uses that repo profile, including mixed profiles            |
+| Scenario                                                                                   | Outcome                                                     |
+| ------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| Public channel outside profiles, no profiled repo                                          | Accepted by Slack gate; MCP uses unsuffixed globals         |
+| Public channel outside profiles, repo-only profile                                         | Accepted by Slack gate; MCP uses the repo profile           |
+| Public channel outside profiles, mixed channel+repo profile                                | Accepted by Slack gate; MCP profile resolution fails closed |
+| Public channel listed in a mixed profile, same repo profile                                | Uses that profile                                           |
+| Public channel listed in one profile, repo in another                                      | Fails closed as a channel/repo conflict                     |
+| Private channel, DM, group DM, or shared channel outside `slack.private_channel_allowlist` | Dropped at Slack admission before runner starts             |
+| Cron or other non-Slack session in a profiled repo                                         | Uses that repo profile, including mixed profiles            |
 
 ## Abuse Cases
 
@@ -82,5 +82,5 @@ Atlassian profile support is not first class yet. MCP calls can resolve `ATLASSI
 
 - Profiles do not choose the working repo. Slack work routing still comes from `SLACK_DEFAULT_REPO` and the per-channel repo override.
 - Profiles do not create per-profile MCP tool allowlists or approval policy.
-- Profiles do not admit gated Slack surfaces through `repos[]`.
+- Profiles do not admit gated Slack surfaces; `slack.private_channel_allowlist` does.
 - Profiles are not exposed as a direct agent argument.

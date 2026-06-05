@@ -54,7 +54,7 @@ const KNOWN_BINS: Record<string, number> = {
   gh: 2,
   git: 2,
   ldcli: 2,
-  mcp: 3,
+  mcp: 2,
   metabase: 2,
   npm: 2,
   npx: 2,
@@ -111,7 +111,31 @@ export function toolDisplayName(toolPart: ToolPart): string {
 
   const depth = KNOWN_BINS[cmd];
   if (depth === undefined) return "bash";
+  if (cmd === "mcp") return mcpDisplayName(parts);
   return parts.slice(0, depth).join(" ");
+}
+
+function mcpDisplayName(parts: string[]): string {
+  const first = parts[1];
+  if (!first || first.startsWith("-")) {
+    if (first !== "--profile" && !first?.startsWith("--profile=")) return "mcp";
+  }
+
+  if (first === "--profile") {
+    const profile = parts[2];
+    const server = parts[3];
+    if (!profile || profile.startsWith("-") || !server || server.startsWith("-")) return "mcp";
+    return `mcp[${profile}] ${server}`;
+  }
+
+  if (first?.startsWith("--profile=")) {
+    const profile = first.slice("--profile=".length);
+    const server = parts[2];
+    if (!profile || !server || server.startsWith("-")) return "mcp";
+    return `mcp[${profile}] ${server}`;
+  }
+
+  return `mcp ${first}`;
 }
 
 function emitMemoryEventsFromToolPart(

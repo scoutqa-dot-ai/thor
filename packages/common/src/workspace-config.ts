@@ -52,6 +52,16 @@ const UserRecordSchema = z.object({
   github: z.string().min(1).optional(),
 });
 
+const SlackConfigSchema = z.object({
+  private_channel_allowlist: z
+    .array(z.string().min(1))
+    .optional()
+    .refine(
+      (channels) => channels === undefined || new Set(channels).size === channels.length,
+      "Slack private channel allowlist must not contain duplicates",
+    ),
+});
+
 const uniqueStringArray = (label: string) =>
   z.array(z.string().min(1)).refine((items) => new Set(items).size === items.length, {
     message: `Profile ${label} must not contain duplicates`,
@@ -70,6 +80,7 @@ export const WorkspaceConfigSchema = z
   .object({
     owners: z.record(z.string(), OwnerConfigSchema).optional(),
     users: z.array(UserRecordSchema).optional(),
+    slack: SlackConfigSchema.optional(),
     profiles: z.record(z.string().min(1), ProfileConfigSchema).optional(),
     mitmproxy: z.array(MitmproxyRuleSchema).optional(),
     mitmproxy_passthrough: z.array(MitmproxyPassthroughHostSchema).optional(),
@@ -245,6 +256,14 @@ export function getProfileForRepo(config: WorkspaceConfig, repoName: string): st
 
 export function isSlackChannelInProfile(config: WorkspaceConfig, channelId: string): boolean {
   return getProfileForSlackChannel(config, channelId) !== undefined;
+}
+
+export function getSlackPrivateChannelAllowlist(config: WorkspaceConfig): string[] {
+  return config.slack?.private_channel_allowlist ?? [];
+}
+
+export function isSlackPrivateChannelAllowed(config: WorkspaceConfig, channelId: string): boolean {
+  return getSlackPrivateChannelAllowlist(config).includes(channelId);
 }
 
 function profileHasSlackChannels(config: WorkspaceConfig, profileName: string): boolean {

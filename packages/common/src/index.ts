@@ -16,6 +16,8 @@ export {
   getProfileForSlackChannel,
   getProfileForRepo,
   isSlackChannelInProfile,
+  getSlackPrivateChannelAllowlist,
+  isSlackPrivateChannelAllowed,
   resolveStrictProfileForSession,
 } from "./workspace-config.ts";
 export { PROXY_NAMES, isProxyName, resolveProxyConfig, getAvailableProxyNames } from "./proxies.ts";

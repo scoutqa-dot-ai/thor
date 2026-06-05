@@ -12,6 +12,8 @@ import {
   getProfileForSlackChannel,
   getProfileForRepo,
   isSlackChannelInProfile,
+  getSlackPrivateChannelAllowlist,
+  isSlackPrivateChannelAllowed,
   resolveSafeRepoDirectory,
   resolveSlackChannelRepoDirectory,
   resolveStrictProfileForSession,
@@ -120,6 +122,28 @@ describe("loadWorkspaceConfig", () => {
     expect(getProfileForSlackChannel(config, "C000")).toBeUndefined();
     expect(isSlackChannelInProfile(config, "D456")).toBe(true);
     expect(isSlackChannelInProfile(config, "D000")).toBe(false);
+  });
+
+  it("accepts the Slack private-channel allowlist independently from profiles", () => {
+    const path = writeConfig("config.json", {
+      slack: { private_channel_allowlist: ["G123", "D456"] },
+      profiles: {
+        QA: { channels: ["G_PROFILE_ONLY"] },
+      },
+    });
+
+    const config = loadWorkspaceConfig(path);
+    expect(getSlackPrivateChannelAllowlist(config)).toEqual(["G123", "D456"]);
+    expect(isSlackPrivateChannelAllowed(config, "G123")).toBe(true);
+    expect(isSlackPrivateChannelAllowed(config, "G_PROFILE_ONLY")).toBe(false);
+  });
+
+  it("rejects duplicate Slack private-channel allowlist entries", () => {
+    const path = writeConfig("config.json", {
+      slack: { private_channel_allowlist: ["G123", "G123"] },
+    });
+
+    expect(() => loadWorkspaceConfig(path)).toThrow("Slack private channel allowlist");
   });
 
   describe("resolveStrictProfileForSession", () => {

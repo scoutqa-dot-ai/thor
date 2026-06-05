@@ -84,7 +84,7 @@ Every external request that reaches the gateway must prove origin before any wor
 
 After authentication, events still face content-aware gates before they wake the agent:
 
-- **Slack routing profiles** — public non-shared channels admit by default; private channels, DMs, group DMs, and Slack Connect channels must appear in `profiles.<name>.channels[]` in `thor.json`. `repos[]` never admits Slack surfaces. Fail-closed on lookup error. See [`profile.md`](./profile.md) and [`slack.md`](../slack.md) §5.
+- **Slack gated-channel allowlist** — public non-shared channels admit by default; private channels, DMs, group DMs, and Slack Connect channels must appear in `slack.private_channel_allowlist` in `thor.json`. Profiles and `repos[]` never admit Slack surfaces. Fail-closed on lookup error. See [`slack.md`](../slack.md) §5 and [`profile.md`](./profile.md).
 - **GitHub mention-required for first contact** — pure issue comments require `@${GITHUB_APP_SLUG}`. Once a session exists for the issue, later follow-ups can wake without a mention. See `github.md` §4.
 - **Self-loop guards** — events whose sender matches `SLACK_BOT_USER_ID` or `GITHUB_APP_BOT_ID` are dropped. Without these, every Thor-authored reply would re-trigger Thor.
 - **CI wake gate.** `check_suite.completed` only wakes Thor when the head commit's author email matches the derived GitHub App bot email and an alias-backed session for that branch already exists. See `github.md` §4a.
