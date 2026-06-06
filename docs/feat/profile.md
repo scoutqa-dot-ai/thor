@@ -7,7 +7,7 @@ MCP profiles are explicit endpoint-bundle selectors passed on the `mcp` command 
 - Thor workspace config no longer has a `profiles` block.
 - A profile is requested only with `mcp --profile NAME <upstream> ...` or `mcp --profile=NAME <upstream> ...`.
 - Thor does not infer MCP profiles from Slack channel, repo, current working directory, or session aliases.
-- Profile names use uppercase ASCII letters and underscores, matching env suffixes such as `_QA`.
+- Profile names are passed through directly into env-suffix lookup, such as `_QA`; Thor does not validate the name up front.
 - `mcp <upstream>` with no `--profile` uses only the unsuffixed global env bundle.
 - When `--profile NAME` is requested, env resolution is exact: Thor uses only `*_NAME` variables and does not fall back to unsuffixed globals.
 - Session ids are still required for MCP audit logging and approval-thread behavior, but they do not choose the profile.

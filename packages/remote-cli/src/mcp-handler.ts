@@ -43,7 +43,6 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
 const PROFILE_DENIAL_MESSAGE = "Integration not available in this thread context";
-const PROFILE_NAME_RE = /^[A-Z_]+$/;
 
 class ProfileRoutingDenialError extends Error {
   constructor(message: string) {
@@ -309,9 +308,6 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         args.splice(0, 1);
       }
       if (!profile) return fail("Usage: mcp --profile NAME <upstream> [tool] [json-args]\n");
-      if (!PROFILE_NAME_RE.test(profile)) {
-        return fail("MCP profile names must contain only uppercase ASCII letters and underscores\n");
-      }
     }
     return { profile, args };
   }

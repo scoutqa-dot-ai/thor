@@ -428,6 +428,19 @@ describe("remote-cli MCP endpoints", () => {
     expect(body.stderr).not.toContain("Integration not available in this thread context");
   });
 
+  it("does not validate profile names before env resolution", async () => {
+    const call = await postJson(
+      "/exec/mcp",
+      { args: ["--profile", "qa-labs", "atlassian", "getJiraIssue", "{}"] },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const body = (await call.json()) as { stdout: string; stderr: string; exitCode: number };
+
+    expect(call.status).toBe(200);
+    expect(body.exitCode).toBe(1);
+    expect(body.stderr).toBe('Upstream "atlassian" is not configured for this thread/profile.');
+  });
+
   it("warms every registered upstream", async () => {
     await closeRemoteCli();
 
