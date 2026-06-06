@@ -96,7 +96,7 @@ Common usage patterns:
 
 ## Deployment Configuration
 
-Integration-specific env vars live in each integration's doc. Every `remote-cli` integration credential below supports `_<PROFILE_NAME>` profile-suffixed overrides; multi-value integrations (Atlassian, Grafana, Langfuse) resolve all-or-nothing per scope — see [`docs/feat/profile.md`](docs/feat/profile.md). Cross-cutting vars:
+Integration-specific env vars live in each integration's doc. MCP integration credentials (Atlassian, PostHog, Grafana, Langfuse) support `_<PROFILE_NAME>` profile-suffixed overrides; multi-value integrations (Atlassian, Grafana, Langfuse) resolve all-or-nothing per scope — see [`docs/feat/profile.md`](docs/feat/profile.md). Metabase uses the unsuffixed global `METABASE_*` values. Cross-cutting vars:
 
 | Variable                        | Required | Service                   | Purpose                                                                                                                                           |
 | ------------------------------- | -------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
