@@ -5,6 +5,15 @@
 # Logs:    docker compose logs -f
 # Stop:    docker compose down
 
+x-awslogs: &awslogs
+  driver: awslogs
+  options: &awslogs-options
+    awslogs-region: us-east-1
+    awslogs-group: /thor/ec2
+    awslogs-create-group: "true"
+    mode: non-blocking
+    max-buffer-size: "4m"
+
 x-mitmproxy-egress-env: &mitmproxy-egress-env
   http_proxy: http://mitmproxy:8080
   https_proxy: http://mitmproxy:8080
@@ -63,6 +72,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    logging:
+      <<: *awslogs
+      options:
+        <<: *awslogs-options
+        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-remote-cli-1
 
   grafana-mcp:
     image: grafana/mcp-grafana:0.14.0
@@ -88,6 +102,11 @@ services:
       retries: 5
       start_period: 10s
       start_interval: 2s
+    logging:
+      <<: *awslogs
+      options:
+        <<: *awslogs-options
+        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-grafana-mcp-1
 
   mitmproxy:
     build:
@@ -115,6 +134,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    logging:
+      <<: *awslogs
+      options:
+        <<: *awslogs-options
+        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-mitmproxy-1
 
   codex-lb:
     image: ghcr.io/soju06/codex-lb:1.19
@@ -142,6 +166,11 @@ services:
     depends_on:
       mitmproxy:
         condition: service_healthy
+    logging:
+      <<: *awslogs
+      options:
+        <<: *awslogs-options
+        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-codex-lb-1
 
   opencode:
     build:
@@ -187,6 +216,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    logging:
+      <<: *awslogs
+      options:
+        <<: *awslogs-options
+        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-opencode-1
 
   runner:
     build:
@@ -208,6 +242,11 @@ services:
     depends_on:
       opencode:
         condition: service_healthy
+    logging:
+      <<: *awslogs
+      options:
+        <<: *awslogs-options
+        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-runner-1
 
   gateway:
     build:
@@ -243,6 +282,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    logging:
+      <<: *awslogs
+      options:
+        <<: *awslogs-options
+        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-gateway-1
 
   cron:
     build:
@@ -257,6 +301,11 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
+    logging:
+      <<: *awslogs
+      options:
+        <<: *awslogs-options
+        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-cron-1
 
   admin:
     build:
@@ -276,6 +325,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    logging:
+      <<: *awslogs
+      options:
+        <<: *awslogs-options
+        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-admin-1
 
   vouch:
     image: quay.io/vouch/vouch-proxy:0.45.1
@@ -301,6 +355,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    logging:
+      <<: *awslogs
+      options:
+        <<: *awslogs-options
+        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-vouch-1
 
   ingress:
     build:
@@ -321,6 +380,11 @@ services:
         condition: service_healthy
       codex-lb:
         condition: service_started
+    logging:
+      <<: *awslogs
+      options:
+        <<: *awslogs-options
+        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-ingress-1
 
 volumes:
   shared-tmp:
