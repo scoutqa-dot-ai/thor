@@ -11,6 +11,7 @@ x-awslogs: &awslogs
     awslogs-region: us-east-1
     awslogs-group: /thor/ec2
     awslogs-create-group: "true"
+    tag: "{{.Name}}"
     mode: non-blocking
     max-buffer-size: "4m"
 
@@ -74,9 +75,7 @@ services:
       retries: 10
     logging:
       <<: *awslogs
-      options:
-        <<: *awslogs-options
-        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-remote-cli-1
+      options: *awslogs-options
 
   grafana-mcp:
     image: grafana/mcp-grafana:0.14.0
@@ -104,9 +103,7 @@ services:
       start_interval: 2s
     logging:
       <<: *awslogs
-      options:
-        <<: *awslogs-options
-        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-grafana-mcp-1
+      options: *awslogs-options
 
   mitmproxy:
     build:
@@ -136,9 +133,7 @@ services:
       retries: 10
     logging:
       <<: *awslogs
-      options:
-        <<: *awslogs-options
-        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-mitmproxy-1
+      options: *awslogs-options
 
   codex-lb:
     image: ghcr.io/soju06/codex-lb:1.19
@@ -168,9 +163,7 @@ services:
         condition: service_healthy
     logging:
       <<: *awslogs
-      options:
-        <<: *awslogs-options
-        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-codex-lb-1
+      options: *awslogs-options
 
   opencode:
     build:
@@ -218,9 +211,7 @@ services:
       retries: 10
     logging:
       <<: *awslogs
-      options:
-        <<: *awslogs-options
-        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-opencode-1
+      options: *awslogs-options
 
   runner:
     build:
@@ -244,9 +235,7 @@ services:
         condition: service_healthy
     logging:
       <<: *awslogs
-      options:
-        <<: *awslogs-options
-        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-runner-1
+      options: *awslogs-options
 
   gateway:
     build:
@@ -284,9 +273,7 @@ services:
       retries: 10
     logging:
       <<: *awslogs
-      options:
-        <<: *awslogs-options
-        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-gateway-1
+      options: *awslogs-options
 
   cron:
     build:
@@ -303,9 +290,7 @@ services:
         condition: service_healthy
     logging:
       <<: *awslogs
-      options:
-        <<: *awslogs-options
-        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-cron-1
+      options: *awslogs-options
 
   admin:
     build:
@@ -327,9 +312,7 @@ services:
       retries: 10
     logging:
       <<: *awslogs
-      options:
-        <<: *awslogs-options
-        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-admin-1
+      options: *awslogs-options
 
   vouch:
     image: quay.io/vouch/vouch-proxy:0.45.1
@@ -357,9 +340,7 @@ services:
       retries: 10
     logging:
       <<: *awslogs
-      options:
-        <<: *awslogs-options
-        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-vouch-1
+      options: *awslogs-options
 
   ingress:
     build:
@@ -382,9 +363,7 @@ services:
         condition: service_started
     logging:
       <<: *awslogs
-      options:
-        <<: *awslogs-options
-        awslogs-stream: ${COMPOSE_PROJECT_NAME:-thor}-ingress-1
+      options: *awslogs-options
 
 volumes:
   shared-tmp:
