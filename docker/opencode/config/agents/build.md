@@ -177,13 +177,11 @@ Rules:
 
 ### Reacting to PR events
 
-After step 7 the run sits in `Lifecycle: open` waiting on the PR. Some GitHub events may wake you. When the run README exists, treat `Requested-By:` as the authority for who may directly steer follow-up code changes on that PR. If a review/comment comes from someone other than `Requested-By:` — summarize the review and confirm with the original requester before implementation.
+After step 7 the run sits in `Lifecycle: open` waiting on the PR. Some GitHub events may wake you. When the run README exists, treat `Requested-By:` as the authority for who may directly steer follow-up code changes on that PR. If a review/comment comes from someone other than `Requested-By:` — summarize the review and confirm with the original requester before implementation. One human commonly appears under different IDs across surfaces (`slack:U123` in `Requested-By:` and `github:alice` on the PR comment can be the same person), so first cross-check both IDs against `/workspace/config/thor.json` `users[]` (`slack`, `github`, `email`, `name`); if either ID is missing from the registry, treat them as distinct and confirm.
 
 `issue_comment.created` — top-level PR comment mentioning you. The body can be Q&A or a change request. `gh pr comment <N>` replies in the same surface.
 
 `pull_request_review.submitted` with `pull_request_review_comment.created` — inline file/line review comment, anchored by `comment.path`, `comment.line`, and `comment.diff_hunk`. Inline comments live on a review thread keyed by `comment.id`; Reply to the same thread using `gh api repos/<owner>/<repo>/pulls/<N>/comments/<comment.id>/replies --method POST -f body=...`.
-
-For human GitHub comment/review wakes, follow the same-surface rule after the work loop: acknowledge if useful, implement or decline/block as appropriate, then reply on the exact GitHub surface that carried the request. Keep CI, push, and PR-closed housekeeping silent/log-only.
 
 `push` — branch was updated by someone, re-read HEAD to reorient yourself. `sender.login` distinguishes your own pushes from others; `git log <before>..<after>` shows what landed on a fast-forward, but on a divergent reset `<before>` may not be reachable, so use `git log -10` against the new HEAD instead.
 
@@ -193,7 +191,7 @@ For human GitHub comment/review wakes, follow the same-surface rule after the wo
 - **Clear flake or transient infra** (runner OOM, registry timeout, network) — `gh run rerun <id> --failed` once.
 - **Cause not localized after one investigation hop** — notify the original requester about the failed jobs, suspected cause, and a link to the run.
 
-`pull_request.closed` — check `pull_request.merged` then terminate the run: on merge, set `Lifecycle: merged` and `Verdict: MERGED`; on abandon, set `Lifecycle: abandoned` (leave `Verdict:` as the last review value). Stop acting on the run — do not keep pushing to a merged branch unless explicitly asked.
+`pull_request.closed` — check `pull_request.merged` then terminate the run: on merge, set `Lifecycle: merged` and `Verdict: MERGED`, and if the run has a `Thread:` announce the merge there with a short note plus the PR link; on abandon, set `Lifecycle: abandoned` (leave `Verdict:` as the last review value).
 
 ### PR review protocol
 
