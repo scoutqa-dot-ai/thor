@@ -183,9 +183,13 @@ SBX_WORKTREE_DIR="/workspace/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${SBX_BRANCH}
 SBX_HOST_WORKTREE_DIR="${HOST_WORKSPACE}/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${SBX_BRANCH}"
 
 if [[ -z "$SBX_OLD_SHA" || -z "$SBX_NEW_SHA" ]]; then
-  echo "  ⚠ Prerequisites missing (clone may have failed) — skipping sandbox tests"
+  assert 'false' \
+    "sandbox repo has commits for lifecycle checks" \
+    "oldSha='${SBX_OLD_SHA:-}', newSha='${SBX_NEW_SHA:-}'"
 elif [[ "$SBX_OLD_SHA" == "$SBX_NEW_SHA" ]]; then
-  echo "  ⚠ Repo has only one commit — skipping sandbox tests"
+  assert 'false' \
+    "sandbox repo has at least two commits for lifecycle checks" \
+    "oldSha='${SBX_OLD_SHA:0:12}', newSha='${SBX_NEW_SHA:0:12}'"
 else
   # 8a. List sandboxes — should be empty (or at least none for our worktree)
   sbx_list_before=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
@@ -571,13 +575,22 @@ else
       -H 'Content-Type: application/json' \
       -d "{\"mode\":\"stop\",\"cwd\":\"$SBX_WORKTREE_DIR\"}" 2>/dev/null >/dev/null
     sleep 2
-    # Exec again — should auto-recreate
-    sbx_recreate_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
-      -H 'Content-Type: application/json' \
-      -d "{\"mode\":\"exec\",\"args\":[\"echo\",\"post-recreate\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
-      2>/dev/null)
-    sbx_recreate_exit=$(echo "$sbx_recreate_raw" | sandbox_exec_exit)
-    sbx_recreate_stdout=$(echo "$sbx_recreate_raw" | sandbox_exec_stdout)
+    # Exec again — should auto-recreate. Retry for the Daytona boot race: the
+    # command itself succeeds, but the post-exec pull-back (git status in the
+    # freshly recreated sandbox) can transiently fail before the box is ready,
+    # flipping the reported exit to 1. Re-exec of echo is side-effect-free.
+    sbx_recreate_exit=""
+    sbx_recreate_stdout=""
+    for _sbx_retry in 1 2 3; do
+      sbx_recreate_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+        -H 'Content-Type: application/json' \
+        -d "{\"mode\":\"exec\",\"args\":[\"echo\",\"post-recreate\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+        2>/dev/null)
+      sbx_recreate_exit=$(echo "$sbx_recreate_raw" | sandbox_exec_exit)
+      sbx_recreate_stdout=$(echo "$sbx_recreate_raw" | sandbox_exec_stdout)
+      [[ "$sbx_recreate_exit" == "0" ]] && break
+      sleep 2
+    done
     assert '[[ "$sbx_recreate_exit" == "0" ]]' \
       "auto-recreate after disappear succeeded" \
       "exitCode='$sbx_recreate_exit'"
@@ -620,18 +633,24 @@ else
         "worktree 2 sandbox has correct SHA (isolated)" \
         "expected='${SBX_NEW_SHA:0:12}', got='${sbx_iso2_sha:0:12}'"
 
-      # Verify list shows both
-      sbx_list_both=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
-        -H 'Content-Type: application/json' \
-        -d '{"mode":"list"}' 2>/dev/null)
-      sbx_list_both_count=$(echo "$sbx_list_both" | node -e "
-        const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
-        const list = JSON.parse(d.stdout || '[]');
-        const ours = list.filter(s =>
-          s.cwd === '$SBX_WORKTREE_DIR' || s.cwd === '$SBX_WORKTREE_DIR2'
-        );
-        console.log(ours.length);
-      " 2>/dev/null || echo "0")
+      # Verify list shows both (retry for Daytona API eventual consistency —
+      # a freshly created sandbox can lag before appearing in list results)
+      sbx_list_both_count="0"
+      for _sbx_retry in 1 2 3; do
+        sbx_list_both=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+          -H 'Content-Type: application/json' \
+          -d '{"mode":"list"}' 2>/dev/null)
+        sbx_list_both_count=$(echo "$sbx_list_both" | node -e "
+          const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+          const list = JSON.parse(d.stdout || '[]');
+          const ours = list.filter(s =>
+            s.cwd === '$SBX_WORKTREE_DIR' || s.cwd === '$SBX_WORKTREE_DIR2'
+          );
+          console.log(ours.length);
+        " 2>/dev/null || echo "0")
+        [[ "$sbx_list_both_count" == "2" ]] && break
+        sleep 2
+      done
       assert '[[ "$sbx_list_both_count" == "2" ]]' \
         "list shows both sandboxes" \
         "count='$sbx_list_both_count'"

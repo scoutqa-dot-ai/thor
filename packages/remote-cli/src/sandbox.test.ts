@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { once } from "node:events";
 import { realpathSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { normalize as normalizePosix } from "node:path/posix";
 
 interface FakeSandbox {
@@ -49,7 +52,7 @@ const daytonaState: {
   idCounter: number;
 } = hoisted.daytonaState;
 
-vi.mock("./exec.js", () => ({
+vi.mock("./exec.ts", () => ({
   execCommand: hoisted.execCommandMock,
   execCommandStream: vi.fn(),
 }));
@@ -66,8 +69,14 @@ vi.mock("@daytonaio/sdk", () => {
   };
 });
 
-import { _testing, THOR_CWD_LABEL, THOR_MANAGED_LABEL, THOR_SHA_LABEL } from "./sandbox.js";
-import { createRemoteCliApp } from "./index.js";
+import {
+  _testing,
+  pullSandboxChanges,
+  THOR_CWD_LABEL,
+  THOR_MANAGED_LABEL,
+  THOR_SHA_LABEL,
+} from "./sandbox.ts";
+import { createRemoteCliApp } from "./index.ts";
 
 const CWD = "/workspace/worktrees/acme/feat-sandbox";
 const MULTI_SEGMENT_ROOT = "/workspace/worktrees/acme/feat/sandbox";
@@ -174,6 +183,61 @@ describe("/exec/sandbox", () => {
     expect(sandbox.labels[THOR_SHA_LABEL]).toBe(HEAD_SHA);
   });
 
+  it("pulls generated files when Daytona bulk download needs require", async () => {
+    const worktree = await mkdtemp(join(tmpdir(), "thor-sandbox-pull-"));
+    const globalScope = globalThis as {
+      require?: (id: string) => unknown;
+    };
+    const previousRequire = globalScope.require;
+    delete globalScope.require;
+
+    try {
+      const sandbox = makeSandbox("sbx-1", "thor-acme", {
+        [THOR_MANAGED_LABEL]: "true",
+        [THOR_CWD_LABEL]: worktree,
+        [THOR_SHA_LABEL]: HEAD_SHA,
+      });
+      sandbox.process.executeCommand.mockImplementation(async (command: string) => {
+        if (command.includes("git status --porcelain -uall -z")) {
+          return { exitCode: 0, result: "?? generated.txt\0" };
+        }
+        if (command.includes("stat -c")) {
+          return { exitCode: 0, result: "12 generated.txt\n" };
+        }
+        return { exitCode: 0, result: "" };
+      });
+      sandbox.fs.downloadFiles.mockImplementation(
+        async (files: Array<{ source: string; destination: string }>) => {
+          const shimmedRequire = globalScope.require;
+          expect(typeof shimmedRequire).toBe("function");
+
+          const streamModule = shimmedRequire?.("stream") as typeof import("node:stream");
+          expect(streamModule.Transform).toBeTypeOf("function");
+
+          return files.map((file) => ({ source: file.source, result: file.destination }));
+        },
+      );
+      daytonaState.sandboxes.set(sandbox.id, sandbox);
+
+      const result = await pullSandboxChanges(sandbox.id, worktree);
+
+      expect(result).toEqual({ pulled: ["generated.txt"], deleted: [] });
+      expect(sandbox.fs.downloadFiles).toHaveBeenCalledWith([
+        {
+          source: "/workspace/sandbox/generated.txt",
+          destination: join(worktree, "generated.txt"),
+        },
+      ]);
+    } finally {
+      if (previousRequire) {
+        globalScope.require = previousRequire;
+      } else {
+        delete globalScope.require;
+      }
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+
   it("auto-creates sandbox when none exists for cwd", async () => {
     const response = await postJson("/exec/sandbox", {
       args: ["./gradlew", "build"],
@@ -266,7 +330,7 @@ describe("/exec/sandbox", () => {
 
     expect(response.status).toBe(500);
     const body = (await response.json()) as { stderr: string };
-    expect(body.stderr).toContain("Failed to resolve worktree root");
+    expect(body.stderr).toContain("git toplevel is not a valid worktree path");
   });
 
   it("rejects git toplevels nested under another working tree", async () => {
@@ -286,7 +350,7 @@ describe("/exec/sandbox", () => {
 
     expect(response.status).toBe(500);
     const body = (await response.json()) as { stderr: string };
-    expect(body.stderr).toContain("Failed to resolve worktree root");
+    expect(body.stderr).toContain("git toplevel is nested under another working tree");
   });
 
   it("reports pullback failures as exec failures", async () => {
@@ -318,10 +382,24 @@ describe("/exec/sandbox", () => {
       { type: "stdout", data: "sandbox run output\n" },
       {
         type: "stderr",
-        data: "Failed to read sandbox state after exec. No files were pulled back.\n",
+        data:
+          "Failed to read sandbox state after exec. No files were pulled back. (sandbox git status failed: status failed)\n",
       },
       { type: "exit", exitCode: 1 },
     ]);
+  });
+
+  it("passes through provider failures with paths in JSON stderr", async () => {
+    daytonaListMock.mockRejectedValueOnce(
+      new Error("no space left on device: /home/thor/.daytona/sandboxes/sbx-1"),
+    );
+
+    const response = await postJson("/exec/sandbox", { mode: "list" });
+    const body = (await response.json()) as { stderr: string; exitCode: number };
+
+    expect(response.status).toBe(500);
+    expect(body.stderr).toBe("no space left on device: /home/thor/.daytona/sandboxes/sbx-1");
+    expect(body.exitCode).toBe(1);
   });
 
   async function postJson(path: string, body: Record<string, unknown>): Promise<Response> {

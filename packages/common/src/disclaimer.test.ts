@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { rmSync } from "node:fs";
-import { appendAlias, appendSessionEvent } from "./event-log.js";
-import { buildThorDisclaimerForSession } from "./disclaimer.js";
+import { appendAlias, appendSessionEvent } from "./event-log.ts";
+import { buildThorDisclaimerForSession } from "./disclaimer.ts";
 
 const worklogRoot = "/tmp/thor-common-disclaimer-test";
 const triggerId = "00000000-0000-7000-8000-000000000301";

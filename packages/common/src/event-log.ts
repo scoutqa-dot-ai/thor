@@ -11,22 +11,22 @@ import { randomBytes } from "node:crypto";
 import { dirname, join, resolve, sep } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
-import { getWorklogDir } from "./worklog.js";
-import { createLogger, logWarn, truncate } from "./logger.js";
-import { parseOpencodeEvent, projectOpencodeEvent } from "./opencode-event.js";
+import { getWorklogDir } from "./worklog.ts";
+import { createLogger, logWarn, truncate } from "./logger.ts";
+import { parseOpencodeEvent, projectOpencodeEvent } from "./opencode-event.ts";
 
 const log = createLogger("event-log");
 const SLOW_READ_THRESHOLD_MS = 50;
 
-export const ALIAS_TYPES = [
-  "slack.thread_id",
+const ALIAS_TYPES = [
   "slack.thread",
+  "repo",
   "git.branch",
   "github.issue",
   "opencode.session",
   "opencode.subsession",
 ] as const;
-export const AliasTypeSchema = z.enum(ALIAS_TYPES);
+const AliasTypeSchema = z.enum(ALIAS_TYPES);
 
 /**
  * Alias value safety: rejects empty values, oversized values, and any control
@@ -53,7 +53,7 @@ const BaseRecordSchema = z.object({
   _truncated: z.literal(true).optional(),
 });
 
-export const TriggerStartRecordSchema = BaseRecordSchema.extend({
+const TriggerStartRecordSchema = BaseRecordSchema.extend({
   type: z.literal("trigger_start"),
   triggerId: z.string().regex(UUID_V7_RE, { message: "triggerId must be a UUIDv7" }),
   correlationKey: z.string().optional(),
@@ -61,7 +61,7 @@ export const TriggerStartRecordSchema = BaseRecordSchema.extend({
   triggerGithubLogin: z.string().min(1).optional(),
 });
 
-export const TriggerEndRecordSchema = BaseRecordSchema.extend({
+const TriggerEndRecordSchema = BaseRecordSchema.extend({
   type: z.literal("trigger_end"),
   triggerId: z.string().regex(UUID_V7_RE, { message: "triggerId must be a UUIDv7" }),
   status: z.enum(["completed", "error", "aborted"]),
@@ -70,12 +70,12 @@ export const TriggerEndRecordSchema = BaseRecordSchema.extend({
   reason: z.string().optional(),
 });
 
-export const OpencodeEventRecordSchema = BaseRecordSchema.extend({
+const OpencodeEventRecordSchema = BaseRecordSchema.extend({
   type: z.literal("opencode_event"),
   event: z.unknown(),
 });
 
-export const AliasEventRecordSchema = BaseRecordSchema.extend({
+const AliasEventRecordSchema = BaseRecordSchema.extend({
   type: z.literal("alias"),
   aliasType: AliasTypeSchema,
   aliasValue: AliasValueSchema,
@@ -83,7 +83,7 @@ export const AliasEventRecordSchema = BaseRecordSchema.extend({
   source: z.string().optional(),
 });
 
-export const ToolCallRecordSchema = BaseRecordSchema.extend({
+const ToolCallRecordSchema = BaseRecordSchema.extend({
   type: z.literal("tool_call"),
   callId: z.string().optional(),
   tool: z.string(),
@@ -109,7 +109,7 @@ export const AliasRecordSchema = z.object({
 
 export type AliasRecord = z.infer<typeof AliasRecordSchema>;
 
-export type TriggerSliceStatus = "completed" | "error" | "aborted" | "crashed" | "in_flight";
+type TriggerSliceStatus = "completed" | "error" | "aborted" | "crashed" | "in_flight";
 
 export interface TriggerSlice {
   records: SessionEventLogRecord[];
@@ -186,6 +186,14 @@ const aliasCache: AliasCacheState = { forward: new Map(), reverse: new Map() };
 /** Last observed file signature for aliases.jsonl. */
 let aliasCacheLastSignature: string | null = null;
 
+// Anchor metadata, not a routing key: many anchors share a repo, so it must
+// never enter the forward (value→anchor) map. That map assumes one anchor per
+// value, so a second anchor stamping the same repo would evict the first
+// anchor's binding — silently breaking profile resolution for the non-Slack /
+// cron sessions repo-stamping exists for. These types are recorded in the
+// reverse index only.
+const ANCHOR_METADATA_ALIAS_TYPES = new Set<AliasRecord["aliasType"]>(["repo"]);
+
 interface SessionRecordsCacheEntry {
   signature: string;
   records: SessionEventLogRecord[];
@@ -251,15 +259,13 @@ export function mintAnchor(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-export const mintTriggerId = mintAnchor;
-
 /**
- * Detects opencode_event records whose part is `text` or `reasoning` — the
- * user-visible message body we must never lose. Tool inputs/outputs can run
- * arbitrarily large (file reads, big JSON payloads) and still get capped;
- * text/reasoning bypass the cap unconditionally.
+ * Detects opencode_event records whose part must never be capped. Text and
+ * reasoning preserve user-visible/debuggable content; step-finish preserves
+ * authoritative token/cost accounting. Tool inputs/outputs can run arbitrarily
+ * large (file reads, big JSON payloads) and still get capped.
  */
-function isTextOrReasoningOpencodeEvent(record: Record<string, unknown>): boolean {
+function isUncappedOpencodeEventPart(record: Record<string, unknown>): boolean {
   if (record.type !== "opencode_event") return false;
   const event = record.event;
   if (!event || typeof event !== "object") return false;
@@ -268,7 +274,7 @@ function isTextOrReasoningOpencodeEvent(record: Record<string, unknown>): boolea
   const part = (properties as { part?: unknown }).part;
   if (!part || typeof part !== "object") return false;
   const partType = (part as { type?: unknown }).type;
-  return partType === "text" || partType === "reasoning";
+  return partType === "text" || partType === "reasoning" || partType === "step-finish";
 }
 
 function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncated?: true } {
@@ -276,9 +282,10 @@ function capRecord<T extends Record<string, unknown>>(record: T): T & { _truncat
   if (Buffer.byteLength(JSON.stringify(candidate), "utf8") < MAX_RECORD_BYTES)
     return candidate as T;
 
-  // Never truncate text/reasoning parts — long assistant replies or thinking
-  // chains exceed 4 KB legitimately, and the debugging UI needs them whole.
-  if (isTextOrReasoningOpencodeEvent(candidate)) return candidate as T;
+  // Never truncate text/reasoning/step-finish parts: long assistant replies or
+  // thinking chains can legitimately exceed 4 KB, and step-finish carries the
+  // authoritative token/cost accounting used by the viewer.
+  if (isUncappedOpencodeEventPart(candidate)) return candidate as T;
 
   // Project oversized opencode events to a fixed viewer skeleton. The projected
   // schema has a bounded set of keys, so size is naturally constrained.
@@ -615,16 +622,19 @@ function externalKeyEncoded(aliasType: AliasRecord["aliasType"], aliasValue: str
 
 function applyAliasRecord(r: AliasRecord): void {
   const aliasKey = externalKeyEncoded(r.aliasType, r.aliasValue);
-  const previousAnchorId = aliasCache.forward.get(aliasKey);
-  aliasCache.forward.set(aliasKey, r.anchorId);
 
-  if (previousAnchorId && previousAnchorId !== r.anchorId) {
-    const old = aliasCache.reverse.get(previousAnchorId);
-    if (old) {
-      if (r.aliasType === "opencode.session") old.sessions.delete(r.aliasValue);
-      else if (r.aliasType === "opencode.subsession") old.subsessions.delete(r.aliasValue);
-      else old.externalKeys.delete(aliasKey);
-      if (isReverseEntryEmpty(old)) aliasCache.reverse.delete(previousAnchorId);
+  if (!ANCHOR_METADATA_ALIAS_TYPES.has(r.aliasType)) {
+    const previousAnchorId = aliasCache.forward.get(aliasKey);
+    aliasCache.forward.set(aliasKey, r.anchorId);
+
+    if (previousAnchorId && previousAnchorId !== r.anchorId) {
+      const old = aliasCache.reverse.get(previousAnchorId);
+      if (old) {
+        if (r.aliasType === "opencode.session") old.sessions.delete(r.aliasValue);
+        else if (r.aliasType === "opencode.subsession") old.subsessions.delete(r.aliasValue);
+        else old.externalKeys.delete(aliasKey);
+        if (isReverseEntryEmpty(old)) aliasCache.reverse.delete(previousAnchorId);
+      }
     }
   }
 
@@ -702,6 +712,31 @@ export function resolveAlias(input: {
 }): string | undefined {
   loadAliasCacheIfChanged();
   return aliasCache.forward.get(externalKeyEncoded(input.aliasType, input.aliasValue));
+}
+
+export function resolveSessionAnchorId(sessionId: string): string | undefined {
+  return (
+    resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId }) ??
+    resolveAlias({ aliasType: "opencode.subsession", aliasValue: sessionId })
+  );
+}
+
+/**
+ * Cheap membership check: does the anchor carry any external key of the given
+ * type? Reads the in-memory reverse index directly, allocating nothing — used
+ * to enforce stamp-once semantics without materializing a full
+ * `ReverseAnchorEntry`.
+ */
+export function anchorHasExternalKeyType(
+  anchorId: string,
+  aliasType: AliasRecord["aliasType"],
+): boolean {
+  loadAliasCacheIfChanged();
+  const entry = aliasCache.reverse.get(anchorId);
+  if (!entry) return false;
+  const prefix = `${aliasType}\0`;
+  for (const key of entry.externalKeys) if (key.startsWith(prefix)) return true;
+  return false;
 }
 
 export function reverseLookupAnchor(anchorId: string): ReverseAnchorEntry {
@@ -990,9 +1025,7 @@ function scanTriggers(
 }
 
 export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult {
-  const anchorId =
-    resolveAlias({ aliasType: "opencode.session", aliasValue: requestSessionId }) ??
-    resolveAlias({ aliasType: "opencode.subsession", aliasValue: requestSessionId });
+  const anchorId = resolveSessionAnchorId(requestSessionId);
   if (!anchorId) return { ok: false, reason: "none" };
 
   const reverse = reverseLookupAnchor(anchorId);
@@ -1010,9 +1043,7 @@ function findBestTriggerForSession(
   requestSessionId: string,
   accepts?: (trigger: ScannedTrigger) => boolean,
 ): ScannedTrigger | undefined {
-  const anchorId =
-    resolveAlias({ aliasType: "opencode.session", aliasValue: requestSessionId }) ??
-    resolveAlias({ aliasType: "opencode.subsession", aliasValue: requestSessionId });
+  const anchorId = resolveSessionAnchorId(requestSessionId);
   if (!anchorId) return undefined;
 
   const reverse = reverseLookupAnchor(anchorId);
@@ -1039,10 +1070,6 @@ export function findTriggerActor(
   };
 }
 
-export function findTriggerCorrelationKey(requestSessionId: string): string | undefined {
-  return findBestTriggerForSession(requestSessionId)?.correlationKey;
-}
-
 export function findSlackTriggerCorrelationKey(requestSessionId: string): string | undefined {
   return findBestTriggerForSession(requestSessionId, (trigger) =>
     Boolean(trigger.correlationKey?.startsWith("slack:thread:")),
@@ -1050,9 +1077,7 @@ export function findSlackTriggerCorrelationKey(requestSessionId: string): string
 }
 
 export function findAnchorContext(requestSessionId: string): AnchorContextResult {
-  const anchorId =
-    resolveAlias({ aliasType: "opencode.session", aliasValue: requestSessionId }) ??
-    resolveAlias({ aliasType: "opencode.subsession", aliasValue: requestSessionId });
+  const anchorId = resolveSessionAnchorId(requestSessionId);
   if (!anchorId) return { ok: false, reason: "none" };
 
   const active = findActiveTrigger(requestSessionId);

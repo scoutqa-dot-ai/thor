@@ -1,8 +1,12 @@
 import { serializeError } from "serialize-error";
-import { truncate } from "./logger.js";
+import { truncate } from "./logger.ts";
 
 export interface ErrorMetadataOptions {
   maxMessageLength?: number;
+}
+
+export function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 export function errorToMetadata(

@@ -20,8 +20,8 @@ x-mitmproxy-egress-env: &mitmproxy-egress-env
   https_proxy: http://mitmproxy:8080
   HTTP_PROXY: http://mitmproxy:8080
   HTTPS_PROXY: http://mitmproxy:8080
-  no_proxy: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb"
-  NO_PROXY: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb"
+  no_proxy: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb"
+  NO_PROXY: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb"
 
 services:
   remote-cli:
@@ -29,6 +29,8 @@ services:
       context: .
       target: remote-cli
     restart: unless-stopped
+    security_opt:
+      - seccomp=./docker/remote-cli/seccomp-bwrap.json
     ports:
       - "127.0.0.1:3004:3004"
     environment:
@@ -38,15 +40,10 @@ services:
       - GITHUB_APP_BOT_ID=${GITHUB_APP_BOT_ID:?set GITHUB_APP_BOT_ID}
       - GITHUB_APP_PRIVATE_KEY_FILE=${GITHUB_APP_PRIVATE_KEY_FILE:?set GITHUB_APP_PRIVATE_KEY_FILE}
       - GITHUB_API_URL=${GITHUB_API_URL:-}
-      - ATLASSIAN_AUTH=${ATLASSIAN_AUTH}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:?set SLACK_BOT_TOKEN}
       - SLACK_API_BASE_URL
-      - POSTHOG_API_KEY=${POSTHOG_API_KEY}
       - THOR_INTERNAL_SECRET=${THOR_INTERNAL_SECRET:?set THOR_INTERNAL_SECRET}
       - SCOUT_API_KEY=${SCOUT_API_KEY:-}
-      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
-      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
-      - LANGFUSE_HOST=${LANGFUSE_HOST:-https://us.cloud.langfuse.com}
       - LD_ACCESS_TOKEN=${LD_ACCESS_TOKEN:-}
       - LD_BASE_URI=${LD_BASE_URI:-}
       - LD_PROJECT=${LD_PROJECT:-}
@@ -59,14 +56,13 @@ services:
       - DAYTONA_API_URL=${DAYTONA_API_URL:-https://app.daytona.io/api}
       - DAYTONA_SNAPSHOT=${DAYTONA_SNAPSHOT:-}
       - RUNNER_BASE_URL=${RUNNER_BASE_URL:?set RUNNER_BASE_URL}
+    env_file:
+      - .env
     volumes:
       - ./docker-volumes/home/thor:/home/thor
       - ./docker-volumes/workspace:/workspace
       - ./docker-volumes/github-app:/var/lib/remote-cli/github-app
       - shared-tmp:/tmp
-    depends_on:
-      grafana-mcp:
-        condition: service_healthy
     healthcheck:
       test:
         ["CMD", "node", "-e", "fetch('http://localhost:3004/health').then(r=>{if(!r.ok)throw 1})"]
@@ -77,41 +73,12 @@ services:
       <<: *awslogs
       options: *awslogs-options
 
-  grafana-mcp:
-    image: grafana/mcp-grafana:0.14.0
-    restart: unless-stopped
-    entrypoint:
-      [
-        "/app/mcp-grafana",
-        "-transport",
-        "streamable-http",
-        "-address",
-        "0.0.0.0:8000",
-        "-enabled-tools",
-        "datasource,prometheus,loki,proxied",
-      ]
-    environment:
-      - GRAFANA_URL=${GRAFANA_URL:?set GRAFANA_URL}
-      - GRAFANA_SERVICE_ACCOUNT_TOKEN=${GRAFANA_SERVICE_ACCOUNT_TOKEN:?set GRAFANA_SERVICE_ACCOUNT_TOKEN}
-      - GRAFANA_ORG_ID=${GRAFANA_ORG_ID:-1}
-    healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8000"]
-      interval: 30s
-      timeout: 3s
-      retries: 5
-      start_period: 10s
-      start_interval: 2s
-    logging:
-      <<: *awslogs
-      options: *awslogs-options
-
   mitmproxy:
     build:
       context: .
       target: mitmproxy
     restart: unless-stopped
     environment:
-      - ATLASSIAN_AUTH=${ATLASSIAN_AUTH:-}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
     ports:
       - "127.0.0.1:3080:8080"
@@ -228,6 +195,8 @@ services:
       - SLACK_TEAM_ID=${SLACK_TEAM_ID:-}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:?set SLACK_BOT_TOKEN}
       - SLACK_API_BASE_URL
+    env_file:
+      - .env
     volumes:
       - ./docker-volumes/workspace:/workspace
     depends_on:

@@ -8,6 +8,7 @@ import {
   computeGitCorrelationKey,
   createConfigLoader,
   createLogger,
+  errorMessage,
   getRunnerBaseUrl,
   logError,
   logInfo,
@@ -20,15 +21,15 @@ import {
   type ExecStreamEvent,
   type ConfigLoader,
 } from "@thor/common";
-import { execCommand, execCommandStream } from "./exec.js";
-import { resolveOwnerRepoFromRemote } from "./github-app-auth.js";
-import { createMcpService, type McpServiceDeps } from "./mcp-handler.js";
+import { execCommand, execCommandStream } from "./exec.ts";
+import { resolveOwnerRepoFromRemote } from "./github-app-auth.ts";
+import { createMcpService, type McpServiceDeps } from "./mcp-handler.ts";
 import {
   handleSlackPostMessage,
   parseSlackPostMessageArgs,
   type SlackPostMessageDeps,
-} from "./slack-post-message.js";
-import { listSchemas, listTables, getColumns, executeQuery, getQuestion } from "./metabase.js";
+} from "./slack-post-message.ts";
+import { listSchemas, listTables, getColumns, executeQuery, getQuestion } from "./metabase.ts";
 import {
   createSandbox,
   deleteSandbox,
@@ -38,24 +39,22 @@ import {
   listSandboxes,
   overlayDirtyFiles,
   pullSandboxChanges,
-  SandboxError,
   shellQuote,
   syncSandbox,
   withCwdLock,
   THOR_CWD_LABEL,
   THOR_MANAGED_LABEL,
   THOR_SHA_LABEL,
-} from "./sandbox.js";
+} from "./sandbox.ts";
 import {
   resolveGitArgs,
   validateCwd,
   validateGhArgs,
   validateLdcliArgs,
-  validateLangfuseArgs,
   validateMetabaseArgs,
   validateScoutqaArgs,
-} from "./policy.js";
-import { attributionFields, resolveTriggerUser } from "./attribution.js";
+} from "./policy.ts";
+import { attributionFields, resolveTriggerUser } from "./attribution.ts";
 
 const log = createLogger("remote-cli");
 
@@ -388,6 +387,36 @@ async function withNdjsonHeartbeat<T>(
   }
 }
 
+type NdjsonWrite = (chunk: ExecStreamEvent) => void;
+
+async function streamNdjsonResponse(
+  res: express.Response,
+  onError: (err: unknown) => void,
+  fn: (write: NdjsonWrite) => Promise<void>,
+): Promise<void> {
+  res.setHeader("Content-Type", "application/x-ndjson");
+  res.setHeader("Transfer-Encoding", "chunked");
+  res.flushHeaders();
+
+  const write: NdjsonWrite = (chunk) => {
+    res.write(JSON.stringify(chunk) + "\n");
+  };
+
+  try {
+    await withNdjsonHeartbeat(write, () => fn(write));
+  } catch (err) {
+    try {
+      onError(err);
+    } catch {
+      // Logging/telemetry failures must not break the NDJSON response shape.
+    }
+    write({ type: "stderr", data: `${errorMessage(err)}\n` });
+    write({ type: "exit", exitCode: 1 });
+  } finally {
+    res.end();
+  }
+}
+
 function parseArgs(body: unknown): string[] | undefined {
   if (!body || typeof body !== "object" || !("args" in body)) return undefined;
   const args = (body as { args?: unknown }).args;
@@ -450,25 +479,16 @@ async function resolveWorktreeRoot(cwd: string): Promise<{ root: string; subpath
 
   const result = await execCommand("git", ["rev-parse", "--show-toplevel"], gitCwd);
   if ((result.exitCode ?? 0) !== 0 || !result.stdout.trim()) {
-    throw new SandboxError(
-      "Failed to resolve worktree root",
-      `git rev-parse --show-toplevel failed for ${cwd}`,
-    );
+    throw new Error(`git rev-parse --show-toplevel failed for ${cwd}`);
   }
   const root = result.stdout.trim();
   if (!isValidWorktreeTopLevel(root)) {
-    throw new SandboxError(
-      "Failed to resolve worktree root",
-      `git toplevel is not a valid worktree path: ${root}`,
-    );
+    throw new Error(`git toplevel is not a valid worktree path: ${root}`);
   }
 
   const containingRoot = await findContainingWorktreeRoot(root);
   if (containingRoot) {
-    throw new SandboxError(
-      "Failed to resolve worktree root",
-      `git toplevel is nested under another working tree: ${root} (parent ${containingRoot})`,
-    );
+    throw new Error(`git toplevel is nested under another working tree: ${root} (parent ${containingRoot})`);
   }
 
   const subpath = cwd.startsWith(root + "/") ? cwd.slice(root.length + 1) : "";
@@ -599,17 +619,11 @@ async function prepareSandbox(
 async function resolveHead(cwd: string): Promise<string> {
   const gitSha = await execCommand("git", ["rev-parse", "HEAD"], cwd);
   if ((gitSha.exitCode ?? 0) !== 0) {
-    throw new SandboxError(
-      "Failed to resolve worktree HEAD",
-      `git rev-parse HEAD failed: ${gitSha.stderr || gitSha.stdout}`,
-    );
+    throw new Error(`git rev-parse HEAD failed: ${gitSha.stderr || gitSha.stdout}`);
   }
   const sha = gitSha.stdout.trim();
   if (!sha) {
-    throw new SandboxError(
-      "Failed to resolve worktree HEAD",
-      "git rev-parse HEAD returned empty SHA",
-    );
+    throw new Error("git rev-parse HEAD returned empty SHA");
   }
   return sha;
 }
@@ -691,10 +705,10 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       logError(
         log,
         "exec_git_error",
-        err instanceof Error ? err.message : String(err),
+        errorMessage(err),
         thorIds(req),
       );
-      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+      res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
 
@@ -734,10 +748,10 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       logError(
         log,
         "exec_gh_error",
-        err instanceof Error ? err.message : String(err),
+        errorMessage(err),
         thorIds(req),
       );
-      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+      res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
 
@@ -753,34 +767,23 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
       logInfo(log, "exec_scoutqa", { args, ...thorIds(req) });
 
-      res.setHeader("Content-Type", "application/x-ndjson");
-      res.setHeader("Transfer-Encoding", "chunked");
-
-      const write = (chunk: ExecStreamEvent) => {
-        res.write(JSON.stringify(chunk) + "\n");
-      };
-
-      await withNdjsonHeartbeat(write, async () => {
+      await streamNdjsonResponse(res, (err) => {
+        logError(log, "exec_scoutqa_error", errorMessage(err), thorIds(req));
+      }, async (write) => {
         const exitCode = await execCommandStream("scoutqa", args, "/workspace", {
           onStdout: (data) => write({ type: "stdout", data }),
           onStderr: (data) => write({ type: "stderr", data }),
         });
         write({ type: "exit", exitCode });
       });
-      res.end();
     } catch (err) {
       logError(
         log,
         "exec_scoutqa_error",
-        err instanceof Error ? err.message : String(err),
+        errorMessage(err),
         thorIds(req),
       );
-      if (!res.headersSent) {
-        res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
-      } else {
-        res.write(JSON.stringify({ type: "exit", exitCode: 1 } satisfies ExecStreamEvent) + "\n");
-        res.end();
-      }
+      res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
 
@@ -819,18 +822,14 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       logError(
         log,
         "exec_slack_post_message_error",
-        err instanceof Error ? err.message : String(err),
+        errorMessage(err),
         ids,
       );
-      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+      res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
 
   app.post("/exec/sandbox", async (req, res) => {
-    const writeNdjson = (chunk: ExecStreamEvent) => {
-      res.write(JSON.stringify(chunk) + "\n");
-    };
-
     try {
       const { args, cwd, mode: rawMode } = req.body ?? {};
       const mode = parseSandboxMode(rawMode);
@@ -938,11 +937,9 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       // Streaming exec runs outside the lock — parallel commands are OK.
       // Known limitation: parallel execs share one sandbox filesystem, so
       // concurrent writes to the same file produce last-writer-wins pull results.
-      res.setHeader("Content-Type", "application/x-ndjson");
-      res.setHeader("Transfer-Encoding", "chunked");
-      res.flushHeaders();
-
-      await withNdjsonHeartbeat(writeNdjson, async () => {
+      await streamNdjsonResponse(res, (err) => {
+        logError(log, "exec_sandbox_error", errorMessage(err), thorIds(req));
+      }, async (writeNdjson) => {
         const exitCode = await execInSandboxStream(result.sandboxId, result.command, {
           onStdout: (chunk) => writeNdjson({ type: "stdout", data: chunk }),
           onStderr: (chunk) => writeNdjson({ type: "stderr", data: chunk }),
@@ -963,62 +960,20 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
               });
             }
           } catch (pullErr) {
-            const error =
-              pullErr instanceof SandboxError
-                ? pullErr
-                : new SandboxError(
-                    "Failed to pull sandbox changes back to the worktree",
-                    String(pullErr),
-                  );
-            logError(log, "sandbox_pull_error", error.adminDetail, thorIds(req));
-            writeNdjson({ type: "stderr", data: `${error.userMessage}\n` });
+            const message = errorMessage(pullErr);
+            logError(log, "sandbox_pull_error", message, thorIds(req));
+            writeNdjson({ type: "stderr", data: `${message}\n` });
             finalExitCode = 1;
           }
         }
 
         writeNdjson({ type: "exit", exitCode: finalExitCode });
       });
-      res.end();
     } catch (err) {
-      const error =
-        err instanceof SandboxError ? err : new SandboxError("Sandbox service error", String(err));
-      logError(log, "exec_sandbox_error", error.adminDetail, thorIds(req));
+      const message = errorMessage(err);
+      logError(log, "exec_sandbox_error", message, thorIds(req));
 
-      if (!res.headersSent) {
-        res.status(500).json({ stdout: "", stderr: error.userMessage, exitCode: 1 });
-      } else {
-        writeNdjson({ type: "stderr", data: `${error.userMessage}\n` });
-        writeNdjson({ type: "exit", exitCode: 1 });
-        res.end();
-      }
-    }
-  });
-
-  app.post("/exec/langfuse", async (req, res) => {
-    try {
-      const { args } = req.body ?? {};
-
-      const argsError = validateLangfuseArgs(args);
-      if (argsError) {
-        res.status(400).json({ stdout: "", stderr: argsError, exitCode: 1 });
-        return;
-      }
-
-      const action = args[2];
-      const needsJson = action === "list" || action === "get";
-      const finalArgs = !needsJson || args.includes("--json") ? args : [...args, "--json"];
-
-      logInfo(log, "exec_langfuse", { args: finalArgs, ...thorIds(req) });
-      const result = await execCommand("langfuse", finalArgs, "/workspace");
-      res.json(result);
-    } catch (err) {
-      logError(
-        log,
-        "exec_langfuse_error",
-        err instanceof Error ? err.message : String(err),
-        thorIds(req),
-      );
-      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+      res.status(500).json({ stdout: "", stderr: message, exitCode: 1 });
     }
   });
 
@@ -1049,10 +1004,10 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       logError(
         log,
         "exec_ldcli_error",
-        err instanceof Error ? err.message : String(err),
+        errorMessage(err),
         thorIds(req),
       );
-      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+      res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
 
@@ -1095,7 +1050,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
       res.json({ stdout: JSON.stringify(result, null, 2), stderr: "", exitCode: 0 });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       logError(log, "exec_metabase_error", message, thorIds(req));
       res.status(500).json({ stdout: "", stderr: message, exitCode: 1 });
     }
@@ -1117,20 +1072,17 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         }
       }
 
-      const result = await mcpService.executeMcp(args, {
-        directory: typeof req.body?.directory === "string" ? req.body.directory : undefined,
-        ...thorIds(req),
-      });
+      const result = await mcpService.executeMcp(args, thorIds(req));
 
       res.json(result);
     } catch (err) {
       logError(
         log,
         "exec_mcp_error",
-        err instanceof Error ? err.message : String(err),
+        errorMessage(err),
         thorIds(req),
       );
-      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+      res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
 
@@ -1170,14 +1122,14 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       });
       res.json(result);
     } catch (err) {
-      logError(log, "internal_exec_error", err instanceof Error ? err.message : String(err), {
+      logError(log, "internal_exec_error", errorMessage(err), {
         bin,
         argc: args.length,
         cwd,
         durationMs: Date.now() - startedAt,
         ...thorIds(req),
       });
-      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+      res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
 
@@ -1195,10 +1147,10 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       logError(
         log,
         "exec_approval_error",
-        err instanceof Error ? err.message : String(err),
+        errorMessage(err),
         thorIds(req),
       );
-      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+      res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
 

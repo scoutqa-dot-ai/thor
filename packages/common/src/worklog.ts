@@ -13,7 +13,7 @@
 
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { envOptionalString, envString } from "./env.js";
+import { envOptionalString, envString } from "./env.ts";
 
 /** Max bytes for JSON-serialized args/result payloads. */
 const MAX_PAYLOAD_BYTES = 4096;
@@ -73,6 +73,8 @@ function fileTimestamp(): string {
 export interface ToolCallLogEntry {
   tool: string;
   decision: "allowed" | "blocked" | "pending" | "approved" | "rejected";
+  targetKey?: string;
+  profile?: string;
   args?: Record<string, unknown>;
   result?: unknown;
   durationMs?: number;
@@ -93,6 +95,8 @@ export function writeToolCallLog(entry: ToolCallLogEntry): void {
     type: "tool_call",
     tool: entry.tool,
     decision: entry.decision,
+    targetKey: entry.targetKey,
+    profile: entry.profile,
     args: entry.args ? truncatePayload(entry.args) : undefined,
     result: entry.result ? truncatePayload(entry.result) : undefined,
     durationMs: entry.durationMs,

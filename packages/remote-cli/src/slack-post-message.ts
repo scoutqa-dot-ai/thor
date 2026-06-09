@@ -1,10 +1,11 @@
 import {
   appendCorrelationAlias,
-  buildSlackCorrelationKeys,
+  buildSlackCorrelationKey,
   currentSessionForAnchor,
   isPathWithin,
   realpathOrNull,
   resolveAlias,
+  resolveSessionAnchorId,
   type ExecResult,
 } from "@thor/common";
 import MarkdownIt from "markdown-it";
@@ -102,14 +103,13 @@ function resolveBlocksFilePath(blocksFile: string, cwd?: string): string | { err
 }
 
 function hasUsableThorSession(sessionId: string): boolean {
-  const sessionAnchor = resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId });
-  if (sessionAnchor) return currentSessionForAnchor(sessionAnchor) === sessionId;
+  const anchorId = resolveSessionAnchorId(sessionId);
+  if (!anchorId) return false;
 
-  const subsessionAnchor = resolveAlias({
-    aliasType: "opencode.subsession",
-    aliasValue: sessionId,
-  });
-  return subsessionAnchor ? currentSessionForAnchor(subsessionAnchor) !== undefined : false;
+  const sessionAnchor = resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId });
+  return sessionAnchor
+    ? currentSessionForAnchor(anchorId) === sessionId
+    : currentSessionForAnchor(anchorId) !== undefined;
 }
 
 function stripCodeSegments(text: string): string {
@@ -307,15 +307,17 @@ export async function handleSlackPostMessage(
   const responseChannel = slackResponse.channel;
 
   const aliasTs = parsed.threadTs ?? responseTs;
-  const correlationKey = buildSlackCorrelationKeys(responseChannel, aliasTs)[0];
-  const appendAlias = deps.appendAlias ?? appendCorrelationAlias;
-  try {
-    appendAlias(sessionId, correlationKey);
-  } catch (err) {
-    deps.logAliasError?.(err instanceof Error ? err : new Error(String(err)), {
-      sessionId,
-      correlationKey,
-    });
+  if (responseChannel) {
+    const correlationKey = buildSlackCorrelationKey(responseChannel, aliasTs);
+    const appendAlias = deps.appendAlias ?? appendCorrelationAlias;
+    try {
+      appendAlias(sessionId, correlationKey);
+    } catch (err) {
+      deps.logAliasError?.(err instanceof Error ? err : new Error(String(err)), {
+        sessionId,
+        correlationKey,
+      });
+    }
   }
 
   void started;

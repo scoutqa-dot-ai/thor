@@ -4,7 +4,7 @@ import {
   __resetSlackChannelGateCacheForTests,
   getCachedSlackChannelGate,
   isSlackEventGated,
-} from "./slack-api.js";
+} from "./slack-api.ts";
 
 function depsWithInfo(info = vi.fn()) {
   return {

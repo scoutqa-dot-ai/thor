@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { WORKSPACE_CONFIG_PATH } from "./workspace-config.js";
+import { WORKSPACE_CONFIG_PATH } from "./workspace-config.ts";
 import {
   ADMIN_AUDIT_LOG_PATH,
   loadAdminEnv,
@@ -10,7 +10,7 @@ import {
   loadRemoteCliAppEnv,
   loadRemoteCliEnv,
   loadRunnerEnv,
-} from "./service-env.js";
+} from "./service-env.ts";
 
 const githubEnv = {
   GITHUB_APP_ID: "app-id",

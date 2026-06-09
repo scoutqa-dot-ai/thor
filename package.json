@@ -1,7 +1,7 @@
 {
   "name": "thor",
   "private": true,
-  "packageManager": "pnpm@10.33.4",
+  "packageManager": "pnpm@11.2.2",
   "scripts": {
     "build": "pnpm -r build",
     "dev": "pnpm -r --parallel dev",
@@ -11,7 +11,6 @@
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:mcp": "npx tsx scripts/test-mcp.ts",
     "test:e2e": "./scripts/test-e2e.sh",
     "test:opencode-e2e": "./scripts/test-opencode-e2e.sh",
     "test:create-jira-approval-e2e": "./scripts/test-create-jira-approval-e2e.sh",
@@ -25,7 +24,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^17.0.0",
     "prettier": "^3.8.1",
-    "tsup": "^8.5.1",
+    "tsdown": "^0.22.1",
     "vitest": "^4.1.5"
   }
 }

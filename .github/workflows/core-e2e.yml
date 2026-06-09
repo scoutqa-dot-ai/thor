@@ -9,8 +9,9 @@ on:
       - "scripts/test-opencode-e2e.sh"
       - "packages/**"
       - "docker/**"
-      - pnpm-lock.yaml
       - docker-compose.yml
+      - Dockerfile
+      - pnpm-lock.yaml
   workflow_dispatch:
 
 permissions:
@@ -51,13 +52,15 @@ jobs:
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       DAYTONA_SNAPSHOT: ${{ vars.DAYTONA_SNAPSHOT }}
       ATLASSIAN_AUTH: ${{ secrets.ATLASSIAN_AUTH }}
-      # Fakes: services not exercised by e2e, but referenced at compose startup.
-      GRAFANA_URL: http://grafana-mcp:8000
+      POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+      # Grafana MCP runs as a bwrap-sandboxed child of remote-cli; tool listing
+      # works against a placeholder URL without reaching a real Grafana.
+      GRAFANA_URL: http://grafana.invalid
       GRAFANA_SERVICE_ACCOUNT_TOKEN: ci-fake
-      POSTHOG_API_KEY: ci-fake
-      LANGFUSE_PUBLIC_KEY: ci-fake
-      LANGFUSE_SECRET_KEY: ci-fake
-      LANGFUSE_HOST: https://us.cloud.langfuse.com
+      LANGFUSE_PUBLIC_KEY: ${{ vars.LANGFUSE_PUBLIC_KEY }}
+      LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+      LANGFUSE_HOST: ${{ vars.LANGFUSE_HOST }}
+      # Fakes: services not exercised by e2e, but referenced at compose startup.
       METABASE_URL: http://localhost
       METABASE_API_KEY: ci-fake
       METABASE_DATABASE_ID: "1"
@@ -108,8 +111,20 @@ jobs:
           printf '%s' "$THOR_GITHUB_APP_PRIVATE_KEY" > docker-volumes/github-app/private-key.pem
           chmod 600 docker-volumes/github-app/private-key.pem
 
-          # data service requires env_file: .env — create an empty one.
-          : > .env
+          # MCP credentials are passed to compose services through env_file.
+          {
+            printf 'ATLASSIAN_AUTH=%s\n' "$ATLASSIAN_AUTH"
+            printf 'POSTHOG_API_KEY=%s\n' "$POSTHOG_API_KEY"
+            printf 'GRAFANA_URL=%s\n' "$GRAFANA_URL"
+            printf 'GRAFANA_SERVICE_ACCOUNT_TOKEN=%s\n' "$GRAFANA_SERVICE_ACCOUNT_TOKEN"
+            printf 'GRAFANA_ORG_ID=%s\n' "${GRAFANA_ORG_ID:-1}"
+            # CI cannot host a rootless bwrap sandbox (container-in-container);
+            # run mcp-grafana unsandboxed. Safe here: credentials are fakes.
+            printf 'THOR_MCP_DISABLE_SANDBOX=1\n'
+            printf 'LANGFUSE_PUBLIC_KEY=%s\n' "$LANGFUSE_PUBLIC_KEY"
+            printf 'LANGFUSE_SECRET_KEY=%s\n' "$LANGFUSE_SECRET_KEY"
+            printf 'LANGFUSE_BASE_URL=https://%s\n' "$LANGFUSE_HOST"
+          } > .env
 
           export CRON_SECRET="$(openssl rand -hex 32)"
           export THOR_INTERNAL_SECRET="$(openssl rand -hex 32)"
@@ -120,6 +135,7 @@ jobs:
 
           cat > docker-volumes/workspace/config/thor.json <<EOF
           {
+            "mitmproxy_passthrough": ["${LANGFUSE_HOST}"],
             "owners": {
               "${{ github.repository_owner }}": {
                 "github_app_installation_id": ${THOR_GITHUB_APP_INSTALLATION_ID}
@@ -148,6 +164,31 @@ jobs:
 
           ./scripts/mitmproxy-ca-init.sh
 
+          # CI has no codex-lb upstream accounts; strip the codex-lb provider
+          # override so opencode talks to OpenAI directly via auth.json.
+          # Also enable the langfuse plugin + OpenTelemetry so the e2e run
+          # exercises tracing (LANGFUSE_* are wired into the env_file above).
+          # The plugin is referenced by absolute path; bare-name would trigger
+          # opencode's runtime `npm install`, which mitmproxy 403s. The package
+          # is pre-installed globally in the opencode image (see Dockerfile).
+          jq 'del(.provider)
+            | .experimental.openTelemetry = true
+            | .plugin += ["/usr/local/lib/node_modules/opencode-plugin-langfuse"]' \
+            docker/opencode/config/opencode.json \
+            > docker/opencode/config/opencode.json.tmp \
+            && mv docker/opencode/config/opencode.json.tmp docker/opencode/config/opencode.json
+
+          # The langfuse plugin runs inside the opencode container, which has no
+          # env_file, so inject its three vars onto the service. Values are left
+          # as compose interpolation refs (resolved from .env at `up`), keeping
+          # the secret out of the compose file on disk. The plugin's var has no
+          # underscore (LANGFUSE_BASEURL); source it from .env's LANGFUSE_BASE_URL.
+          yq -i '
+            .services.opencode.environment.LANGFUSE_PUBLIC_KEY = "${LANGFUSE_PUBLIC_KEY:-}" |
+            .services.opencode.environment.LANGFUSE_SECRET_KEY = "${LANGFUSE_SECRET_KEY:-}" |
+            .services.opencode.environment.LANGFUSE_BASEURL = "${LANGFUSE_BASE_URL:-}"
+          ' docker-compose.yml
+
           docker compose up --build --wait -d
 
       - name: Run e2e test
@@ -156,13 +197,13 @@ jobs:
         run: pnpm test:e2e
 
       - name: Run approval card e2e
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/approval-required-after-abort'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/core-e2e'
         env:
           CI: "true"
         run: pnpm test:create-jira-approval-e2e
 
       - name: Run OpenCode LLM smoke test
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/slack-channel-repo-routing'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/langfuse-mcp'
         env:
           CI: "true"
         run: pnpm test:opencode-e2e

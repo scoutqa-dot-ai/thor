@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { unwrapResult } from "./unwrap-result.js";
+import { unwrapResult } from "./unwrap-result.ts";
 
 describe("unwrapResult", () => {
   it("joins text content blocks into stdout", () => {

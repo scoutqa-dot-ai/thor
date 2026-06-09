@@ -53,14 +53,14 @@ flowchart LR
 
 All external event routes validate shape and origin before queueing work.
 
-| Source | Route | Authentication | Main correlation key |
-| --- | --- | --- | --- |
-| Slack events | `POST /slack/events` | Slack signing secret | `slack:thread:<channel>/<threadTs>` |
-| GitHub webhooks | `POST /github/webhook` | `X-Hub-Signature-256` | `git:branch:<repo>:<branch>` or `github:issue:<...>` |
-| Cron | `POST /cron` | `Authorization: Bearer <CRON_SECRET>` | caller-supplied or derived `cron:<hash>:<time>` |
-| Slack approval buttons | `POST /slack/interactivity` | Slack signing secret | originating `slack:thread:<channel>/<threadTs>` |
+| Source                 | Route                       | Authentication                        | Main correlation key                                 |
+| ---------------------- | --------------------------- | ------------------------------------- | ---------------------------------------------------- |
+| Slack events           | `POST /slack/events`        | Slack signing secret                  | `slack:thread:<channel>/<threadTs>`                  |
+| GitHub webhooks        | `POST /github/webhook`      | `X-Hub-Signature-256`                 | `git:branch:<repo>:<branch>` or `github:issue:<...>` |
+| Cron                   | `POST /cron`                | `Authorization: Bearer <CRON_SECRET>` | caller-supplied or derived `cron:<hash>:<time>`      |
+| Slack approval buttons | `POST /slack/interactivity` | Slack signing secret                  | originating `slack:thread:<channel>/<threadTs>`      |
 
-Slack first-contact work comes from `app_mention` events. Plain `message` events are accepted only after Thor is already engaged in the thread. Public, non-shared channels are admitted by default; private channels, DMs, group DMs, and Slack Connect/shared channels must be allowlisted in `slack.private_channel_allowlist`. Channel classification failures fail closed.
+Slack first-contact work comes from `app_mention` events. Plain `message` events are accepted only after Thor is already engaged in the thread. Public, non-shared channels are admitted by default; private channels, DMs, group DMs, and Slack Connect/shared channels must be listed in a routing profile (`profiles.<name>.channels[]`). `repos[]` does not affect Slack admission; profile resolution details live in [`profile.md`](./profile.md). Channel classification failures fail closed.
 
 GitHub first-contact comments must mention the app unless the event belongs to a Thor-owned PR flow or an already-active issue session. Branch-known events use `git:branch:<repo>:<branch>`. PR issue comments that do not include the branch enqueue under `pending:branch-resolve:<repo>:<number>` until dispatch can resolve the PR head. Pure issue sessions use `github:issue:<localRepo>:<repoFullName>#<issueNumber>`.
 
@@ -122,6 +122,8 @@ The runner lock is based on the direct session id or resolved correlation lock k
 
 If the target session is busy, `interrupt:false` returns `{ "busy": true }`. `interrupt:true` aborts the in-flight trigger, records it as aborted, waits for OpenCode to become idle, then sends the new prompt.
 
+When OpenCode idles a session on an empty failed assistant message (an error finish with no output), runner sends a single `Continue` nudge to the same session rather than ending the trigger, bounded to a few attempts per run. These nudges stay inside one trigger — no new `trigger_start` is written and the session stays busy throughout — and an empty failure that cannot be recovered is recorded as `trigger_end: error` rather than an empty `completed`. Mechanism and bounds: [`../plan/2026060301_runner-idle-auto-resume.md`](../plan/2026060301_runner-idle-auto-resume.md).
+
 Every accepted trigger writes `trigger_start` and then a terminal `trigger_end` with `completed`, `error`, or `aborted`. The viewer and disclaimer links depend on that lifecycle record, not on gateway state.
 
 ## Progress
@@ -149,14 +151,13 @@ No usable pending approval is created unless the human-visible Slack card is pos
 
 Aliases bind external keys and OpenCode entities to an opaque anchor id. The anchor is the durable conversation identity; sessions can be replaced without moving external aliases.
 
-| Alias type | Value | Purpose |
-| --- | --- | --- |
-| `slack.thread` | `<channel>/<threadTs>` | Current Slack thread key |
-| `slack.thread_id` | `<threadTs>` | Legacy Slack thread fallback |
-| `git.branch` | `base64url("git:branch:<repo>:<branch>")` | GitHub branch session key |
-| `github.issue` | `base64url("github:issue:<...>")` | GitHub issue session key |
-| `opencode.session` | `<sessionId>` | OpenCode session bound to an anchor |
-| `opencode.subsession` | `<childSessionId>` | Child session bound to the parent's anchor |
+| Alias type            | Value                                     | Purpose                                    |
+| --------------------- | ----------------------------------------- | ------------------------------------------ |
+| `slack.thread`        | `<channel>/<threadTs>`                    | Slack thread key                           |
+| `git.branch`          | `base64url("git:branch:<repo>:<branch>")` | GitHub branch session key                  |
+| `github.issue`        | `base64url("github:issue:<...>")`         | GitHub issue session key                   |
+| `opencode.session`    | `<sessionId>`                             | OpenCode session bound to an anchor        |
+| `opencode.subsession` | `<childSessionId>`                        | Child session bound to the parent's anchor |
 
 Alias records are append-only JSONL. The newest session binding for an anchor is the current session; external aliases do not move. Branch and issue keys are base64url encoded because they contain characters that are awkward in raw JSONL lookup keys. Slack ids and timestamps are stored raw.
 

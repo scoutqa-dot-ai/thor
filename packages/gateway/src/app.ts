@@ -1,10 +1,9 @@
 import express, { type Express, type Request, type Response } from "express";
 import {
   appendJsonlWorklog,
-  buildSlackCorrelationKeys,
+  buildSlackCorrelationKey,
   createLogger,
   errorToMetadata,
-  extractApprovalFailureCategory,
   getWorkspaceWorktreesRoot,
   hasSessionForCorrelationKey,
   logError,
@@ -16,14 +15,13 @@ import {
   resolveSafeRepoDirectory,
   resolveSlackChannelRepoDirectory,
   SLACK_CHANNEL_REPO_MEMORY_ROOT,
-  truncate,
   resolveRepoDirectory,
   type ApprovalButtonRoute,
   type InboundWebhookHistoryEntry,
   type ConfigLoader,
 } from "@thor/common";
 import { z } from "zod/v4";
-import { EventQueue, type QueuedEvent } from "./queue.js";
+import { EventQueue, type QueuedEvent } from "./queue.ts";
 import {
   addSlackReaction,
   buildDispatchLogContext,
@@ -38,19 +36,19 @@ import {
   type BatchSource,
   type InternalExecClient,
   type RunnerDeps,
-} from "./service.js";
-import { createSlackClient, type SlackChannelGateInput, type SlackDeps } from "./slack-api.js";
+} from "./service.ts";
+import { createSlackClient, type SlackChannelGateInput, type SlackDeps } from "./slack-api.ts";
 import {
   addSlackGateRejectedReaction,
   evaluateCachedSlackChannelGate,
   evaluateSlackChannelGate,
   type SlackChannelGateDecision,
-} from "./slack-channel-gate.js";
-import { verifyThorAuthoredSha } from "./github-gate.js";
-import { deepHealthCheck } from "./healthcheck.js";
+} from "./slack-channel-gate.ts";
+import { verifyThorAuthoredSha } from "./github-gate.ts";
+import { deepHealthCheck } from "./healthcheck.ts";
 import {
   buildPendingSlackPrivacyKey,
-  getSlackCorrelationKeys,
+  getSlackCorrelationKey,
   isForwardableSlackMessage,
   isSupportedSlackMessageSubtype,
   isPendingSlackPrivacyKey,
@@ -62,12 +60,13 @@ import {
   type SlackInteractivityAction,
   type SlackInteractivityPayload,
   type SlackThreadEvent,
-} from "./slack.js";
-import { CronRequestSchema, deriveCronCorrelationKey, type CronPayload } from "./cron.js";
+} from "./slack.ts";
+import { CronRequestSchema, deriveCronCorrelationKey, type CronPayload } from "./cron.ts";
 import {
   buildCorrelationKey,
   buildIssueCorrelationKey,
   buildPendingBranchResolveKey,
+  buildPendingCheckSuiteKey,
   getGitHubEventBranch,
   getGitHubEventLocalRepo,
   getGitHubEventNumber,
@@ -83,7 +82,7 @@ import {
   type GitHubWebhookEvent,
   type PushEvent,
   verifyGitHubSignature,
-} from "./github.js";
+} from "./github.ts";
 
 interface SlackQueuedEvent extends QueuedEvent<SlackThreadEvent> {
   source: "slack";
@@ -151,9 +150,6 @@ function summarizeResolutionOutput(
   let tool: string | undefined;
   let upstream: string | undefined;
 
-  // Avoid echoing raw stdout/stderr — both can contain upstream tool response
-  // data, which the approval card must not leak. Only surface structured fields
-  // and a sanitized failure category.
   try {
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
     if (typeof parsed.status === "string") status = parsed.status;
@@ -168,8 +164,12 @@ function summarizeResolutionOutput(
     // non-JSON stdout: drop, do not surface
   }
 
-  if (!summary) {
-    summary = extractApprovalFailureCategory(stderr);
+  const trimmedStderr = stderr.trim();
+  if (trimmedStderr) {
+    summary =
+      summary && summary !== trimmedStderr
+        ? `${summary}\nremote-cli stderr: ${trimmedStderr}`
+        : trimmedStderr;
   }
 
   return { status, summary, tool, upstream };
@@ -360,7 +360,7 @@ function withWebhookHistory(
     try {
       await handler(req, res, history);
     } catch (error) {
-      history.reason = "handler_exception";
+      history.reason = history.reason === "enqueue_failed" ? history.reason : "handler_exception";
       history.metadata = { ...history.metadata, ...errorToMetadata(error) };
       throw error;
     } finally {
@@ -397,7 +397,11 @@ type GitHubIgnoreReason =
   | "check_suite_branch_missing"
   | "correlation_key_unresolved"
   | "check_suite_conclusion_missing"
-  | "check_suite_gate_failed";
+  | "check_suite_gate_failed"
+  | "check_suite_pr_missing"
+  | "check_suite_pr_ambiguous"
+  | "check_suite_pr_checks_pending"
+  | "check_suite_pr_checks_lookup_failed";
 
 const GITHUB_WEBHOOK_INGESTED_STREAM = "github-webhook-ingested";
 const GITHUB_WEBHOOK_IGNORED_STREAM = "github-webhook-ignored";
@@ -644,7 +648,7 @@ async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<v
   const target = [route.upstreamName ?? resolution.upstream, resolution.tool]
     .filter(Boolean)
     .join("/");
-  const summarySuffix = resolution.summary ? `\n>${truncate(resolution.summary, 180)}` : "";
+  const summarySuffix = resolution.summary ? `\n>${resolution.summary}` : "";
   const text = `${statusEmoji} *${decisionLabel}* by <@${reviewer}> · \`${route.actionId}\`${target ? ` (${target})` : ""}${summarySuffix}`;
 
   if (!channel) {
@@ -669,11 +673,11 @@ async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<v
     resolutionExitCode: resolved.exitCode,
   };
 
-  const rawCorrelationKeys = buildSlackCorrelationKeys(channel, threadTs);
-  const outcomeCorrelationKey = resolveCorrelationKeys(rawCorrelationKeys);
-  if (outcomeCorrelationKey !== rawCorrelationKeys[0]) {
+  const rawCorrelationKey = buildSlackCorrelationKey(channel, threadTs);
+  const outcomeCorrelationKey = resolveCorrelationKeys([rawCorrelationKey]);
+  if (outcomeCorrelationKey !== rawCorrelationKey) {
     logInfo(log, "corr_key_resolved", {
-      rawKey: rawCorrelationKeys[0],
+      rawKey: rawCorrelationKey,
       correlationKey: outcomeCorrelationKey,
     });
   }
@@ -1093,6 +1097,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           remoteCliUrl,
           internalSecret: config.internalSecret,
           internalExec,
+          githubAppBotEmail: config.githubAppBotEmail,
           ...latestQueuedTriggerActor(events),
           interrupt: hasInterrupt,
           onAccepted: ack,
@@ -1105,12 +1110,18 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           const now = Date.now();
           const resolvedKey = resolveCorrelationKeys([plan.toCorrelationKey]);
           if (plan.githubEvents) {
-            for (const [index, event] of githubEvents.entries()) {
+            const baseEvents =
+              plan.githubEvents.length === githubEvents.length
+                ? githubEvents
+                : githubEvents.slice(-plan.githubEvents.length);
+            for (const [index, payload] of plan.githubEvents.entries()) {
+              const event = baseEvents[index];
+              if (!event) throw new Error("reroute plan missing source GitHub event");
               await queue.enqueue({
                 ...event,
                 id: `${event.id}:resolved`,
                 correlationKey: resolvedKey,
-                payload: plan.githubEvents[index],
+                payload,
                 readyAt: now,
                 delayMs: 0,
               });
@@ -1352,28 +1363,40 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       return;
     }
 
-    const enqueueSlackEvent = (
+    const enqueueSlackEvent = async (
       payload: SlackThreadEvent,
       correlationKey: string,
       options: { delayMs: number; interrupt?: boolean },
-    ) =>
-      queue.enqueue({
-        id: eventId,
-        source: "slack",
-        correlationKey,
-        payload,
-        receivedAt: new Date().toISOString(),
-        sourceTs: parseSlackTs(payload.ts),
-        readyAt: Date.now() + options.delayMs,
-        delayMs: options.delayMs,
-        ...(options.interrupt !== undefined ? { interrupt: options.interrupt } : {}),
-      });
+    ): Promise<void> => {
+      try {
+        await queue.enqueue({
+          id: eventId,
+          source: "slack",
+          correlationKey,
+          payload,
+          receivedAt: new Date().toISOString(),
+          sourceTs: parseSlackTs(payload.ts),
+          readyAt: Date.now() + options.delayMs,
+          delayMs: options.delayMs,
+          ...(options.interrupt !== undefined ? { interrupt: options.interrupt } : {}),
+        });
+      } catch (error) {
+        history.reason = "enqueue_failed";
+        history.metadata = {
+          ...(history.metadata ?? {}),
+          channel: payload.channel,
+          correlationKey,
+        };
+        throw error;
+      }
+    };
 
     const deferForPendingPrivacy = async (
       target: SlackThreadEvent,
       options: { delayMs: number; interrupt?: boolean },
     ): Promise<void> => {
       const correlationKey = buildPendingSlackPrivacyKey(target.channel, eventId);
+      await enqueueSlackEvent(target, correlationKey, options);
       history.metadata = {
         ...(history.metadata ?? {}),
         channel: target.channel,
@@ -1388,7 +1411,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         ts: target.ts,
         correlationKey,
       });
-      await enqueueSlackEvent(target, correlationKey, options);
       res.status(200).json({ ok: true });
     };
 
@@ -1397,6 +1419,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       correlationKey: string,
       options: { delayMs: number; interrupt?: boolean },
     ): Promise<void> => {
+      await enqueueSlackEvent(target, correlationKey, options);
+      history.metadata = {
+        ...(history.metadata ?? {}),
+        channel: target.channel,
+        correlationKey,
+      };
       logInfo(log, "event_accepted", {
         eventId,
         teamId: envelope.data.team_id,
@@ -1407,7 +1435,6 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         threadTs: target.thread_ts,
         correlationKey,
       });
-      await enqueueSlackEvent(target, correlationKey, options);
       res.status(200).json({ ok: true });
     };
 
@@ -1431,11 +1458,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           return;
         }
         addEyesReaction();
-        const rawKeys = getSlackCorrelationKeys(event);
-        const correlationKey = resolveCorrelationKeys(rawKeys);
-        if (correlationKey !== rawKeys[0]) {
-          logInfo(log, "corr_key_resolved", { rawKey: rawKeys[0], correlationKey });
-        }
+        const correlationKey = getSlackCorrelationKey(event);
         await acceptSlackEvent(event, correlationKey, { delayMs: 0, interrupt: true });
         return;
       }
@@ -1458,15 +1481,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     // Message continuations. Supported subtypes are user-authored messages;
     // unsupported/system subtypes remain ignored below.
     if (event.type === "message" && isForwardableSlackMessage(event)) {
-      const rawKeys = getSlackCorrelationKeys(event);
-      const correlationKey = resolveCorrelationKeys(rawKeys);
-      if (correlationKey !== rawKeys[0]) {
-        logInfo(log, "corr_key_resolved", { rawKey: rawKeys[0], correlationKey });
-      }
+      const correlationKey = getSlackCorrelationKey(event);
 
       // Only forward if Thor is engaged in this thread via the JSONL alias index.
       // Users must @mention to start new conversations.
-      const engaged = hasSessionForCorrelationKey(rawKeys);
+      const engaged = hasSessionForCorrelationKey(correlationKey);
       if (!engaged) {
         logInfo(log, "event_ignored_not_engaged", {
           eventId,
@@ -1737,6 +1756,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
     const branch = getGitHubEventBranch(parsed.data);
     let correlationKey: string;
+    let targetCorrelationKey: string | undefined;
     let delayMs = githubMentionDelay;
     let interrupt = true;
 
@@ -1770,6 +1790,54 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       delayMs = 0;
       interrupt = false;
     } else if (isCheckSuiteCompletedEvent(parsed.data)) {
+      const pullRequests = parsed.data.check_suite.pull_requests;
+      if (pullRequests.length === 0) {
+        history.githubStream = "ignored";
+        history.parseStatus = "schema_valid";
+        history.action = parsed.data.action;
+        history.reason = "check_suite_pr_missing";
+        history.metadata = {
+          repoFullName,
+          localRepo,
+          headSha: parsed.data.check_suite.head_sha,
+        };
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "check_suite_pr_missing",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
+      if (pullRequests.length !== 1) {
+        history.githubStream = "ignored";
+        history.parseStatus = "schema_valid";
+        history.action = parsed.data.action;
+        history.reason = "check_suite_pr_ambiguous";
+        history.metadata = {
+          repoFullName,
+          localRepo,
+          headSha: parsed.data.check_suite.head_sha,
+          pullRequests: pullRequests.map((pr) => ({
+            number: pr.number,
+            headRef: pr.head?.ref,
+            headRepoFullName: pr.head?.repo?.full_name,
+          })),
+        };
+        logGitHubIgnored({
+          deliveryId,
+          repoFullName,
+          eventType: eventTypeHeader,
+          action: parsed.data.action,
+          reason: "check_suite_pr_ambiguous",
+        });
+        res.status(200).json({ ok: true, ignored: true });
+        return;
+      }
+
       if (!branch) {
         history.githubStream = "ignored";
         history.parseStatus = "schema_valid";
@@ -1836,41 +1904,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         res.status(200).json({ ok: true, ignored: true });
         return;
       }
-
-      const directory = resolveRepoDirectory(localRepo);
-      const gate = directory
-        ? await verifyThorAuthoredSha({
-            internalExec,
-            directory,
-            sha: parsed.data.check_suite.head_sha,
-            expectedEmail: config.githubAppBotEmail ?? "",
-          })
-        : { ok: false as const, reason: "exec_failed" as const };
-      if (!gate.ok) {
-        history.githubStream = "ignored";
-        history.parseStatus = "schema_valid";
-        history.action = parsed.data.action;
-        history.reason = "check_suite_gate_failed";
-        history.metadata = {
-          repoFullName,
-          localRepo,
-          rawKey,
-          resolvedKey,
-          headSha: parsed.data.check_suite.head_sha,
-          gateReason: gate.reason,
-        };
-        logGitHubIgnored({
-          deliveryId,
-          repoFullName,
-          eventType: eventTypeHeader,
-          action: parsed.data.action,
-          reason: "check_suite_gate_failed",
-        });
-        res.status(200).json({ ok: true, ignored: true });
-        return;
-      }
-
-      correlationKey = resolvedKey;
+      targetCorrelationKey = resolvedKey;
+      correlationKey = buildPendingCheckSuiteKey(localRepo, pullRequests[0]!.number, branch);
       delayMs = 0;
       interrupt = false;
     } else if (branch) {
@@ -1900,7 +1935,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     history.parseStatus = "schema_valid";
     history.action = parsed.data.action;
     history.reason = "accepted";
-    history.metadata = { repoFullName, localRepo, correlationKey };
+    history.metadata = {
+      repoFullName,
+      localRepo,
+      correlationKey,
+      ...(targetCorrelationKey ? { targetCorrelationKey } : {}),
+    };
 
     logInfo(log, "github_event_accepted", {
       deliveryId,

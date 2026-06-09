@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProgressEvent } from "./progress-events.js";
+import type { ProgressEvent } from "./progress-events.ts";
 import {
   handleProgressEvent,
   getRegistrySize,
   clearRegistry,
   type ProgressTransport,
   type ProgressTarget,
-} from "./progress-manager.js";
+} from "./progress-manager.ts";
 type SlackDeps = { client: any };
 
 function mockSlackDeps() {
@@ -381,6 +381,19 @@ describe("ProgressManager", () => {
 
     const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
     expect(postCall.text).toContain("agents: research-agent x2, coding-agent, research-agent");
+  });
+
+  it("renders the latest five recent agent groups like tools", async () => {
+    const deps = mockSlackDeps();
+
+    for (const agent of ["agent-a", "agent-b", "agent-c", "agent-d", "agent-e", "agent-f"]) {
+      await handleProgressEvent(progressTarget(deps), { type: "delegate", agent }, transport);
+    }
+    await sendTools(deps, 3);
+
+    const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
+    expect(postCall.text).toContain("agents: agent-b, agent-c, agent-d, agent-e, agent-f");
+    expect(postCall.text).not.toContain("agents: agent-a");
   });
 
   it("shows compact memory file labels when fewer than 3 distinct files", async () => {
