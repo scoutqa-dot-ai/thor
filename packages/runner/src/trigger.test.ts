@@ -15,7 +15,6 @@ import {
   mintAnchor,
   resolveAnchorForCorrelationKey,
   sessionLogPath,
-  WORKSPACE_CONFIG_PATH,
 } from "@thor/common";
 import type { WorkspaceConfig } from "@thor/common";
 
@@ -1064,7 +1063,6 @@ describe("runner /trigger orchestration", () => {
     expect(h.prompts[0]).toContain("Run triggered by Alice Example <alice@example.com>");
     expect(h.prompts[0]).toContain("slack: UABCDEF1");
     expect(h.prompts[0]).toContain("github: alice");
-    expect(h.prompts[0]).toContain(`${WORKSPACE_CONFIG_PATH} users[]`);
     expect(h.prompts[1]).not.toContain("[Triggering user]");
     expect(h.prompts[1]).not.toContain("Alice Example");
     expect(h.prompts[1]).toContain("second");

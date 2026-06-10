@@ -1,2 +1,12 @@
 packages:
   - "packages/*"
+
+overrides:
+  vite: "^8.0.0"
+
+# protobufjs ships a postinstall build script that is not needed for our build.
+# pnpm v11 fails the install unless every dependency with a build script is
+# explicitly allowed (true) or denied (false). We deny it, preserving the
+# prior behavior where the script was skipped.
+allowBuilds:
+  protobufjs: false
