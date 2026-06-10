@@ -5,6 +5,16 @@
 # Logs:    docker compose logs -f
 # Stop:    docker compose down
 
+x-awslogs: &awslogs
+  driver: awslogs
+  options: &awslogs-options
+    awslogs-region: us-east-1
+    awslogs-group: /thor/ec2
+    awslogs-create-group: "true"
+    tag: "{{.Name}}"
+    mode: non-blocking
+    max-buffer-size: "4m"
+
 x-mitmproxy-egress-env: &mitmproxy-egress-env
   http_proxy: http://mitmproxy:8080
   https_proxy: http://mitmproxy:8080
@@ -15,6 +25,9 @@ x-mitmproxy-egress-env: &mitmproxy-egress-env
 
 services:
   remote-cli:
+    logging:
+      <<: *awslogs
+      options: *awslogs-options
     build:
       context: .
       target: remote-cli
@@ -60,6 +73,9 @@ services:
       timeout: 3s
       retries: 10
   mitmproxy:
+    logging:
+      <<: *awslogs
+      options: *awslogs-options
     build:
       context: .
       target: mitmproxy
@@ -85,6 +101,9 @@ services:
       timeout: 3s
       retries: 10
   codex-lb:
+    logging:
+      <<: *awslogs
+      options: *awslogs-options
     image: ghcr.io/soju06/codex-lb:1.19
     restart: unless-stopped
     ports:
@@ -111,6 +130,9 @@ services:
       mitmproxy:
         condition: service_healthy
   opencode:
+    logging:
+      <<: *awslogs
+      options: *awslogs-options
     build:
       context: .
       target: opencode
@@ -160,6 +182,9 @@ services:
       timeout: 3s
       retries: 10
   runner:
+    logging:
+      <<: *awslogs
+      options: *awslogs-options
     build:
       context: .
       target: runner
@@ -182,6 +207,9 @@ services:
       opencode:
         condition: service_healthy
   gateway:
+    logging:
+      <<: *awslogs
+      options: *awslogs-options
     build:
       context: .
       target: gateway
@@ -216,6 +244,9 @@ services:
       timeout: 3s
       retries: 10
   cron:
+    logging:
+      <<: *awslogs
+      options: *awslogs-options
     build:
       context: ./docker/cron
     restart: unless-stopped
@@ -229,6 +260,9 @@ services:
       gateway:
         condition: service_healthy
   admin:
+    logging:
+      <<: *awslogs
+      options: *awslogs-options
     build:
       context: .
       target: admin
@@ -247,6 +281,9 @@ services:
       timeout: 3s
       retries: 10
   vouch:
+    logging:
+      <<: *awslogs
+      options: *awslogs-options
     image: quay.io/vouch/vouch-proxy:0.45.1
     restart: unless-stopped
     ports:
@@ -271,6 +308,9 @@ services:
       timeout: 3s
       retries: 10
   ingress:
+    logging:
+      <<: *awslogs
+      options: *awslogs-options
     build:
       context: ./docker/ingress
     restart: unless-stopped
@@ -289,5 +329,22 @@ services:
         condition: service_healthy
       codex-lb:
         condition: service_started
+  worklog-shipper:
+    image: public.ecr.aws/aws-cli/aws-cli:2.34.63
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          aws s3 sync /worklog "s3://security-s3-central-logs/thor/" --exclude "*" --include "*.jsonl" --only-show-errors || true
+          sleep 600
+        done
+    environment:
+      - AWS_REGION=us-east-1
+    logging:
+      <<: *awslogs
+      options: *awslogs-options
+    volumes:
+      - ./docker-volumes/workspace/worklog:/worklog:ro
 volumes:
   shared-tmp:
