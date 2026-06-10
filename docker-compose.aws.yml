@@ -44,18 +44,19 @@ services:
   ingress:
     logging: *awslogs
 
-  worklog-shipper:
+  workspace-shipper:
     image: public.ecr.aws/aws-cli/aws-cli:2.34.63
     restart: unless-stopped
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         while true; do
-          aws s3 sync /worklog "s3://security-s3-central-logs/thor/" --exclude "*" --include "*.jsonl" --only-show-errors || true
+          aws s3 sync /workspace "$${THOR_AWS_WORKSPACE_SYNC_TARGET}" --only-show-errors || true
           sleep 600
         done
     environment:
       - AWS_REGION=us-east-1
+      - THOR_AWS_WORKSPACE_SYNC_TARGET=${THOR_AWS_WORKSPACE_SYNC_TARGET:?set THOR_AWS_WORKSPACE_SYNC_TARGET}
     logging: *awslogs
     volumes:
-      - ./docker-volumes/workspace/worklog:/worklog:ro
+      - ./docker-volumes/workspace:/workspace:ro
