@@ -6,7 +6,7 @@
 x-awslogs: &awslogs
   driver: awslogs
   options:
-    awslogs-region: us-east-1
+    awslogs-region: ${THOR_AWS_REGION:-us-east-1}
     awslogs-group: ${THOR_AWSLOGS_GROUP:?set THOR_AWSLOGS_GROUP}
     awslogs-create-group: "true"
     tag: "{{.Name}}"
@@ -55,7 +55,7 @@ services:
           sleep 600
         done
     environment:
-      - AWS_REGION=us-east-1
+      - AWS_REGION=${THOR_AWS_REGION:-us-east-1}
       - THOR_AWS_WORKSPACE_SYNC_TARGET=${THOR_AWS_WORKSPACE_SYNC_TARGET:?set THOR_AWS_WORKSPACE_SYNC_TARGET}
     logging: *awslogs
     volumes:
