@@ -17,8 +17,9 @@ services:
   remote-cli:
     logging: *awslogs
 
-  mitmproxy:
-    logging: *awslogs
+  # intentionally skip mitmproxy to reduce noise
+  # mitmproxy:
+  #   logging: *awslogs
 
   codex-lb:
     logging: *awslogs
@@ -32,8 +33,9 @@ services:
   gateway:
     logging: *awslogs
 
-  cron:
-    logging: *awslogs
+  # intentionally skip cron to reduce noise
+  # cron:
+  #  logging: *awslogs
 
   admin:
     logging: *awslogs
@@ -51,7 +53,7 @@ services:
     command:
       - |
         while true; do
-          aws s3 sync /workspace "$${THOR_AWS_WORKSPACE_SYNC_TARGET}" --only-show-errors || true
+          aws s3 sync /workspace/worklog "$${THOR_AWS_WORKSPACE_SYNC_TARGET}/worklog" --only-show-errors || true
           sleep 600
         done
     environment:
