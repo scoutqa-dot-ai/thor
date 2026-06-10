@@ -103,6 +103,7 @@ Integration-specific env vars live in each integration's doc. Cross-cutting vars
 | `CRON_SECRET`                   | Yes      | `gateway`, `cron`         | Shared secret for cron endpoint auth                                                                                            |
 | `THOR_ADMIN_EMAILS`             | Yes      | `ingress`                 | Comma-separated authenticated Google emails allowed for OpenCode-backed and `/admin/` ingress routes                            |
 | `THOR_INTERNAL_SECRET`          | Yes      | `remote-cli`, `gateway`   | Secret-gates gateway↔remote-cli internal APIs                                                                                   |
+| `THOR_AWSLOGS_GROUP`            | AWS overlay | `compose`                 | CloudWatch Logs group used by the `awslogs` driver in `docker-compose.aws.yml`                                                   |
 | `THOR_AWS_WORKSPACE_SYNC_TARGET` | AWS overlay | `workspace-shipper`       | S3 URI used by `docker-compose.aws.yml` to sync the mounted workspace directory                                                  |
 | `THOR_E2E_TEST_HELPERS`         | No       | `runner`                  | Enables secret-gated deterministic runner e2e helpers                                                                           |
 | `RUNNER_BASE_URL`               | Yes      | `remote-cli`              | Public base URL for Thor trigger viewer links in PR/Jira content                                                                |
@@ -163,7 +164,7 @@ The registry is maintained by operators from team Slack and GitHub membership re
 - Repos under `/workspace/repos` are mounted read-only into OpenCode. Thor creates edits in `/workspace/worktrees`.
 - OpenCode and remote-cli share the same `/tmp` volume so temporary artifacts referenced by absolute path, such as `slack-post-message --blocks-file /tmp/...`, are readable by the posting service.
 - Scheduled prompts live in `docker-volumes/workspace/cron/crontab`.
-- AWS deployment logging and workspace shipping are opt-in via `docker compose -f docker-compose.yml -f docker-compose.aws.yml up --build -d`. The overlay sends service logs to CloudWatch Logs group `/thor/ec2` in `us-east-1` with Docker's `tag: "{{.Name}}"`, and syncs `/workspace` to `THOR_AWS_WORKSPACE_SYNC_TARGET` every 10 minutes. The host must support Docker's `awslogs` driver and have an EC2 instance profile or AWS credentials with the needed CloudWatch Logs permissions plus `s3:ListBucket` and `s3:PutObject` for that bucket/prefix.
+- AWS deployment logging and workspace shipping are opt-in via `docker compose -f docker-compose.yml -f docker-compose.aws.yml up --build -d`. The overlay sends service logs to `THOR_AWSLOGS_GROUP` in `us-east-1` with Docker's `tag: "{{.Name}}"`, and syncs `/workspace` to `THOR_AWS_WORKSPACE_SYNC_TARGET` every 10 minutes. The host must support Docker's `awslogs` driver and have an EC2 instance profile or AWS credentials with the needed CloudWatch Logs permissions plus `s3:ListBucket` and `s3:PutObject` for that bucket/prefix.
 
 ## Security Model
 
