@@ -1,4 +1,4 @@
-# Thor — optional CloudWatch logging overlay
+# Thor — optional AWS deployment overlay
 #
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.aws.yml up --build -d
@@ -43,3 +43,19 @@ services:
 
   ingress:
     logging: *awslogs
+
+  worklog-shipper:
+    image: public.ecr.aws/aws-cli/aws-cli:2.34.63
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          aws s3 sync /worklog "s3://security-s3-central-logs/thor/" --exclude "*" --include "*.jsonl" --only-show-errors || true
+          sleep 600
+        done
+    environment:
+      - AWS_REGION=us-east-1
+    logging: *awslogs
+    volumes:
+      - ./docker-volumes/workspace/worklog:/worklog:ro

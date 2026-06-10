@@ -162,7 +162,7 @@ The registry is maintained by operators from team Slack and GitHub membership re
 - Repos under `/workspace/repos` are mounted read-only into OpenCode. Thor creates edits in `/workspace/worktrees`.
 - OpenCode and remote-cli share the same `/tmp` volume so temporary artifacts referenced by absolute path, such as `slack-post-message --blocks-file /tmp/...`, are readable by the posting service.
 - Scheduled prompts live in `docker-volumes/workspace/cron/crontab`.
-- CloudWatch logging is opt-in via `docker compose -f docker-compose.yml -f docker-compose.aws.yml up --build -d`. The shared `/thor/ec2` log group in `us-east-1` uses Docker's `tag: "{{.Name}}"`, so each stream follows the real container name at startup instead of a hardcoded service stream. The host must support Docker's `awslogs` driver and have an EC2 instance profile or AWS credentials with `logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents`, and `logs:DescribeLogStreams` for that region/log group.
+- AWS deployment logging and worklog shipping are opt-in via `docker compose -f docker-compose.yml -f docker-compose.aws.yml up --build -d`. The overlay sends service logs to CloudWatch Logs group `/thor/ec2` in `us-east-1` with Docker's `tag: "{{.Name}}"`, and syncs `/workspace/worklog/*.jsonl` to `s3://security-s3-central-logs/thor/` every 10 minutes. The host must support Docker's `awslogs` driver and have an EC2 instance profile or AWS credentials with the needed CloudWatch Logs permissions plus `s3:ListBucket` and `s3:PutObject` for that bucket/prefix.
 
 ## Security Model
 
