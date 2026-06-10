@@ -5,16 +5,6 @@
 # Logs:    docker compose logs -f
 # Stop:    docker compose down
 
-x-awslogs: &awslogs
-  driver: awslogs
-  options: &awslogs-options
-    awslogs-region: us-east-1
-    awslogs-group: /thor/ec2
-    awslogs-create-group: "true"
-    tag: "{{.Name}}"
-    mode: non-blocking
-    max-buffer-size: "4m"
-
 x-mitmproxy-egress-env: &mitmproxy-egress-env
   http_proxy: http://mitmproxy:8080
   https_proxy: http://mitmproxy:8080
@@ -69,10 +59,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    logging:
-      <<: *awslogs
-      options: *awslogs-options
-
   mitmproxy:
     build:
       context: .
@@ -98,10 +84,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    logging:
-      <<: *awslogs
-      options: *awslogs-options
-
   codex-lb:
     image: ghcr.io/soju06/codex-lb:1.19
     restart: unless-stopped
@@ -128,10 +110,6 @@ services:
     depends_on:
       mitmproxy:
         condition: service_healthy
-    logging:
-      <<: *awslogs
-      options: *awslogs-options
-
   opencode:
     build:
       context: .
@@ -181,10 +159,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    logging:
-      <<: *awslogs
-      options: *awslogs-options
-
   runner:
     build:
       context: .
@@ -207,10 +181,6 @@ services:
     depends_on:
       opencode:
         condition: service_healthy
-    logging:
-      <<: *awslogs
-      options: *awslogs-options
-
   gateway:
     build:
       context: .
@@ -245,10 +215,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    logging:
-      <<: *awslogs
-      options: *awslogs-options
-
   cron:
     build:
       context: ./docker/cron
@@ -262,10 +228,6 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
-    logging:
-      <<: *awslogs
-      options: *awslogs-options
-
   admin:
     build:
       context: .
@@ -284,10 +246,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    logging:
-      <<: *awslogs
-      options: *awslogs-options
-
   vouch:
     image: quay.io/vouch/vouch-proxy:0.45.1
     restart: unless-stopped
@@ -312,10 +270,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    logging:
-      <<: *awslogs
-      options: *awslogs-options
-
   ingress:
     build:
       context: ./docker/ingress
@@ -335,9 +289,5 @@ services:
         condition: service_healthy
       codex-lb:
         condition: service_started
-    logging:
-      <<: *awslogs
-      options: *awslogs-options
-
 volumes:
   shared-tmp:
