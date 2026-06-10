@@ -59,6 +59,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
   mitmproxy:
     build:
       context: .
@@ -84,6 +85,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
   codex-lb:
     image: ghcr.io/soju06/codex-lb:1.19
     restart: unless-stopped
@@ -110,6 +112,7 @@ services:
     depends_on:
       mitmproxy:
         condition: service_healthy
+
   opencode:
     build:
       context: .
@@ -159,6 +162,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
   runner:
     build:
       context: .
@@ -181,6 +185,7 @@ services:
     depends_on:
       opencode:
         condition: service_healthy
+
   gateway:
     build:
       context: .
@@ -215,6 +220,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
   cron:
     build:
       context: ./docker/cron
@@ -228,6 +234,7 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
+
   admin:
     build:
       context: .
@@ -246,6 +253,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
   vouch:
     image: quay.io/vouch/vouch-proxy:0.45.1
     restart: unless-stopped
@@ -270,6 +278,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
   ingress:
     build:
       context: ./docker/ingress
@@ -289,5 +298,6 @@ services:
         condition: service_healthy
       codex-lb:
         condition: service_started
+
 volumes:
   shared-tmp:
