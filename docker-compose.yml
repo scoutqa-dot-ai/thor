@@ -103,6 +103,12 @@ services:
       # leaving session titles stuck on "New session - <timestamp>". Disable
       # the bridge so each request gets its own upstream stream.
       CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_ENABLED: "false"
+      # The model-registry scheduler's version lookup hits GitHub/npm, which our
+      # egress proxy blocks, logging a traceback every refresh. Disabling it
+      # silences that and empties codex-lb's /v1/models — safe because opencode
+      # sources its models from its bundled models.dev snapshot, not this proxy.
+      # Caveat + source-level verification: docs/plan/2026052601_codex-lb-integration.md
+      CODEX_LB_MODEL_REGISTRY_ENABLED: "false"
       SSL_CERT_FILE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
       REQUESTS_CA_BUNDLE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
       CURL_CA_BUNDLE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
