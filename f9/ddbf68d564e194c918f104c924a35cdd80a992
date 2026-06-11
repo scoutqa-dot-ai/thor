@@ -1,0 +1,25 @@
+docs/plan/2026060301_grafana-mcp-per-profile.md
+  72a621ef56a7f5a7 286-296
+.github/workflows/core-e2e.yml
+  72a621ef56a7f5a7 56-64,123-131,228-229
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "f9ddbf68d564e194c918f104c924a35cdd80a992",
+  "prompts": {
+    "72a621ef56a7f5a7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9ef64106-d868-4734-b865-436a2981670d",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 48,
+      "total_deletions": 26,
+      "accepted_lines": 34,
+      "overriden_lines": 0
+    }
+  }
+}
