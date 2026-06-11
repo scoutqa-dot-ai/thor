@@ -283,3 +283,14 @@ remaining repo reference to `grafana-mcp:8000`; env var surfaces updated per AGE
   untracked `mcp-grafana` processes behind.
 - 2026-06-03: reconnect retry timers are `unref()`ed so a pending retry does not hold
   `remote-cli` open after `closeAll()` starts shutdown.
+- 2026-06-12: Decision 13 revised. Core E2E now connects `mcp-grafana` to the real
+  Grafana Cloud instance (`vars.GRAFANA_URL`, `secrets.GRAFANA_SERVICE_ACCOUNT_TOKEN`,
+  `vars.GRAFANA_ORG_ID`) instead of `grafana.invalid`/`ci-fake`. The placeholder only
+  listed backend-independent tools (datasource/prometheus/loki), so the policy-drift
+  guard added in `fix/policy-drift` false-positived on the allowlisted Tempo tools,
+  which mcp-grafana lists only after probing a real Grafana. Real creds make the CI
+  tool surface match prod so drift is validated for grafana too. The token is real but
+  read-only/minimal-scope, and the MCP SDK passes the unsandboxed child only a fixed env
+  allowlist plus `GRAFANA_*` — remote-cli's other secrets still never reach it. If the
+  vars/secrets are unset, the global bundle resolves to disabled and the check skips
+  grafana. `THOR_MCP_DISABLE_SANDBOX=1` remains CI-only; production keeps the sandbox.

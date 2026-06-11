@@ -53,10 +53,12 @@ jobs:
       DAYTONA_SNAPSHOT: ${{ vars.DAYTONA_SNAPSHOT }}
       ATLASSIAN_AUTH: ${{ secrets.ATLASSIAN_AUTH }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
-      # Grafana MCP runs as a bwrap-sandboxed child of remote-cli; tool listing
-      # works against a placeholder URL without reaching a real Grafana.
-      GRAFANA_URL: http://grafana.invalid
-      GRAFANA_SERVICE_ACCOUNT_TOKEN: ci-fake
+      # Real Grafana Cloud creds so the full tool surface (incl. Tempo) is listed
+      # and validated by the drift check. Use a read-only, minimal-scope token.
+      # If unset, grafana resolves to disabled and the drift check skips it.
+      GRAFANA_URL: ${{ vars.GRAFANA_URL }}
+      GRAFANA_SERVICE_ACCOUNT_TOKEN: ${{ secrets.GRAFANA_SERVICE_ACCOUNT_TOKEN }}
+      GRAFANA_ORG_ID: ${{ vars.GRAFANA_ORG_ID }}
       LANGFUSE_PUBLIC_KEY: ${{ vars.LANGFUSE_PUBLIC_KEY }}
       LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
       LANGFUSE_HOST: ${{ vars.LANGFUSE_HOST }}
@@ -115,11 +117,12 @@ jobs:
           {
             printf 'ATLASSIAN_AUTH=%s\n' "$ATLASSIAN_AUTH"
             printf 'POSTHOG_API_KEY=%s\n' "$POSTHOG_API_KEY"
-            printf 'GRAFANA_URL=%s\n' "$GRAFANA_URL"
-            printf 'GRAFANA_SERVICE_ACCOUNT_TOKEN=%s\n' "$GRAFANA_SERVICE_ACCOUNT_TOKEN"
-            printf 'GRAFANA_ORG_ID=%s\n' "${GRAFANA_ORG_ID:-1}"
-            # CI cannot host a rootless bwrap sandbox (container-in-container);
-            # run mcp-grafana unsandboxed. Safe here: credentials are fakes.
+            printf 'GRAFANA_URL=%s\n' "${GRAFANA_URL:-}"
+            printf 'GRAFANA_SERVICE_ACCOUNT_TOKEN=%s\n' "${GRAFANA_SERVICE_ACCOUNT_TOKEN:-}"
+            printf 'GRAFANA_ORG_ID=%s\n' "${GRAFANA_ORG_ID:-}"
+            # CI can't host rootless bwrap, so mcp-grafana runs unsandboxed. The
+            # MCP SDK gives the child only a fixed env allowlist + GRAFANA_*, so
+            # remote-cli's other secrets never reach it; keep the token read-only.
             printf 'THOR_MCP_DISABLE_SANDBOX=1\n'
             printf 'LANGFUSE_PUBLIC_KEY=%s\n' "$LANGFUSE_PUBLIC_KEY"
             printf 'LANGFUSE_SECRET_KEY=%s\n' "$LANGFUSE_SECRET_KEY"
@@ -207,6 +210,21 @@ jobs:
         env:
           CI: "true"
         run: pnpm test:opencode-e2e
+
+      - name: Assert no MCP policy drift
+        run: |
+          set -euo pipefail
+          # warmUp() logs a "policy_drift" event when our allow/approve lists name
+          # tools an upstream no longer exposes. Prod tolerates it (never fails
+          # boot), so catch it here. The e2e run above lets warmup settle, and all
+          # upstreams use real creds in CI, so any drift is a real bug.
+          logs="$(docker compose logs --no-color remote-cli 2>/dev/null || true)"
+          if printf '%s\n' "$logs" | grep -q '"event":"policy_drift"'; then
+            echo "::error::MCP policy drift: allow/approve lists reference tools the upstream no longer exposes. Reconcile packages/common/src/proxies.ts against the upstream tool inventory."
+            printf '%s\n' "$logs" | grep '"event":"policy_drift"'
+            exit 1
+          fi
+          echo "No MCP policy drift detected."
 
       - name: Compose status (on failure)
         if: failure()
