@@ -1,0 +1,64 @@
+# Thor — optional AWS deployment overlay
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.aws.yml up --build -d
+
+x-awslogs: &awslogs
+  driver: awslogs
+  options:
+    awslogs-region: ${THOR_AWS_REGION:-us-east-1}
+    awslogs-group: ${THOR_AWSLOGS_GROUP:?set THOR_AWSLOGS_GROUP}
+    awslogs-create-group: "true"
+    tag: "{{.Name}}"
+    mode: non-blocking
+    max-buffer-size: "4m"
+
+services:
+  remote-cli:
+    logging: *awslogs
+
+  # intentionally skip mitmproxy to reduce noise
+  # mitmproxy:
+  #   logging: *awslogs
+
+  codex-lb:
+    logging: *awslogs
+
+  opencode:
+    logging: *awslogs
+
+  runner:
+    logging: *awslogs
+
+  gateway:
+    logging: *awslogs
+
+  # intentionally skip cron to reduce noise
+  # cron:
+  #  logging: *awslogs
+
+  admin:
+    logging: *awslogs
+
+  vouch:
+    logging: *awslogs
+
+  ingress:
+    logging: *awslogs
+
+  workspace-shipper:
+    image: public.ecr.aws/aws-cli/aws-cli:2.34.63
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          aws s3 sync /workspace/worklog "$${THOR_AWS_WORKSPACE_SYNC_TARGET}/worklog" --only-show-errors || true
+          sleep 600
+        done
+    environment:
+      - AWS_REGION=${THOR_AWS_REGION:-us-east-1}
+      - THOR_AWS_WORKSPACE_SYNC_TARGET=${THOR_AWS_WORKSPACE_SYNC_TARGET:?set THOR_AWS_WORKSPACE_SYNC_TARGET}
+    logging: *awslogs
+    volumes:
+      - ./docker-volumes/workspace:/workspace:ro
