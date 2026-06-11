@@ -1,0 +1,25 @@
+docs/plan/2026052601_codex-lb-integration.md
+  a2cef2fa0d276b94 35-40
+docker-compose.yml
+  a2cef2fa0d276b94 106-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b285bde678ffcf31c6bf85c9ddecd21d82bb4a43",
+  "prompts": {
+    "a2cef2fa0d276b94": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "df34ed7e-ffb9-4b0f-966f-143a8ab1babe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 49,
+      "total_deletions": 45,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    }
+  }
+}
