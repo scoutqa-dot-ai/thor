@@ -69,6 +69,7 @@ The sandbox image is intentionally slim. Preinstalled by default:
 - **Node**: 22 (default), 20 via nvm. pnpm available via corepack.
 - **Java**: 21 (default), 17 (Temurin) via SDKMAN. Maven and Gradle included.
 - **Python**: 3.12 (default) via pyenv. `uv` available for fast installs.
+- **PHP**: 8.4 (default) via `ondrej/php`, with common CLI extensions installed.
 - **Docker**: Docker CE with docker compose. Start the daemon with `sudo dockerd &` before use.
 - **Browser automation/recording**: `agent-browser` with Chrome for Testing preinstalled, plus `ffmpeg`, `xvfb`, `xdotool`, `tree`, and ImageMagick (`identify`, `convert`, `compare`).
 

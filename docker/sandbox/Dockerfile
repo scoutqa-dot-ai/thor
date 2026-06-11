@@ -43,6 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     ca-certificates \
     gnupg \
+    software-properties-common \
     jq \
     zip \
     unzip \
@@ -86,6 +87,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends sudo \
     && echo "thor ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/thor \
     && command -v docker >/dev/null \
     && docker --version | grep -F "$DOCKER_VERSION" >/dev/null
+
+# ── PHP 8.4 via ondrej/php ─────────────────────────────────────────────────
+# Keep the PPA configured so sandbox users can install other supported PHP
+# versions on demand with apt and switch the `php` alternative when needed.
+
+RUN add-apt-repository -y ppa:ondrej/php \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    php8.4-cli \
+    php8.4-common \
+    php8.4-curl \
+    php8.4-intl \
+    php8.4-mbstring \
+    php8.4-mysql \
+    php8.4-pgsql \
+    php8.4-sqlite3 \
+    php8.4-xml \
+    php8.4-zip \
+    && php8.4 --version | grep -F "PHP 8.4" >/dev/null \
+    && php --version | grep -F "PHP 8.4" >/dev/null \
+    && grep -R "ondrej/php" /etc/apt/sources.list.d >/dev/null \
+    && rm -rf /var/lib/apt/lists/*
 
 # ── nvm + Node versions ────────────────────────────────────────────────────
 
