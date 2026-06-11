@@ -1,3 +1,4 @@
+import type { WebClient } from "@slack/web-api";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { once } from "node:events";
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -10,18 +11,22 @@ import { appendAlias, resolveSessionForCorrelationKey } from "@thor/common";
 import { createRemoteCliApp } from "./index.ts";
 import type { SlackPostMessageDeps } from "./slack-post-message.ts";
 
+function mockSlackClient(postMessage: ReturnType<typeof vi.fn>): WebClient {
+  return { chat: { postMessage } } as unknown as WebClient;
+}
+
 describe("remote-cli slack-post-message endpoint", () => {
   let server: Server;
   let baseUrl: string;
   let closeRemoteCli: () => Promise<void>;
-  let fetchMock: ReturnType<typeof vi.fn>;
+  let postMessageMock: ReturnType<typeof vi.fn>;
   let appendAliasMock: ReturnType<typeof vi.fn>;
   let aliasErrorMock: ReturnType<typeof vi.fn>;
   let worklogRoot: string;
   let testCwd: string;
 
   beforeEach(async () => {
-    fetchMock = vi.fn();
+    postMessageMock = vi.fn();
     appendAliasMock = vi.fn();
     aliasErrorMock = vi.fn();
     testCwd = mkdtempSync(join("/tmp", "remote-cli-slack-cwd-"));
@@ -38,7 +43,7 @@ describe("remote-cli slack-post-message endpoint", () => {
       env: { slackBotToken: "xoxb-test" } as any,
       slackPostMessage: {
         env: { SLACK_BOT_TOKEN: "xoxb-test" } as NodeJS.ProcessEnv,
-        fetch: fetchMock as unknown as typeof fetch,
+        client: mockSlackClient(postMessageMock),
         appendAlias: appendAliasMock as unknown as SlackPostMessageDeps["appendAlias"],
         logAliasError: aliasErrorMock as unknown as SlackPostMessageDeps["logAliasError"],
       },
@@ -60,10 +65,8 @@ describe("remote-cli slack-post-message endpoint", () => {
     delete process.env.WORKLOG_DIR;
   });
 
-  it("posts mrkdwn to any channel and registers a new-thread alias", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ ok: true, channel: "C999", ts: "1777940309.867569" }),
-    );
+  it("posts mrkdwn to a Slack channel and registers a new-thread alias", async () => {
+    postMessageMock.mockResolvedValue({ ok: true, channel: "C999", ts: "1777940309.867569" });
 
     const response = await postSlack(
       { cwd: undefined, args: ["--channel", "C999"], stdin: "hello *world*\n" },
@@ -72,29 +75,51 @@ describe("remote-cli slack-post-message endpoint", () => {
     const body = (await response.json()) as { stdout: string; stderr: string; exitCode: number };
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({
-      stdout: '{"ok":true}\n',
-      stderr: "",
-      exitCode: 0,
+    expect(body.stderr).toBe("");
+    expect(body.exitCode).toBe(0);
+    expect(JSON.parse(body.stdout)).toEqual({
+      ts: "1777940309.867569",
+      thread_ts: "1777940309.867569",
     });
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://slack.com/api/chat.postMessage",
-      expect.objectContaining({
-        method: "POST",
-        headers: expect.objectContaining({ Authorization: "Bearer xoxb-test" }),
-        body: JSON.stringify({ channel: "C999", text: "hello *world*\n", mrkdwn: true }),
-      }),
-    );
+    expect(postMessageMock).toHaveBeenCalledWith({
+      channel: "C999",
+      text: "hello *world*\n",
+      mrkdwn: true,
+    });
     expect(appendAliasMock).toHaveBeenCalledWith(
       "session-1",
       "slack:thread:C999/1777940309.867569",
     );
   });
 
-  it("registers reply aliases against the requested thread value", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ ok: true, channel: "C123", ts: "1777940310.111111" }),
+  it("keys aliases by the requested channel even when Slack omits it", async () => {
+    postMessageMock.mockResolvedValue({ ok: true, ts: "1777940309.867569" });
+
+    const response = await postSlack(
+      { args: ["--channel", "CREQUESTED"], stdin: "hello" },
+      { "x-thor-session-id": "session-1" },
     );
+    const body = (await response.json()) as { stdout: string; exitCode: number };
+
+    expect(response.status).toBe(200);
+    expect(body.exitCode).toBe(0);
+    expect(JSON.parse(body.stdout)).toEqual({
+      ts: "1777940309.867569",
+      thread_ts: "1777940309.867569",
+    });
+    expect(appendAliasMock).toHaveBeenCalledWith(
+      "session-1",
+      "slack:thread:CREQUESTED/1777940309.867569",
+    );
+  });
+
+  it("registers reply aliases against the thread_ts Slack reports", async () => {
+    postMessageMock.mockResolvedValue({
+      ok: true,
+      channel: "C123",
+      ts: "1777940310.111111",
+      message: { thread_ts: "thread-parent-token" },
+    });
 
     const response = await postSlack(
       {
@@ -105,17 +130,16 @@ describe("remote-cli slack-post-message endpoint", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        body: JSON.stringify({
-          channel: "C123",
-          text: "reply",
-          mrkdwn: true,
-          thread_ts: "thread-parent-token",
-        }),
-      }),
-    );
+    expect(JSON.parse(((await response.json()) as { stdout: string }).stdout)).toEqual({
+      ts: "1777940310.111111",
+      thread_ts: "thread-parent-token",
+    });
+    expect(postMessageMock).toHaveBeenCalledWith({
+      channel: "C123",
+      text: "reply",
+      mrkdwn: true,
+      thread_ts: "thread-parent-token",
+    });
     expect(appendAliasMock).toHaveBeenCalledWith(
       "session-2",
       "slack:thread:C123/thread-parent-token",
@@ -150,12 +174,24 @@ describe("remote-cli slack-post-message endpoint", () => {
       {},
     );
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(postMessageMock).not.toHaveBeenCalled();
     expect(appendAliasMock).not.toHaveBeenCalled();
   });
 
   it("rejects invalid message inputs before calling Slack", async () => {
     await expectFailure({ args: [], stdin: "hi" }, "--channel is required");
+    await expectFailure(
+      { args: ["--channel", "U123"], stdin: "hi" },
+      "--channel must be a Slack channel or private group ID starting with C or G",
+    );
+    await expectFailure(
+      { args: ["--channel", "D123"], stdin: "hi" },
+      "--channel must be a Slack channel or private group ID starting with C or G",
+    );
+    await expectFailure(
+      { args: ["--channel", "general"], stdin: "hi" },
+      "--channel must be a Slack channel or private group ID starting with C or G",
+    );
     await expectFailure(
       { args: ["--channel", "C123", "--thread-ts"], stdin: "hi" },
       "--thread-ts requires a value",
@@ -211,13 +247,11 @@ describe("remote-cli slack-post-message endpoint", () => {
       "must not contain literal `\\n` escape sequences",
     );
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(postMessageMock).not.toHaveBeenCalled();
   });
 
   it("accepts real newlines and literal backslash-n inside code spans or fences", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ ok: true, channel: "C123", ts: "1777940312.555555" }),
-    );
+    postMessageMock.mockResolvedValue({ ok: true, channel: "C123", ts: "1777940312.555555" });
 
     const paragraphBreak = await postSlack(
       {
@@ -246,13 +280,11 @@ describe("remote-cli slack-post-message endpoint", () => {
     );
     expect(literalInFence.status).toBe(200);
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(postMessageMock).toHaveBeenCalledTimes(3);
   });
 
   it("allows literal double stars and table-looking text inside code spans or fences", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ ok: true, channel: "C123", ts: "1777940312.444444" }),
-    );
+    postMessageMock.mockResolvedValue({ ok: true, channel: "C123", ts: "1777940312.444444" });
 
     const inlineCode = await postSlack(
       {
@@ -285,13 +317,11 @@ describe("remote-cli slack-post-message endpoint", () => {
       "must not include CommonMark double-star emphasis",
     );
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(postMessageMock).toHaveBeenCalledTimes(2);
   });
 
   it("accepts blocks files only from allowed roots", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ ok: true, channel: "C123", ts: "1777940312.333333" }),
-    );
+    postMessageMock.mockResolvedValue({ ok: true, channel: "C123", ts: "1777940312.333333" });
     const blocksFile = join(testCwd, "blocks.json");
     writeFileSync(
       blocksFile,
@@ -307,19 +337,14 @@ describe("remote-cli slack-post-message endpoint", () => {
       { "x-thor-session-id": "session-1" },
     );
     expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://slack.com/api/chat.postMessage",
-      expect.objectContaining({
-        body: JSON.stringify({
-          channel: "C123",
-          text: "fallback text",
-          mrkdwn: true,
-          blocks: [{ type: "section", text: { type: "mrkdwn", text: "from tmp" } }],
-        }),
-      }),
-    );
+    expect(postMessageMock).toHaveBeenCalledWith({
+      channel: "C123",
+      text: "fallback text",
+      mrkdwn: true,
+      blocks: [{ type: "section", text: { type: "mrkdwn", text: "from tmp" } }],
+    });
 
-    fetchMock.mockClear();
+    postMessageMock.mockClear();
     const escapedLink = join(testCwd, "escaped-blocks.json");
     symlinkSync("/etc/passwd", escapedLink);
     await expectFailure(
@@ -334,11 +359,15 @@ describe("remote-cli slack-post-message endpoint", () => {
       { args: ["--channel", "C123", "--blocks-file", escapedLink], stdin: "hi" },
       "--blocks-file must be under /tmp or /workspace",
     );
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(postMessageMock).not.toHaveBeenCalled();
   });
 
-  it("returns Slack ok:false without alias registration", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ ok: false, error: "channel_not_found" }));
+  it("surfaces Slack API errors without alias registration", async () => {
+    postMessageMock.mockRejectedValue(
+      Object.assign(new Error("An API error occurred: channel_not_found"), {
+        data: { ok: false, error: "channel_not_found" },
+      }),
+    );
 
     const response = await postSlack(
       { args: ["--channel", "C404"], stdin: "hello" },
@@ -352,9 +381,7 @@ describe("remote-cli slack-post-message endpoint", () => {
   });
 
   it("logs alias registration failure but preserves Slack success", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ ok: true, channel: "C123", ts: "1777940309.867569" }),
-    );
+    postMessageMock.mockResolvedValue({ ok: true, channel: "C123", ts: "1777940309.867569" });
     const error = new Error("alias store unavailable");
     appendAliasMock.mockImplementation(() => {
       throw error;
@@ -379,16 +406,21 @@ describe("remote-cli slack-post-message endpoint", () => {
     const previousWorklogDir = process.env.WORKLOG_DIR;
     process.env.WORKLOG_DIR = worklogRoot;
 
-    const integrationFetch = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(jsonResponse({ ok: true, channel: "C123", ts: "1777940309.867569" }))
-      .mockResolvedValueOnce(jsonResponse({ ok: true, channel: "C123", ts: "1777940310.111111" }))
-      .mockResolvedValueOnce(jsonResponse({ ok: true, channel: "C123", ts: "1777940311.222222" }));
+    const integrationPostMessage = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, channel: "C123", ts: "1777940309.867569" })
+      .mockResolvedValueOnce({
+        ok: true,
+        channel: "C123",
+        ts: "1777940310.111111",
+        message: { thread_ts: "1777940309.867569" },
+      })
+      .mockResolvedValueOnce({ ok: true, channel: "C123", ts: "1777940311.222222" });
     const remoteCli = createRemoteCliApp({
       env: { slackBotToken: "xoxb-test" } as any,
       slackPostMessage: {
         env: { SLACK_BOT_TOKEN: "xoxb-test" } as NodeJS.ProcessEnv,
-        fetch: integrationFetch,
+        client: mockSlackClient(integrationPostMessage),
       },
     });
     const integrationServer = createServer(remoteCli.app);
@@ -494,9 +526,5 @@ describe("remote-cli slack-post-message endpoint", () => {
       headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify({ cwd: testCwd, ...body }),
     });
-  }
-
-  function jsonResponse(body: unknown): Response {
-    return { json: async () => body } as Response;
   }
 });

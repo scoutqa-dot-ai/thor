@@ -176,20 +176,6 @@ slack-upload "$REPORT_FILE" \
   --comment 'Attached the report.'
 ```
 
-## Response handling
-
-Slack Web API responses are JSON with an `ok` field.
-
-- `ok: true` means the call succeeded
-- `ok: false` means inspect the `error` field and surface the problem clearly
-
-Common failures to report as-is:
-
-- `channel_not_found`
-- `not_in_channel`
-- `missing_scope`
-- `ratelimited`
-
 ## Gotchas
 
 - Tool inputs use Slack IDs such as `C...` and `F...`, not channel names.

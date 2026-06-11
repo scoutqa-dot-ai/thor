@@ -164,6 +164,7 @@ export {
 } from "./correlation.ts";
 export type { EnsureAnchorResult } from "./correlation.ts";
 export { withKeyLock } from "./key-lock.ts";
+export { SUPPORTED_SLACK_CHANNEL_ID } from "./slack.ts";
 export { ExecResultSchema, ExecStreamEventSchema } from "./exec-result.ts";
 export type { ExecResult, ExecStreamEvent } from "./exec-result.ts";
 export { deriveGitHubAppBotIdentity } from "./github-identity.ts";

@@ -1,9 +1,6 @@
 import { defineConfig } from "tsdown";
 
-export default defineConfig({
-  entry: {
-    "remote-cli": "src/remote-cli.ts",
-  },
+const baseConfig = {
   format: "esm",
   target: "node22",
   platform: "node",
@@ -17,4 +14,20 @@ export default defineConfig({
   // Bundle everything into standalone .mjs files. onlyBundle:false silences the
   // informational notice about bundling node_modules deps.
   deps: { alwaysBundle: [/.*/], onlyBundle: false },
-});
+} satisfies Parameters<typeof defineConfig>[0];
+
+export default defineConfig([
+  {
+    ...baseConfig,
+    entry: {
+      "remote-cli": "src/remote-cli.ts",
+    },
+  },
+  {
+    ...baseConfig,
+    clean: false,
+    entry: {
+      "slack-upload": "src/slack-upload.ts",
+    },
+  },
+]);

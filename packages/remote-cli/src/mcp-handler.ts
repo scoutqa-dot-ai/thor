@@ -1,3 +1,4 @@
+import type { WebClient } from "@slack/web-api";
 import { z } from "zod";
 
 import {
@@ -37,6 +38,7 @@ import { unwrapResult } from "./unwrap-result.ts";
 import { connectUpstream, upstreamTarget, type UpstreamConnection } from "./upstream.ts";
 import { attributionFields, resolveTriggerUser } from "./attribution.ts";
 import { postSlackMessageApi } from "./slack-post-message.ts";
+import type { SlackCreatedMessageResponse } from "./slack-post-message.ts";
 
 const log = createLogger("mcp");
 const DEFAULT_APPROVALS_DIR = "/workspace/data/approvals";
@@ -136,7 +138,7 @@ export interface McpServiceDeps {
   connectUpstreamFn?: typeof connectUpstream;
   writeToolCallLogFn?: typeof writeToolCallLog;
   configLoader?: ConfigLoader;
-  fetchImpl?: typeof fetch;
+  slackClient?: WebClient;
   slack?: { botToken?: string; apiBaseUrl?: string };
 }
 
@@ -218,7 +220,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   const connectUpstreamFn = deps.connectUpstreamFn ?? connectUpstream;
   const writeToolCallLogFn = deps.writeToolCallLogFn ?? writeToolCallLog;
   const getConfig = deps.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
-  const fetchImpl = deps.fetchImpl;
+  const slackClient = deps.slackClient;
   const slackConfig = deps.slack;
   const instances = new Map<string, ProxyInstance>();
   const connecting = new Map<string, Promise<ProxyInstance>>();
@@ -256,7 +258,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     upstreamName: string;
     channel: string;
     threadTs: string;
-  }): Promise<{ ts: string } | { error: string }> {
+  }): Promise<SlackCreatedMessageResponse | { error: string }> {
     const slackMessage = buildApprovalSlackMessage({
       actionId: input.action.id,
       tool: input.action.tool as ApprovalRequiredEventPayload["tool"],
@@ -272,14 +274,14 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         blocks: slackMessage.blocks,
       },
       {
-        fetch: fetchImpl,
+        client: slackClient,
         env: {
           SLACK_BOT_TOKEN: slackConfig?.botToken,
           SLACK_API_BASE_URL: slackConfig?.apiBaseUrl,
         },
       },
     );
-    return "error" in result ? result : { ts: result.ts };
+    return result;
   }
 
   function resolveProfileForContext(context: McpCommandContext): { profile: string | undefined } {
@@ -743,7 +745,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       action.notification = {
         provider: "slack",
         channel: slackTarget.channel,
-        threadTs: slackTarget.threadTs,
+        threadTs: slackPost.thread_ts,
         messageTs: slackPost.ts,
         postedAt: new Date().toISOString(),
       };

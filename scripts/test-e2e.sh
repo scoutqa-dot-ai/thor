@@ -1067,7 +1067,9 @@ if [[ "$seed_ok" == "true" && -n "$seed_ts" ]]; then
     -e INITIAL_COMMENT="$slack_upload_comment" \
     "$opencode_container" \
     sh -lc 'printf "%s\n" "$FILE_CONTENT" > /tmp/slack-upload-e2e.txt && slack-upload /tmp/slack-upload-e2e.txt --title "$FILE_TITLE" --channel "$CHANNEL_ID" --thread-ts "$THREAD_TS" --comment "$INITIAL_COMMENT"' 2>&1 || true)
-  assert '[[ "$slack_upload_raw" == "{\"ok\":true}" ]]' "slack-upload returns minimal success payload" "output: ${slack_upload_raw:0:500}"
+  slack_upload_ok=$(json_field "$slack_upload_raw" "ok")
+  slack_upload_file_id=$(json_field "$slack_upload_raw" "files.0.id")
+  assert '[[ "$slack_upload_ok" == "true" && -n "$slack_upload_file_id" ]]' "slack-upload returns Slack files.completeUploadExternal response" "output: ${slack_upload_raw:0:500}"
 
   upload_reply_json=""
   upload_file_id=""

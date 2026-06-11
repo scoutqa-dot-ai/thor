@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@thor/common": "workspace:*"
+    "@thor/common": "workspace:*",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

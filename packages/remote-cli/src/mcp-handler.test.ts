@@ -1,3 +1,4 @@
+import type { WebClient } from "@slack/web-api";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
@@ -104,7 +105,7 @@ describe("remote-cli MCP endpoints", () => {
   let jiraLookups: Array<Record<string, unknown> | undefined>;
   let jiraLookupResultText: string;
   let jiraLookupFailure: Error | undefined;
-  let slackFetch: ReturnType<typeof vi.fn<typeof fetch>>;
+  let slackPostMessage: ReturnType<typeof vi.fn>;
   let workspaceConfig: WorkspaceConfig;
   let configLoadFailure: Error | undefined;
   let upstreamConnectFailure: Error | undefined;
@@ -129,14 +130,15 @@ describe("remote-cli MCP endpoints", () => {
     jiraLookups = [];
     jiraLookupResultText = JSON.stringify(jiraLookupResponse([{ accountId: "jira-account-1" }]));
     jiraLookupFailure = undefined;
+    slackPostMessage = vi.fn().mockResolvedValue({
+      ok: true,
+      channel: "C123",
+      ts: "1710000000.100",
+      message: { thread_ts: "1710000000.001" },
+    });
     configLoadFailure = undefined;
     upstreamConnectFailure = undefined;
     toolCallLogs = [];
-    slackFetch = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ ok: true, channel: "C123", ts: "1710000000.100" })),
-      );
     workspaceConfig = {
       users: [{ email: "alice@example.com", name: "Alice", slack: "UABCDEF1", github: "alice" }],
     };
@@ -172,7 +174,7 @@ describe("remote-cli MCP endpoints", () => {
       mcp: {
         approvalsDir,
         isProduction: true,
-        fetchImpl: slackFetch,
+        slackClient: { chat: { postMessage: slackPostMessage } } as unknown as WebClient,
         writeToolCallLogFn: (entry) => {
           toolCallLogs.push(entry);
         },
@@ -1178,10 +1180,6 @@ describe("remote-cli MCP endpoints", () => {
         messageTs: "1710000000.100",
       },
     });
-    expect(slackFetch).toHaveBeenCalledWith(
-      "https://slack.test/api/chat.postMessage",
-      expect.objectContaining({ method: "POST" }),
-    );
 
     const list = await postJson("/exec/approval", { args: ["list"] });
     const listBody = (await list.json()) as { stdout: string };
@@ -1254,7 +1252,7 @@ describe("remote-cli MCP endpoints", () => {
     expect(pending.status).toBe(200);
     expect(pendingBody).toEqual({ stdout: "linked", stderr: "", exitCode: 0 });
     expect(toolCalls).toEqual([{ name: "createIssueLink", arguments: cleanArgs }]);
-    expect(slackFetch).not.toHaveBeenCalled();
+    expect(slackPostMessage).not.toHaveBeenCalled();
   });
 
   it("posts approval cards to the trigger Slack thread when the anchor has other Slack aliases", async () => {
@@ -1286,12 +1284,8 @@ describe("remote-cli MCP endpoints", () => {
       tool: "createJiraIssue",
     });
 
-    expect(slackFetch).toHaveBeenCalledTimes(1);
-    const payload = JSON.parse(String(slackFetch.mock.calls[0]?.[1]?.body)) as {
-      channel: string;
-      thread_ts?: string;
-    };
-    expect(payload).toMatchObject({
+    expect(slackPostMessage).toHaveBeenCalledTimes(1);
+    expect(slackPostMessage.mock.calls[0]?.[0]).toMatchObject({
       channel: "C123",
       thread_ts: "1710000000.001",
     });
@@ -1334,12 +1328,8 @@ describe("remote-cli MCP endpoints", () => {
       tool: "createJiraIssue",
     });
 
-    expect(slackFetch).toHaveBeenCalledTimes(1);
-    const payload = JSON.parse(String(slackFetch.mock.calls[0]?.[1]?.body)) as {
-      channel: string;
-      thread_ts?: string;
-    };
-    expect(payload).toMatchObject({
+    expect(slackPostMessage).toHaveBeenCalledTimes(1);
+    expect(slackPostMessage.mock.calls[0]?.[0]).toMatchObject({
       channel: "C123",
       thread_ts: "1710000000.001",
     });
@@ -1367,12 +1357,47 @@ describe("remote-cli MCP endpoints", () => {
     expect(pending.status).toBe(200);
     expect(pendingBody.exitCode).toBe(1);
     expect(pendingBody.stderr).toContain("has no Slack trigger correlation key");
-    expect(slackFetch).not.toHaveBeenCalled();
+    expect(slackPostMessage).not.toHaveBeenCalled();
   });
 
+  it("fails closed when an approval origin only has a legacy Slack thread alias", async () => {
+    const legacyAnchorId = "00000000-0000-7000-8000-0000000004a3";
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "legacy-thread-session",
+      anchorId: legacyAnchorId,
+    });
+    appendSessionEvent("legacy-thread-session", {
+      type: "trigger_start",
+      triggerId: activeTriggerId,
+      correlationKey: "slack:thread:1710000000.001",
+    });
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "legacy-thread-session" },
+    );
+    const pendingBody = (await pending.json()) as { stderr: string; exitCode: number };
+
+    expect(pending.status).toBe(200);
+    expect(pendingBody.exitCode).toBe(1);
+    expect(pendingBody.stderr).toContain("unsupported Slack thread correlation key");
+    expect(slackPostMessage).not.toHaveBeenCalled();
+  });
   it("fails closed when posting the approval card to Slack fails", async () => {
-    slackFetch.mockResolvedValueOnce(
-      new Response(JSON.stringify({ ok: false, error: "channel_not_found" })),
+    slackPostMessage.mockRejectedValueOnce(
+      Object.assign(new Error("An API error occurred: channel_not_found"), {
+        data: { ok: false, error: "channel_not_found" },
+      }),
     );
     appendActiveTrigger();
 
