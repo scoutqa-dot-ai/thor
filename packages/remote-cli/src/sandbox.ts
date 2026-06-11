@@ -263,7 +263,9 @@ export async function pullSandboxChanges(
   const allPaths = [...downloads, ...localDeletes];
   for (const f of allPaths) {
     if (!resolve(cwd, f).startsWith(cwdPrefix)) {
-      throw new Error(`Sandbox produced a file path that escapes the worktree ("${f}"). Pull aborted.`);
+      throw new Error(
+        `Sandbox produced a file path that escapes the worktree ("${f}"). Pull aborted.`,
+      );
     }
   }
 
@@ -416,8 +418,11 @@ export function getLastSyncedSha(sandbox: Sandbox): string | null {
 
 async function listSandboxesByLabels(labels: Record<string, string>): Promise<Sandbox[]> {
   try {
-    const page = await getDaytona().list(labels, 1, 100);
-    return page.items || [];
+    const sandboxes: Sandbox[] = [];
+    for await (const sandbox of getDaytona().list({ labels, limit: 100 })) {
+      sandboxes.push(sandbox);
+    }
+    return sandboxes;
   } catch (err) {
     rethrowError(err);
   }

@@ -696,12 +696,21 @@ else
     "echo 'parallel-e2e' > $SBX_WORKTREE_DIR/parallel-test.txt" 2>/dev/null
 
   # Warm up the sandbox — two-worktree test above stopped it, and the
-  # first parallel exec can race with the auto-recreate path (Daytona
-  # returns "sandbox container not found" before the container boots).
-  curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
-    -H 'Content-Type: application/json' \
-    -d "{\"mode\":\"exec\",\"args\":[\"true\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
-    2>/dev/null >/dev/null
+  # first exec after recreate can race with Daytona container readiness
+  # ("sandbox container not found" before the container boots).
+  sbx_warmup_exit=""
+  for _sbx_retry in 1 2 3 4 5; do
+    sbx_warmup_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"true\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_warmup_exit=$(echo "$sbx_warmup_raw" | sandbox_exec_exit)
+    [[ "$sbx_warmup_exit" == "0" ]] && break
+    sleep 2
+  done
+  assert '[[ "$sbx_warmup_exit" == "0" ]]' \
+    "parallel exec warmup succeeded" \
+    "exitCode='$sbx_warmup_exit'"
 
   # Fire two sandbox exec requests in parallel.
   # Each command prints a start timestamp, sleeps, then prints an end
