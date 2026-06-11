@@ -1,0 +1,27 @@
+packages/common/src/proxies.ts
+  72a621ef56a7f5a7 141-144,147,150-163,165-169,173-175
+.github/workflows/core-e2e.yml
+  72a621ef56a7f5a7 211-225
+packages/common/src/proxies.test.ts
+  72a621ef56a7f5a7 31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "3b869a7402f84e4fcb0ceeae65bb111627df65a8",
+  "prompts": {
+    "72a621ef56a7f5a7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9ef64106-d868-4734-b865-436a2981670d",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 105,
+      "total_deletions": 58,
+      "accepted_lines": 44,
+      "overriden_lines": 1
+    }
+  }
+}
