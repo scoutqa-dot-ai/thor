@@ -28,7 +28,7 @@ describe("proxy registry", () => {
     expect(resolveProxyConfig("grafana", undefined, FULL_ENV)?.allow).toEqual(
       expect.arrayContaining(["query_prometheus", "list_prometheus_metric_names"]),
     );
-    expect(resolveProxyConfig("posthog", undefined, FULL_ENV)?.allow).toContain("query-run");
+    expect(resolveProxyConfig("posthog", undefined, FULL_ENV)?.allow).toContain("query-trends");
     expect(resolveProxyConfig("unknown", undefined, FULL_ENV)).toBeUndefined();
   });
 

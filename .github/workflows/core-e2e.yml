@@ -208,6 +208,22 @@ jobs:
           CI: "true"
         run: pnpm test:opencode-e2e
 
+      - name: Assert no MCP policy drift
+        run: |
+          set -euo pipefail
+          # remote-cli's warmUp() connects every configured MCP upstream at boot
+          # and logs a "policy_drift" event when our allow/approve lists name
+          # tools the upstream no longer exposes. Runtime tolerates drift under
+          # NODE_ENV=production, so it never fails boot — catch it here instead.
+          # The e2e run above gives warmup ample time to settle, so just scan logs.
+          logs="$(docker compose logs --no-color remote-cli 2>/dev/null || true)"
+          if printf '%s\n' "$logs" | grep -q '"event":"policy_drift"'; then
+            echo "::error::MCP policy drift: allow/approve lists reference tools the upstream no longer exposes. Reconcile packages/common/src/proxies.ts against the upstream tool inventory."
+            printf '%s\n' "$logs" | grep '"event":"policy_drift"'
+            exit 1
+          fi
+          echo "No MCP policy drift detected."
+
       - name: Compose status (on failure)
         if: failure()
         run: docker compose ps

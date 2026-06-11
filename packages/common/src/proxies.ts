@@ -37,8 +37,6 @@ const ATLASSIAN_ALLOW = [
   "getConfluencePageFooterComments",
   "getConfluencePageInlineComments",
   "getConfluenceCommentChildren",
-  "search",
-  "fetch",
 ];
 const ATLASSIAN_APPROVE = ["createJiraIssue", "addCommentToJiraIssue"];
 
@@ -140,35 +138,46 @@ const GRAFANA_SANDBOX_ARGS = [
   ...GRAFANA_MCP_ARGS,
 ];
 
+// Read-only PostHog tools only. Writes/destructive operations stay hidden;
+// any future write capability should go through POSTHOG_APPROVE (human gate),
+// not here. PII-heavy surfaces (persons-*, session-recording-*) are
+// intentionally omitted.
 const POSTHOG_ALLOW = [
   "docs-search",
-  "error-details",
-  "list-errors",
-  "feature-flag-get-all",
-  "feature-flag-get-definition",
+  // Insights + analytics query family
   "insight-query",
   "insight-get",
-  "insights-get-all",
-  "query-run",
-  "query-generate-hogql-from-question",
-  "event-definitions-list",
-  "properties-list",
-  "logs-query",
-  "logs-list-attributes",
-  "logs-list-attribute-values",
-  "error-tracking-issues-list",
-  "error-tracking-issues-retrieve",
-  "entity-search",
-  "cohorts-list",
-  "cohorts-retrieve",
-  "dashboard-get",
-  "dashboard-reorder-tiles",
-  "dashboards-get-all",
+  "insights-list",
+  "query-trends",
+  "query-funnel",
+  "query-retention",
+  "query-stickiness",
+  "query-paths",
+  "query-lifecycle",
+  // Ad-hoc SQL + schema introspection (replaces the removed generic query-run)
+  "execute-sql",
+  "read-data-schema",
+  "read-data-warehouse-schema",
+  // Error tracking
+  "query-error-tracking-issue",
+  "query-error-tracking-issue-events",
+  "query-error-tracking-issues-list",
+  // Feature flags
+  "feature-flag-get-all",
+  "feature-flag-get-definition",
+  "feature-flags-status-retrieve",
+  // Experiments
   "experiment-get",
   "experiment-get-all",
   "experiment-results-get",
+  "experiment-list",
+  "experiment-stats",
+  // Cohorts, dashboards, surveys
+  "cohorts-list",
+  "cohorts-retrieve",
+  "dashboard-get",
+  "dashboards-get-all",
   "surveys-global-stats",
-  "update-issue-status",
 ];
 const POSTHOG_APPROVE = ["create-feature-flag"];
 
