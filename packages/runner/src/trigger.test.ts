@@ -15,7 +15,6 @@ import {
   mintAnchor,
   resolveAnchorForCorrelationKey,
   sessionLogPath,
-  WORKSPACE_CONFIG_PATH,
 } from "@thor/common";
 import type { WorkspaceConfig } from "@thor/common";
 
