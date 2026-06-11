@@ -48,6 +48,7 @@ jobs:
       GRAFANA_URL: http://grafana.invalid
       GRAFANA_SERVICE_ACCOUNT_TOKEN: ci-fake
       ATLASSIAN_AUTH: ci-fake
+      ATLASSIAN_CLOUD_ID: ci-fake
       POSTHOG_API_KEY: ci-fake
       LANGFUSE_PUBLIC_KEY: ${{ vars.LANGFUSE_PUBLIC_KEY }}
       LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
@@ -237,6 +238,7 @@ jobs:
           # MCP credentials are passed to compose services through env_file.
           {
             printf 'ATLASSIAN_AUTH=%s\n' "$ATLASSIAN_AUTH"
+            printf 'ATLASSIAN_CLOUD_ID=%s\n' "$ATLASSIAN_CLOUD_ID"
             printf 'POSTHOG_API_KEY=%s\n' "$POSTHOG_API_KEY"
             printf 'GRAFANA_URL=%s\n' "$GRAFANA_URL"
             printf 'GRAFANA_SERVICE_ACCOUNT_TOKEN=%s\n' "$GRAFANA_SERVICE_ACCOUNT_TOKEN"

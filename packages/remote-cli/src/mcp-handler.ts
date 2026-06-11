@@ -20,6 +20,7 @@ import {
   logInfo,
   logWarn,
   PROXY_NAMES,
+  resolveAtlassianCloudId,
   resolveProxyConfig,
   resolveSessionAnchorId,
   resolveSlackThreadTargetFromTrigger,
@@ -66,6 +67,30 @@ function buildUpstreamArgs(action: ApprovalAction): Record<string, unknown> {
   }
   const { footer } = buildThorDisclaimer(trigger, getRunnerBaseUrl());
   return injectApprovalDisclaimer(action.tool, action.args, footer);
+}
+
+function withoutCloudId(args: Record<string, unknown>): Record<string, unknown> {
+  const { cloudId: _cloudId, ...rest } = args;
+  return rest;
+}
+
+function sanitizeAtlassianInputSchema(inputSchema: unknown): unknown {
+  if (!inputSchema || typeof inputSchema !== "object" || Array.isArray(inputSchema)) {
+    return inputSchema;
+  }
+  const schema = inputSchema as Record<string, unknown>;
+  const properties =
+    schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)
+      ? withoutCloudId(schema.properties as Record<string, unknown>)
+      : schema.properties;
+  const required = Array.isArray(schema.required)
+    ? schema.required.filter((field) => field !== "cloudId")
+    : schema.required;
+  return {
+    ...schema,
+    ...(properties !== undefined ? { properties } : {}),
+    ...(required !== undefined ? { required } : {}),
+  };
 }
 
 type JiraLookupResult = { ok: true; accountId: string } | { ok: false; reason: string };
@@ -329,12 +354,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
             logInfo(log, "upstream_reconnected", { name, afterAttempt: attempt });
           })
           .catch((err) => {
-            logError(
-              log,
-              "upstream_reconnect_failed",
-              errorMessage(err),
-              { name, attempt },
-            );
+            logError(log, "upstream_reconnect_failed", errorMessage(err), { name, attempt });
             scheduleReconnect(attempt + 1);
           });
       }, delay);
@@ -452,7 +472,6 @@ export function createMcpService(deps: McpServiceDeps): McpService {
 
   async function lookupJiraAccountIdViaUpstream(
     instance: ProxyInstance,
-    cloudId: string,
     email: string,
     profile: string | undefined,
   ): Promise<JiraLookupResult> {
@@ -462,7 +481,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     const result = await executeUpstreamCall({
       instance,
       toolName: JIRA_ACCOUNT_LOOKUP_TOOL,
-      args: { cloudId, searchString: email },
+      args: { searchString: email },
       profile,
       logEvent: "jira_account_lookup",
       decision: "allowed",
@@ -501,7 +520,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       .map((tool) => ({
         name: tool.name,
         description: tool.description,
-        inputSchema: tool.inputSchema,
+        inputSchema:
+          upstreamName === "atlassian"
+            ? sanitizeAtlassianInputSchema(tool.inputSchema)
+            : tool.inputSchema,
         classification: classifyTool(allow, approve, tool.name),
       }))
       .filter((tool) => tool.classification !== "hidden");
@@ -574,6 +596,22 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     onError?: (message: string) => void;
   }
 
+  function outboundArgs(
+    instance: ProxyInstance,
+    args: Record<string, unknown>,
+    profile: string | undefined,
+  ): Record<string, unknown> {
+    if (instance.name !== "atlassian") return args;
+    // Intentionally inject for every Atlassian call. The deterministic e2e
+    // exercises atlassianUserInfo, whose schema has no cloudId, so a future
+    // upstream rejection of extra cloudId fails there and we can revisit.
+    const cloudId = resolveAtlassianCloudId(profile).value;
+    if (!cloudId) {
+      throw new Error("Atlassian cloud ID is not configured");
+    }
+    return { ...args, cloudId };
+  }
+
   async function executeUpstreamCall(opts: UpstreamCallOpts): Promise<McpExecResult> {
     const {
       instance,
@@ -588,9 +626,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     } = opts;
     const start = Date.now();
     try {
+      const callArgs = outboundArgs(instance, args, profile);
       const result = await instance.upstream.client.callTool({
         name: toolName,
-        arguments: args,
+        arguments: callArgs,
       });
       const duration = Date.now() - start;
       logInfo(log, logEvent, {
@@ -606,7 +645,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         decision,
         targetKey: targetKey ?? instance.targetKey,
         profile,
-        args,
+        args: callArgs,
         result,
         durationMs: duration,
       });
@@ -624,15 +663,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
               source: "mcp:post_message",
             });
           } catch (err) {
-            logError(
-              log,
-              "alias_registration_error",
-              errorMessage(err),
-              {
-                sessionId: opts.sessionId,
-                correlationKey,
-              },
-            );
+            logError(log, "alias_registration_error", errorMessage(err), {
+              sessionId: opts.sessionId,
+              correlationKey,
+            });
           }
         }
       }
@@ -988,25 +1022,9 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       });
       return args;
     }
-    const cloudId =
-      typeof args.cloudId === "string" && args.cloudId.length > 0 ? args.cloudId : undefined;
-    if (!cloudId) {
-      logInfo(log, "attribution_applied", {
-        surface: "jira",
-        outcome: "api_rejected",
-        reason: "lookup_missing_cloud_id",
-        ...attributionFields(resolved.actor, resolved.user),
-      });
-      return args;
-    }
     let lookup: JiraLookupResult;
     try {
-      lookup = await lookupJiraAccountIdViaUpstream(
-        instance,
-        cloudId,
-        resolved.user.email,
-        profile,
-      );
+      lookup = await lookupJiraAccountIdViaUpstream(instance, resolved.user.email, profile);
     } catch {
       logInfo(log, "attribution_applied", {
         surface: "jira",

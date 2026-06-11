@@ -18,7 +18,13 @@ export {
   isSlackChannelInProfile,
   resolveStrictProfileForSession,
 } from "./workspace-config.ts";
-export { PROXY_NAMES, isProxyName, resolveProxyConfig, getAvailableProxyNames } from "./proxies.ts";
+export {
+  PROXY_NAMES,
+  getAvailableProxyNames,
+  isProxyName,
+  resolveAtlassianCloudId,
+  resolveProxyConfig,
+} from "./proxies.ts";
 export {
   APPROVAL_TOOL_NAMES,
   ApprovalArgsSchema,
