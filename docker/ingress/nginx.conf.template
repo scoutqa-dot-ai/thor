@@ -48,16 +48,31 @@ server {
         return 302 http://$http_host/vouch/login?url=$scheme://$http_host$uri;
     }
 
-    # Slack webhooks — no auth required
+    # Slack webhooks — no auth required.
+    # Slack does not publish a max request body size for the Events API
+    # (https://docs.slack.dev/apis/events-api/); inbound event, slash-command
+    # and interactivity payloads are small, so keep a tight 1m cap and enlarge
+    # the in-memory buffer enough that normal payloads are not spilled to a
+    # temp file on disk.
     location /slack/ {
+        client_max_body_size    1m;
+        client_body_buffer_size 256k;
         set $gateway http://gateway:3002;
         proxy_pass $gateway;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
     }
 
-    # GitHub webhooks — no auth required
+    # GitHub webhooks — no auth required.
+    # GitHub caps webhook payloads at 25 MB
+    # (https://docs.github.com/en/webhooks/webhook-events-and-payloads), so
+    # allow bodies up to that limit to avoid silently 413-ing large deliveries
+    # (e.g. a push touching many refs). Keep typical payloads in memory with a
+    # 1m buffer so they are not spilled to a temp file (the nginx [warn] seen
+    # on every webhook).
     location /github/ {
+        client_max_body_size    25m;
+        client_body_buffer_size 1m;
         set $gateway http://gateway:3002;
         proxy_pass $gateway;
         proxy_http_version 1.1;
