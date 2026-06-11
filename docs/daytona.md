@@ -50,10 +50,11 @@ Slim runtime contract in the custom image:
 - Node via nvm: **22 (default)** and **20**
 - Java via SDKMAN: **21 (default)** and **17**, plus Maven and Gradle
 - Python via pyenv: **3.12 (default)** and `uv`
+- PHP via `ondrej/php`: **8.4 (default)** with common CLI extensions
 - Docker CE (with docker compose)
 - Browser automation/recording: `agent-browser` with Chrome for Testing preinstalled, plus `ffmpeg`, `xvfb`, `xdotool`, `tree`, and ImageMagick
 
-Everything else should be installed on demand inside the sandbox for the current task (for example Node 19, Python 3.11, Go, Rust, Terraform/Terragrunt/SOPS/AWS CLI, or repo-specific Playwright/Puppeteer versions).
+Everything else should be installed on demand inside the sandbox for the current task (for example Node 19, Python 3.11, PHP 8.3, Go, Rust, Terraform/Terragrunt/SOPS/AWS CLI, or repo-specific Playwright/Puppeteer versions). The custom image keeps `ppa:ondrej/php` configured so non-default PHP versions can be installed with `sudo apt-get` and selected with `update-alternatives`.
 
 ### Build + publish the image
 

@@ -441,10 +441,10 @@ else
       "stdout='${sbx_fail_stdout:0:200}'"
 
     # 8o. Toolchain: verify pre-installed runtimes are available via bash -lc
-    echo "  Testing sandbox toolchain (Node, Java, Python, Maven, Gradle)..."
+    echo "  Testing sandbox toolchain (Node, Java, Python, PHP, Maven, Gradle)..."
     sbx_tc_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
       -H 'Content-Type: application/json' \
-      -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"node --version && java --version 2>&1 | head -1 && python3 --version && mvn --version 2>&1 | head -1 && gradle --version 2>&1 | grep Gradle\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"node --version && java --version 2>&1 | head -1 && python3 --version && php --version | head -1 && mvn --version 2>&1 | head -1 && gradle --version 2>&1 | grep Gradle\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
       2>/dev/null)
     sbx_tc_exit=$(echo "$sbx_tc_raw" | sandbox_exec_exit)
     sbx_tc_stdout=$(echo "$sbx_tc_raw" | sandbox_exec_stdout)
@@ -455,10 +455,26 @@ else
       "Java 21 available (default)" "stdout='${sbx_tc_stdout:0:300}'"
     assert '[[ "$sbx_tc_stdout" == *"3.12"* ]]' \
       "Python 3.12 available (default)" "stdout='${sbx_tc_stdout:0:300}'"
+    assert '[[ "$sbx_tc_stdout" == *"PHP 8.4"* ]]' \
+      "PHP 8.4 available (default)" "stdout='${sbx_tc_stdout:0:300}'"
     assert '[[ "$sbx_tc_stdout" == *"Maven"* ]]' \
       "Maven available" "stdout='${sbx_tc_stdout:0:300}'"
     assert '[[ "$sbx_tc_stdout" == *"Gradle"* ]]' \
       "Gradle available" "stdout='${sbx_tc_stdout:0:300}'"
+
+    echo "  Testing PHP on-demand package source (ondrej/php)..."
+    sbx_php_src_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"sudo apt-get update >/dev/null && apt-cache policy php8.3-cli php8.2-cli\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_php_src_exit=$(echo "$sbx_php_src_raw" | sandbox_exec_exit)
+    sbx_php_src_stdout=$(echo "$sbx_php_src_raw" | sandbox_exec_stdout)
+    assert '[[ "$sbx_php_src_exit" == "0" ]]' \
+      "PHP on-demand source query succeeded" "exitCode='$sbx_php_src_exit'"
+    assert '[[ "$sbx_php_src_stdout" == *"php8.3-cli"* && "$sbx_php_src_stdout" == *"php8.2-cli"* ]]' \
+      "non-default PHP packages visible from apt" "stdout='${sbx_php_src_stdout:0:500}'"
+    assert '[[ "$sbx_php_src_stdout" == *"ondrej/php"* || "$sbx_php_src_stdout" == *"ppa.launchpadcontent.net/ondrej"* ]]' \
+      "non-default PHP packages come from ondrej/php" "stdout='${sbx_php_src_stdout:0:500}'"
 
     # 8p. Version switching: set non-default version, verify it persists
     echo "  Testing version switching persistence across sandbox calls..."
@@ -680,12 +696,21 @@ else
     "echo 'parallel-e2e' > $SBX_WORKTREE_DIR/parallel-test.txt" 2>/dev/null
 
   # Warm up the sandbox — two-worktree test above stopped it, and the
-  # first parallel exec can race with the auto-recreate path (Daytona
-  # returns "sandbox container not found" before the container boots).
-  curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
-    -H 'Content-Type: application/json' \
-    -d "{\"mode\":\"exec\",\"args\":[\"true\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
-    2>/dev/null >/dev/null
+  # first exec after recreate can race with Daytona container readiness
+  # ("sandbox container not found" before the container boots).
+  sbx_warmup_exit=""
+  for _sbx_retry in 1 2 3 4 5; do
+    sbx_warmup_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"exec\",\"args\":[\"true\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      2>/dev/null)
+    sbx_warmup_exit=$(echo "$sbx_warmup_raw" | sandbox_exec_exit)
+    [[ "$sbx_warmup_exit" == "0" ]] && break
+    sleep 2
+  done
+  assert '[[ "$sbx_warmup_exit" == "0" ]]' \
+    "parallel exec warmup succeeded" \
+    "exitCode='$sbx_warmup_exit'"
 
   # Fire two sandbox exec requests in parallel.
   # Each command prints a start timestamp, sleeps, then prints an end
