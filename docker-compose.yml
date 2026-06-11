@@ -103,12 +103,11 @@ services:
       # leaving session titles stuck on "New session - <timestamp>". Disable
       # the bridge so each request gets its own upstream stream.
       CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_ENABLED: "false"
-      # The model-registry refresh scheduler polls GitHub/npm every 300s for the
-      # latest Codex release (to advertise a current client_version upstream).
-      # Our egress proxy blocks those hosts, so every cycle 403s and emits a full
-      # Python traceback. We don't rely on codex-lb's dynamic /models list or
-      # plan-based routing, so disable the registry to silence the noise; the
-      # proxy degrades gracefully to default model handling.
+      # The model-registry scheduler's version lookup hits GitHub/npm, which our
+      # egress proxy blocks, logging a traceback every refresh. Disabling it
+      # silences that and empties codex-lb's /v1/models — safe because opencode
+      # sources its models from its bundled models.dev snapshot, not this proxy.
+      # Caveat + source-level verification: docs/plan/2026052601_codex-lb-integration.md
       CODEX_LB_MODEL_REGISTRY_ENABLED: "false"
       SSL_CERT_FILE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
       REQUESTS_CA_BUNDLE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
