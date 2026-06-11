@@ -24,8 +24,12 @@ const tools: Tool[] = [
     description: "Create a Jira issue",
     inputSchema: {
       type: "object",
-      properties: { projectKey: { type: "string" }, summary: { type: "string" } },
-      required: ["projectKey", "summary"],
+      properties: {
+        cloudId: { type: "string" },
+        projectKey: { type: "string" },
+        summary: { type: "string" },
+      },
+      required: ["cloudId", "projectKey", "summary"],
       additionalProperties: false,
     },
   },
@@ -38,8 +42,9 @@ const tools: Tool[] = [
         outwardIssueIdOrKey: { type: "string" },
         inwardIssueIdOrKey: { type: "string" },
         linkType: { type: "string" },
+        cloudId: { type: "string" },
       },
-      required: ["outwardIssueIdOrKey", "inwardIssueIdOrKey", "linkType"],
+      required: ["cloudId", "outwardIssueIdOrKey", "inwardIssueIdOrKey", "linkType"],
       additionalProperties: false,
     },
   },
@@ -63,6 +68,9 @@ const activeTriggerId = "00000000-0000-7000-8000-000000000101";
 const githubTriggerId = "00000000-0000-7000-8000-000000000102";
 const activeAnchorId = "00000000-0000-7000-8000-0000000004a1";
 const activeSlackCorrelationKey = "slack:thread:C123/1710000000.001";
+const configuredCloudId = "acme.atlassian.net";
+const configuredQaCloudId = "qa.atlassian.net";
+const configuredLabsCloudId = "labs.atlassian.net";
 
 function jiraLookupResponse(users: Array<{ accountId: string; displayName?: string }>) {
   return {
@@ -112,6 +120,7 @@ describe("remote-cli MCP endpoints", () => {
 
   beforeEach(async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic dGVzdA==");
+    vi.stubEnv("ATLASSIAN_CLOUD_ID", configuredCloudId);
     vi.stubEnv("POSTHOG_API_KEY", "test-posthog-key");
     vi.stubEnv("GRAFANA_URL", "https://grafana.example.com");
     vi.stubEnv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "grafana-token");
@@ -326,6 +335,20 @@ describe("remote-cli MCP endpoints", () => {
       "createIssueLink",
     ]);
 
+    const toolHelp = await postJson(
+      "/exec/mcp",
+      {
+        args: ["atlassian", "createJiraIssue", "--help"],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const toolHelpBody = (await toolHelp.json()) as { stdout: string };
+    const toolHelpJson = JSON.parse(toolHelpBody.stdout) as {
+      inputSchema: { properties?: Record<string, unknown>; required?: string[] };
+    };
+    expect(toolHelpJson.inputSchema.properties).not.toHaveProperty("cloudId");
+    expect(toolHelpJson.inputSchema.required).not.toContain("cloudId");
+
     const hiddenLookup = await postJson(
       "/exec/mcp",
       {
@@ -366,7 +389,9 @@ describe("remote-cli MCP endpoints", () => {
       stderr: "",
       exitCode: 0,
     });
-    expect(toolCalls).toEqual([{ name: "getJiraIssue", arguments: {} }]);
+    expect(toolCalls).toEqual([
+      { name: "getJiraIssue", arguments: { cloudId: configuredCloudId } },
+    ]);
     expect(toolCallLogs).toContainEqual(
       expect.objectContaining({
         tool: "getJiraIssue",
@@ -507,6 +532,7 @@ describe("remote-cli MCP endpoints", () => {
 
   it("routes Slack-triggered MCP calls through the channel profile credential target", async () => {
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    vi.stubEnv("ATLASSIAN_CLOUD_ID_QA", configuredQaCloudId);
     workspaceConfig = {
       ...workspaceConfig,
       profiles: { QA: { channels: ["C123"] } },
@@ -532,6 +558,7 @@ describe("remote-cli MCP endpoints", () => {
         decision: "allowed",
         targetKey: "atlassian:QA",
         profile: "QA",
+        args: { cloudId: configuredQaCloudId },
       }),
     );
   });
@@ -568,6 +595,7 @@ describe("remote-cli MCP endpoints", () => {
   it("honors the Slack channel's profile even after a subsequent non-Slack trigger fires", async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    vi.stubEnv("ATLASSIAN_CLOUD_ID_QA", configuredQaCloudId);
     workspaceConfig = { ...workspaceConfig, profiles: { QA: { channels: ["C123"] } } };
     appendActiveTrigger({ ts: "2026-05-21T00:00:01.000Z" });
     appendSessionEvent("parent-session", {
@@ -605,6 +633,7 @@ describe("remote-cli MCP endpoints", () => {
 
   it("does not store profile/routing snapshot on approval actions", async () => {
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    vi.stubEnv("ATLASSIAN_CLOUD_ID_QA", configuredQaCloudId);
     workspaceConfig = { ...workspaceConfig, profiles: { QA: { channels: ["C123"] } } };
     appendActiveTrigger();
 
@@ -651,6 +680,7 @@ describe("remote-cli MCP endpoints", () => {
     const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
 
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-after-approval");
+    vi.stubEnv("ATLASSIAN_CLOUD_ID_QA", configuredQaCloudId);
     vi.stubEnv("ATLASSIAN_AUTH", "Basic global-after-approval");
     await stopRemoteCliServer();
     upstreamConfigs = [];
@@ -698,7 +728,11 @@ describe("remote-cli MCP endpoints", () => {
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
-    const resolvedBody = (await resolved.json()) as { stdout: string; stderr: string; exitCode: number };
+    const resolvedBody = (await resolved.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
 
     expect(resolvedBody.exitCode).toBe(1);
     expect(resolvedBody.stderr).toBe("atlassian upstream TLS failed at /workspace/certs/ca.pem");
@@ -712,6 +746,7 @@ describe("remote-cli MCP endpoints", () => {
   it("rejects an approval when its stored session id no longer resolves to an anchor", async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    vi.stubEnv("ATLASSIAN_CLOUD_ID_QA", configuredQaCloudId);
     workspaceConfig = { ...workspaceConfig, profiles: { QA: { channels: ["C123"] } } };
     appendActiveTrigger();
 
@@ -772,7 +807,9 @@ describe("remote-cli MCP endpoints", () => {
 
   it("rejects an approval when the session's channels are bound to multiple profiles", async () => {
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    vi.stubEnv("ATLASSIAN_CLOUD_ID_QA", configuredQaCloudId);
     vi.stubEnv("ATLASSIAN_AUTH_LABS", "Basic labs-token");
+    vi.stubEnv("ATLASSIAN_CLOUD_ID_LABS", configuredLabsCloudId);
     workspaceConfig = {
       ...workspaceConfig,
       profiles: { QA: { channels: ["C123"] }, LABS: { channels: ["C456"] } },
@@ -827,6 +864,7 @@ describe("remote-cli MCP endpoints", () => {
     vi.stubEnv("GRAFANA_URL", "");
     vi.stubEnv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "");
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    vi.stubEnv("ATLASSIAN_CLOUD_ID_QA", configuredQaCloudId);
     workspaceConfig = { ...workspaceConfig, profiles: { QA: { channels: ["C123"] } } };
 
     const health = await fetch(`${baseUrl}/health`);
@@ -838,7 +876,9 @@ describe("remote-cli MCP endpoints", () => {
 
   it("reports connected upstream names separately from connected credential targets in health", async () => {
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    vi.stubEnv("ATLASSIAN_CLOUD_ID_QA", configuredQaCloudId);
     vi.stubEnv("ATLASSIAN_AUTH_LABS", "Basic labs-token");
+    vi.stubEnv("ATLASSIAN_CLOUD_ID_LABS", configuredLabsCloudId);
     workspaceConfig = {
       ...workspaceConfig,
       profiles: { QA: { channels: ["C123"] }, LABS: { channels: ["C999"] } },
@@ -889,7 +929,9 @@ describe("remote-cli MCP endpoints", () => {
   it("uses the session repo alias instead of a forged request directory for profile routing", async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    vi.stubEnv("ATLASSIAN_CLOUD_ID_QA", configuredQaCloudId);
     vi.stubEnv("ATLASSIAN_AUTH_LABS", "Basic labs-token");
+    vi.stubEnv("ATLASSIAN_CLOUD_ID_LABS", configuredLabsCloudId);
     workspaceConfig = {
       ...workspaceConfig,
       profiles: {
@@ -923,6 +965,7 @@ describe("remote-cli MCP endpoints", () => {
   it("allows a Slack session to use a mixed profile when its channel is in the profile", async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    vi.stubEnv("ATLASSIAN_CLOUD_ID_QA", configuredQaCloudId);
     workspaceConfig = {
       ...workspaceConfig,
       profiles: {
@@ -952,6 +995,7 @@ describe("remote-cli MCP endpoints", () => {
   it("blocks an unlisted Slack session from adopting a mixed channel+repo profile", async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    vi.stubEnv("ATLASSIAN_CLOUD_ID_QA", configuredQaCloudId);
     workspaceConfig = {
       ...workspaceConfig,
       profiles: {
@@ -991,6 +1035,7 @@ describe("remote-cli MCP endpoints", () => {
   it("allows a non-Slack session to use a mixed profile through its repo alias", async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic global-token");
     vi.stubEnv("ATLASSIAN_AUTH_QA", "Basic qa-token");
+    vi.stubEnv("ATLASSIAN_CLOUD_ID_QA", configuredQaCloudId);
     workspaceConfig = {
       ...workspaceConfig,
       profiles: {
@@ -1137,7 +1182,6 @@ describe("remote-cli MCP endpoints", () => {
       command: string;
     };
     const cleanArgs = {
-      cloudId: "cloud-1",
       projectKey: "THOR",
       issueTypeName: "Task",
       summary: "Fix it",
@@ -1145,6 +1189,7 @@ describe("remote-cli MCP endpoints", () => {
     };
     const upstreamArgs = {
       ...cleanArgs,
+      cloudId: configuredCloudId,
       description: `body\n${formatThorContextFooter(`https://thor.example.com/runner/v/${activeAnchorId}/${activeTriggerId}`)}`,
     };
     expect(approvalOutput).toMatchObject({
@@ -1253,7 +1298,9 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(pending.status).toBe(200);
     expect(pendingBody).toEqual({ stdout: "linked", stderr: "", exitCode: 0 });
-    expect(toolCalls).toEqual([{ name: "createIssueLink", arguments: cleanArgs }]);
+    expect(toolCalls).toEqual([
+      { name: "createIssueLink", arguments: { ...cleanArgs, cloudId: configuredCloudId } },
+    ]);
     expect(slackFetch).not.toHaveBeenCalled();
   });
 
@@ -1432,7 +1479,9 @@ describe("remote-cli MCP endpoints", () => {
       '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
     );
 
-    expect(jiraLookups).toEqual([{ cloudId: "cloud-1", searchString: "alice@example.com" }]);
+    expect(jiraLookups).toEqual([
+      { cloudId: configuredCloudId, searchString: "alice@example.com" },
+    ]);
     expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
     expect(toolCalls[1].arguments).toMatchObject({
       description: `body\n${formatThorContextFooter(`https://thor.example.com/runner/v/${activeAnchorId}/${activeTriggerId}`)}`,
@@ -1486,14 +1535,16 @@ describe("remote-cli MCP endpoints", () => {
     expect(toolCalls[1].arguments?.assignee_account_id).toBeUndefined();
   });
 
-  it("keeps Jira issue creation best-effort when cloudId is missing", async () => {
+  it("injects configured cloudId for Jira attribution when caller omits cloudId", async () => {
     await approveJiraCreate(
       '{"projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
     );
 
-    expect(jiraLookups).toEqual([]);
-    expect(toolCalls).toHaveLength(1);
-    expect(toolCalls[0].arguments?.assignee_account_id).toBeUndefined();
+    expect(jiraLookups).toEqual([
+      { cloudId: configuredCloudId, searchString: "alice@example.com" },
+    ]);
+    expect(toolCalls.map((call) => call.name)).toEqual(["lookupJiraAccountId", "createJiraIssue"]);
+    expect(toolCalls[1].arguments?.assignee_account_id).toBe("jira-account-1");
   });
 
   it("blocks Jira approvals when contentFormat is not markdown", async () => {

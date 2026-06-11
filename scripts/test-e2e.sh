@@ -55,16 +55,16 @@ ATTRIBUTION_E2E_SLACK_ID="${ATTRIBUTION_E2E_SLACK_ID:-U_E2E_ATTRIBUTION}"
 ATTRIBUTION_E2E_NAME="${ATTRIBUTION_E2E_NAME:-Thor E2E Reviewer}"
 ATTRIBUTION_E2E_GITHUB="${ATTRIBUTION_E2E_GITHUB:-thor-e2e-reviewer}"
 THOR_E2E_JIRA_EMAIL="${THOR_E2E_JIRA_EMAIL:-$DEFAULT_THOR_E2E_JIRA_EMAIL}"
-JIRA_CLOUD_ID="${JIRA_CLOUD_ID:-}"
+ATLASSIAN_CLOUD_ID="${ATLASSIAN_CLOUD_ID:-}"
 export REMOTE_CLI_GIT_REPO_DIR REMOTE_CLI_WORKTREE_BRANCH REMOTE_CLI_WORKTREE_DIR
 export ATTRIBUTION_E2E_SLACK_ID ATTRIBUTION_E2E_NAME ATTRIBUTION_E2E_GITHUB THOR_E2E_JIRA_EMAIL
-export JIRA_CLOUD_ID SLACK_CHANNEL_ID
+export ATLASSIAN_CLOUD_ID SLACK_CHANNEL_ID
 JIRA_E2E_ISSUE_KEY=""
 passed=0
 failed=0
 
 cleanup() {
-  if [[ -n "${JIRA_E2E_ISSUE_KEY:-}" && -n "${ATLASSIAN_AUTH:-}" && -n "${JIRA_CLOUD_ID:-}" ]]; then
+  if [[ -n "${JIRA_E2E_ISSUE_KEY:-}" && -n "${ATLASSIAN_AUTH:-}" && -n "${ATLASSIAN_CLOUD_ID:-}" ]]; then
     jira_delete_issue "$JIRA_E2E_ISSUE_KEY" >/dev/null 2>&1 || true
   fi
 
@@ -126,7 +126,7 @@ mcp_payload() {
 }
 
 jira_api_base() {
-  local cloud="$JIRA_CLOUD_ID"
+  local cloud="$ATLASSIAN_CLOUD_ID"
   if [[ "$cloud" == http://* || "$cloud" == https://* ]]; then
     echo "${cloud%/}/rest/api/3"
   else
@@ -156,7 +156,7 @@ function matchesJiraE2E(entry) {
   if (tool === "lookupJiraAccountId") {
     return (
       entry.decision === "allowed" &&
-      entry.args?.cloudId === process.env.JIRA_CLOUD_ID &&
+      entry.args?.cloudId === process.env.ATLASSIAN_CLOUD_ID &&
       String(entry.args?.searchString || "").toLowerCase() ===
         process.env.THOR_E2E_JIRA_EMAIL.toLowerCase()
     );
@@ -520,7 +520,8 @@ else
         -d "$(mcp_payload "$mcp_upstream")" \
         2>/dev/null || echo '{}')
       mcp_tools_exit=$(json_field "$mcp_tools_raw" "exitCode")
-      mcp_first_tool=$(json_field "$mcp_tools_raw" "stdout" | awk 'NF { print; exit }')
+      mcp_tools_stdout=$(json_field "$mcp_tools_raw" "stdout")
+      mcp_first_tool=$(echo "$mcp_tools_stdout" | awk 'NF { print; exit }')
 
       assert '[[ "$mcp_tools_exit" == "0" ]]' \
         "mcp integrations: $mcp_upstream lists visible tools" \
@@ -541,6 +542,23 @@ else
         assert '[[ "$mcp_help_exit" == "0" && "$mcp_help_name" == "$mcp_first_tool" ]]' \
           "mcp integrations: $mcp_upstream/$mcp_first_tool help returns schema" \
           "tool='$mcp_first_tool' name='$mcp_help_name' response: ${mcp_help_raw:0:500}"
+      fi
+
+      if [[ "$mcp_upstream" == "atlassian" ]]; then
+        assert '[[ "$mcp_tools_stdout" == *"atlassianUserInfo"* ]]' \
+          "mcp integrations: atlassian exposes atlassianUserInfo" \
+          "visible tools: ${mcp_tools_stdout:0:500}"
+
+        atlassian_user_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/mcp" \
+          -H 'Content-Type: application/json' \
+          -H "x-thor-session-id: $E2E_MCP_SESSION_ID" \
+          -d "$(mcp_payload atlassian atlassianUserInfo '{}')" \
+          2>/dev/null || echo '{}')
+        atlassian_user_exit=$(json_field "$atlassian_user_raw" "exitCode")
+
+        assert '[[ "$atlassian_user_exit" == "0" ]]' \
+          "mcp integrations: atlassian/atlassianUserInfo call succeeds" \
+          "response: ${atlassian_user_raw:0:500}"
       fi
     done
   fi
@@ -772,7 +790,7 @@ else
     echo "  Approval flow setup failed; remaining approval checks cannot run."
   else
   jira_assignee_live=false
-  if [[ -n "$JIRA_CLOUD_ID" && "$THOR_E2E_JIRA_EMAIL" != "$DEFAULT_THOR_E2E_JIRA_EMAIL" ]]; then
+  if [[ -n "$ATLASSIAN_CLOUD_ID" && "$THOR_E2E_JIRA_EMAIL" != "$DEFAULT_THOR_E2E_JIRA_EMAIL" ]]; then
     assert '[[ "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" == "atlassian/createJiraIssue" ]]' \
       "jira attribution e2e: discovered Atlassian createJiraIssue" \
       "discovered '$APPROVAL_UPSTREAM/$APPROVAL_TOOL'; check ATLASSIAN_AUTH and MCP health"
@@ -782,10 +800,10 @@ else
     if [[ "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" == "atlassian/createJiraIssue" && -n "${ATLASSIAN_AUTH:-}" ]]; then
       jira_assignee_live=true
     fi
-  elif [[ -n "$JIRA_CLOUD_ID" ]]; then
+  elif [[ -n "$ATLASSIAN_CLOUD_ID" ]]; then
     assert 'false' \
       "jira attribution e2e: THOR_E2E_JIRA_EMAIL is configured" \
-      "JIRA_CLOUD_ID is set, but THOR_E2E_JIRA_EMAIL is still the default placeholder"
+      "ATLASSIAN_CLOUD_ID is set, but THOR_E2E_JIRA_EMAIL is still the default placeholder"
   fi
 
   trigger_context_body=$(node -e "
@@ -813,7 +831,6 @@ else
     export JIRA_E2E_SUMMARY jira_e2e_description
     approval_args_json=$(node -e "
       console.log(JSON.stringify({
-        cloudId: process.env.JIRA_CLOUD_ID,
         projectKey: 'THORE2E',
         issueTypeName: 'ThorE2EFakeIssueType',
         summary: process.env.JIRA_E2E_SUMMARY,
@@ -823,10 +840,10 @@ else
   else
     case "$APPROVAL_UPSTREAM/$APPROVAL_TOOL" in
       atlassian/createJiraIssue)
-        approval_args_json='{"cloudId":"e2e-cloud","projectKey":"THOR","issueTypeName":"Task","summary":"e2e approval summary","description":"e2e approval body"}'
+        approval_args_json='{"projectKey":"THOR","issueTypeName":"Task","summary":"e2e approval summary","description":"e2e approval body"}'
         ;;
       atlassian/addCommentToJiraIssue)
-        approval_args_json='{"cloudId":"e2e-cloud","issueIdOrKey":"THOR-1","commentBody":"e2e approval body"}'
+        approval_args_json='{"issueIdOrKey":"THOR-1","commentBody":"e2e approval body"}'
         ;;
       posthog/create-feature-flag)
         approval_args_json="{\"key\":\"thor-e2e-approval-${REMOTE_CLI_AUTH_TS}\",\"name\":\"Thor E2E approval ${REMOTE_CLI_AUTH_TS}\",\"description\":\"e2e approval body\",\"active\":false}"
@@ -901,7 +918,7 @@ else
       jira_create_is_error=$(json_field "$jira_create_entry" "result.isError")
       assert '[[ -n "$jira_lookup_entry" ]]' \
         "jira attribution e2e: lookupJiraAccountId ran for the configured user email" \
-        "expected cloud='$JIRA_CLOUD_ID' email='$THOR_E2E_JIRA_EMAIL'"
+        "expected cloud='$ATLASSIAN_CLOUD_ID' email='$THOR_E2E_JIRA_EMAIL'"
       assert '[[ "$jira_create_project_key" == "THORE2E" ]]' \
         "jira attribution e2e: createJiraIssue used the fake project key" \
         "projectKey='$jira_create_project_key' expected='THORE2E'; worklog entry: ${jira_create_entry:0:800}"
