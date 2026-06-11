@@ -602,6 +602,9 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     profile: string | undefined,
   ): Record<string, unknown> {
     if (instance.name !== "atlassian") return args;
+    // Intentionally inject for every Atlassian call. The deterministic e2e
+    // exercises atlassianUserInfo, whose schema has no cloudId, so a future
+    // upstream rejection of extra cloudId fails there and we can revisit.
     const cloudId = resolveAtlassianCloudId(profile).value;
     if (!cloudId) {
       throw new Error("Atlassian cloud ID is not configured");

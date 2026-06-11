@@ -520,7 +520,8 @@ else
         -d "$(mcp_payload "$mcp_upstream")" \
         2>/dev/null || echo '{}')
       mcp_tools_exit=$(json_field "$mcp_tools_raw" "exitCode")
-      mcp_first_tool=$(json_field "$mcp_tools_raw" "stdout" | awk 'NF { print; exit }')
+      mcp_tools_stdout=$(json_field "$mcp_tools_raw" "stdout")
+      mcp_first_tool=$(echo "$mcp_tools_stdout" | awk 'NF { print; exit }')
 
       assert '[[ "$mcp_tools_exit" == "0" ]]' \
         "mcp integrations: $mcp_upstream lists visible tools" \
@@ -541,6 +542,23 @@ else
         assert '[[ "$mcp_help_exit" == "0" && "$mcp_help_name" == "$mcp_first_tool" ]]' \
           "mcp integrations: $mcp_upstream/$mcp_first_tool help returns schema" \
           "tool='$mcp_first_tool' name='$mcp_help_name' response: ${mcp_help_raw:0:500}"
+      fi
+
+      if [[ "$mcp_upstream" == "atlassian" ]]; then
+        assert '[[ "$mcp_tools_stdout" == *"atlassianUserInfo"* ]]' \
+          "mcp integrations: atlassian exposes atlassianUserInfo" \
+          "visible tools: ${mcp_tools_stdout:0:500}"
+
+        atlassian_user_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/mcp" \
+          -H 'Content-Type: application/json' \
+          -H "x-thor-session-id: $E2E_MCP_SESSION_ID" \
+          -d "$(mcp_payload atlassian atlassianUserInfo '{}')" \
+          2>/dev/null || echo '{}')
+        atlassian_user_exit=$(json_field "$atlassian_user_raw" "exitCode")
+
+        assert '[[ "$atlassian_user_exit" == "0" ]]' \
+          "mcp integrations: atlassian/atlassianUserInfo call succeeds" \
+          "response: ${atlassian_user_raw:0:500}"
       fi
     done
   fi
