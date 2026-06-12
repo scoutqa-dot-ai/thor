@@ -802,7 +802,9 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
       logInfo(log, "exec_aws", { args, cwd, ...thorIds(req) });
       // aws inherits the container's AWS credential chain (IAM role / AWS_* env).
-      const result = await execCommand("aws", args, cwd);
+      // AWS_PAGER="" disables the v2 pager — output is captured non-interactively,
+      // and the container has no pager (`less`) to redirect to.
+      const result = await execCommand("aws", args, cwd, { env: { AWS_PAGER: "" } });
       res.json(result);
     } catch (err) {
       logError(log, "exec_aws_error", errorMessage(err), thorIds(req));
