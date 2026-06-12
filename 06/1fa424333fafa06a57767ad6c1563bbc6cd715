@@ -1,0 +1,35 @@
+.env.example
+  0ae0be11d893abdd 62-69
+packages/remote-cli/src/policy.ts
+  0ae0be11d893abdd 2,233-248
+packages/remote-cli/src/index.ts
+  0ae0be11d893abdd 51,1015-1021
+README.md
+  0ae0be11d893abdd 15,125-128
+packages/remote-cli/src/policy.test.ts
+  0ae0be11d893abdd 9,1890-1904
+docker/opencode/bin/aws
+  0ae0be11d893abdd 1-2
+Dockerfile
+  0ae0be11d893abdd 100,130-136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "061fa424333fafa06a57767ad6c1563bbc6cd715",
+  "prompts": {
+    "0ae0be11d893abdd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "387b6bae-68b1-4181-b281-bfa753be3921",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 90,
+      "total_deletions": 2,
+      "accepted_lines": 90,
+      "overriden_lines": 0
+    }
+  }
+}
