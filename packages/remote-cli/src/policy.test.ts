@@ -6,6 +6,7 @@ import { normalize as normalizePosix } from "node:path/posix";
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import {
   resolveGitArgs,
+  validateAwsArgs,
   validateCwd,
   validateGitArgs,
   validateGhArgs,
@@ -1840,5 +1841,20 @@ describe("validateMetabaseArgs", () => {
       expect(validateMetabaseArgs(["question", "123abc"])).not.toBeNull();
       expect(validateMetabaseArgs(["question", "42/slug"])).not.toBeNull();
     });
+  });
+});
+
+// ── aws policy ───────────────────────────────────────────────────────────────
+
+describe("validateAwsArgs", () => {
+  it("rejects empty or non-array args", () => {
+    expect(validateAwsArgs([])).not.toBeNull();
+    expect(validateAwsArgs(undefined as unknown as string[])).not.toBeNull();
+  });
+
+  it("allows any non-empty command (generic passthrough)", () => {
+    expect(validateAwsArgs(["s3", "ls"])).toBeNull();
+    expect(validateAwsArgs(["sts", "get-caller-identity"])).toBeNull();
+    expect(validateAwsArgs(["--version"])).toBeNull();
   });
 });

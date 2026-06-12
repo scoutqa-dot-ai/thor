@@ -1,5 +1,5 @@
 /**
- * Server-side command policy for git, gh, scoutqa, ldcli, metabase.
+ * Server-side command policy for git, gh, scoutqa, ldcli, metabase, aws.
  *
  * All validation happens here — the OpenCode wrapper scripts are untrusted.
  *
@@ -229,4 +229,20 @@ function getMetabaseAllowedSchemas(): Set<string> {
       .map((s) => s.trim())
       .filter(Boolean),
   );
+}
+
+// ── aws policy ─────────────────────────────────────────────────────────────
+//
+// The aws endpoint is a generic passthrough — any AWS CLI command is forwarded
+// to the remote-cli container, which executes it with the credentials in its
+// own environment (IAM role / AWS_* env). Scope is governed by those IAM
+// credentials, not by an in-process allowlist. If a future plan needs to
+// restrict which services/subcommands agents can reach, add the allowlist here.
+
+export function validateAwsArgs(args: string[]): string | null {
+  if (!Array.isArray(args) || args.length === 0) {
+    return "args must be a non-empty array";
+  }
+
+  return null;
 }
