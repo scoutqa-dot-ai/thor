@@ -34,9 +34,11 @@ For Slack admission details, see [`../slack.md`](../slack.md). For the remote-cl
 }
 ```
 
-Single-value integrations check the profile-suffixed environment variable first, then the unsuffixed global. For example, `POSTHOG_API_KEY_QA` is preferred over `POSTHOG_API_KEY` for profile `QA`. Grafana is a bundle: if any `GRAFANA_*_<PROFILE>` value is set, the profile URL and token must both be set.
+Single-value integrations check the profile-suffixed environment variable first, then the unsuffixed global. For example, `POSTHOG_API_KEY_QA` is preferred over `POSTHOG_API_KEY` for profile `QA`.
 
-Atlassian profile support is not first class yet. MCP calls can resolve `ATLASSIAN_AUTH_<PROFILE>` before falling back to `ATLASSIAN_AUTH`, but direct Jira/Atlassian HTTP egress through mitmproxy still uses the unsuffixed global `ATLASSIAN_AUTH` because mitmproxy is not profile-aware. Treat Atlassian profile suffixes as best-effort MCP routing until a later mitmproxy profile-routing update lands.
+Multi-value integrations (Grafana, Langfuse, Atlassian) are bundles: a profile must set every `_<PROFILE>` value in the bundle together, or none of them. A partial profile bundle is rejected rather than silently mixing scoped values with globals, and a profile with no scoped values falls back to the whole global bundle.
+
+Atlassian bundles `ATLASSIAN_AUTH` + `ATLASSIAN_CLOUD_ID`. Profile suffixes re-route MCP calls only; direct mitmproxy egress still uses the global `ATLASSIAN_AUTH` (see [`security-model.md`](security-model.md) → Built-in defaults).
 
 ## Resolution
 

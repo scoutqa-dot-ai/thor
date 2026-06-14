@@ -6,6 +6,7 @@ on:
       - "docker/sandbox/**"
       - "scripts/test-sandbox-e2e.sh"
       - ".github/workflows/sandbox-e2e.yml"
+      - docker-compose.yml
   workflow_dispatch:
 
 permissions:
@@ -44,9 +45,10 @@ jobs:
       SLACK_BOT_USER_ID: U000000000
       SLACK_DEFAULT_REPO: ci-fake
       SLACK_SIGNING_SECRET: ci-fake
-      GRAFANA_URL: http://grafana-mcp:8000
+      GRAFANA_URL: http://grafana.invalid
       GRAFANA_SERVICE_ACCOUNT_TOKEN: ci-fake
       ATLASSIAN_AUTH: ci-fake
+      ATLASSIAN_CLOUD_ID: ci-fake
       POSTHOG_API_KEY: ci-fake
       LANGFUSE_PUBLIC_KEY: ${{ vars.LANGFUSE_PUBLIC_KEY }}
       LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
@@ -236,10 +238,14 @@ jobs:
           # MCP credentials are passed to compose services through env_file.
           {
             printf 'ATLASSIAN_AUTH=%s\n' "$ATLASSIAN_AUTH"
+            printf 'ATLASSIAN_CLOUD_ID=%s\n' "$ATLASSIAN_CLOUD_ID"
             printf 'POSTHOG_API_KEY=%s\n' "$POSTHOG_API_KEY"
             printf 'GRAFANA_URL=%s\n' "$GRAFANA_URL"
             printf 'GRAFANA_SERVICE_ACCOUNT_TOKEN=%s\n' "$GRAFANA_SERVICE_ACCOUNT_TOKEN"
             printf 'GRAFANA_ORG_ID=%s\n' "${GRAFANA_ORG_ID:-1}"
+            # CI cannot host a rootless bwrap sandbox; run mcp-grafana unsandboxed
+            # so remote-cli starts cleanly. Safe here: credentials are fakes.
+            printf 'THOR_MCP_DISABLE_SANDBOX=1\n'
           } > .env
 
           echo "DAYTONA_SNAPSHOT=$DAYTONA_SNAPSHOT" >> "$GITHUB_ENV"

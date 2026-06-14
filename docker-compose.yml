@@ -10,8 +10,8 @@ x-mitmproxy-egress-env: &mitmproxy-egress-env
   https_proxy: http://mitmproxy:8080
   HTTP_PROXY: http://mitmproxy:8080
   HTTPS_PROXY: http://mitmproxy:8080
-  no_proxy: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb"
-  NO_PROXY: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb"
+  no_proxy: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb"
+  NO_PROXY: "localhost,127.0.0.1,::1,remote-cli,gateway,runner,opencode,admin,ingress,vouch,cron,mitmproxy,codex-lb"
 
 services:
   remote-cli:
@@ -19,6 +19,8 @@ services:
       context: .
       target: remote-cli
     restart: unless-stopped
+    security_opt:
+      - seccomp=./docker/remote-cli/seccomp-bwrap.json
     ports:
       - "127.0.0.1:3004:3004"
     environment:
@@ -51,38 +53,12 @@ services:
       - ./docker-volumes/workspace:/workspace
       - ./docker-volumes/github-app:/var/lib/remote-cli/github-app
       - shared-tmp:/tmp
-    depends_on:
-      grafana-mcp:
-        condition: service_healthy
     healthcheck:
       test:
         ["CMD", "node", "-e", "fetch('http://localhost:3004/health').then(r=>{if(!r.ok)throw 1})"]
       interval: 5s
       timeout: 3s
       retries: 10
-
-  grafana-mcp:
-    image: grafana/mcp-grafana:0.14.0
-    restart: unless-stopped
-    entrypoint:
-      [
-        "/app/mcp-grafana",
-        "-transport",
-        "streamable-http",
-        "-address",
-        "0.0.0.0:8000",
-        "-enabled-tools",
-        "datasource,prometheus,loki,proxied",
-      ]
-    env_file:
-      - .env
-    healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8000"]
-      interval: 30s
-      timeout: 3s
-      retries: 5
-      start_period: 10s
-      start_interval: 2s
 
   mitmproxy:
     build:
@@ -127,6 +103,12 @@ services:
       # leaving session titles stuck on "New session - <timestamp>". Disable
       # the bridge so each request gets its own upstream stream.
       CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_ENABLED: "false"
+      # The model-registry scheduler's version lookup hits GitHub/npm, which our
+      # egress proxy blocks, logging a traceback every refresh. Disabling it
+      # silences that and empties codex-lb's /v1/models — safe because opencode
+      # sources its models from its bundled models.dev snapshot, not this proxy.
+      # Caveat + source-level verification: docs/plan/2026052601_codex-lb-integration.md
+      CODEX_LB_MODEL_REGISTRY_ENABLED: "false"
       SSL_CERT_FILE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
       REQUESTS_CA_BUNDLE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
       CURL_CA_BUNDLE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem

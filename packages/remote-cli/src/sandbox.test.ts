@@ -109,12 +109,15 @@ describe("/exec/sandbox", () => {
       return sandbox;
     });
 
-    daytonaListMock.mockImplementation(async (labels?: Record<string, string>) => {
+    daytonaListMock.mockImplementation((query?: { labels?: Record<string, string> }) => {
       const items = Array.from(daytonaState.sandboxes.values()).filter((sandbox) => {
-        if (!labels) return true;
-        return Object.entries(labels).every(([key, value]) => sandbox.labels[key] === value);
+        if (!query?.labels) return true;
+        return Object.entries(query.labels).every(([key, value]) => sandbox.labels[key] === value);
       });
-      return { items };
+
+      return (async function* () {
+        yield* items;
+      })();
     });
 
     daytonaGetMock.mockImplementation(async (id: string) => {
@@ -330,7 +333,7 @@ describe("/exec/sandbox", () => {
 
     expect(response.status).toBe(500);
     const body = (await response.json()) as { stderr: string };
-    expect(body.stderr).toContain("Failed to resolve worktree root");
+    expect(body.stderr).toContain("git toplevel is not a valid worktree path");
   });
 
   it("rejects git toplevels nested under another working tree", async () => {
@@ -350,7 +353,7 @@ describe("/exec/sandbox", () => {
 
     expect(response.status).toBe(500);
     const body = (await response.json()) as { stderr: string };
-    expect(body.stderr).toContain("Failed to resolve worktree root");
+    expect(body.stderr).toContain("git toplevel is nested under another working tree");
   });
 
   it("reports pullback failures as exec failures", async () => {
@@ -382,10 +385,25 @@ describe("/exec/sandbox", () => {
       { type: "stdout", data: "sandbox run output\n" },
       {
         type: "stderr",
-        data: "Failed to read sandbox state after exec. No files were pulled back.\n",
+        data: "Failed to read sandbox state after exec. No files were pulled back. (sandbox git status failed: status failed)\n",
       },
       { type: "exit", exitCode: 1 },
     ]);
+  });
+
+  it("passes through provider failures with paths in JSON stderr", async () => {
+    daytonaListMock.mockImplementationOnce(() =>
+      (async function* () {
+        throw new Error("no space left on device: /home/thor/.daytona/sandboxes/sbx-1");
+      })(),
+    );
+
+    const response = await postJson("/exec/sandbox", { mode: "list" });
+    const body = (await response.json()) as { stderr: string; exitCode: number };
+
+    expect(response.status).toBe(500);
+    expect(body.stderr).toBe("no space left on device: /home/thor/.daytona/sandboxes/sbx-1");
+    expect(body.exitCode).toBe(1);
   });
 
   async function postJson(path: string, body: Record<string, unknown>): Promise<Response> {

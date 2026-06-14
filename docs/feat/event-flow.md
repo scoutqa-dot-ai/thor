@@ -122,6 +122,8 @@ The runner lock is based on the direct session id or resolved correlation lock k
 
 If the target session is busy, `interrupt:false` returns `{ "busy": true }`. `interrupt:true` aborts the in-flight trigger, records it as aborted, waits for OpenCode to become idle, then sends the new prompt.
 
+When OpenCode idles a session on an empty failed assistant message (an error finish with no output), runner sends a single `Continue` nudge to the same session rather than ending the trigger, bounded to a few attempts per run. These nudges stay inside one trigger — no new `trigger_start` is written and the session stays busy throughout — and an empty failure that cannot be recovered is recorded as `trigger_end: error` rather than an empty `completed`. Mechanism and bounds: [`../plan/2026060301_runner-idle-auto-resume.md`](../plan/2026060301_runner-idle-auto-resume.md).
+
 Every accepted trigger writes `trigger_start` and then a terminal `trigger_end` with `completed`, `error`, or `aborted`. The viewer and disclaimer links depend on that lifecycle record, not on gateway state.
 
 ## Progress

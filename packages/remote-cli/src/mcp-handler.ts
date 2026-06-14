@@ -7,6 +7,7 @@ import {
   buildThorDisclaimer,
   computeSlackCorrelationKey,
   createLogger,
+  errorMessage,
   getAvailableProxyNames,
   injectApprovalDisclaimer,
   isProxyName,
@@ -16,6 +17,7 @@ import {
   logInfo,
   logWarn,
   PROXY_NAMES,
+  resolveAtlassianCloudId,
   resolveProxyConfig,
   resolveSessionAnchorId,
   resolveStrictProfileForSession,
@@ -26,12 +28,7 @@ import {
   writeToolCallLog,
 } from "@thor/common";
 import type { ApprovalAction } from "./approval-store.ts";
-import {
-  classifyTool,
-  PolicyDriftError,
-  PolicyOverlapError,
-  validatePolicy,
-} from "./policy-mcp.ts";
+import { classifyTool, PolicyDriftError, validatePolicy } from "./policy-mcp.ts";
 import {
   ApprovalSystemRejection,
   fail,
@@ -44,13 +41,25 @@ import {
   type ApprovalService,
 } from "./approval-service.ts";
 import { unwrapResult } from "./unwrap-result.ts";
-import { connectUpstream, type UpstreamConnection } from "./upstream.ts";
+import { connectUpstream, upstreamTarget, type UpstreamConnection } from "./upstream.ts";
 import { attributionFields, resolveTriggerUser } from "./attribution.ts";
 
 const log = createLogger("mcp");
 const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
+const PROFILE_DENIAL_MESSAGE = "Integration not available in this thread context";
+
+class ProfileRoutingDenialError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProfileRoutingDenialError";
+  }
+}
+
+function profileDenialMessage(err: unknown): string {
+  return err instanceof ProfileRoutingDenialError ? PROFILE_DENIAL_MESSAGE : errorMessage(err);
+}
 
 function buildUpstreamArgs(action: ApprovalAction): Record<string, unknown> {
   if (!approvalToolRequiresDisclaimer(action.tool)) return action.args;
@@ -62,6 +71,30 @@ function buildUpstreamArgs(action: ApprovalAction): Record<string, unknown> {
   }
   const { footer } = buildThorDisclaimer(trigger, getRunnerBaseUrl());
   return injectApprovalDisclaimer(action.tool, action.args, footer);
+}
+
+function withoutCloudId(args: Record<string, unknown>): Record<string, unknown> {
+  const { cloudId: _cloudId, ...rest } = args;
+  return rest;
+}
+
+function sanitizeAtlassianInputSchema(inputSchema: unknown): unknown {
+  if (!inputSchema || typeof inputSchema !== "object" || Array.isArray(inputSchema)) {
+    return inputSchema;
+  }
+  const schema = inputSchema as Record<string, unknown>;
+  const properties =
+    schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)
+      ? withoutCloudId(schema.properties as Record<string, unknown>)
+      : schema.properties;
+  const required = Array.isArray(schema.required)
+    ? schema.required.filter((field) => field !== "cloudId")
+    : schema.required;
+  return {
+    ...schema,
+    ...(properties !== undefined ? { properties } : {}),
+    ...(required !== undefined ? { required } : {}),
+  };
 }
 
 type JiraLookupResult = { ok: true; accountId: string } | { ok: false; reason: string };
@@ -173,10 +206,10 @@ function requireBoundSessionId(input: {
   invalidMessage: (sessionId: string) => string;
 }): string {
   if (!input.sessionId) {
-    throw new Error(input.missingMessage);
+    throw new ProfileRoutingDenialError(input.missingMessage);
   }
   if (!resolveSessionAnchorId(input.sessionId)) {
-    throw new Error(input.invalidMessage(input.sessionId));
+    throw new ProfileRoutingDenialError(input.invalidMessage(input.sessionId));
   }
   return input.sessionId;
 }
@@ -202,6 +235,9 @@ export function createMcpService(
   const getConfig = deps.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
   const instances = new Map<string, ProxyInstance>();
   const connecting = new Map<string, Promise<ProxyInstance>>();
+  // Set by closeAll() so a disconnect during shutdown does not respawn an
+  // upstream (for stdio that would orphan a child process nothing will reap).
+  let closing = false;
 
   function getThorIds(context: McpCommandContext): { sessionId?: string; callId?: string } {
     return {
@@ -221,7 +257,7 @@ export function createMcpService(
 
     const config = getConfig();
     const resolved = resolveStrictProfileForSession(config, sessionId);
-    if (!resolved.ok) throw new Error(resolved.error);
+    if (!resolved.ok) throw new ProfileRoutingDenialError(resolved.error);
     return { profile: resolved.profile };
   }
 
@@ -229,12 +265,10 @@ export function createMcpService(
     name: ProxyName,
     proxyDef: NonNullable<ReturnType<typeof resolveProxyConfig>>,
   ): Promise<ProxyInstance> {
-    const upstreamConfig = {
-      url: proxyDef.upstream.url,
-      headers: proxyDef.upstream.headers,
-    };
+    const upstreamConfig = proxyDef.upstream;
 
     function scheduleReconnect(attempt: number): void {
+      if (closing) return;
       const instance = instances.get(proxyDef.target.key);
       if (!instance) return;
       if (attempt > MAX_RECONNECT_ATTEMPTS) {
@@ -251,46 +285,58 @@ export function createMcpService(
       }
       const delay = Math.min(BASE_DELAY_MS * 2 ** (attempt - 1), MAX_DELAY_MS);
       logInfo(log, "upstream_reconnecting", { name, attempt, delayMs: delay });
-      setTimeout(() => {
+      const reconnectTimer = setTimeout(() => {
+        if (closing) return;
         connectUpstreamFn(name, upstreamConfig, () => scheduleReconnect(1))
           .then((newUpstream) => {
             instance.upstream = newUpstream;
             logInfo(log, "upstream_reconnected", { name, afterAttempt: attempt });
           })
           .catch((err) => {
-            logError(
-              log,
-              "upstream_reconnect_failed",
-              err instanceof Error ? err.message : String(err),
-              { name, attempt },
-            );
+            logError(log, "upstream_reconnect_failed", errorMessage(err), { name, attempt });
             scheduleReconnect(attempt + 1);
           });
       }, delay);
+      reconnectTimer.unref?.();
     }
 
+    if (proxyDef.upstream.kind === "stdio" && proxyDef.upstream.command !== "bwrap") {
+      logWarn(log, "mcp_sandbox_disabled", {
+        name,
+        targetKey: proxyDef.target.key,
+        reason: "THOR_MCP_DISABLE_SANDBOX=1 — stdio MCP server runs unsandboxed",
+      });
+    }
     logInfo(log, "connecting_upstream", {
       name,
       targetKey: proxyDef.target.key,
       profile: proxyDef.target.profile,
-      url: proxyDef.upstream.url,
+      transport: proxyDef.upstream.kind,
+      target: upstreamTarget(proxyDef.upstream),
     });
     const upstream = await connectUpstreamFn(name, upstreamConfig, () => scheduleReconnect(1));
 
     const allToolNames = upstream.tools.map((tool) => tool.name);
+    async function closeUpstreamOnSetupFailure(err: unknown): Promise<never> {
+      await upstream.client.close().catch((closeErr) => {
+        logError(
+          log,
+          "upstream_close_failed",
+          closeErr instanceof Error ? closeErr.message : String(closeErr),
+          { name, targetKey: proxyDef.target.key },
+        );
+      });
+      throw err;
+    }
+
     try {
       validatePolicy(proxyDef.allow, proxyDef.approve ?? [], allToolNames);
     } catch (err) {
-      if (err instanceof PolicyDriftError) {
-        if (deps.isProduction) {
-          logWarn(log, "policy_drift", { name, orphans: err.orphans });
-        } else {
-          throw err;
-        }
-      } else if (err instanceof PolicyOverlapError) {
-        throw err;
+      const tolerated = err instanceof PolicyDriftError && deps.isProduction;
+      if (tolerated) {
+        logWarn(log, "policy_drift", { name, orphans: err.orphans });
       } else {
-        throw err;
+        await closeUpstreamOnSetupFailure(err);
       }
     }
 
@@ -317,7 +363,7 @@ export function createMcpService(
       logWarn(log, "proxy_resolution_failed", {
         name,
         profile,
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
       });
       throw err;
     }
@@ -358,13 +404,12 @@ export function createMcpService(
 
     const config = getConfig();
     const resolved = resolveStrictProfileForSession(config, sessionId);
-    if (!resolved.ok) throw new Error(resolved.error);
+    if (!resolved.ok) throw new ProfileRoutingDenialError(resolved.error);
     return { profile: resolved.profile };
   }
 
   async function lookupJiraAccountIdViaUpstream(
     instance: ProxyInstance,
-    cloudId: string,
     email: string,
     profile: string | undefined,
   ): Promise<JiraLookupResult> {
@@ -374,7 +419,7 @@ export function createMcpService(
     const outcome = await callUpstreamWithLogging(
       instance,
       JIRA_ACCOUNT_LOOKUP_TOOL,
-      { cloudId, searchString: email },
+      { searchString: email },
       { logEvent: "jira_account_lookup", decision: "allowed", profile },
     );
     if (!outcome.ok) return { ok: false, reason: "upstream_disconnected" };
@@ -395,7 +440,7 @@ export function createMcpService(
     try {
       instance = await getInstance(upstreamName, profile);
     } catch (err) {
-      return fail(err instanceof Error ? err.message : String(err));
+      return fail(errorMessage(err));
     }
     if (!instance) {
       return fail(`Upstream "${upstreamName}" is not configured for this thread/profile.`);
@@ -409,7 +454,10 @@ export function createMcpService(
       .map((tool) => ({
         name: tool.name,
         description: tool.description,
-        inputSchema: tool.inputSchema,
+        inputSchema:
+          upstreamName === "atlassian"
+            ? sanitizeAtlassianInputSchema(tool.inputSchema)
+            : tool.inputSchema,
         classification: classifyTool(allow, approve, tool.name),
       }))
       .filter((tool) => tool.classification !== "hidden");
@@ -444,7 +492,7 @@ export function createMcpService(
       const upstreams = getAvailableProxyNames(profile);
       return ok(upstreams.join("\n") + (upstreams.length > 0 ? "\n" : ""));
     } catch (err) {
-      return fail(err instanceof Error ? err.message : String(err));
+      return fail(errorMessage(err));
     }
   }
 
@@ -470,6 +518,22 @@ export function createMcpService(
   type UpstreamCallOutcome =
     | { ok: true; text: string; durationMs: number }
     | { ok: false; message: string; durationMs: number };
+
+  function outboundArgs(
+    instance: ProxyInstance,
+    args: Record<string, unknown>,
+    profile: string | undefined,
+  ): Record<string, unknown> {
+    if (instance.name !== "atlassian") return args;
+    // Intentionally inject for every Atlassian call. The deterministic e2e
+    // exercises atlassianUserInfo, whose schema has no cloudId, so a future
+    // upstream rejection of extra cloudId fails there and we can revisit.
+    const cloudId = resolveAtlassianCloudId(profile).value;
+    if (!cloudId) {
+      throw new Error("Atlassian cloud ID is not configured");
+    }
+    return { ...args, cloudId };
+  }
 
   async function callUpstreamWithLogging(
     instance: ProxyInstance,
@@ -502,10 +566,14 @@ export function createMcpService(
       ...extraLogFields,
     };
     const start = Date.now();
+    // Logged so the audit trail records the effective payload sent upstream
+    // (including any server-side injected fields such as the Atlassian cloudId).
+    let callArgs = args;
     try {
+      callArgs = outboundArgs(instance, args, profile);
       const result = await instance.upstream.client.callTool({
         name: toolName,
-        arguments: args,
+        arguments: callArgs,
       });
       const durationMs = Date.now() - start;
       const text = unwrapResult(result);
@@ -516,7 +584,7 @@ export function createMcpService(
           decision,
           targetKey: targetKey ?? instance.targetKey,
           profile,
-          args,
+          args: callArgs,
           durationMs,
           error: text,
         });
@@ -529,7 +597,7 @@ export function createMcpService(
         decision,
         targetKey: targetKey ?? instance.targetKey,
         profile,
-        args,
+        args: callArgs,
         result: text,
         durationMs,
       });
@@ -544,7 +612,7 @@ export function createMcpService(
         decision,
         targetKey: targetKey ?? instance.targetKey,
         profile,
-        args,
+        args: callArgs,
         durationMs,
         error: message,
       });
@@ -612,7 +680,7 @@ export function createMcpService(
       ({ profile } = resolveProfileForContext(context));
       instance = await getInstance(upstreamName, profile);
     } catch (err) {
-      return fail(err instanceof Error ? err.message : String(err));
+      return fail(profileDenialMessage(err));
     }
     if (!instance) {
       return fail(`Upstream "${upstreamName}" is not configured for this thread/profile.`);
@@ -683,6 +751,7 @@ export function createMcpService(
           profile,
         );
       }
+      upstreamArgs = outboundArgs(instance, upstreamArgs, profile);
     } catch (err) {
       return {
         ok: false,
@@ -735,10 +804,10 @@ export function createMcpService(
       try {
         profile = resolveProfileForAction(action).profile;
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const outwardMessage = profileDenialMessage(err);
         throw new ApprovalSystemRejection(
-          message,
-          `profile re-resolution failed at approval time: ${message}`,
+          outwardMessage,
+          `profile re-resolution failed at approval time: ${outwardMessage}`,
           { logEvent: "tool_call_rejected_profile_ambiguous", logToolCall: true },
         );
       }
@@ -797,25 +866,9 @@ export function createMcpService(
       });
       return args;
     }
-    const cloudId =
-      typeof args.cloudId === "string" && args.cloudId.length > 0 ? args.cloudId : undefined;
-    if (!cloudId) {
-      logInfo(log, "attribution_applied", {
-        surface: "jira",
-        outcome: "api_rejected",
-        reason: "lookup_missing_cloud_id",
-        ...attributionFields(resolved.actor, resolved.user),
-      });
-      return args;
-    }
     let lookup: JiraLookupResult;
     try {
-      lookup = await lookupJiraAccountIdViaUpstream(
-        instance,
-        cloudId,
-        resolved.user.email,
-        profile,
-      );
+      lookup = await lookupJiraAccountIdViaUpstream(instance, resolved.user.email, profile);
     } catch {
       logInfo(log, "attribution_applied", {
         surface: "jira",
@@ -887,6 +940,7 @@ export function createMcpService(
     },
 
     async closeAll(): Promise<void> {
+      closing = true;
       await Promise.allSettled(
         [...instances.values()].map((instance) => instance.upstream.client.close()),
       );
@@ -911,7 +965,7 @@ export function createMcpService(
           const { profile } = resolveProfileForContext(context);
           return listUpstreams(profile);
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return fail(profileDenialMessage(err));
         }
       }
 
@@ -929,7 +983,7 @@ export function createMcpService(
       try {
         profile = resolveProfileForContext(context).profile;
       } catch (err) {
-        return fail(err instanceof Error ? err.message : String(err));
+        return fail(profileDenialMessage(err));
       }
       const tools = await listVisibleTools(upstreamName, profile);
       if (!Array.isArray(tools)) return tools;

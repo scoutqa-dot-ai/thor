@@ -1,10 +1,159 @@
+import { z } from "zod";
 import type { InternalExecClient } from "./service.ts";
 
-type CheckSuiteGateFailureReason = "sha_missing" | "author_mismatch" | "exec_failed";
+type InternalExecResult = Awaited<ReturnType<InternalExecClient>>;
+
+export type CheckSuiteGateFailureReason = "sha_missing" | "author_mismatch" | "exec_failed";
 
 export type CheckSuiteGateResult =
   | { ok: true }
   | { ok: false; reason: CheckSuiteGateFailureReason };
+
+const PrCheckSummarySchema = z
+  .object({
+    name: z.string().optional(),
+    state: z.string().optional(),
+    bucket: z.string().optional(),
+    link: z.string().optional(),
+    description: z.string().optional(),
+    workflow: z.string().optional(),
+  })
+  .refine((row) => row.state !== undefined || row.bucket !== undefined);
+
+const PrCheckSummariesSchema = z.array(PrCheckSummarySchema);
+
+export type PrCheckSummary = z.infer<typeof PrCheckSummarySchema>;
+
+export interface PrChecksAggregateOutput {
+  command: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+export type PrChecksTerminalStateResult =
+  | { ok: true; checks: PrCheckSummary[]; aggregate: PrChecksAggregateOutput }
+  | { ok: false; reason: "pr_checks_pending"; pending: PrCheckSummary[]; checks: PrCheckSummary[] }
+  | {
+      ok: false;
+      reason: "pr_checks_lookup_failed";
+      error?: string;
+      stderr?: string;
+      exitCode?: number;
+    };
+
+const TERMINAL_BUCKETS = new Set(["pass", "fail", "skipping", "cancel"]);
+const PENDING_STATES = new Set([
+  "EXPECTED",
+  "IN_PROGRESS",
+  "PENDING",
+  "QUEUED",
+  "REQUESTED",
+  "WAITING",
+]);
+const TERMINAL_STATES = new Set([
+  "ACTION_REQUIRED",
+  "CANCELLED",
+  "COMPLETED",
+  "ERROR",
+  "FAILURE",
+  "NEUTRAL",
+  "SKIPPED",
+  "STARTUP_FAILURE",
+  "STALE",
+  "SUCCESS",
+  "TIMED_OUT",
+]);
+
+function parsePrCheckSummaries(stdout: string): PrCheckSummary[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  const result = PrCheckSummariesSchema.safeParse(parsed);
+  return result.success ? result.data : null;
+}
+
+function isTerminalPrCheck(check: PrCheckSummary): boolean {
+  const bucket = check.bucket?.trim().toLowerCase();
+  if (bucket) return TERMINAL_BUCKETS.has(bucket);
+
+  const state = check.state?.trim().toUpperCase();
+  if (!state) return false;
+  if (PENDING_STATES.has(state)) return false;
+  return TERMINAL_STATES.has(state);
+}
+
+export async function resolvePrChecksTerminalState(input: {
+  internalExec: InternalExecClient;
+  directory: string;
+  prNumber: number;
+}): Promise<PrChecksTerminalStateResult> {
+  let jsonResult: InternalExecResult;
+  try {
+    jsonResult = await input.internalExec({
+      bin: "gh",
+      args: [
+        "pr",
+        "checks",
+        String(input.prNumber),
+        "--json",
+        "name,state,bucket,link,description,workflow",
+      ],
+      cwd: input.directory,
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "pr_checks_lookup_failed",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const checks = parsePrCheckSummaries(jsonResult.stdout);
+  if (!checks) {
+    return {
+      ok: false,
+      reason: "pr_checks_lookup_failed",
+      stderr: jsonResult.stderr,
+      exitCode: jsonResult.exitCode,
+    };
+  }
+
+  const pending = checks.filter((check) => !isTerminalPrCheck(check));
+  if (pending.length > 0) {
+    return { ok: false, reason: "pr_checks_pending", pending, checks };
+  }
+
+  const aggregateCommand = `gh pr checks ${input.prNumber}`;
+  let aggregate: InternalExecResult;
+  try {
+    aggregate = await input.internalExec({
+      bin: "gh",
+      args: ["pr", "checks", String(input.prNumber)],
+      cwd: input.directory,
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "pr_checks_lookup_failed",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  return {
+    ok: true,
+    checks,
+    aggregate: {
+      command: aggregateCommand,
+      stdout: aggregate.stdout,
+      stderr: aggregate.stderr,
+      exitCode: aggregate.exitCode,
+    },
+  };
+}
 
 export async function verifyThorAuthoredSha(input: {
   internalExec: InternalExecClient;
@@ -12,7 +161,7 @@ export async function verifyThorAuthoredSha(input: {
   sha: string;
   expectedEmail: string;
 }): Promise<CheckSuiteGateResult> {
-  let exists;
+  let exists: InternalExecResult;
   try {
     exists = await input.internalExec({
       bin: "git",
@@ -27,7 +176,7 @@ export async function verifyThorAuthoredSha(input: {
     return { ok: false, reason: "sha_missing" };
   }
 
-  let author;
+  let author: InternalExecResult;
   try {
     author = await input.internalExec({
       bin: "git",

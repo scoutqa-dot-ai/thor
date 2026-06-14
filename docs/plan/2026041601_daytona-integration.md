@@ -228,6 +228,7 @@ sandbox --list                         # list session's sandboxes
 - [x] **P1 — Per-cwd mutex for parallel sandbox exec.** Two parallel `sandbox` calls on the same worktree raced on git auto-stash (`git add -A` + temp commit + `git reset`), corrupting the worktree. Fix: `withCwdLock(cwd, fn)` serializes the git+sync portion via promise chaining; lock is released before streaming exec so parallel commands run concurrently in the sandbox. Different worktrees are unaffected (separate lock keys). Future changes must preserve this property: parallel `sandbox` calls on the same cwd must be safe.
 - [x] **P1 — Custom sandbox image with polyglot runtimes.** `docker/sandbox/Dockerfile` builds an Ubuntu 24.04 image with nvm (Node 20/22), SDKMAN (Java 17/21, Maven, Gradle), pyenv (Python 3.12), and uv. CI workflow (`.github/workflows/sandbox-e2e.yml`) builds and pushes the image to `ghcr.io/scoutqa-dot-ai/thor-sandbox` on Dockerfile changes; an admin creates the Daytona snapshot from the published image and sets `DAYTONA_SNAPSHOT` to use it. Default snapshot remains `daytona-medium` for zero-config startup.
 - [x] **P1 — Slim sandbox runtime contract + on-demand toolchains.** Base image now preinstalls Node 22 (default) + 20, Java 21 (default) + 17, Python 3.12 (default), uv, Maven, Gradle, and Docker. Extra toolchains (for example Node 19, Python 3.11, Go, Rust, IaC CLIs) are installed inside the sandbox on demand via `docker/opencode/config/skills/sandbox/install-common-toolchains.sh`.
+- [x] **P1 — PHP 8.4 in the sandbox image via ondrej/php.** Base image now preinstalls PHP 8.4 CLI and common extensions from `ppa:ondrej/php`. The PPA remains configured so agents can install other PHP versions on demand with `sudo apt-get` and switch the `php` alternative when a repo requires a non-default version.
 - [ ] **P2 — Delta sync after dirty auto-stash.** After a temp commit is reset, the sandbox label holds an orphaned SHA. Next sync's delta bundle (`orphan..HEAD`) fails and falls back to full bundle. Fix: store original (pre-temp) SHA in label, or clear label to force full sync explicitly. Low impact for small repos; matters for large ones.
 - [ ] **P2 — Token cache invalidation on 401/403.** Currently tokens are cached for ~1hr with 5-min early refresh. A revoked token would fail until cache expires. (Host-side only — sandbox has no tokens.)
 - [ ] **P3 — Client disconnect → sandbox command cancellation.** If OpenCode kills the wrapper (SIGTERM), the HTTP request aborts but the sandbox command keeps running until Daytona auto-stop. Future: listen for `req.on("close")` and call SDK command cancel.
@@ -266,7 +267,8 @@ sandbox --list                         # list session's sandboxes
 | 2026-04-18 | Delta bundles with full-bundle fallback for subsequent syncs                    | Try delta bundle (`last-sha..HEAD`) first; on failure (backward reset, unrelated branch, empty bundle) fall back to full bundle (`HEAD`). `thor-sha` label on sandbox tracks last-synced SHA. Skip sync entirely if SHA unchanged. Supersedes pure-delta approach which broke on backward resets (git refuses empty bundles).          |
 | 2026-04-18 | Sandbox has no git remotes                                                      | Bundle unbundle + reset creates a local repo with no origin configured. Sandbox cannot fetch/push anywhere. Eliminates credential stripping follow-up (P2) and the entire token-in-URL pattern. Strongest possible isolation.                                                                                                          |
 | 2026-04-25 | Keep custom snapshot slim; install extra runtimes on demand                     | Reduces sandbox image build/pull time and maintenance churn while keeping common defaults always available. Add a shared helper script in the sandbox skill folder to make on-demand installs predictable and fast for agents.                                                                                                         |
-| 2026-05-12 | OpenCode owns sandbox execution timeouts                                        | Duplicate Thor-side kill timers can interrupt large repo bundle creation or long-running sandbox commands before the harness-level timeout policy applies. Remote-cli should stream/return results and let OpenCode enforce timeout/cancellation unless Thor has a distinct API contract.                                                  |
+| 2026-05-12 | OpenCode owns sandbox execution timeouts                                        | Duplicate Thor-side kill timers can interrupt large repo bundle creation or long-running sandbox commands before the harness-level timeout policy applies. Remote-cli should stream/return results and let OpenCode enforce timeout/cancellation unless Thor has a distinct API contract.                                              |
+| 2026-06-04 | Add PHP 8.4 from ondrej/php to the custom sandbox image                         | PHP projects should work without bootstrap cost, while non-default PHP versions remain on demand from the same apt source instead of expanding the preinstall matrix.                                                                                                                                                                  |
 
 ## Exit Criteria
 
@@ -288,23 +290,23 @@ sandbox --list                         # list session's sandboxes
 
 ## Error & Rescue Registry
 
-| Codepath          | What Can Go Wrong                 | Rescued? | Rescue Action                                  | User Sees                                      |
-| ----------------- | --------------------------------- | -------- | ---------------------------------------------- | ---------------------------------------------- |
-| auto-create       | Not in a worktree                 | Y        | 400                                            | "Must run from /workspace/worktrees/"          |
-| auto-create       | Daytona API unreachable           | Y        | 500                                            | "Sandbox service unavailable"                  |
-| auto-create       | Daytona auth failure              | Y        | 500                                            | "Sandbox auth failed, check DAYTONA_API_KEY"   |
-| auto-create       | Bundle create fails               | Y        | Delete sandbox, 500                            | "Failed to prepare code for sandbox"           |
-| auto-create       | Bundle upload fails               | Y        | Delete sandbox, 500                            | "Failed to upload code to sandbox"             |
-| auto-create       | Unbundle+reset fails              | Y        | Delete sandbox, 500                            | "Failed to initialize code in sandbox"         |
+| Codepath          | What Can Go Wrong                 | Rescued? | Rescue Action                                      | User Sees                                      |
+| ----------------- | --------------------------------- | -------- | -------------------------------------------------- | ---------------------------------------------- |
+| auto-create       | Not in a worktree                 | Y        | 400                                                | "Must run from /workspace/worktrees/"          |
+| auto-create       | Daytona API unreachable           | Y        | 500                                                | "Sandbox service unavailable"                  |
+| auto-create       | Daytona auth failure              | Y        | 500                                                | "Sandbox auth failed, check DAYTONA_API_KEY"   |
+| auto-create       | Bundle create fails               | Y        | Delete sandbox, 500                                | "Failed to prepare code for sandbox"           |
+| auto-create       | Bundle upload fails               | Y        | Delete sandbox, 500                                | "Failed to upload code to sandbox"             |
+| auto-create       | Unbundle+reset fails              | Y        | Delete sandbox, 500                                | "Failed to initialize code in sandbox"         |
 | auto-create       | Sandbox creation stalls           | N/A      | No Thor timeout imposed — OpenCode manages its own | OpenCode timeout/cancel behavior               |
-| `sandbox <cmd>`   | No sandbox yet / gone on Daytona  | Y        | Auto-create from cwd (silent)                  | Stream command output normally                 |
-| `sandbox <cmd>`   | Worktree dirty (host preflight)   | Y        | Auto-stash: temp commit, sync, undo            | Transparent — sandbox gets uncommitted changes |
-| `sandbox <cmd>`   | Bundle create fails (delta)       | Y        | Fallback to full bundle; 500 only if both fail | "Failed to prepare code sync"                  |
-| `sandbox <cmd>`   | Bundle upload fails               | Y        | 500                                            | "Failed to upload code to sandbox"             |
-| `sandbox <cmd>`   | Unbundle+reset fails (sandbox)    | Y        | 500                                            | "Failed to sync code to sandbox"               |
-| `sandbox <cmd>`   | Command fails (nonzero)           | Y        | Stream stderr                                  | Test failure output (normal)                   |
-| `sandbox <cmd>`   | Parallel calls on same worktree   | Y        | Per-cwd mutex serializes git stash+sync        | Transparent — both commands execute            |
+| `sandbox <cmd>`   | No sandbox yet / gone on Daytona  | Y        | Auto-create from cwd (silent)                      | Stream command output normally                 |
+| `sandbox <cmd>`   | Worktree dirty (host preflight)   | Y        | Auto-stash: temp commit, sync, undo                | Transparent — sandbox gets uncommitted changes |
+| `sandbox <cmd>`   | Bundle create fails (delta)       | Y        | Fallback to full bundle; 500 only if both fail     | "Failed to prepare code sync"                  |
+| `sandbox <cmd>`   | Bundle upload fails               | Y        | 500                                                | "Failed to upload code to sandbox"             |
+| `sandbox <cmd>`   | Unbundle+reset fails (sandbox)    | Y        | 500                                                | "Failed to sync code to sandbox"               |
+| `sandbox <cmd>`   | Command fails (nonzero)           | Y        | Stream stderr                                      | Test failure output (normal)                   |
+| `sandbox <cmd>`   | Parallel calls on same worktree   | Y        | Per-cwd mutex serializes git stash+sync            | Transparent — both commands execute            |
 | `sandbox <cmd>`   | Long-running host sync or command | N/A      | No Thor timeout imposed — OpenCode manages its own | Stream until done                              |
-| `sandbox --stop`  | No sandbox tracked for cwd        | Y        | Silent no-op (idempotent)                      | Exit 0                                         |
-| `sandbox --stop`  | Delete fails                      | Y        | Log + ignore                                   | Exit 0                                         |
-| Daytona auto-stop | Sandbox leaked (no explicit stop) | Y        | Auto-delete after 15 min idle                  | Silent                                         |
+| `sandbox --stop`  | No sandbox tracked for cwd        | Y        | Silent no-op (idempotent)                          | Exit 0                                         |
+| `sandbox --stop`  | Delete fails                      | Y        | Log + ignore                                       | Exit 0                                         |
+| Daytona auto-stop | Sandbox leaked (no explicit stop) | Y        | Auto-delete after 15 min idle                      | Silent                                         |
