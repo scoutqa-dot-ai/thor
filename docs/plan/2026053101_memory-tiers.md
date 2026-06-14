@@ -31,13 +31,13 @@ Out of scope:
 
 ## Decision Log
 
-| #   | Decision                                                                                           | Rationale                                                                                                                                  |
-| --- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| D1  | Remove runner-injected per-repo memory                                                             | Repo-scoped context should live in repo-local docs/instructions that humans and agents share.                                              |
-| D2  | Keep three injected tiers only: global, channel, person                                            | Simpler prompt model with clearer ownership and less accidental context stacking.                                                          |
-| D3  | Person memory path uses lowercased email local-part only                                           | Keeps filenames simple and deterministic, matching configured user identity in `users[]`.                                                  |
-| D4  | Prefer `/workspace/runs/` over `/workspace/worklog/` for dense reusable recall on non-trivial work | Run dirs carry higher-signal curated task context; worklog remains continuity/audit history.                                               |
-| D5  | Do not add extra runner validation for Slack channel ids in this change                            | Channel ids come from Thor's signed Slack webhook intake path, so this boundary is treated as trusted input for the channel-memory lookup. |
+| # | Decision | Rationale |
+|---|---|---|
+| D1 | Remove runner-injected per-repo memory | Repo-scoped context should live in repo-local docs/instructions that humans and agents share. |
+| D2 | Keep three injected tiers only: global, channel, person | Simpler prompt model with clearer ownership and less accidental context stacking. |
+| D3 | Person memory path uses lowercased email local-part only | Keeps filenames simple and deterministic, matching configured user identity in `users[]`. |
+| D4 | Prefer `/workspace/runs/` over `/workspace/worklog/` for dense reusable recall on non-trivial work | Run dirs carry higher-signal curated task context; worklog remains continuity/audit history. |
+| D5 | Do not add extra runner validation for Slack channel ids in this change | Channel ids come from Thor's signed Slack webhook intake path, so this boundary is treated as trusted input for the channel-memory lookup. |
 
 ## Phases
 

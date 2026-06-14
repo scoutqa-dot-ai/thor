@@ -216,9 +216,7 @@ describe("remote-cli ldcli endpoint", () => {
   });
 
   it("keeps scoutqa pre-first-chunk failures on the NDJSON path", async () => {
-    execCommandStreamMock.mockRejectedValue(
-      new Error("scoutqa auth missing at /workspace/.scoutqa"),
-    );
+    execCommandStreamMock.mockRejectedValue(new Error("scoutqa auth missing at /workspace/.scoutqa"));
 
     const response = await postJson("/exec/scoutqa", {
       args: ["list-executions"],

@@ -123,7 +123,9 @@ describe("resolvePrChecksTerminalState", () => {
   it("treats startup_failure state as terminal", async () => {
     const internalExec = vi
       .fn<InternalExecClient>()
-      .mockResolvedValueOnce(ok(JSON.stringify([{ name: "bootstrap", state: "STARTUP_FAILURE" }])))
+      .mockResolvedValueOnce(
+        ok(JSON.stringify([{ name: "bootstrap", state: "STARTUP_FAILURE" }])),
+      )
       .mockResolvedValueOnce({ stdout: "bootstrap startup_failure\n", stderr: "", exitCode: 1 });
 
     await expect(
