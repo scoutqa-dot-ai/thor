@@ -3,26 +3,21 @@ import { z } from "zod";
 import {
   appendCorrelationAlias,
   approvalToolRequiresDisclaimer,
-  buildApprovalSlackMessage,
   validateDisclaimerCompatibleArgs,
   buildThorDisclaimer,
   computeSlackCorrelationKey,
   createLogger,
-  ExecResultSchema,
-  findAnchorContext,
   getAvailableProxyNames,
   injectApprovalDisclaimer,
   isProxyName,
   getRunnerBaseUrl,
   ApprovalRequiredEventPayloadSchema,
-  GhIssueCreateApprovalArgsSchema,
   logError,
   logInfo,
   logWarn,
   PROXY_NAMES,
   resolveProxyConfig,
   resolveSessionAnchorId,
-  resolveSlackThreadTargetFromTrigger,
   resolveStrictProfileForSession,
   WORKSPACE_CONFIG_PATH,
   createConfigLoader,
@@ -30,24 +25,29 @@ import {
   type ProxyName,
   writeToolCallLog,
 } from "@thor/common";
-import type { ApprovalRequiredEventPayload } from "@thor/common";
-import { ApprovalStore, type ApprovalAction } from "./approval-store.ts";
+import type { ApprovalAction } from "./approval-store.ts";
 import {
   classifyTool,
   PolicyDriftError,
   PolicyOverlapError,
   validatePolicy,
 } from "./policy-mcp.ts";
+import {
+  ApprovalSystemRejection,
+  fail,
+  ok,
+  stringify,
+  type ApprovalExecResult,
+  type ApprovalExecutor,
+  type ApprovalOutcome,
+  type ApprovalPlan,
+  type ApprovalService,
+} from "./approval-service.ts";
 import { unwrapResult } from "./unwrap-result.ts";
 import { connectUpstream, type UpstreamConnection } from "./upstream.ts";
 import { attributionFields, resolveTriggerUser } from "./attribution.ts";
-import { postSlackMessageApi } from "./slack-post-message.ts";
-import { execCommand } from "./exec.ts";
-import { registerCreatedIssueCorrelationAlias } from "./gh-issue-alias.ts";
 
 const log = createLogger("mcp");
-const DEFAULT_APPROVALS_DIR = "/workspace/data/approvals";
-export const GH_APPROVAL_STORE = "gh";
 const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
@@ -112,15 +112,9 @@ interface ProxyInstance {
   name: string;
   targetKey: string;
   upstream: UpstreamConnection;
-  approvalStore: ApprovalStore;
 }
 
-interface McpExecResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-  sideEffectAttempted?: boolean;
-}
+type McpExecResult = ApprovalExecResult;
 
 interface McpCommandContext {
   sessionId?: string;
@@ -128,14 +122,16 @@ interface McpCommandContext {
 }
 
 export interface McpServiceDeps {
-  approvalsDir?: string;
   isProduction?: boolean;
   connectUpstreamFn?: typeof connectUpstream;
   writeToolCallLogFn?: typeof writeToolCallLog;
   configLoader?: ConfigLoader;
+  // Approval-engine settings. createRemoteCliApp reads these from the same
+  // `mcp` config blob to build the shared ApprovalService that the MCP service
+  // and CLI approvals register into.
+  approvalsDir?: string;
   fetchImpl?: typeof fetch;
   slack?: { botToken?: string; apiBaseUrl?: string };
-  execCommandFn?: typeof execCommand;
 }
 
 interface ToolInfo {
@@ -143,20 +139,6 @@ interface ToolInfo {
   description?: string;
   inputSchema?: unknown;
   classification?: string;
-}
-
-interface ApprovalLookup {
-  upstreamName: string;
-  action: ApprovalAction;
-  store: ApprovalStore;
-}
-
-function ok(stdout = ""): McpExecResult {
-  return { stdout, stderr: "", exitCode: 0 };
-}
-
-function fail(stderr: string, stdout = ""): McpExecResult {
-  return { stdout, stderr, exitCode: 1 };
 }
 
 function isExecResult(value: unknown): value is McpExecResult {
@@ -167,10 +149,6 @@ function isExecResult(value: unknown): value is McpExecResult {
     "stderr" in value &&
     "exitCode" in value
   );
-}
-
-function stringify(value: unknown): string {
-  return JSON.stringify(value, null, 2) + "\n";
 }
 
 function fuzzyMatch(input: string, candidates: string[]): string[] {
@@ -208,113 +186,28 @@ interface McpService {
   warmUpstreams(): Promise<void>;
   closeAll(): Promise<void>;
   executeMcp(args: string[], context: McpCommandContext): Promise<McpExecResult>;
-  executeApproval(args: string[]): Promise<McpExecResult>;
-  requestGhIssueCreateApproval(input: {
-    cwd: string;
-    args: string[];
-    sessionId?: string;
-    callId?: string;
-  }): Promise<McpExecResult>;
 }
 
-export function createMcpService(deps: McpServiceDeps): McpService {
-  const approvalsDir = deps.approvalsDir ?? DEFAULT_APPROVALS_DIR;
+/**
+ * Builds the MCP command service and registers every MCP proxy store with the
+ * shared approval engine (all proxies share one MCP executor that re-resolves
+ * the upstream per action at click time).
+ */
+export function createMcpService(
+  deps: McpServiceDeps,
+  approvalService: ApprovalService,
+): McpService {
   const connectUpstreamFn = deps.connectUpstreamFn ?? connectUpstream;
   const writeToolCallLogFn = deps.writeToolCallLogFn ?? writeToolCallLog;
   const getConfig = deps.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
-  const fetchImpl = deps.fetchImpl;
-  const slackConfig = deps.slack;
-  const execCommandFn = deps.execCommandFn ?? execCommand;
   const instances = new Map<string, ProxyInstance>();
   const connecting = new Map<string, Promise<ProxyInstance>>();
-  const approvalStores = new Map<string, ApprovalStore>();
-  const resolvingApprovals = new Map<
-    string,
-    {
-      decision: "approved" | "rejected";
-      reviewer: string;
-      reason?: string;
-      promise: Promise<McpExecResult>;
-    }
-  >();
 
   function getThorIds(context: McpCommandContext): { sessionId?: string; callId?: string } {
     return {
       ...(context.sessionId && { sessionId: context.sessionId }),
       ...(context.callId && { callId: context.callId }),
     };
-  }
-
-  function getApprovalStore(name: string): ApprovalStore {
-    const existing = approvalStores.get(name);
-    if (existing) return existing;
-    const store = new ApprovalStore(`${approvalsDir}/${name}`, name);
-    approvalStores.set(name, store);
-    return store;
-  }
-
-  function approvalStoreNames(): string[] {
-    return [...PROXY_NAMES, GH_APPROVAL_STORE];
-  }
-
-  function parseGhIssueDisplay(args: string[]): {
-    title?: string;
-    bodyPreview?: string;
-    labels?: string[];
-    assignees?: string[];
-  } {
-    const values = (names: string[]) => {
-      const found: string[] = [];
-      for (let i = 0; i < args.length; i += 1) {
-        const arg = args[i];
-        const name = names.find((n) => arg === n || arg.startsWith(`${n}=`));
-        if (!name) continue;
-        if (arg === name && i + 1 < args.length) found.push(args[++i]);
-        else if (arg.startsWith(`${name}=`)) found.push(arg.slice(name.length + 1));
-      }
-      return found;
-    };
-    const title = values(["--title", "-t"])[0];
-    const body = values(["--body", "-b"])[0];
-    const labels = values(["--label", "-l"]).flatMap((v) => v.split(",").filter(Boolean));
-    const assignees = values(["--assignee", "-a"]).flatMap((v) => v.split(",").filter(Boolean));
-    return {
-      ...(title ? { title } : {}),
-      ...(body ? { bodyPreview: body.length > 700 ? `${body.slice(0, 700)}…` : body } : {}),
-      ...(labels.length > 0 ? { labels } : {}),
-      ...(assignees.length > 0 ? { assignees } : {}),
-    };
-  }
-
-  async function postSlackApprovalMessage(input: {
-    action: ApprovalAction;
-    upstreamName: string;
-    channel: string;
-    threadTs: string;
-  }): Promise<{ ts: string } | { error: string }> {
-    const slackMessage = buildApprovalSlackMessage({
-      actionId: input.action.id,
-      tool: input.action.tool as ApprovalRequiredEventPayload["tool"],
-      args: input.action.args,
-      upstreamName: input.upstreamName,
-      threadTs: input.threadTs,
-    });
-    const result = await postSlackMessageApi(
-      {
-        channel: input.channel,
-        threadTs: input.threadTs,
-        text: slackMessage.text,
-        blocks: slackMessage.blocks,
-      },
-      {
-        fetch: fetchImpl,
-        env: {
-          SLACK_BOT_TOKEN: slackConfig?.botToken,
-          SLACK_API_BASE_URL: slackConfig?.apiBaseUrl,
-        },
-      },
-    );
-    return "error" in result ? result : { ts: result.ts };
   }
 
   function resolveProfileForContext(context: McpCommandContext): { profile: string | undefined } {
@@ -412,7 +305,6 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       name,
       targetKey: proxyDef.target.key,
       upstream,
-      approvalStore: getApprovalStore(name),
     };
   }
 
@@ -745,16 +637,15 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       if (!context.sessionId) {
         return fail(`Approval required for "${toolInfo.name}": missing Thor session id`);
       }
-      return createPendingApproval({
-        store: instance.approvalStore,
-        proxyName: instance.name,
+      return approvalService.createPending({
+        storeName: instance.name,
         tool: toolInfo.name,
         displayName: toolInfo.name,
         args: approvalArgs,
         sessionId: context.sessionId,
         ...(context.callId ? { callId: context.callId } : {}),
         targetKey: instance.targetKey,
-        profile,
+        ...(profile !== undefined ? { profile } : {}),
       });
     }
 
@@ -766,97 +657,6 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       sessionId: context.sessionId,
       inputSchema: toolInfo.inputSchema,
     });
-  }
-
-  async function createPendingApproval(opts: {
-    store: ApprovalStore;
-    proxyName: string;
-    tool: string;
-    displayName: string;
-    args: Record<string, unknown>;
-    sessionId: string;
-    callId?: string;
-    targetKey?: string;
-    profile?: string;
-  }): Promise<McpExecResult> {
-    const { store, proxyName, tool, displayName, args, sessionId, callId, targetKey, profile } =
-      opts;
-    const anchorContext = findAnchorContext(sessionId);
-    if (!anchorContext.ok) {
-      return fail(
-        `Approval required for "${displayName}": no Thor anchor for session ${sessionId} (${anchorContext.reason})`,
-      );
-    }
-    const slackTarget = resolveSlackThreadTargetFromTrigger(sessionId);
-    if ("error" in slackTarget) {
-      return fail(`Approval required for "${displayName}": ${slackTarget.error}`);
-    }
-    const action = store.buildPending(
-      tool,
-      args,
-      {
-        sessionId,
-        trigger: {
-          anchorId: anchorContext.anchorId,
-          ...(anchorContext.triggerId ? { triggerId: anchorContext.triggerId } : {}),
-        },
-      },
-      { provider: "slack", channel: slackTarget.channel, threadTs: slackTarget.threadTs },
-    );
-    const slackPost = await postSlackApprovalMessage({
-      action,
-      upstreamName: proxyName,
-      channel: slackTarget.channel,
-      threadTs: slackTarget.threadTs,
-    });
-    if ("error" in slackPost) {
-      store.rejectLoaded(action, "system", slackPost.error);
-      return fail(`Approval required for "${displayName}": ${slackPost.error}`);
-    }
-    action.notification = {
-      provider: "slack",
-      channel: slackTarget.channel,
-      threadTs: slackTarget.threadTs,
-      messageTs: slackPost.ts,
-      postedAt: new Date().toISOString(),
-    };
-    store.update(action);
-    logInfo(log, "tool_call_pending_approval", {
-      upstream: proxyName,
-      tool,
-      ...(targetKey !== undefined ? { targetKey } : {}),
-      ...(profile !== undefined ? { profile } : {}),
-      actionId: action.id,
-      ...getThorIds({ sessionId, callId }),
-    });
-    writeToolCallLogFn({ tool, decision: "pending", targetKey, profile, args });
-    const approvalEvent = {
-      type: "approval_required",
-      actionId: action.id,
-      proxyName,
-      tool,
-      args,
-    } satisfies Record<string, unknown>;
-    return ok(stringify({ ...approvalEvent, command: `approval status ${action.id}` }));
-  }
-
-  function findApproval(actionId: string): ApprovalLookup | undefined {
-    for (const upstreamName of approvalStoreNames()) {
-      const store = getApprovalStore(upstreamName);
-      const action = store.get(actionId);
-      if (action) {
-        return { upstreamName, action, store };
-      }
-    }
-    return undefined;
-  }
-
-  interface ApprovalOutcome {
-    ok: boolean;
-    stdout: string;
-    stderr: string;
-    sideEffectAttempted: boolean;
-    effectiveArgs?: Record<string, unknown>;
   }
 
   function isMcpToolError(result: unknown): boolean {
@@ -924,218 +724,54 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
   }
 
-  async function runGhIssueCreateApproval(action: ApprovalAction): Promise<ApprovalOutcome> {
-    const parsed = GhIssueCreateApprovalArgsSchema.safeParse(action.args);
-    if (!parsed.success) {
-      return {
-        ok: false,
-        stdout: "",
-        stderr: `Stored gh issue create approval action ${action.id} is invalid: ${parsed.error.message}`,
-        sideEffectAttempted: false,
-      };
-    }
-    const result = await execCommandFn("gh", parsed.data.args, parsed.data.cwd);
-    if (result.exitCode !== 0) {
-      return {
-        ok: false,
-        stdout: result.stdout,
-        stderr: result.stderr || `gh exited with code ${result.exitCode}`,
-        sideEffectAttempted: true,
-      };
-    }
-    registerCreatedIssueCorrelationAlias(action.origin?.sessionId, parsed.data.cwd, result.stdout);
-    return { ok: true, stdout: result.stdout, stderr: "", sideEffectAttempted: true };
-  }
-
-  function storedApprovedResult(action: ApprovalAction): McpExecResult {
-    const parsed = ExecResultSchema.safeParse(action.result);
-    if (!parsed.success) {
-      return fail(
-        `Stored approved result for approval action ${action.id} is invalid: ${parsed.error.message}`,
-      );
-    }
-    return parsed.data;
-  }
-
-  async function resolveApprovalAction(
-    actionId: string,
-    decision: "approved" | "rejected",
-    reviewer: string,
-    reason: string | undefined,
-  ): Promise<McpExecResult> {
-    const inFlight = resolvingApprovals.get(actionId);
-    if (inFlight) {
-      if (inFlight.decision !== decision) {
-        return fail(
-          `Approval action ${actionId} is already resolving as ${inFlight.decision}; cannot also resolve as ${decision}`,
-        );
-      }
-      if (inFlight.reviewer !== reviewer || inFlight.reason !== reason) {
-        return fail(
-          `Approval action ${actionId} is already resolving for reviewer ${inFlight.reviewer}; cannot also resolve as ${reviewer}`,
-        );
-      }
-      return inFlight.promise;
-    }
-
-    const promise = resolveApprovalActionOnce(actionId, decision, reviewer, reason);
-    resolvingApprovals.set(actionId, { decision, reviewer, reason, promise });
-    try {
-      return await promise;
-    } finally {
-      resolvingApprovals.delete(actionId);
-    }
-  }
-
-  async function resolveApprovalActionOnce(
-    actionId: string,
-    decision: "approved" | "rejected",
-    reviewer: string,
-    reason: string | undefined,
-  ): Promise<McpExecResult> {
-    let lookup: ApprovalLookup | undefined;
-    try {
-      lookup = findApproval(actionId);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return fail(`Failed to load approval action ${actionId}: ${message}`);
-    }
-    if (!lookup) {
-      return fail(`No approval action found with ID: ${actionId}`);
-    }
-
-    if (lookup.action.status !== "pending") {
-      if (lookup.action.status !== decision) {
-        return fail(
-          `Approval action ${actionId} is already ${lookup.action.status}; cannot resolve as ${decision}`,
-        );
-      }
-      if (lookup.action.status === "approved") {
-        return storedApprovedResult(lookup.action);
-      }
-      return ok(stringify(lookup.action));
-    }
-
-    if (decision === "rejected") {
-      const rejected = lookup.store.rejectLoaded(lookup.action, reviewer, reason);
-      logInfo(log, "tool_call_rejected", {
-        upstream: lookup.upstreamName,
-        tool: rejected.tool,
-        actionId: rejected.id,
-        reviewer,
-      });
-      writeToolCallLogFn({ tool: rejected.tool, decision: "rejected", args: rejected.args });
-      return ok(stringify(rejected));
-    }
-
-    const pendingAction = lookup.action;
-    let profile: string | undefined;
-    let targetKey: string | undefined;
-    const start = Date.now();
-    let outcome: ApprovalOutcome;
-    if (lookup.upstreamName === GH_APPROVAL_STORE) {
-      outcome = await runGhIssueCreateApproval(pendingAction);
-    } else {
+  /**
+   * MCP executor: a write to a configured upstream. Re-resolves the Thor profile
+   * and reconnects the upstream at click time so a stale session binding or a
+   * down integration fails the approval closed instead of executing.
+   */
+  const mcpExecutor: ApprovalExecutor = {
+    async resolve(action): Promise<ApprovalPlan> {
+      let profile: string | undefined;
       try {
-        profile = resolveProfileForAction(pendingAction).profile;
+        profile = resolveProfileForAction(action).profile;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        const rejected = lookup.store.rejectLoaded(
-          pendingAction,
-          "system",
+        throw new ApprovalSystemRejection(
+          message,
           `profile re-resolution failed at approval time: ${message}`,
+          { logEvent: "tool_call_rejected_profile_ambiguous", logToolCall: true },
         );
-        logWarn(log, "tool_call_rejected_profile_ambiguous", {
-          upstream: lookup.upstreamName,
-          tool: rejected.tool,
-          actionId: rejected.id,
-          error: message,
-        });
-        writeToolCallLogFn({
-          tool: rejected.tool,
-          decision: "rejected",
-          args: rejected.args,
-          error: message,
-        });
-        return fail(message, stringify(rejected));
       }
 
       let instance: ProxyInstance | undefined;
       try {
-        instance = await getInstance(lookup.upstreamName, profile);
+        instance = await getInstance(action.upstream, profile);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        const rejected = lookup.store.rejectLoaded(
-          pendingAction,
-          "system",
+        throw new ApprovalSystemRejection(
+          message,
           `integration unavailable at approval time: ${message}`,
+          { logToolCall: true },
         );
-        writeToolCallLogFn({
-          tool: rejected.tool,
-          decision: "rejected",
-          args: rejected.args,
-          error: message,
-        });
-        return fail(message, stringify(rejected));
       }
       if (!instance) {
-        const message = `Upstream "${lookup.upstreamName}" is not configured for the resolved profile.`;
-        const rejected = lookup.store.rejectLoaded(pendingAction, "system", message);
-        return fail(message, stringify(rejected));
+        const message = `Upstream "${action.upstream}" is not configured for the resolved profile.`;
+        throw new ApprovalSystemRejection(message, message);
       }
-      targetKey = instance.targetKey;
-      outcome = await runMcpApproval(instance, pendingAction, profile);
-    }
-    const durationMs = Date.now() - start;
 
-    const baseLogFields = {
-      upstream: lookup.upstreamName,
-      tool: pendingAction.tool,
-      ...(targetKey !== undefined ? { targetKey } : {}),
-      ...(profile !== undefined ? { profile } : {}),
-      durationMs,
-      actionId: pendingAction.id,
-    };
-
-    if (outcome.ok) {
-      logInfo(log, "tool_call_approved", baseLogFields);
-      writeToolCallLogFn({
-        tool: pendingAction.tool,
-        decision: "approved",
-        targetKey,
-        profile,
-        args: outcome.effectiveArgs ?? pendingAction.args,
-        durationMs,
-        result: outcome.stdout,
-      });
-      const execResult: McpExecResult = {
-        stdout: outcome.stdout,
-        stderr: "",
-        exitCode: 0,
-        sideEffectAttempted: outcome.sideEffectAttempted,
+      const resolvedInstance = instance;
+      return {
+        logContext: {
+          ...(profile !== undefined ? { profile } : {}),
+          targetKey: resolvedInstance.targetKey,
+        },
+        execute: () => runMcpApproval(resolvedInstance, action, profile),
       };
-      lookup.store.approveLoaded(pendingAction, execResult, reviewer, reason);
-      return execResult;
-    }
+    },
+  };
 
-    logError(log, "tool_call_approved", outcome.stderr, baseLogFields);
-    writeToolCallLogFn({
-      tool: pendingAction.tool,
-      decision: "approved",
-      targetKey,
-      profile,
-      args: outcome.effectiveArgs ?? pendingAction.args,
-      durationMs,
-      error: outcome.stderr,
-    });
-    pendingAction.error = outcome.stderr;
-    lookup.store.update(pendingAction);
-    return {
-      stdout: outcome.stdout,
-      stderr: outcome.stderr,
-      exitCode: 1,
-      sideEffectAttempted: outcome.sideEffectAttempted,
-    };
+  for (const name of PROXY_NAMES) {
+    approvalService.register(name, mcpExecutor);
   }
 
   async function withJiraAttribution(
@@ -1267,7 +903,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         }
         const reviewer = args[3];
         const reason = args[4];
-        return resolveApprovalAction(args[1], decision, reviewer, reason);
+        return approvalService.resolve(args[1], decision, reviewer, reason);
       }
 
       if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
@@ -1313,60 +949,6 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       if (isExecResult(parsedArgs)) return parsedArgs;
 
       return callTool(upstreamName, resolvedTool, parsedArgs, context);
-    },
-
-    async executeApproval(args: string[]): Promise<McpExecResult> {
-      if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
-        return fail("Usage:\n  approval status <action-id>\n  approval list\n");
-      }
-
-      if (args[0] === "status") {
-        if (!args[1]) {
-          return fail("Usage: approval status <action-id>\n");
-        }
-        let lookup: ApprovalLookup | undefined;
-        try {
-          lookup = findApproval(args[1]);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          return fail(`Failed to load approval action ${args[1]}: ${message}`);
-        }
-        if (!lookup) {
-          return fail(`No approval action found with ID: ${args[1]}\n`);
-        }
-        return ok(stringify(lookup.action));
-      }
-
-      if (args[0] === "list") {
-        const approvals = approvalStoreNames().flatMap((upstreamName) =>
-          getApprovalStore(upstreamName).listPending(),
-        );
-        return ok(stringify({ approvals }));
-      }
-
-      return fail(
-        `Unknown subcommand: ${args[0]}\nUsage:\n  approval status <action-id>\n  approval list\n`,
-      );
-    },
-
-    async requestGhIssueCreateApproval(input): Promise<McpExecResult> {
-      if (!input.sessionId) {
-        return fail('Approval required for "gh issue create": missing Thor session id');
-      }
-      const args = GhIssueCreateApprovalArgsSchema.parse({
-        cwd: input.cwd,
-        args: input.args,
-        ...parseGhIssueDisplay(input.args),
-      });
-      return createPendingApproval({
-        store: getApprovalStore(GH_APPROVAL_STORE),
-        proxyName: GH_APPROVAL_STORE,
-        tool: "ghIssueCreate",
-        displayName: "gh issue create",
-        args,
-        sessionId: input.sessionId,
-        ...(input.callId ? { callId: input.callId } : {}),
-      });
     },
   };
 }

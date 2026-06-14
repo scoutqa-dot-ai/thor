@@ -20,6 +20,12 @@ import {
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.ts";
 import { createMcpService, type McpServiceDeps } from "./mcp-handler.ts";
+import { createApprovalService } from "./approval-service.ts";
+import {
+  getCliApprovalDefinition,
+  registerCliApprovals,
+  requestCliApproval,
+} from "./cli-approval.ts";
 import {
   registerCreatedIssueCorrelationAlias,
   registerGitCorrelationAlias,
@@ -552,7 +558,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   const envConfig = config.env;
   const internalSecret = appEnv.thorInternalSecret;
   const getConfig = config.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
-  const mcpService = createMcpService({
+  const mcpConfig: McpServiceDeps = {
     isProduction: appEnv.isProduction,
     ...config.mcp,
     configLoader: config.mcp?.configLoader ?? getConfig,
@@ -560,7 +566,17 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       botToken: envConfig?.slackBotToken,
       apiBaseUrl: envConfig?.slackApiBaseUrl,
     },
+  };
+  // The approval engine is a registry owned here at the composition root; the
+  // MCP service and CLI approvals register their stores into it.
+  const approvalService = createApprovalService({
+    ...(mcpConfig.approvalsDir ? { approvalsDir: mcpConfig.approvalsDir } : {}),
+    ...(mcpConfig.writeToolCallLogFn ? { writeToolCallLogFn: mcpConfig.writeToolCallLogFn } : {}),
+    ...(mcpConfig.slack ? { slack: mcpConfig.slack } : {}),
+    ...(mcpConfig.fetchImpl ? { fetchImpl: mcpConfig.fetchImpl } : {}),
   });
+  const mcpService = createMcpService(mcpConfig, approvalService);
+  registerCliApprovals(approvalService, execCommand);
 
   const app = express();
   app.use(express.json());
@@ -648,7 +664,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         !isGhHelpRequest(effectiveArgs)
       ) {
         logInfo(log, "exec_gh_pending_approval", { args: effectiveArgs, cwd, ...ids });
-        const result = await mcpService.requestGhIssueCreateApproval({
+        const result = await requestCliApproval(approvalService, getCliApprovalDefinition("gh"), {
           cwd,
           args: effectiveArgs,
           ...ids,
@@ -1093,7 +1109,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
-      const result = await mcpService.executeApproval(args);
+      const result = approvalService.executeApproval(args);
       res.json(result);
     } catch (err) {
       logError(
