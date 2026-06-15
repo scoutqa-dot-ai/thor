@@ -1,0 +1,31 @@
+docs/feat/security-model.md
+  2f9de1acc74c4b3e 81,98
+packages/gateway/src/service.ts
+  2f9de1acc74c4b3e 1145
+packages/remote-cli/src/approval-service.ts
+  2f9de1acc74c4b3e 138-141,143,483,496-507
+packages/remote-cli/src/gh-disclaimer.test.ts
+  2f9de1acc74c4b3e 108-109
+packages/remote-cli/src/index.ts
+  2f9de1acc74c4b3e 1068-1076
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "9937d929cc6234b7790e2278e4c8ee665e08f28c",
+  "prompts": {
+    "2f9de1acc74c4b3e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44ebe60c-c4a6-4eee-8860-8ac8f69eba6b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 35,
+      "total_deletions": 30,
+      "accepted_lines": 33,
+      "overriden_lines": 0
+    }
+  }
+}
