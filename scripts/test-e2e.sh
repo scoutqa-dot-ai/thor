@@ -703,15 +703,18 @@ elif assert_attribution_config; then
     assert '[[ "$issue_create_exit" != "0" && "$issue_create_raw" == *"has no Slack trigger correlation key"* ]]' \
       "attribution e2e: gh issue create fails closed when no Slack approval thread is available" \
       "exitCode='$issue_create_exit' response: ${issue_create_raw:0:500}"
-    assert '[[ "$issue_logs" == *"\"event\":\"exec_gh_pending_approval\""*"\"issue\""*"\"create\""*"$issue_body"* ]]' \
+    # Scope assertions to the issue-create pending-approval line; the prior
+    # pr-create exec_gh line can share the same --since second.
+    issue_pending_line=$(printf '%s\n' "$issue_logs" | grep '"event":"exec_gh_pending_approval"' | tail -1)
+    assert '[[ "$issue_pending_line" == *"\"issue\""*"\"create\""*"$issue_body"* ]]' \
       "attribution e2e: gh issue create requests approval with the raw author body" \
-      "expected raw body marker in pending-approval args; logs: ${issue_logs:0:1500}"
-    assert '[[ "$issue_logs" != *"--assignee"* ]]' \
+      "expected raw body marker in pending-approval args; line: ${issue_pending_line:0:1500}"
+    assert '[[ -n "$issue_pending_line" && "$issue_pending_line" != *"--assignee"* ]]' \
       "attribution e2e: gh issue create approval card args exclude the auto-injected assignee" \
-      "did not expect --assignee in pending-approval args (injected post-approval); logs: ${issue_logs:0:1500}"
-    assert '[[ "$issue_logs" != *"View Thor context"* ]]' \
+      "did not expect --assignee in pending-approval args (injected post-approval); line: ${issue_pending_line:0:1500}"
+    assert '[[ -n "$issue_pending_line" && "$issue_pending_line" != *"View Thor context"* ]]' \
       "attribution e2e: gh issue create approval card args exclude the disclaimer footer" \
-      "did not expect Thor context footer in pending-approval args (injected post-approval); logs: ${issue_logs:0:1500}"
+      "did not expect Thor context footer in pending-approval args (injected post-approval); line: ${issue_pending_line:0:1500}"
   fi
 fi
 
