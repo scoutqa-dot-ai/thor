@@ -319,7 +319,7 @@ else
       "approval re-entry: created pending approval" \
       "response: ${e2e_call_raw:0:500}"
   else
-    curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
+    curl -sf -X POST "$REMOTE_CLI_URL/exec/approval" \
       -H 'Content-Type: application/json' \
       -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
       -d "{\"args\":[\"resolve\",\"$e2e_action_id\",\"rejected\",\"opencode-e2e\",\"opencode e2e automated rejection\"]}" \

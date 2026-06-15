@@ -897,7 +897,7 @@ else
       # the create payload with assignee_account_id.
       echo "  Approving Jira approval $action_id..."
       jira_log_since=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-      resolve_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
+      resolve_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/approval" \
         -H 'Content-Type: application/json' \
         -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
         -d "{\"args\":[\"resolve\",\"$action_id\",\"approved\",\"e2e-test\",\"e2e test - automated Jira assignee verification\"]}" \
@@ -940,7 +940,7 @@ else
     else
       # 4d. Reject the approval (safe — no side effects on the upstream MCP)
       echo "  Rejecting approval $action_id..."
-      resolve_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
+      resolve_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/approval" \
         -H 'Content-Type: application/json' \
         -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
         -d "{\"args\":[\"resolve\",\"$action_id\",\"rejected\",\"e2e-test\",\"e2e test - automated rejection\"]}" \
