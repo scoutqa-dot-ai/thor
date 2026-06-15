@@ -1,4 +1,4 @@
-import { GhIssueCreateApprovalArgsSchema } from "@thor/common";
+import { GhIssueCreateApprovalArgsSchema, type ConfigLoader } from "@thor/common";
 import type { ApprovalAction } from "./approval-store.ts";
 import {
   fail,
@@ -9,7 +9,13 @@ import {
   type ApprovalService,
 } from "./approval-service.ts";
 import { execCommand } from "./exec.ts";
+import { injectGhIssueCreateExec } from "./gh-args.ts";
 import { registerCreatedIssueCorrelationAlias } from "./gh-issue-alias.ts";
+
+/** Runtime dependencies an approval executor needs to build the final command. */
+export interface CliApprovalDeps {
+  getConfig: ConfigLoader;
+}
 
 /** The exact command an approved CLI action runs. */
 export interface CliCommand {
@@ -39,10 +45,12 @@ export interface CliApprovalDefinition {
    */
   buildRequestArgs(input: { cwd: string; args: string[] }): Record<string, unknown>;
   /**
-   * Recover the command to run from a stored action at approval time. Return an
-   * error string to fail closed (e.g. a corrupt stored action).
+   * Recover the command to run from a stored action at approval time. Server
+   * additions reserved for the side effect (disclaimer footer, attribution) are
+   * injected here so the approval card shows only the reviewed command. Return
+   * an error string to fail closed (e.g. a corrupt stored action).
    */
-  resolveCommand(action: ApprovalAction): CliCommand | { error: string };
+  resolveCommand(action: ApprovalAction, deps: CliApprovalDeps): CliCommand | { error: string };
   /** Optional side effect after a successful run (e.g. alias registration). */
   onSuccess?(action: ApprovalAction, command: CliCommand, stdout: string): void;
 }
@@ -58,8 +66,9 @@ async function runCliApproval(
   def: CliApprovalDefinition,
   action: ApprovalAction,
   execCommandFn: typeof execCommand,
+  deps: CliApprovalDeps,
 ): Promise<ApprovalOutcome> {
-  const command = def.resolveCommand(action);
+  const command = def.resolveCommand(action, deps);
   if ("error" in command) {
     return { ok: false, stdout: "", stderr: command.error, sideEffectAttempted: false };
   }
@@ -84,10 +93,11 @@ async function runCliApproval(
 export function createCliApprovalExecutor(
   def: CliApprovalDefinition,
   execCommandFn: typeof execCommand,
+  deps: CliApprovalDeps,
 ): ApprovalExecutor {
   return {
     async resolve(action): Promise<ApprovalPlan> {
-      return { logContext: {}, execute: () => runCliApproval(def, action, execCommandFn) };
+      return { logContext: {}, execute: () => runCliApproval(def, action, execCommandFn, deps) };
     },
   };
 }
@@ -158,14 +168,23 @@ const ghIssueCreate: CliApprovalDefinition = {
   displayName: "gh issue create",
   buildRequestArgs: ({ cwd, args }) =>
     GhIssueCreateApprovalArgsSchema.parse({ cwd, args, ...parseGhIssueDisplay(args) }),
-  resolveCommand: (action) => {
+  resolveCommand: (action, deps) => {
     const parsed = GhIssueCreateApprovalArgsSchema.safeParse(action.args);
     if (!parsed.success) {
       return {
         error: `Stored gh issue create approval action ${action.id} is invalid: ${parsed.error.message}`,
       };
     }
-    return { bin: "gh", args: parsed.data.args, cwd: parsed.data.cwd };
+    // The stored args are the raw, reviewed command. Inject the disclaimer
+    // footer (from the trigger snapshotted at request time) and assignee
+    // attribution now, at execution, so they never appeared on the card.
+    const injected = injectGhIssueCreateExec(parsed.data.args, {
+      ...(action.origin?.trigger ? { trigger: action.origin.trigger } : {}),
+      ...(action.origin?.sessionId ? { sessionId: action.origin.sessionId } : {}),
+      getConfig: deps.getConfig,
+    });
+    if ("error" in injected) return injected;
+    return { bin: "gh", args: injected, cwd: parsed.data.cwd };
   },
   onSuccess: (action, command, stdout) =>
     registerCreatedIssueCorrelationAlias(action.origin?.sessionId, command.cwd, stdout),
@@ -184,8 +203,9 @@ export function getCliApprovalDefinition(store: string): CliApprovalDefinition {
 export function registerCliApprovals(
   approvalService: ApprovalService,
   execCommandFn: typeof execCommand,
+  deps: CliApprovalDeps,
 ): void {
   for (const def of CLI_APPROVAL_DEFINITIONS) {
-    approvalService.register(def.store, createCliApprovalExecutor(def, execCommandFn));
+    approvalService.register(def.store, createCliApprovalExecutor(def, execCommandFn, deps));
   }
 }

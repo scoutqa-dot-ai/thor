@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ExecResult } from "@thor/common";
+import type { ConfigLoader, ExecResult } from "@thor/common";
 import type { ApprovalAction } from "./approval-store.ts";
 import type { ApprovalService } from "./approval-service.ts";
 import type { execCommand } from "./exec.ts";
@@ -44,12 +44,15 @@ function execStub(result: ExecResult) {
   return vi.fn(async () => result) as unknown as typeof execCommand;
 }
 
+// The fake CLI definition does not read config, so a no-op loader suffices.
+const fakeDeps = { getConfig: (() => ({ users: [] })) as unknown as ConfigLoader };
+
 describe("cli-approval framework", () => {
   describe("createCliApprovalExecutor", () => {
     it("runs the resolved command and fires onSuccess on a clean exit", async () => {
       const onSuccess = vi.fn();
       const exec = execStub({ stdout: "https://issue/1", stderr: "", exitCode: 0 });
-      const executor = createCliApprovalExecutor(fakeCliDefinition(onSuccess), exec);
+      const executor = createCliApprovalExecutor(fakeCliDefinition(onSuccess), exec, fakeDeps);
 
       const action = pendingAction({});
       const plan = await executor.resolve(action);
@@ -72,7 +75,7 @@ describe("cli-approval framework", () => {
     it("reports a non-zero exit as an attempted failure without firing onSuccess", async () => {
       const onSuccess = vi.fn();
       const exec = execStub({ stdout: "partial", stderr: "", exitCode: 3 });
-      const executor = createCliApprovalExecutor(fakeCliDefinition(onSuccess), exec);
+      const executor = createCliApprovalExecutor(fakeCliDefinition(onSuccess), exec, fakeDeps);
 
       const outcome = await (await executor.resolve(pendingAction({}))).execute();
 
@@ -87,7 +90,7 @@ describe("cli-approval framework", () => {
 
     it("fails closed without running the command when the stored action is unusable", async () => {
       const exec = execStub({ stdout: "", stderr: "", exitCode: 0 });
-      const executor = createCliApprovalExecutor(fakeCliDefinition(), exec);
+      const executor = createCliApprovalExecutor(fakeCliDefinition(), exec, fakeDeps);
 
       const outcome = await (await executor.resolve(pendingAction({ broken: true }))).execute();
 
