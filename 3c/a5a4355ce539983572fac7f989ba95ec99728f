@@ -1,0 +1,23 @@
+docs/plan/2026061301_progress-update.md
+  64e914cc55203ea0 1,6-7,11-36,83-86,88-94,101-106,110-116,139,145-147,150-152,158-163,176-185,187-193,195-199,227,229-230,232-251,253-260,262-264,266-277,285-286,288-289,293,297-300,302-304,306-310,319-320,322-328,332,334-340,406-434,437-438,445,447,450-451,453,455-456,460-484,493-495,498-504,520,535
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "3ca5a4355ce539983572fac7f989ba95ec99728f",
+  "prompts": {
+    "64e914cc55203ea0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3edcbc9b-0b36-4d3b-ab74-dbce6305caed",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 883,
+      "total_deletions": 574,
+      "accepted_lines": 263,
+      "overriden_lines": 4
+    }
+  }
+}
