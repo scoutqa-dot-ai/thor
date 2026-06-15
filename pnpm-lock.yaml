@@ -146,7 +146,7 @@ importers:
   packages/runner:
     dependencies:
       '@opencode-ai/sdk':
-        specifier: ^1.15.10
+        specifier: ^1.15.13
         version: 1.15.13
       '@slack/types':
         specifier: 2.21.1
