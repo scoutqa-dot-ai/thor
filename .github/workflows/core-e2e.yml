@@ -207,7 +207,7 @@ jobs:
         run: pnpm test:create-jira-approval-e2e
 
       - name: Run OpenCode LLM smoke test
-        if: contains(fromJSON('["refs/heads/main","refs/heads/feat/langfuse-mcp","refs/heads/renovate/opencode-ai-sdk-1.x-lockfile"]'), github.ref)
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/renovate/opencode-ai-sdk-1.x-lockfile'
         env:
           CI: "true"
         run: pnpm test:opencode-e2e
