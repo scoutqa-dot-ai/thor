@@ -3,11 +3,9 @@ import { access } from "node:fs/promises";
 import { dirname, normalize as normalizePosix } from "node:path/posix";
 import { fileURLToPath } from "node:url";
 import {
-  buildThorDisclaimerForSession,
   createConfigLoader,
   createLogger,
   errorMessage,
-  getRunnerBaseUrl,
   logError,
   logInfo,
   loadRemoteCliAppEnv,
@@ -27,10 +25,7 @@ import {
   registerCliApprovals,
   requestCliApproval,
 } from "./cli-approval.ts";
-import {
-  registerCreatedIssueCorrelationAlias,
-  registerGitCorrelationAlias,
-} from "./gh-issue-alias.js";
+import { registerGitCorrelationAlias } from "./gh-issue-alias.js";
 import {
   handleSlackPostMessage,
   parseSlackPostMessageArgs,
@@ -61,7 +56,12 @@ import {
   validateMetabaseArgs,
   validateScoutqaArgs,
 } from "./policy.ts";
-import { attributionFields, resolveTriggerUser } from "./attribution.ts";
+import {
+  isGhHelpRequest,
+  withGhAttribution,
+  withGhDisclaimer,
+  withGitAttribution,
+} from "./gh-args.ts";
 
 const log = createLogger("remote-cli");
 
@@ -112,189 +112,6 @@ function thorIds(req: express.Request): { sessionId?: string; callId?: string } 
     ...(sessionId && { sessionId }),
     ...(callId && { callId }),
   };
-}
-
-type FlagMatch = { index: number; valueIndex?: number; inlinePrefix?: string };
-
-function rewriteValueFlag(
-  args: string[],
-  names: string[],
-  append: string | ((value: string) => string),
-  options: { valuePrefix?: string; match: "single" | "last" } = { match: "single" },
-): string[] | { error: "duplicate" | "notFound" } {
-  const { valuePrefix, match: mode } = options;
-  const matches: FlagMatch[] = [];
-  for (let i = 0; i < args.length; i++) {
-    for (const name of names) {
-      if (args[i] === name && i + 1 < args.length) {
-        if (valuePrefix && !args[i + 1].startsWith(valuePrefix)) continue;
-        matches.push({ index: i, valueIndex: i + 1 });
-        i += 1;
-        break;
-      }
-      if (args[i].startsWith(`${name}=`)) {
-        const value = args[i].slice(name.length + 1);
-        if (valuePrefix && !value.startsWith(valuePrefix)) continue;
-        matches.push({ index: i, inlinePrefix: `${name}=` });
-        break;
-      }
-    }
-  }
-  if (matches.length === 0) return { error: "notFound" };
-  if (matches.length > 1 && mode === "single") return { error: "duplicate" };
-  const m = mode === "last" ? matches[matches.length - 1] : matches[0];
-  const out = [...args];
-  const rewrite = (value: string) =>
-    typeof append === "function" ? append(value) : `${value}${append}`;
-  if (m.valueIndex !== undefined) {
-    out[m.valueIndex] = rewrite(out[m.valueIndex]);
-  } else if (m.inlinePrefix) {
-    out[m.index] = `${m.inlinePrefix}${rewrite(out[m.index].slice(m.inlinePrefix.length))}`;
-  }
-  return out;
-}
-
-function hasFlag(args: string[], names: string[]): boolean {
-  return args.some((arg) => names.some((name) => arg === name || arg.startsWith(`${name}=`)));
-}
-
-function logAttribution(surface: string, outcome: string, extra: Record<string, unknown> = {}) {
-  logInfo(log, "attribution_applied", { surface, outcome, ...extra });
-}
-
-function withGitAttribution(
-  args: string[],
-  sessionId: string | undefined,
-  getConfig: ConfigLoader,
-): string[] {
-  if (args[0] !== "commit") return args;
-  const resolved = resolveTriggerUser(sessionId, getConfig);
-  if (!resolved.user) {
-    logAttribution(
-      "git",
-      resolved.reason ?? "skipped_no_user_record",
-      attributionFields(resolved.actor),
-    );
-    return args;
-  }
-  if (hasFlag(args, ["-F", "--file"])) {
-    logAttribution(
-      "git",
-      "skipped_unsupported_arg_shape",
-      attributionFields(resolved.actor, resolved.user),
-    );
-    return args;
-  }
-  const trailerLine = `Co-authored-by: ${resolved.user.name} <${resolved.user.email}>`;
-  const attributionEmail = resolved.user.email.toLowerCase();
-  let alreadyAttributed = false;
-  const rewritten = rewriteValueFlag(
-    args,
-    ["-m", "--message"],
-    (message) => {
-      if (message.toLowerCase().includes(attributionEmail)) {
-        alreadyAttributed = true;
-        return message;
-      }
-      return `${message}${message.endsWith("\n") ? "\n" : "\n\n"}${trailerLine}`;
-    },
-    { match: "last" },
-  );
-  if ("error" in rewritten) {
-    logAttribution(
-      "git",
-      "skipped_unsupported_arg_shape",
-      attributionFields(resolved.actor, resolved.user),
-    );
-    return args;
-  }
-  if (alreadyAttributed) {
-    logAttribution(
-      "git",
-      "skipped_already_attributed",
-      attributionFields(resolved.actor, resolved.user),
-    );
-    return args;
-  }
-  logAttribution("git", "applied", attributionFields(resolved.actor, resolved.user));
-  return rewritten;
-}
-
-function withGhAttribution(
-  args: string[],
-  sessionId: string | undefined,
-  getConfig: ConfigLoader,
-): string[] {
-  if (!((args[0] === "pr" || args[0] === "issue") && args[1] === "create")) return args;
-  if (isGhHelpRequest(args)) return args;
-  const resolved = resolveTriggerUser(sessionId, getConfig);
-  if (hasFlag(args, ["--assignee", "-a"])) {
-    logAttribution(
-      "gh-assignee",
-      "skipped_existing_assignee",
-      attributionFields(resolved.actor, resolved.user),
-    );
-    return args;
-  }
-  if (!resolved.user) {
-    logAttribution(
-      "gh-assignee",
-      resolved.reason ?? "skipped_no_user_record",
-      attributionFields(resolved.actor),
-    );
-    return args;
-  }
-  if (!resolved.user.github) {
-    logAttribution("gh-assignee", "skipped_missing_identity_field", {
-      field: "github",
-      ...attributionFields(resolved.actor, resolved.user),
-    });
-    return args;
-  }
-  logAttribution("gh-assignee", "applied", attributionFields(resolved.actor, resolved.user));
-  return [...args, "--assignee", resolved.user.github];
-}
-
-function isGhHelpRequest(args: string[]): boolean {
-  if (args[0] === "help") return true;
-  if (args.length === 1 && ["-h", "--help"].includes(args[0] ?? "")) return true;
-  if (args.length === 2 && ["-h", "--help"].includes(args[1] ?? "")) return true;
-  if (args.length === 3 && ["-h", "--help"].includes(args[2] ?? "")) return true;
-  return false;
-}
-
-function withGhDisclaimer(args: string[], sessionId?: string): string[] | { error: string } {
-  if (isGhHelpRequest(args)) return args;
-  const eligible =
-    (args[0] === "pr" && ["create", "comment", "review"].includes(args[1] ?? "")) ||
-    (args[0] === "issue" && ["create", "comment"].includes(args[1] ?? "")) ||
-    (args[0] === "api" && args.some((arg) => /pulls\/\d+\/comments\/\d+\/replies/.test(arg)));
-  if (!eligible) return args;
-  let footer: string;
-  try {
-    footer = `\n${buildThorDisclaimerForSession(sessionId, getRunnerBaseUrl()).footer}`;
-  } catch (err) {
-    return {
-      error:
-        err instanceof Error ? err.message : "Disclaimer required: unable to build Thor disclaimer",
-    };
-  }
-  const result =
-    args[0] === "api"
-      ? rewriteValueFlag(args, ["-f", "--raw-field"], footer, {
-          match: "single",
-          valuePrefix: "body=",
-        })
-      : rewriteValueFlag(args, ["--body", "-b"], footer, { match: "single" });
-  if ("error" in result) {
-    return {
-      error:
-        result.error === "duplicate"
-          ? "Disclaimer required: multiple mutable gh body fields"
-          : "Disclaimer required: could not find a mutable gh body field",
-    };
-  }
-  return result;
 }
 
 /**
@@ -593,7 +410,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     ...(mcpConfig.fetchImpl ? { fetchImpl: mcpConfig.fetchImpl } : {}),
   });
   const mcpService = createMcpService(mcpConfig, approvalService);
-  registerCliApprovals(approvalService, execCommand);
+  registerCliApprovals(approvalService, execCommand, { getConfig });
 
   const app = express();
   app.use(express.json());
@@ -663,6 +480,21 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       }
 
       const ids = thorIds(req);
+
+      // issue create is approval-gated: store raw args and inject the footer +
+      // assignee at execution time so the approval card shows only the raw command.
+      if (args[0] === "issue" && args[1] === "create" && !isGhHelpRequest(args)) {
+        logInfo(log, "exec_gh_pending_approval", { args, cwd, ...ids });
+        const result = await requestCliApproval(approvalService, getCliApprovalDefinition("gh"), {
+          cwd,
+          args,
+          ...ids,
+        });
+        res.status(result.exitCode === 0 ? 200 : 400).json(result);
+        return;
+      }
+
+      // Other mutating gh commands run immediately, so inject up front.
       const disclaimerArgs = withGhDisclaimer(args, ids.sessionId);
       if (!Array.isArray(disclaimerArgs)) {
         res.status(400).json({ stdout: "", stderr: disclaimerArgs.error, exitCode: 1 });
@@ -670,28 +502,8 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       }
       const effectiveArgs = withGhAttribution(disclaimerArgs, ids.sessionId, getConfig);
 
-      if (
-        effectiveArgs[0] === "issue" &&
-        effectiveArgs[1] === "create" &&
-        !isGhHelpRequest(effectiveArgs)
-      ) {
-        logInfo(log, "exec_gh_pending_approval", { args: effectiveArgs, cwd, ...ids });
-        const result = await requestCliApproval(approvalService, getCliApprovalDefinition("gh"), {
-          cwd,
-          args: effectiveArgs,
-          ...ids,
-        });
-        res.status(result.exitCode === 0 ? 200 : 400).json(result);
-        return;
-      }
-
       logInfo(log, "exec_gh", { args: effectiveArgs, cwd, ...ids });
       const result = await execCommand("gh", effectiveArgs, cwd);
-      if ((result.exitCode ?? 0) === 0) {
-        if (effectiveArgs[0] === "issue" && effectiveArgs[1] === "create") {
-          registerCreatedIssueCorrelationAlias(ids.sessionId, cwd, result.stdout);
-        }
-      }
       res.json(result);
     } catch (err) {
       logError(log, "exec_gh_error", errorMessage(err), thorIds(req));
