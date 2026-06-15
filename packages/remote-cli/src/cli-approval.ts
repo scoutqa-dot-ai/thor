@@ -175,9 +175,7 @@ const ghIssueCreate: CliApprovalDefinition = {
         error: `Stored gh issue create approval action ${action.id} is invalid: ${parsed.error.message}`,
       };
     }
-    // The stored args are the raw, reviewed command. Inject the disclaimer
-    // footer (from the trigger snapshotted at request time) and assignee
-    // attribution now, at execution, so they never appeared on the card.
+    // Inject the footer + assignee now, at execution, so they stay off the card.
     const injected = injectGhIssueCreateExec(parsed.data.args, {
       trigger: action.origin?.trigger,
       sessionId: action.origin?.sessionId,

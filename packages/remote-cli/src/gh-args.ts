@@ -12,11 +12,6 @@ const log = createLogger("remote-cli");
 
 type FlagMatch = { index: number; valueIndex?: number; inlinePrefix?: string };
 
-/**
- * Append to (or rewrite) the value of a flag in `args`. Handles both
- * `--flag value` and `--flag=value` shapes. `match: "single"` rejects ambiguous
- * duplicate flags; `match: "last"` targets the final occurrence.
- */
 export function rewriteValueFlag(
   args: string[],
   names: string[],
@@ -164,11 +159,6 @@ export function isGhHelpRequest(args: string[]): boolean {
   return false;
 }
 
-/**
- * Inject the Thor disclaimer footer into a mutable gh body field for commands
- * that execute immediately (no approval gate). The footer is built from the
- * session's live anchor/trigger context.
- */
 export function withGhDisclaimer(args: string[], sessionId?: string): string[] | { error: string } {
   if (isGhHelpRequest(args)) return args;
   const eligible =
@@ -189,11 +179,9 @@ export function withGhDisclaimer(args: string[], sessionId?: string): string[] |
 }
 
 /**
- * Exec-time injection for an approved `gh issue create`. Unlike
- * {@link withGhDisclaimer}, the disclaimer is built from the trigger context
- * snapshotted onto the approval action at request time, and assignee
- * attribution is applied here too — so the approval card shows only the
- * author's reviewed command (matching the MCP approval flow).
+ * Post-approval injection for `gh issue create`: builds the disclaimer from the
+ * trigger snapshotted onto the action (not a live lookup) and appends the
+ * assignee, so neither appears on the approval card.
  */
 export function injectGhIssueCreateExec(
   args: string[],

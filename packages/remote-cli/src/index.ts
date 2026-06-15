@@ -481,10 +481,8 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
       const ids = thorIds(req);
 
-      // gh issue create is gated behind human approval. Request approval with
-      // the raw author args; the disclaimer footer and assignee attribution are
-      // injected at execution time (post-approval) so the approval card shows
-      // only the reviewed command — consistent with the MCP approval flow.
+      // issue create is approval-gated: store raw args and inject the footer +
+      // assignee at execution time so the approval card shows only the raw command.
       if (args[0] === "issue" && args[1] === "create" && !isGhHelpRequest(args)) {
         logInfo(log, "exec_gh_pending_approval", { args, cwd, ...ids });
         const result = await requestCliApproval(approvalService, getCliApprovalDefinition("gh"), {
@@ -496,8 +494,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
-      // Every other mutating gh command runs immediately, so inject the
-      // disclaimer footer and assignee attribution up front.
+      // Other mutating gh commands run immediately, so inject up front.
       const disclaimerArgs = withGhDisclaimer(args, ids.sessionId);
       if (!Array.isArray(disclaimerArgs)) {
         res.status(400).json({ stdout: "", stderr: disclaimerArgs.error, exitCode: 1 });
