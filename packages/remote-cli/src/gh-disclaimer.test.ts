@@ -240,7 +240,7 @@ describe("gh disclaimer injection", () => {
     );
   });
 
-  it("requests approval for issue create with footer and GitHub assignee when trigger user resolves", async () => {
+  it("stores raw author args for the approval card and injects footer + assignee only at execution", async () => {
     seedActor();
     await withServer(async (url) => {
       const { response, body } = await postGh(
@@ -254,7 +254,14 @@ describe("gh disclaimer injection", () => {
       expect(payload.type).toBe("approval_required");
       expect(payload.tool).toBe("ghIssueCreate");
       expect(payload.command).toBe(`approval status ${payload.actionId}`);
-      expect(payload.args.args).toEqual([
+      // The pending action (and thus the approval card) carries only the
+      // author's reviewed command — no disclaimer footer, no auto-assignee.
+      expect(payload.args.args).toEqual(["issue", "create", "--title", "Bug", "--body", "Broken"]);
+
+      // The footer and assignee attribution are injected at execution, after approval.
+      const approved = await postApprovalResolve(url, payload.actionId);
+      expect(approved.response.status).toBe(200);
+      expect(execCalls[0].args).toEqual([
         "issue",
         "create",
         "--title",
