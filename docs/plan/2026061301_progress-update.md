@@ -103,7 +103,7 @@ residue is `/trigger`'s synthesized NDJSON terminal `done` — see the _NDJSON /
   once-constructed, shared Slack transport.
 - **Operator-UI sessions** (an operator drives a session directly in the OpenCode UI,
   bypassing `/trigger`) are a first-class case: they have a `slack.thread` alias, so the
-  listener resolves a target and projects their progress exactly like a `/trigger` run.
+  listener resolves a target and projects parent-session progress like a `/trigger` run.
 - Moving progress derivation (the four `emit*` helpers + dedup state) out of
   `runPromptStream` and the `emit`/`progressChain`/target boilerplate out of
   `/trigger`, into the listener.
@@ -126,6 +126,10 @@ residue is `/trigger`'s synthesized NDJSON terminal `done` — see the _NDJSON /
   `opencode.subsession` alias write + child subscription), the per-trigger
   completion result `{ terminalError, textParts, toolCalls, totalParts }`, and the
   send-lock that serializes prompt sends per session.
+- Duplicating child-session discovery in the listener. If `runPromptStream` is bypassed
+  (operator-UI sessions), delegated child-session events may be dropped because no
+  `opencode.subsession` alias is written. Accepted for now to keep one owner of child
+  discovery; revisit only if operator-UI delegated progress becomes a real annoyance.
 - Gateway trigger sources (slack/github/cron/approval), Slack message format /
   `ProgressSession` field semantics beyond the changes listed under _Sink changes_.
 
@@ -198,7 +202,7 @@ re-attaches and projects current activity; there is no replay of past runs. Stat
 in the listener (not discarded on a per-run boundary), so finalizing one turn never drops
 another session's live bubble; per-session state is cleared on that session's finalize.
 
-### Slack target resolution (covers child sessions for free)
+### Slack target resolution (covers child sessions once aliased)
 
 For any session id on the firehose: `resolveSessionAnchorId(sessionId)` → anchor;
 `reverseLookupAnchor(anchorId).externalKeys` yields the `slack.thread` alias, whose
@@ -206,12 +210,14 @@ For any session id on the firehose: `resolveSessionAnchorId(sessionId)` → anch
 `C123/1710000000.001`) — reconstruct the full correlation key by prefixing
 `slack:thread:`, then pass it to `resolveSlackProgressTarget` (regex
 `^slack:thread:([^/]+)\/(.+)$`) → `ProgressTarget`. Child sessions share the parent
-anchor (via the `opencode.subsession` alias written by `runPromptStream`'s unchanged
-child discovery), so delegated tool activity resolves to the **same** thread
-automatically. Sessions with no `slack.thread` alias (cron/github/etc.) resolve to
-nothing and are silently ignored — a pure projection, no side effects on unmatched
-events. Child events arriving before the alias is written are dropped — a brief
-startup-race gap, tolerated under D2.
+anchor only after the `opencode.subsession` alias is written by `runPromptStream`'s
+unchanged child discovery, so `/trigger` delegated activity resolves to the **same**
+thread once discovered. Sessions with no `slack.thread` alias resolve to nothing and are
+silently ignored. Sessions that create Slack messages may later acquire a `slack.thread`
+alias and become progress targets too; accepted for now to keep target resolution simple.
+Child events arriving before the alias is written are dropped — a brief startup-race gap,
+tolerated under D2. Operator-UI delegated child events can also be dropped because no
+`runPromptStream` owns child discovery in that path; accepted for now.
 
 ### What the listener derives
 
@@ -471,6 +477,13 @@ One PR; phases are review/checkpoint boundaries, not ship gates.
 - **Child-event startup race.** Child events arriving before the `opencode.subsession`
   alias is written resolve to nothing and are dropped. Brief and tolerated; confirm the
   alias is written early in child discovery.
+- **Operator-UI delegated child events (accepted).** The listener does not duplicate
+  child-session discovery, so operator-UI sessions that delegate to child sessions may miss
+  child events. Parent-session progress still renders; revisit only if the missing child
+  activity becomes a real annoyance.
+- **Tool-created Slack aliases (accepted).** A GitHub, cron, or direct session that posts
+  to Slack can gain a `slack.thread` alias and later resolve as a Slack progress target.
+  Keep this simple for now; introduce alias provenance only if it becomes noisy in practice.
 - **C1 flicker (accepted).** A stale parent `idle` dismisses the live bubble; the next
   event recreates it with a reset tool count. Accepted for simplicity (no turn tracking).
   Worst case during the rare error-while-reused intersection: a stray ❌ bubble plus the
@@ -495,9 +508,10 @@ One PR; phases are review/checkpoint boundaries, not ship gates.
   active.
 - Slack behaviors preserved: 3-tool threshold, 10s throttle, full
   tools/memory/agents/context breakdown, prior-progress cleanup, error visibility,
-  abort-as-completed, supersede-on-`start`, and the heartbeat/elapsed counter (kept, H3).
+  abort-as-completed, and the heartbeat/elapsed counter (kept, H3).
 - One bubble per thread (C1): a stale parent `idle` dismisses-and-recreates rather than
-  silently losing the live turn; the `sessionId`-match guard is gone.
+  silently losing the live turn; a `start` while a bubble is live reuses the current bubble;
+  the `sessionId`-match guard is gone.
 - A delegated child's idle does not dismiss the parent bubble (D3).
 - A recovering `session.error` (a part arrives after) produces **no false ❌** with no timer
   (C2); the three error cases render correctly (`error`→nothing keeps `⏳`,
