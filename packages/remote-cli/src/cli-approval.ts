@@ -179,8 +179,8 @@ const ghIssueCreate: CliApprovalDefinition = {
     // footer (from the trigger snapshotted at request time) and assignee
     // attribution now, at execution, so they never appeared on the card.
     const injected = injectGhIssueCreateExec(parsed.data.args, {
-      ...(action.origin?.trigger ? { trigger: action.origin.trigger } : {}),
-      ...(action.origin?.sessionId ? { sessionId: action.origin.sessionId } : {}),
+      trigger: action.origin?.trigger,
+      sessionId: action.origin?.sessionId,
       getConfig: deps.getConfig,
     });
     if ("error" in injected) return injected;
