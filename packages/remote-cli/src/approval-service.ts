@@ -134,8 +134,13 @@ export interface ApprovalService {
     reviewer: string,
     reason: string | undefined,
   ): Promise<ApprovalExecResult>;
-  /** Backs the `approval status <id>` / `approval list` command surface. */
-  executeApproval(args: string[]): ApprovalExecResult;
+  /**
+   * Backs the `/exec/approval` command surface: the agent-facing
+   * `approval status <id>` / `approval list` reads plus the privileged
+   * `approval resolve <id> <decision> <reviewer> [reason]` write. The route
+   * gates `resolve` behind the internal secret before delegating here.
+   */
+  executeApproval(args: string[]): Promise<ApprovalExecResult>;
 }
 
 interface ApprovalLookup {
@@ -475,7 +480,7 @@ export function createApprovalService(deps: ApprovalServiceDeps = {}): ApprovalS
     return ok(stringify({ approvals }));
   }
 
-  function executeApproval(args: string[]): ApprovalExecResult {
+  async function executeApproval(args: string[]): Promise<ApprovalExecResult> {
     if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
       return fail("Usage:\n  approval status <action-id>\n  approval list\n");
     }
@@ -487,6 +492,21 @@ export function createApprovalService(deps: ApprovalServiceDeps = {}): ApprovalS
     }
     if (args[0] === "list") {
       return list();
+    }
+    // Privileged write: the /exec/approval route enforces the internal secret
+    // before this branch runs, so it is intentionally omitted from the
+    // agent-facing usage text above.
+    if (args[0] === "resolve") {
+      if (args.length < 4) {
+        return fail(
+          "Usage: approval resolve <action-id> <approved|rejected> <reviewer> [reason]\n",
+        );
+      }
+      const decision = args[2];
+      if (decision !== "approved" && decision !== "rejected") {
+        return fail('decision must be "approved" or "rejected"\n');
+      }
+      return resolve(args[1], decision, args[3], args[4]);
     }
     return fail(
       `Unknown subcommand: ${args[0]}\nUsage:\n  approval status <action-id>\n  approval list\n`,

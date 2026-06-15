@@ -1001,14 +1001,6 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
-      if (args[0] === "resolve") {
-        const providedSecret = getInternalSecretHeader(req);
-        if (!matchesInternalSecret(internalSecret, providedSecret)) {
-          res.status(401).json({ error: "Unauthorized" });
-          return;
-        }
-      }
-
       const result = await mcpService.executeMcp(args, thorIds(req));
 
       res.json(result);
@@ -1073,7 +1065,15 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
-      const result = approvalService.executeApproval(args);
+      if (args[0] === "resolve") {
+        const providedSecret = getInternalSecretHeader(req);
+        if (!matchesInternalSecret(internalSecret, providedSecret)) {
+          res.status(401).json({ error: "Unauthorized" });
+          return;
+        }
+      }
+
+      const result = await approvalService.executeApproval(args);
       res.json(result);
     } catch (err) {
       logError(log, "exec_approval_error", errorMessage(err), thorIds(req));

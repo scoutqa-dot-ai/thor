@@ -312,7 +312,7 @@ describe("remote-cli MCP endpoints", () => {
     ).actionId;
 
     const resolved = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -705,7 +705,7 @@ describe("remote-cli MCP endpoints", () => {
     upstreamConfigs = [];
     await startRemoteCliServer();
     const resolved = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -743,7 +743,7 @@ describe("remote-cli MCP endpoints", () => {
     await startRemoteCliServer();
 
     const resolved = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -802,7 +802,7 @@ describe("remote-cli MCP endpoints", () => {
     );
 
     const resolved = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -857,7 +857,7 @@ describe("remote-cli MCP endpoints", () => {
     });
 
     const resolved = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -1256,20 +1256,20 @@ describe("remote-cli MCP endpoints", () => {
       ],
     });
 
-    const deniedResolve = await postJson("/exec/mcp", {
+    const deniedResolve = await postJson("/exec/approval", {
       args: ["resolve", actionId, "approved", "U123"],
     });
     expect(deniedResolve.status).toBe(401);
 
     const wrongSecretResolve = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "wrong" },
     );
     expect(wrongSecretResolve.status).toBe(401);
 
     const allowedResolve = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -1475,7 +1475,7 @@ describe("remote-cli MCP endpoints", () => {
     });
 
     const resolveRejectedZombie = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", storedAction.id, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -1628,12 +1628,12 @@ describe("remote-cli MCP endpoints", () => {
     });
 
     const firstResolve = postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
     const secondResolve = postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -1658,7 +1658,7 @@ describe("remote-cli MCP endpoints", () => {
     expect(toolCalls).toHaveLength(1);
 
     const laterResolve = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -1698,14 +1698,14 @@ describe("remote-cli MCP endpoints", () => {
     });
 
     const firstResolve = postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
     await vi.waitFor(() => expect(toolCalls).toHaveLength(1));
 
     const secondResolve = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U999"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -1758,7 +1758,7 @@ describe("remote-cli MCP endpoints", () => {
 
     createJiraIssueFailure = new Error("upstream unavailable");
     const failedResolve = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -1781,7 +1781,7 @@ describe("remote-cli MCP endpoints", () => {
     });
 
     const successfulRetry = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -1807,7 +1807,7 @@ describe("remote-cli MCP endpoints", () => {
     );
 
     const corruptResolve = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -1863,7 +1863,7 @@ describe("remote-cli MCP endpoints", () => {
 
     createJiraIssueErrorResponse = "The target project doesn't exist or you don't have permission.";
     const resolved = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );

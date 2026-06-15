@@ -1142,7 +1142,7 @@ export async function resolveApproval(
 
   for (let attempt = 0; attempt < APPROVAL_RESOLVE_MAX_ATTEMPTS; attempt++) {
     try {
-      const response = await fetchFn(`${remoteCliUrl}/exec/mcp`, {
+      const response = await fetchFn(`${remoteCliUrl}/exec/approval`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

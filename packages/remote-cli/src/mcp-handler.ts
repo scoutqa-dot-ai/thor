@@ -947,19 +947,6 @@ export function createMcpService(
     },
 
     async executeMcp(args: string[], context: McpCommandContext): Promise<McpExecResult> {
-      if (args[0] === "resolve") {
-        if (args.length < 4) {
-          return fail("Usage: mcp resolve <action-id> <approved|rejected> <reviewer> [reason]\n");
-        }
-        const decision = args[2];
-        if (decision !== "approved" && decision !== "rejected") {
-          return fail('decision must be "approved" or "rejected"\n');
-        }
-        const reviewer = args[3];
-        const reason = args[4];
-        return approvalService.resolve(args[1], decision, reviewer, reason);
-      }
-
       if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
         try {
           const { profile } = resolveProfileForContext(context);

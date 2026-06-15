@@ -105,8 +105,8 @@ async function postGit(url: string, args: string[], sessionId?: string) {
   };
 }
 
-async function postMcpResolve(url: string, actionId: string) {
-  const response = await fetch(`${url}/exec/mcp`, {
+async function postApprovalResolve(url: string, actionId: string) {
+  const response = await fetch(`${url}/exec/approval`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -416,7 +416,7 @@ describe("gh disclaimer injection", () => {
         }),
       ).toBeUndefined();
       const payload = JSON.parse(body.stdout);
-      const approved = await postMcpResolve(url, payload.actionId);
+      const approved = await postApprovalResolve(url, payload.actionId);
       expect(approved.response.status).toBe(200);
       expect(execCalls[0].args).toEqual([
         "issue",
@@ -460,7 +460,7 @@ describe("gh disclaimer injection", () => {
         };
       });
 
-      const resolved = await postMcpResolve(url, payload.actionId);
+      const resolved = await postApprovalResolve(url, payload.actionId);
       expect(resolved.response.status).toBe(200);
       expect(resolved.body.exitCode).toBe(1);
       expect(resolved.body.stderr).toContain("repository not found");
