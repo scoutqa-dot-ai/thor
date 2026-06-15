@@ -4070,6 +4070,7 @@ describe("gateway", () => {
             }),
             stderr: 'Error calling "merge_pull_request": upstream unavailable\n',
             exitCode: 1,
+            sideEffectAttempted: true,
           }),
         ),
       )
@@ -4124,19 +4125,23 @@ describe("gateway", () => {
     expect(capturedSlack!.update).toHaveBeenCalled();
     const updateArg = capturedSlack!.update.mock.calls[0][0] as { text: string };
     expect(updateArg.text).toContain("Approved, resolution failed");
+    // Slack card never echoes raw stderr — privacy boundary preserved by
     expect(updateArg.text).toContain("categorized failure");
-    expect(updateArg.text).toContain("remote-cli stderr:");
-    expect(updateArg.text).toContain('Error calling "merge_pull_request"');
-    expect(updateArg.text).toContain("upstream unavailable");
+    expect(updateArg.text).not.toContain("remote-cli stderr:");
+    expect(updateArg.text).not.toContain("upstream unavailable");
 
     const runnerCall = fetchImpl.mock.calls.find(
       ([url]) => typeof url === "string" && url === "http://runner.test/trigger",
     );
     expect(runnerCall).toBeDefined();
     const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
+    // Agent gets the "do not replay, choose a safe recovery action" guidance
+    // structurally via resolutionExitCode + sideEffectAttempted-driven routing;
+    // only structured stdout metadata is re-entered, never the raw stderr.
+    expect(runnerBody.prompt).toContain("act-1");
+    expect(runnerBody.prompt).toContain("approval resolver already");
     expect(runnerBody.prompt).toContain("categorized failure");
-    expect(runnerBody.prompt).toContain("remote-cli stderr:");
-    expect(runnerBody.prompt).toContain('Error calling "merge_pull_request"');
-    expect(runnerBody.prompt).toContain("upstream unavailable");
+    expect(runnerBody.prompt).not.toContain("remote-cli stderr:");
+    expect(runnerBody.prompt).not.toContain("upstream unavailable");
   });
 });

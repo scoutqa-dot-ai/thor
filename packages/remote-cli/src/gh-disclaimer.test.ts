@@ -38,6 +38,7 @@ vi.mock("./exec.ts", () => ({
 }));
 
 import { createRemoteCliApp, type RemoteCliAppConfig } from "./index.ts";
+import { execCommand } from "./exec.ts";
 
 const worklogRoot = "/tmp/thor-remote-cli-gh-test";
 const cwd = "/workspace/worktrees/acme/feat/test";
@@ -104,6 +105,21 @@ async function postGit(url: string, args: string[], sessionId?: string) {
   };
 }
 
+async function postApprovalResolve(url: string, actionId: string) {
+  const response = await fetch(`${url}/exec/approval`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-thor-internal-secret": "test-secret",
+    },
+    body: JSON.stringify({ args: ["resolve", actionId, "approved", "UAPPROVER"] }),
+  });
+  return {
+    response,
+    body: (await response.json()) as { stdout: string; stderr: string; exitCode: number },
+  };
+}
+
 function readAliases(): Array<{ aliasType: string; aliasValue: string; anchorId: string }> {
   try {
     return readFileSync(`${process.env.WORKLOG_DIR}/aliases.jsonl`, "utf8")
@@ -135,8 +151,26 @@ describe("gh disclaimer injection", () => {
       type: "trigger_start",
       triggerId,
       triggerSlackId: "UABCDEF1",
+      correlationKey: "slack:thread:C123/177.1",
     });
   }
+
+  const approvalConfig = (extra: RemoteCliAppConfig = {}): RemoteCliAppConfig => ({
+    appEnv: { isProduction: false, thorInternalSecret: "test-secret" },
+    ...extra,
+    mcp: {
+      approvalsDir: `${worklogRoot}/approvals`,
+      fetchImpl: vi.fn(
+        async () =>
+          new Response(JSON.stringify({ ok: true, ts: "177.2" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      ) as unknown as typeof fetch,
+      slack: { botToken: "xoxb-test", apiBaseUrl: "https://slack.example.com/api" },
+      ...extra.mcp,
+    },
+  });
 
   const configLoader = () => ({
     users: [{ email: "alice@example.com", name: "Alice", slack: "UABCDEF1", github: "alice" }],
@@ -206,48 +240,59 @@ describe("gh disclaimer injection", () => {
     );
   });
 
-  it("appends a GitHub assignee to issue create when trigger user resolves", async () => {
+  it("requests approval for issue create with footer and GitHub assignee when trigger user resolves", async () => {
     seedActor();
-    await withServer(
-      async (url) => {
-        const { response } = await postGh(
-          url,
-          ["issue", "create", "--title", "Bug", "--body", "Broken"],
-          "parent",
-        );
-        expect(response.status).toBe(200);
-        expect(execCalls[0].args).toEqual([
-          "issue",
-          "create",
-          "--title",
-          "Bug",
-          "--body",
-          `Broken\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
-          "--assignee",
-          "alice",
-        ]);
-      },
-      { configLoader },
-    );
+    await withServer(async (url) => {
+      const { response, body } = await postGh(
+        url,
+        ["issue", "create", "--title", "Bug", "--body", "Broken"],
+        "parent",
+      );
+      expect(response.status).toBe(200);
+      expect(execCalls).toHaveLength(0);
+      const payload = JSON.parse(body.stdout);
+      expect(payload.type).toBe("approval_required");
+      expect(payload.tool).toBe("ghIssueCreate");
+      expect(payload.command).toBe(`approval status ${payload.actionId}`);
+      expect(payload.args.args).toEqual([
+        "issue",
+        "create",
+        "--title",
+        "Bug",
+        "--body",
+        `Broken\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
+        "--assignee",
+        "alice",
+      ]);
+    }, approvalConfig({ configLoader }));
   });
 
   it("keeps an existing issue assignee", async () => {
     seedActor();
-    await withServer(
-      async (url) => {
-        await postGh(
-          url,
-          ["issue", "create", "--title", "x", "--body", "Body", "-a", "bob"],
-          "parent",
-        );
-        expect(
-          execCalls[0].args.filter((arg) => arg === "-a" || arg === "--assignee"),
-        ).toHaveLength(1);
-        expect(execCalls[0].args).toContain("bob");
-        expect(execCalls[0].args).not.toContain("alice");
-      },
-      { configLoader },
-    );
+    await withServer(async (url) => {
+      const { body } = await postGh(
+        url,
+        ["issue", "create", "--title", "x", "--body", "Body", "-a", "bob"],
+        "parent",
+      );
+      const payload = JSON.parse(body.stdout);
+      expect(
+        payload.args.args.filter((arg: string) => arg === "-a" || arg === "--assignee"),
+      ).toHaveLength(1);
+      expect(payload.args.args).toContain("bob");
+      expect(payload.args.args).not.toContain("alice");
+    }, approvalConfig({ configLoader }));
+  });
+
+  it("does not attach an assignee or request approval for gh issue create --help", async () => {
+    seedActor();
+    await withServer(async (url) => {
+      const { response, body } = await postGh(url, ["issue", "create", "--help"], "parent");
+      expect(response.status).toBe(200);
+      expect(body.stdout).not.toContain("approval_required");
+      expect(execCalls).toHaveLength(1);
+      expect(execCalls[0].args).toEqual(["issue", "create", "--help"]);
+    }, approvalConfig({ configLoader }));
   });
 
   it("passes git commit through when attribution config is unavailable", async () => {
@@ -321,6 +366,7 @@ describe("gh disclaimer injection", () => {
     await withServer(async (url) => {
       const commands = [
         ["pr", "create", "--help"],
+        ["issue", "create", "--help"],
         ["pr", "comment", "--help"],
         ["issue", "comment", "--help"],
         ["pr", "review", "-h"],
@@ -347,17 +393,31 @@ describe("gh disclaimer injection", () => {
     });
   });
 
-  it("injects into issue create bodies and binds the created issue alias with GitHub repo basename", async () => {
+  it("binds the created issue alias only after approved issue create succeeds", async () => {
     bindSessionToAnchor("parent", anchorParent);
-    appendSessionEvent("parent", { type: "trigger_start", triggerId });
+    appendSessionEvent("parent", {
+      type: "trigger_start",
+      triggerId,
+      correlationKey: "slack:thread:C123/177.1",
+    });
 
     await withServer(async (url) => {
-      const { response } = await postGh(
+      const { response, body } = await postGh(
         url,
         ["issue", "create", "--title", "Bug", "--body", "Broken"],
         "parent",
       );
       expect(response.status).toBe(200);
+      expect(execCalls).toHaveLength(0);
+      expect(
+        resolveAlias({
+          aliasType: "github.issue",
+          aliasValue: Buffer.from("github:issue:thor:acme/thor#42").toString("base64url"),
+        }),
+      ).toBeUndefined();
+      const payload = JSON.parse(body.stdout);
+      const approved = await postApprovalResolve(url, payload.actionId);
+      expect(approved.response.status).toBe(200);
       expect(execCalls[0].args).toEqual([
         "issue",
         "create",
@@ -372,7 +432,46 @@ describe("gh disclaimer injection", () => {
           aliasValue: Buffer.from("github:issue:thor:acme/thor#42").toString("base64url"),
         }),
       ).toBe(anchorParent);
+    }, approvalConfig());
+  });
+
+  it("returns a side-effect-attempted failure when an approved gh issue create fails", async () => {
+    bindSessionToAnchor("parent", anchorParent);
+    appendSessionEvent("parent", {
+      type: "trigger_start",
+      triggerId,
+      correlationKey: "slack:thread:C123/177.1",
     });
+
+    await withServer(async (url) => {
+      const { body } = await postGh(
+        url,
+        ["issue", "create", "--title", "Bug", "--body", "Broken"],
+        "parent",
+      );
+      const payload = JSON.parse(body.stdout);
+
+      vi.mocked(execCommand).mockImplementationOnce(async (bin, args, cwd) => {
+        execCalls.push({ bin, args, cwd });
+        return {
+          stdout: "",
+          stderr: "could not create issue: repository not found\n",
+          exitCode: 1,
+        };
+      });
+
+      const resolved = await postApprovalResolve(url, payload.actionId);
+      expect(resolved.response.status).toBe(200);
+      expect(resolved.body.exitCode).toBe(1);
+      expect(resolved.body.stderr).toContain("repository not found");
+      expect((resolved.body as { sideEffectAttempted?: boolean }).sideEffectAttempted).toBe(true);
+      expect(
+        resolveAlias({
+          aliasType: "github.issue",
+          aliasValue: Buffer.from("github:issue:thor:acme/thor#42").toString("base64url"),
+        }),
+      ).toBeUndefined();
+    }, approvalConfig());
   });
 
   it("fails closed when the session has no anchor context", async () => {

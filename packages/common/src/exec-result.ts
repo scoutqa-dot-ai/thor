@@ -5,6 +5,13 @@ export const ExecResultSchema = z.object({
   stdout: z.string(),
   stderr: z.string(),
   exitCode: z.number(),
+  /**
+   * True when the executor issued a write/side effect that may have taken
+   * effect (gateway uses this to choose "do not replay" vs "safe to retry"
+   * guidance when re-entering the agent on a failed approval resolution).
+   * Absent for non-approval exec results.
+   */
+  sideEffectAttempted: z.boolean().optional(),
 });
 export type ExecResult = z.infer<typeof ExecResultSchema>;
 

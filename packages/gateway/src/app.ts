@@ -136,10 +136,7 @@ function latestQueuedTriggerActor(events: QueuedEvent[]): {
   return {};
 }
 
-function summarizeResolutionOutput(
-  stdout: string,
-  stderr: string,
-): {
+function summarizeResolutionOutput(stdout: string): {
   status?: string;
   summary?: string;
   tool?: string;
@@ -150,6 +147,9 @@ function summarizeResolutionOutput(
   let tool: string | undefined;
   let upstream: string | undefined;
 
+  // Avoid echoing raw stdout/stderr — both can contain upstream tool response
+  // data, which the approval card must not leak. Surface only structured
+  // fields the resolver emits as JSON on success.
   try {
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
     if (typeof parsed.status === "string") status = parsed.status;
@@ -162,14 +162,6 @@ function summarizeResolutionOutput(
     }
   } catch {
     // non-JSON stdout: drop, do not surface
-  }
-
-  const trimmedStderr = stderr.trim();
-  if (trimmedStderr) {
-    summary =
-      summary && summary !== trimmedStderr
-        ? `${summary}\nremote-cli stderr: ${trimmedStderr}`
-        : trimmedStderr;
   }
 
   return { status, summary, tool, upstream };
@@ -639,7 +631,7 @@ async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<v
     return;
   }
 
-  const resolution = summarizeResolutionOutput(resolved.stdout, resolved.stderr);
+  const resolution = summarizeResolutionOutput(resolved.stdout);
   const resolutionFailed = resolved.exitCode !== 0;
   const statusEmoji = resolutionFailed ? "⚠️" : decision === "approved" ? "✅" : "❌";
   const decisionLabel = resolutionFailed
@@ -671,6 +663,7 @@ async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<v
     resolutionStatus: resolutionFailed ? "error" : resolution.status,
     resolutionSummary: resolution.summary,
     resolutionExitCode: resolved.exitCode,
+    resolutionSideEffectAttempted: resolved.sideEffectAttempted,
   };
 
   const rawCorrelationKey = buildSlackCorrelationKey(channel, threadTs);

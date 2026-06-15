@@ -7,7 +7,7 @@ description: "GitHub CLI surface allowed by Thor's remote-cli server policy. App
 
 All `gh` commands go through Thor's remote-cli which enforces:
 
-- **Append-only writes.** Create PRs/issues, post PR/issue comments, submit `--comment`/`--request-changes` reviews. Approval, merge, edit, and delete are human gates.
+- **Append-only writes.** Create PRs, post PR/issue comments, submit `--comment`/`--request-changes` reviews. Issue creation is supported only after human approval. Approval, merge, edit, and delete are human gates.
 - **`cd` into the target worktree** before running write commands — repo-targeting flags aren't part of the supported surface. For cross-repo API reads, use explicit REST endpoints such as `repos/<owner>/<repo>/...`.
 - **Non-interactive bodies only.** Pass `--body`/`-b` directly; editor, web, and body-file flags aren't supported on the write surface.
 - **`gh api` is a small explicit subset.** REST implicit GET reads are allowed with output shaping. One append-only POST shape is allowed for PR review-comment replies. GraphQL and arbitrary `--method` use are out of scope.
@@ -29,7 +29,7 @@ Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--base`/`-B`, `--head`/`
 
 ### `gh issue create`
 
-Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable). Successful creates receive Thor's traceability footer and bind the created `github:issue:` session for later issue comments.
+Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable). Issue creation requires human approval: calling it returns an action ID instead of creating the issue; check status with `approval status <action-id>`. Only after approval does Thor execute the exact reviewed command.
 
 ### `gh pr comment`
 
