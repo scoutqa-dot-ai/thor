@@ -78,7 +78,7 @@ Every external request that reaches the gateway must prove origin before any wor
 | GitHub webhooks                    | `X-Hub-Signature-256` HMAC over raw body, secret `GITHUB_WEBHOOK_SECRET` | n/a    |
 | Internal gateway↔remote-cli routes | `x-thor-internal-secret: $THOR_INTERNAL_SECRET`                          | n/a    |
 
-`THOR_INTERNAL_SECRET` authorizes policy-bypass internal operations — approval resolution (`POST /exec/mcp`) and arbitrary `POST /internal/exec`. Agents never receive it. Treat it with the same care as a root credential.
+`THOR_INTERNAL_SECRET` authorizes policy-bypass internal operations — approval resolution (`POST /exec/approval` with the `resolve` subcommand) and arbitrary `POST /internal/exec`. Agents never receive it. Treat it with the same care as a root credential.
 
 ## Layer 3: Authorization gating
 
@@ -95,7 +95,7 @@ remote-cli is the _only_ place tool-level policy is enforced. OpenCode-side wrap
 
 ### MCP tool tiers
 
-- **Session-bound routing.** Normal MCP list/call requests require `x-thor-session-id` to resolve to a bound OpenCode session or sub-session before any upstream credentials are selected. This is enforced in `remote-cli`, not just the OpenCode-side `mcp` wrapper, so wrapper bypass fails closed instead of falling back to unsuffixed globals. Profile selection reads only the session anchor's `slack.thread` and trigger-stamped `repo` aliases; MCP request bodies do not carry a trusted directory/profile signal. Bound non-Slack sessions with no Slack thread or repo aliases still resolve to unsuffixed globals. Mixed channel+repo profile fallback rules live in [`profile.md`](./profile.md). Internal approval resolution uses `THOR_INTERNAL_SECRET` on the `mcp resolve` path instead.
+- **Session-bound routing.** Normal MCP list/call requests require `x-thor-session-id` to resolve to a bound OpenCode session or sub-session before any upstream credentials are selected. This is enforced in `remote-cli`, not just the OpenCode-side `mcp` wrapper, so wrapper bypass fails closed instead of falling back to unsuffixed globals. Profile selection reads only the session anchor's `slack.thread` and trigger-stamped `repo` aliases; MCP request bodies do not carry a trusted directory/profile signal. Bound non-Slack sessions with no Slack thread or repo aliases still resolve to unsuffixed globals. Mixed channel+repo profile fallback rules live in [`profile.md`](./profile.md). Internal approval resolution uses `THOR_INTERNAL_SECRET` on the `approval resolve` path instead.
 - **Allow-listed tools** execute immediately.
 - **Approved tools** create an approval record, post an approval card to the triggering Slack thread, and return an action id. Status is available through `POST /exec/approval`.
 - **Hidden tools** are never listed to the agent.

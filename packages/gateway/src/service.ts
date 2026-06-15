@@ -76,6 +76,7 @@ export interface ApprovalOutcomeEventPayload {
   resolutionStatus?: string;
   resolutionSummary?: string;
   resolutionExitCode?: number;
+  resolutionSideEffectAttempted?: boolean;
 }
 
 export interface BatchDispatchInput {
@@ -388,9 +389,12 @@ export function buildApprovalOutcomePrompt(events: ApprovalOutcomeEventPayload[]
     const target = [event.upstreamName, event.tool].filter(Boolean).join("/") || "unknown tool";
     const resolutionFailed =
       typeof event.resolutionExitCode === "number" && event.resolutionExitCode !== 0;
+    const sideEffectAttempted = event.resolutionSideEffectAttempted === true;
     const guidance = resolutionFailed
       ? event.decision === "approved"
-        ? `human approved action \`${event.actionId}\`, but approval resolution reported a failure after the approval resolver already attempted the approved side effect; do not replay or re-run the same write/tool call, inspect approval status/output, explain the implication, and choose only a distinct safe recovery action`
+        ? sideEffectAttempted
+          ? `human approved action \`${event.actionId}\`, but approval resolution reported a failure after the approval resolver already attempted the approved side effect; do not replay or re-run the same write/tool call, inspect approval status/output, explain the implication, and choose only a distinct safe recovery action`
+          : `human approved action \`${event.actionId}\`, but approval resolution failed before executing the approved side effect; inspect approval status/output, explain the failure, and choose the next safe action`
         : `human rejected action \`${event.actionId}\`, but approval resolution reported a failure; inspect approval status/output, explain the implication, and choose the next safe action`
       : event.decision === "approved"
         ? `human approved action \`${event.actionId}\`; the approval resolver already executed or attempted the approved side effect, so do not replay or re-run the same write/tool call; inspect approval status/output if needed, report the result in-thread, and continue only with later distinct safe work`
@@ -1138,7 +1142,7 @@ export async function resolveApproval(
 
   for (let attempt = 0; attempt < APPROVAL_RESOLVE_MAX_ATTEMPTS; attempt++) {
     try {
-      const response = await fetchFn(`${remoteCliUrl}/exec/mcp`, {
+      const response = await fetchFn(`${remoteCliUrl}/exec/approval`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

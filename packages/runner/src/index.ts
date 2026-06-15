@@ -723,7 +723,9 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         const globalMemoryPath = `${memoryDir}/README.md`;
         const globalMemory = readGlobalMemory(memoryDir);
         if (globalMemory) {
-          bootstrapBlocks.push(`[Global memory at ${globalMemoryPath}]\n${globalMemory}`);
+          bootstrapBlocks.push(
+            `[Global memory — full current contents of ${globalMemoryPath}, loaded below; open the file when you want to write or update it]\n${globalMemory}`,
+          );
           bootstrapMemoryPaths.push(globalMemoryPath);
         } else {
           bootstrapBlocks.push(
@@ -735,7 +737,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         if (channelMemory) {
           if (channelMemory.content) {
             bootstrapBlocks.push(
-              `[Channel memory at ${channelMemory.path}]\n${channelMemory.content}`,
+              `[Channel memory — full current contents of ${channelMemory.path}, loaded below; open the file when you want to write or update it]\n${channelMemory.content}`,
             );
             bootstrapMemoryPaths.push(channelMemory.path);
           } else {
@@ -753,7 +755,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         if (personMemory) {
           if (personMemory.content) {
             bootstrapBlocks.push(
-              `[Person memory at ${personMemory.path}]\n${personMemory.content}`,
+              `[Person memory — full current contents of ${personMemory.path}, loaded below; open the file when you want to write or update it]\n${personMemory.content}`,
             );
             bootstrapMemoryPaths.push(personMemory.path);
           } else {

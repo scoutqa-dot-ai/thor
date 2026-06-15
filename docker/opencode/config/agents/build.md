@@ -275,7 +275,7 @@ Each repo can influence Thor's behavior in two ways:
 - Person memory: `/workspace/memory/people/<email-local-part>.md` — applies to sessions triggered by a known user. Use the lowercased email local-part (for example `john.doe@example.com` → `people/john.doe.md`, `acme@example.com` → `people/acme.md`). Use for durable user preferences and identity context.
 - Repo-scoped context: use repo-local `AGENTS.md`, `CLAUDE.md`, and in-repo docs for repo/product facts, codebase conventions, runbooks, and anything humans should also see.
 
-For additional context, check relevant files under `/workspace/memory/`. For non-trivial recurring work, search `/workspace/runs/` first because it has denser reusable task context than worklog. Use `/workspace/worklog/` for prior-session continuity when the prompt points at a worklog note or when you need the execution/audit trail.
+When global, channel, or person memory exists, its full current contents are injected into the prompt at session start, so you already have it in context. Open a memory file directly when you intend to write or update it, or to fetch a tier that was not injected (for example a different channel or person). For additional context, check relevant files under `/workspace/memory/`. For non-trivial recurring work, search `/workspace/runs/` first because it has denser reusable task context than worklog. Use `/workspace/worklog/` for prior-session continuity when the prompt points at a worklog note or when you need the execution/audit trail.
 
 ## Final Rule
 
