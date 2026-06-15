@@ -11,6 +11,7 @@ import type { ToolCallLogEntry } from "@thor/common";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { createRemoteCliApp } from "./index.ts";
 import { createMcpService } from "./mcp-handler.ts";
+import { createApprovalService } from "./approval-service.ts";
 import type { UpstreamConnection } from "./upstream.ts";
 
 const tools: Tool[] = [
@@ -106,6 +107,8 @@ describe("remote-cli MCP endpoints", () => {
   let toolCalls: Array<{ name: string; arguments?: Record<string, unknown> }>;
   let createJiraIssueDelay: Promise<void> | undefined;
   let createJiraIssueFailure: Error | undefined;
+  let createJiraIssueErrorResponse: string | undefined;
+  let toolCallLogEntries: Array<Record<string, unknown>>;
   let connectedUpstreams: string[];
   let upstreamConfigs: Array<{ name: string; headers?: Record<string, string> }>;
   let closeRemoteCli: () => Promise<void>;
@@ -133,6 +136,8 @@ describe("remote-cli MCP endpoints", () => {
     toolCalls = [];
     createJiraIssueDelay = undefined;
     createJiraIssueFailure = undefined;
+    createJiraIssueErrorResponse = undefined;
+    toolCallLogEntries = [];
     connectedUpstreams = [];
     upstreamConfigs = [];
     jiraLookups = [];
@@ -183,6 +188,7 @@ describe("remote-cli MCP endpoints", () => {
         isProduction: true,
         fetchImpl: slackFetch,
         writeToolCallLogFn: (entry) => {
+          toolCallLogEntries.push(entry as unknown as Record<string, unknown>);
           toolCallLogs.push(entry);
         },
         configLoader: () => {
@@ -221,6 +227,14 @@ describe("remote-cli MCP endpoints", () => {
                     const failure = createJiraIssueFailure;
                     createJiraIssueFailure = undefined;
                     throw failure;
+                  }
+                  if (createJiraIssueErrorResponse) {
+                    const errorText = createJiraIssueErrorResponse;
+                    createJiraIssueErrorResponse = undefined;
+                    return {
+                      isError: true,
+                      content: [{ type: "text", text: errorText }],
+                    };
                   }
                   return {
                     content: [{ type: "text", text: "created" }],
@@ -298,7 +312,7 @@ describe("remote-cli MCP endpoints", () => {
     ).actionId;
 
     const resolved = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -463,7 +477,9 @@ describe("remote-cli MCP endpoints", () => {
       mcp: {
         approvalsDir,
         isProduction: true,
-        writeToolCallLogFn: () => {},
+        writeToolCallLogFn: (entry) => {
+          toolCallLogEntries.push(entry as unknown as Record<string, unknown>);
+        },
         connectUpstreamFn: async (name: string): Promise<UpstreamConnection> => {
           connectedUpstreams.push(name);
           return {
@@ -497,22 +513,25 @@ describe("remote-cli MCP endpoints", () => {
     const setTimeoutSpy = vi
       .spyOn(globalThis, "setTimeout")
       .mockImplementation(setTimeoutMock as unknown as typeof setTimeout);
-    const service = createMcpService({
-      approvalsDir,
-      isProduction: true,
-      configLoader: () => workspaceConfig,
-      writeToolCallLogFn: () => {},
-      connectUpstreamFn: async (_name, _upstreamConfig, onClose): Promise<UpstreamConnection> => {
-        onDisconnect = onClose;
-        return {
-          tools,
-          client: {
-            callTool: async () => ({ content: [] }),
-            close: async () => {},
-          } as unknown as UpstreamConnection["client"],
-        };
+    const service = createMcpService(
+      {
+        approvalsDir,
+        isProduction: true,
+        configLoader: () => workspaceConfig,
+        writeToolCallLogFn: () => {},
+        connectUpstreamFn: async (_name, _upstreamConfig, onClose): Promise<UpstreamConnection> => {
+          onDisconnect = onClose;
+          return {
+            tools,
+            client: {
+              callTool: async () => ({ content: [] }),
+              close: async () => {},
+            } as unknown as UpstreamConnection["client"],
+          };
+        },
       },
-    });
+      createApprovalService({ approvalsDir, writeToolCallLogFn: () => {} }),
+    );
 
     try {
       const listed = await service.executeMcp(["atlassian"], { sessionId: "parent-session" });
@@ -686,7 +705,7 @@ describe("remote-cli MCP endpoints", () => {
     upstreamConfigs = [];
     await startRemoteCliServer();
     const resolved = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -724,7 +743,7 @@ describe("remote-cli MCP endpoints", () => {
     await startRemoteCliServer();
 
     const resolved = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -783,7 +802,7 @@ describe("remote-cli MCP endpoints", () => {
     );
 
     const resolved = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -838,7 +857,7 @@ describe("remote-cli MCP endpoints", () => {
     });
 
     const resolved = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -1237,20 +1256,20 @@ describe("remote-cli MCP endpoints", () => {
       ],
     });
 
-    const deniedResolve = await postJson("/exec/mcp", {
+    const deniedResolve = await postJson("/exec/approval", {
       args: ["resolve", actionId, "approved", "U123"],
     });
     expect(deniedResolve.status).toBe(401);
 
     const wrongSecretResolve = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "wrong" },
     );
     expect(wrongSecretResolve.status).toBe(401);
 
     const allowedResolve = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -1456,7 +1475,7 @@ describe("remote-cli MCP endpoints", () => {
     });
 
     const resolveRejectedZombie = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", storedAction.id, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -1609,12 +1628,12 @@ describe("remote-cli MCP endpoints", () => {
     });
 
     const firstResolve = postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
     const secondResolve = postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -1629,12 +1648,17 @@ describe("remote-cli MCP endpoints", () => {
       exitCode: number;
     };
 
-    expect(firstBody).toEqual({ stdout: "created", stderr: "", exitCode: 0 });
+    expect(firstBody).toEqual({
+      stdout: "created",
+      stderr: "",
+      exitCode: 0,
+      sideEffectAttempted: true,
+    });
     expect(secondBody).toEqual(firstBody);
     expect(toolCalls).toHaveLength(1);
 
     const laterResolve = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -1674,14 +1698,14 @@ describe("remote-cli MCP endpoints", () => {
     });
 
     const firstResolve = postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
     await vi.waitFor(() => expect(toolCalls).toHaveLength(1));
 
     const secondResolve = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U999"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -1701,7 +1725,12 @@ describe("remote-cli MCP endpoints", () => {
       stderr: string;
       exitCode: number;
     };
-    expect(firstBody).toEqual({ stdout: "created", stderr: "", exitCode: 0 });
+    expect(firstBody).toEqual({
+      stdout: "created",
+      stderr: "",
+      exitCode: 0,
+      sideEffectAttempted: true,
+    });
     expect(toolCalls).toHaveLength(1);
   });
 
@@ -1729,7 +1758,7 @@ describe("remote-cli MCP endpoints", () => {
 
     createJiraIssueFailure = new Error("upstream unavailable");
     const failedResolve = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -1737,9 +1766,11 @@ describe("remote-cli MCP endpoints", () => {
       stdout: string;
       stderr: string;
       exitCode: number;
+      sideEffectAttempted?: boolean;
     };
     expect(failedBody.exitCode).toBe(1);
-    expect(failedBody.stderr).toContain('Error calling "createJiraIssue": upstream unavailable');
+    expect(failedBody.stderr).toContain("upstream unavailable");
+    expect(failedBody.sideEffectAttempted).toBe(true);
 
     const statusAfterFailure = await postJson("/exec/approval", { args: ["status", actionId] });
     const statusAfterFailureBody = (await statusAfterFailure.json()) as { stdout: string };
@@ -1750,7 +1781,7 @@ describe("remote-cli MCP endpoints", () => {
     });
 
     const successfulRetry = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -1759,7 +1790,12 @@ describe("remote-cli MCP endpoints", () => {
       stderr: string;
       exitCode: number;
     };
-    expect(successfulRetryBody).toEqual({ stdout: "created", stderr: "", exitCode: 0 });
+    expect(successfulRetryBody).toEqual({
+      stdout: "created",
+      stderr: "",
+      exitCode: 0,
+      sideEffectAttempted: true,
+    });
 
     const statusAfterSuccess = await postJson("/exec/approval", { args: ["status", actionId] });
     const statusAfterSuccessBody = (await statusAfterSuccess.json()) as { stdout: string };
@@ -1771,7 +1807,7 @@ describe("remote-cli MCP endpoints", () => {
     );
 
     const corruptResolve = await postJson(
-      "/exec/mcp",
+      "/exec/approval",
       { args: ["resolve", actionId, "approved", "U123"] },
       { "x-thor-internal-secret": "resolve-secret" },
     );
@@ -1796,6 +1832,71 @@ describe("remote-cli MCP endpoints", () => {
     expect(corruptStatus.status).toBe(200);
     expect(corruptStatusBody.exitCode).toBe(1);
     expect(corruptStatusBody.stderr).toContain(`Failed to load approval action ${actionId}`);
+  });
+
+  it("surfaces MCP CallToolResult.isError as a side-effect-attempted failure on approved resolution", async () => {
+    appendAlias({
+      aliasType: "opencode.session",
+      aliasValue: "parent-session",
+      anchorId: activeAnchorId,
+    });
+    // triggerSlackId lets resolveTriggerUser map the trigger to the configured
+    // user (alice@example.com) so withJiraAttribution actually runs and the
+    // worklog assertion below has something to verify.
+    appendActiveTrigger({ triggerSlackId: "UABCDEF1" });
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createJiraIssue",
+          '{"cloudId":"cloud-1","projectKey":"THOR","issueTypeName":"Task","summary":"Fix it","description":"body"}',
+        ],
+        cwd: "/workspace/repos/acme",
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { stdout: string };
+    const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
+
+    createJiraIssueErrorResponse = "The target project doesn't exist or you don't have permission.";
+    const resolved = await postJson(
+      "/exec/approval",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    const resolvedBody = (await resolved.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+      sideEffectAttempted?: boolean;
+    };
+    expect(resolvedBody.exitCode).toBe(1);
+    expect(resolvedBody.sideEffectAttempted).toBe(true);
+    expect(resolvedBody.stderr).toContain("The target project doesn't exist");
+
+    const statusAfterFailure = await postJson("/exec/approval", { args: ["status", actionId] });
+    const statusAfterFailureBody = (await statusAfterFailure.json()) as { stdout: string };
+    expect(JSON.parse(statusAfterFailureBody.stdout)).toMatchObject({
+      id: actionId,
+      status: "pending",
+    });
+
+    // The worklog must reflect the args actually sent to the upstream
+    // (post-attribution), not the pre-attribution args from the approval
+    // store — auditors rely on the worklog to see assignee_account_id, etc.
+    const createEntry = toolCallLogEntries.find(
+      (entry) =>
+        entry.tool === "createJiraIssue" &&
+        entry.decision === "approved" &&
+        typeof entry.error === "string",
+    );
+    expect(createEntry).toBeDefined();
+    expect((createEntry!.args as Record<string, unknown>).assignee_account_id).toBe(
+      "jira-account-1",
+    );
   });
 
   it("returns 401 for /internal/exec without the internal secret", async () => {

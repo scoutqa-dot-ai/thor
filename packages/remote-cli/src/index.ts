@@ -3,9 +3,7 @@ import { access } from "node:fs/promises";
 import { dirname, normalize as normalizePosix } from "node:path/posix";
 import { fileURLToPath } from "node:url";
 import {
-  appendCorrelationAlias,
   buildThorDisclaimerForSession,
-  computeGitCorrelationKey,
   createConfigLoader,
   createLogger,
   errorMessage,
@@ -22,8 +20,17 @@ import {
   type ConfigLoader,
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.ts";
-import { resolveOwnerRepoFromRemote } from "./github-app-auth.ts";
 import { createMcpService, type McpServiceDeps } from "./mcp-handler.ts";
+import { createApprovalService } from "./approval-service.ts";
+import {
+  getCliApprovalDefinition,
+  registerCliApprovals,
+  requestCliApproval,
+} from "./cli-approval.ts";
+import {
+  registerCreatedIssueCorrelationAlias,
+  registerGitCorrelationAlias,
+} from "./gh-issue-alias.js";
 import {
   handleSlackPostMessage,
   parseSlackPostMessageArgs,
@@ -63,8 +70,6 @@ const WORKTREE_ROOT = "/workspace/worktrees";
 const WORKTREE_PREFIX = `${WORKTREE_ROOT}/`;
 const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 const INTERNAL_EXEC_MAX_OUTPUT = 1024 * 1024;
-const GITHUB_ISSUE_URL_RE =
-  /https:\/\/github\.com\/([^\s/]+)\/([^\s/]+)\/issues\/(\d+)(?:\b|[/?#])/;
 
 export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env): void {
   loadRemoteCliGitHubEnv(env);
@@ -107,85 +112,6 @@ function thorIds(req: express.Request): { sessionId?: string; callId?: string } 
     ...(sessionId && { sessionId }),
     ...(callId && { callId }),
   };
-}
-
-function registerGitCorrelationAlias(
-  sessionId: string | undefined,
-  args: string[],
-  cwd: string,
-): void {
-  if (!sessionId) return;
-  const correlationKey = computeGitCorrelationKey(args, cwd);
-  if (!correlationKey) return;
-
-  try {
-    appendCorrelationAlias(sessionId, correlationKey);
-  } catch (err) {
-    logError(log, "alias_registration_error", err instanceof Error ? err.message : String(err), {
-      sessionId,
-      correlationKey,
-    });
-    return;
-  }
-  logInfo(log, "alias_registered", { sessionId, correlationKey, source: "git" });
-}
-
-function buildIssueCorrelationKey(owner: string, repo: string, number: string): string {
-  // Gateway issue correlation uses the GitHub repo basename as the local repo
-  // component. Keep producer-side aliases aligned even when the local worktree
-  // parent directory is not the same as owner/repo's basename.
-  return `github:issue:${repo}:${owner}/${repo}#${number}`;
-}
-
-function parseIssueUrl(
-  stdout: string,
-): { owner: string; repo: string; number: string } | undefined {
-  const match = stdout.match(GITHUB_ISSUE_URL_RE);
-  if (!match) return undefined;
-  const [, owner, repo, number] = match;
-  if (!owner || !repo || !number) return undefined;
-  return { owner, repo, number };
-}
-
-function ownerRepoMatches(
-  cwdRepo: ReturnType<typeof resolveOwnerRepoFromRemote> | undefined,
-  owner: string,
-  repo: string,
-): boolean {
-  return (
-    !cwdRepo ||
-    (cwdRepo.host === "github.com" &&
-      cwdRepo.owner.toLowerCase() === owner.toLowerCase() &&
-      cwdRepo.repo.toLowerCase() === repo.toLowerCase())
-  );
-}
-
-function parseCreatedIssueCorrelationKey(stdout: string, cwd: string): string | undefined {
-  const issue = parseIssueUrl(stdout);
-  if (!issue) return undefined;
-  const cwdRepo = resolveOwnerRepoFromRemote(cwd);
-  if (!ownerRepoMatches(cwdRepo, issue.owner, issue.repo)) return undefined;
-  return buildIssueCorrelationKey(issue.owner, issue.repo, issue.number);
-}
-
-function registerCreatedIssueCorrelationAlias(
-  sessionId: string | undefined,
-  cwd: string,
-  stdout: string,
-): void {
-  if (!sessionId) return;
-  const correlationKey = parseCreatedIssueCorrelationKey(stdout, cwd);
-  if (!correlationKey) return;
-  try {
-    appendCorrelationAlias(sessionId, correlationKey);
-  } catch (err) {
-    logError(log, "alias_registration_error", err instanceof Error ? err.message : String(err), {
-      sessionId,
-      correlationKey,
-    });
-    return;
-  }
-  logInfo(log, "alias_registered", { sessionId, correlationKey, source: "gh" });
 }
 
 type FlagMatch = { index: number; valueIndex?: number; inlinePrefix?: string };
@@ -300,6 +226,7 @@ function withGhAttribution(
   getConfig: ConfigLoader,
 ): string[] {
   if (!((args[0] === "pr" || args[0] === "issue") && args[1] === "create")) return args;
+  if (isGhHelpRequest(args)) return args;
   const resolved = resolveTriggerUser(sessionId, getConfig);
   if (hasFlag(args, ["--assignee", "-a"])) {
     logAttribution(
@@ -488,7 +415,9 @@ async function resolveWorktreeRoot(cwd: string): Promise<{ root: string; subpath
 
   const containingRoot = await findContainingWorktreeRoot(root);
   if (containingRoot) {
-    throw new Error(`git toplevel is nested under another working tree: ${root} (parent ${containingRoot})`);
+    throw new Error(
+      `git toplevel is nested under another working tree: ${root} (parent ${containingRoot})`,
+    );
   }
 
   const subpath = cwd.startsWith(root + "/") ? cwd.slice(root.length + 1) : "";
@@ -646,7 +575,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   const envConfig = config.env;
   const internalSecret = appEnv.thorInternalSecret;
   const getConfig = config.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
-  const mcpService = createMcpService({
+  const mcpConfig: McpServiceDeps = {
     isProduction: appEnv.isProduction,
     ...config.mcp,
     configLoader: config.mcp?.configLoader ?? getConfig,
@@ -654,7 +583,17 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       botToken: envConfig?.slackBotToken,
       apiBaseUrl: envConfig?.slackApiBaseUrl,
     },
+  };
+  // The approval engine is a registry owned here at the composition root; the
+  // MCP service and CLI approvals register their stores into it.
+  const approvalService = createApprovalService({
+    ...(mcpConfig.approvalsDir ? { approvalsDir: mcpConfig.approvalsDir } : {}),
+    ...(mcpConfig.writeToolCallLogFn ? { writeToolCallLogFn: mcpConfig.writeToolCallLogFn } : {}),
+    ...(mcpConfig.slack ? { slack: mcpConfig.slack } : {}),
+    ...(mcpConfig.fetchImpl ? { fetchImpl: mcpConfig.fetchImpl } : {}),
   });
+  const mcpService = createMcpService(mcpConfig, approvalService);
+  registerCliApprovals(approvalService, execCommand);
 
   const app = express();
   app.use(express.json());
@@ -702,12 +641,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       }
       res.json(result);
     } catch (err) {
-      logError(
-        log,
-        "exec_git_error",
-        errorMessage(err),
-        thorIds(req),
-      );
+      logError(log, "exec_git_error", errorMessage(err), thorIds(req));
       res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
@@ -736,6 +670,21 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       }
       const effectiveArgs = withGhAttribution(disclaimerArgs, ids.sessionId, getConfig);
 
+      if (
+        effectiveArgs[0] === "issue" &&
+        effectiveArgs[1] === "create" &&
+        !isGhHelpRequest(effectiveArgs)
+      ) {
+        logInfo(log, "exec_gh_pending_approval", { args: effectiveArgs, cwd, ...ids });
+        const result = await requestCliApproval(approvalService, getCliApprovalDefinition("gh"), {
+          cwd,
+          args: effectiveArgs,
+          ...ids,
+        });
+        res.status(result.exitCode === 0 ? 200 : 400).json(result);
+        return;
+      }
+
       logInfo(log, "exec_gh", { args: effectiveArgs, cwd, ...ids });
       const result = await execCommand("gh", effectiveArgs, cwd);
       if ((result.exitCode ?? 0) === 0) {
@@ -745,12 +694,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       }
       res.json(result);
     } catch (err) {
-      logError(
-        log,
-        "exec_gh_error",
-        errorMessage(err),
-        thorIds(req),
-      );
+      logError(log, "exec_gh_error", errorMessage(err), thorIds(req));
       res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
@@ -767,22 +711,21 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
       logInfo(log, "exec_scoutqa", { args, ...thorIds(req) });
 
-      await streamNdjsonResponse(res, (err) => {
-        logError(log, "exec_scoutqa_error", errorMessage(err), thorIds(req));
-      }, async (write) => {
-        const exitCode = await execCommandStream("scoutqa", args, "/workspace", {
-          onStdout: (data) => write({ type: "stdout", data }),
-          onStderr: (data) => write({ type: "stderr", data }),
-        });
-        write({ type: "exit", exitCode });
-      });
-    } catch (err) {
-      logError(
-        log,
-        "exec_scoutqa_error",
-        errorMessage(err),
-        thorIds(req),
+      await streamNdjsonResponse(
+        res,
+        (err) => {
+          logError(log, "exec_scoutqa_error", errorMessage(err), thorIds(req));
+        },
+        async (write) => {
+          const exitCode = await execCommandStream("scoutqa", args, "/workspace", {
+            onStdout: (data) => write({ type: "stdout", data }),
+            onStderr: (data) => write({ type: "stderr", data }),
+          });
+          write({ type: "exit", exitCode });
+        },
       );
+    } catch (err) {
+      logError(log, "exec_scoutqa_error", errorMessage(err), thorIds(req));
       res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
@@ -819,12 +762,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       });
       res.status((execResult.exitCode ?? 0) === 0 ? 200 : 400).json(execResult);
     } catch (err) {
-      logError(
-        log,
-        "exec_slack_post_message_error",
-        errorMessage(err),
-        ids,
-      );
+      logError(log, "exec_slack_post_message_error", errorMessage(err), ids);
       res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
@@ -937,38 +875,42 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       // Streaming exec runs outside the lock — parallel commands are OK.
       // Known limitation: parallel execs share one sandbox filesystem, so
       // concurrent writes to the same file produce last-writer-wins pull results.
-      await streamNdjsonResponse(res, (err) => {
-        logError(log, "exec_sandbox_error", errorMessage(err), thorIds(req));
-      }, async (writeNdjson) => {
-        const exitCode = await execInSandboxStream(result.sandboxId, result.command, {
-          onStdout: (chunk) => writeNdjson({ type: "stdout", data: chunk }),
-          onStderr: (chunk) => writeNdjson({ type: "stderr", data: chunk }),
-        });
-        let finalExitCode = exitCode;
+      await streamNdjsonResponse(
+        res,
+        (err) => {
+          logError(log, "exec_sandbox_error", errorMessage(err), thorIds(req));
+        },
+        async (writeNdjson) => {
+          const exitCode = await execInSandboxStream(result.sandboxId, result.command, {
+            onStdout: (chunk) => writeNdjson({ type: "stdout", data: chunk }),
+            onStderr: (chunk) => writeNdjson({ type: "stderr", data: chunk }),
+          });
+          let finalExitCode = exitCode;
 
-        // Pull changes back only on success — failed commands may leave partial artifacts
-        if (exitCode === 0) {
-          try {
-            const pull = await withCwdLock(worktreeRoot, () =>
-              pullSandboxChanges(result.sandboxId, worktreeRoot),
-            );
-            if (pull.pulled.length > 0 || pull.deleted.length > 0) {
-              logInfo(log, "sandbox_pull", {
-                pulled: pull.pulled,
-                deleted: pull.deleted,
-                cwd: worktreeRoot,
-              });
+          // Pull changes back only on success — failed commands may leave partial artifacts
+          if (exitCode === 0) {
+            try {
+              const pull = await withCwdLock(worktreeRoot, () =>
+                pullSandboxChanges(result.sandboxId, worktreeRoot),
+              );
+              if (pull.pulled.length > 0 || pull.deleted.length > 0) {
+                logInfo(log, "sandbox_pull", {
+                  pulled: pull.pulled,
+                  deleted: pull.deleted,
+                  cwd: worktreeRoot,
+                });
+              }
+            } catch (pullErr) {
+              const message = errorMessage(pullErr);
+              logError(log, "sandbox_pull_error", message, thorIds(req));
+              writeNdjson({ type: "stderr", data: `${message}\n` });
+              finalExitCode = 1;
             }
-          } catch (pullErr) {
-            const message = errorMessage(pullErr);
-            logError(log, "sandbox_pull_error", message, thorIds(req));
-            writeNdjson({ type: "stderr", data: `${message}\n` });
-            finalExitCode = 1;
           }
-        }
 
-        writeNdjson({ type: "exit", exitCode: finalExitCode });
-      });
+          writeNdjson({ type: "exit", exitCode: finalExitCode });
+        },
+      );
     } catch (err) {
       const message = errorMessage(err);
       logError(log, "exec_sandbox_error", message, thorIds(req));
@@ -1001,12 +943,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       });
       res.json(result);
     } catch (err) {
-      logError(
-        log,
-        "exec_ldcli_error",
-        errorMessage(err),
-        thorIds(req),
-      );
+      logError(log, "exec_ldcli_error", errorMessage(err), thorIds(req));
       res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
@@ -1064,24 +1001,11 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
-      if (args[0] === "resolve") {
-        const providedSecret = getInternalSecretHeader(req);
-        if (!matchesInternalSecret(internalSecret, providedSecret)) {
-          res.status(401).json({ error: "Unauthorized" });
-          return;
-        }
-      }
-
       const result = await mcpService.executeMcp(args, thorIds(req));
 
       res.json(result);
     } catch (err) {
-      logError(
-        log,
-        "exec_mcp_error",
-        errorMessage(err),
-        thorIds(req),
-      );
+      logError(log, "exec_mcp_error", errorMessage(err), thorIds(req));
       res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
@@ -1141,15 +1065,18 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
-      const result = await mcpService.executeApproval(args);
+      if (args[0] === "resolve") {
+        const providedSecret = getInternalSecretHeader(req);
+        if (!matchesInternalSecret(internalSecret, providedSecret)) {
+          res.status(401).json({ error: "Unauthorized" });
+          return;
+        }
+      }
+
+      const result = await approvalService.executeApproval(args);
       res.json(result);
     } catch (err) {
-      logError(
-        log,
-        "exec_approval_error",
-        errorMessage(err),
-        thorIds(req),
-      );
+      logError(log, "exec_approval_error", errorMessage(err), thorIds(req));
       res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
