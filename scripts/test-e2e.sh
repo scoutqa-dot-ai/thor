@@ -667,9 +667,12 @@ elif assert_attribution_config; then
       "attribution e2e: gh pr create invocation includes --assignee with the configured github login" \
       "expected --assignee ${ATTRIBUTION_E2E_GITHUB} in exec_gh args; logs: ${gh_logs:0:1500}"
 
-    # gh issue create: use a unique missing label so the underlying gh call is
-    # expected to fail before creating an issue, while still proving Thor
-    # injected --assignee <github> and preserved disclaimer body rewriting.
+    # gh issue create is gated behind human approval. Thor stores the raw,
+    # reviewed author args and injects the disclaimer footer + assignee
+    # attribution only at execution (post-approval), matching the MCP flow — so
+    # the pending-approval args that back the Slack approval card must stay
+    # clean. This session has no Slack approval thread, so the request fails
+    # closed before an action is created; we assert on the pending-approval log.
     issue_log_since=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     issue_title="Thor issue attribution e2e ${REMOTE_CLI_AUTH_TS}"
     issue_body="Thor issue attribution e2e marker ${REMOTE_CLI_AUTH_TS}"
@@ -700,15 +703,15 @@ elif assert_attribution_config; then
     assert '[[ "$issue_create_exit" != "0" && "$issue_create_raw" == *"has no Slack trigger correlation key"* ]]' \
       "attribution e2e: gh issue create fails closed when no Slack approval thread is available" \
       "exitCode='$issue_create_exit' response: ${issue_create_raw:0:500}"
-    assert '[[ "$issue_logs" == *"\"surface\":\"gh-assignee\",\"outcome\":\"applied\""* ]]' \
-      "attribution e2e: gh issue create attribution was applied" \
-      "logs: ${issue_logs:0:1000}"
-    assert '[[ "$issue_logs" == *"\"event\":\"exec_gh_pending_approval\""*"\"issue\""*"\"create\""*"\"--assignee\""*"\"${ATTRIBUTION_E2E_GITHUB}\""* ]]' \
-      "attribution e2e: gh issue create approval payload includes --assignee with the configured github login" \
-      "expected --assignee ${ATTRIBUTION_E2E_GITHUB} in issue create pending-approval args; logs: ${issue_logs:0:1500}"
-    assert '[[ "$issue_logs" == *"\"event\":\"exec_gh_pending_approval\""*"$issue_body"*"View Thor context"* ]]' \
-      "attribution e2e: gh issue create approval payload keeps the traced body footer" \
-      "expected original body marker and Thor context footer in pending-approval args; logs: ${issue_logs:0:1500}"
+    assert '[[ "$issue_logs" == *"\"event\":\"exec_gh_pending_approval\""*"\"issue\""*"\"create\""*"$issue_body"* ]]' \
+      "attribution e2e: gh issue create requests approval with the raw author body" \
+      "expected raw body marker in pending-approval args; logs: ${issue_logs:0:1500}"
+    assert '[[ "$issue_logs" != *"--assignee"* ]]' \
+      "attribution e2e: gh issue create approval card args exclude the auto-injected assignee" \
+      "did not expect --assignee in pending-approval args (injected post-approval); logs: ${issue_logs:0:1500}"
+    assert '[[ "$issue_logs" != *"View Thor context"* ]]' \
+      "attribution e2e: gh issue create approval card args exclude the disclaimer footer" \
+      "did not expect Thor context footer in pending-approval args (injected post-approval); logs: ${issue_logs:0:1500}"
   fi
 fi
 
