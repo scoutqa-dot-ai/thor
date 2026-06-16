@@ -1,0 +1,43 @@
+packages/remote-cli/src/policy.ts
+  47f8b7419688463a 241-244,253-314,316-335
+packages/remote-cli/src/index.ts
+  47f8b7419688463a 52,781-797
+docs/plan/2026061601_aws-write-approval.md
+  47f8b7419688463a 1-36
+packages/common/src/approval-events.ts
+  47f8b7419688463a 41-47,53,79-82,141
+packages/common/src/index.ts
+  47f8b7419688463a 35
+packages/common/src/approval-presentation.ts
+  47f8b7419688463a 5,171-172,334-348
+packages/remote-cli/src/cli-approval.ts
+  47f8b7419688463a 2,4,29-30,81-83,199-214,216-221,223
+packages/remote-cli/src/policy.test.ts
+  47f8b7419688463a 8,1906-1984
+packages/remote-cli/src/cli-approval.test.ts
+  47f8b7419688463a 154-182
+packages/common/src/approval-presentation.test.ts
+  47f8b7419688463a 22-50
+docs/feat/security-model.md
+  47f8b7419688463a 107-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "f9adbc47ce02538d0b91e32758a406e743bf2fc9",
+  "prompts": {
+    "47f8b7419688463a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec611c14-13ca-4c24-9305-35d4694abd7b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 382,
+      "total_deletions": 23,
+      "accepted_lines": 369,
+      "overriden_lines": 2
+    }
+  }
+}
