@@ -2,6 +2,7 @@ import {
   AddCommentToJiraIssueApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
   GhIssueCreateApprovalArgsSchema,
+  AwsExecApprovalArgsSchema,
   CreateJiraIssueApprovalArgsSchema,
   type ApprovalToolName,
 } from "./approval-events.ts";
@@ -167,6 +168,8 @@ export function buildApprovalPresentation(
         return buildCreateFeatureFlagPresentation(args);
       case "ghIssueCreate":
         return buildGhIssueCreatePresentation(args);
+      case "awsExec":
+        return buildAwsExecPresentation(args);
       default:
         return undefined;
     }
@@ -324,6 +327,21 @@ function buildGhIssueCreatePresentation(args: Record<string, unknown>): Approval
       bullet("Labels", parsed.labels?.join(", ")),
       bullet("Assignees", parsed.assignees?.join(", ")),
       section("Body preview", parsed.bodyPreview),
+    ]),
+  };
+}
+
+function buildAwsExecPresentation(args: Record<string, unknown>): ApprovalPresentation {
+  const parsed = AwsExecApprovalArgsSchema.parse(args);
+  const command = `aws ${parsed.args.join(" ")}`.trim();
+  return {
+    title: "Run aws command",
+    markdown: joinMarkdown([
+      bullet("Directory", parsed.cwd),
+      // Code-fence the command so shell metacharacters (`*` `_` `~` backticks)
+      // render literally instead of being parsed as Slack mrkdwn — the operator
+      // must review the exact command, not a formatted rewrite of it.
+      `*Command:*\n\`\`\`\n${command}\n\`\`\``,
     ]),
   };
 }

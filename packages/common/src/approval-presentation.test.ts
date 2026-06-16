@@ -19,3 +19,32 @@ describe("buildApprovalPresentation — gh issue create", () => {
     expect(presentation!.markdown).not.toContain("gh issue create");
   });
 });
+
+describe("buildApprovalPresentation — aws write command", () => {
+  it("renders the reviewed aws command in a code block with the working directory", () => {
+    const presentation = buildApprovalPresentation("awsExec", {
+      cwd: "/workspace/repos/thor",
+      args: ["s3", "cp", "./build.zip", "s3://my-bucket/build.zip"],
+    });
+
+    expect(presentation).toBeDefined();
+    expect(presentation!.title).toBe("Run aws command");
+    expect(presentation!.markdown).toContain("*Directory:* /workspace/repos/thor");
+    expect(presentation!.markdown).toContain(
+      "*Command:*\n```\naws s3 cp ./build.zip s3://my-bucket/build.zip\n```",
+    );
+  });
+
+  it("preserves shell metacharacters literally instead of parsing them as mrkdwn", () => {
+    const presentation = buildApprovalPresentation("awsExec", {
+      cwd: "/workspace/repos/thor",
+      args: ["s3", "rm", "s3://my-bucket/*.log", "--recursive"],
+    });
+
+    expect(presentation).toBeDefined();
+    // The `*` must survive verbatim inside the fence, not toggle bold.
+    expect(presentation!.markdown).toContain(
+      "```\naws s3 rm s3://my-bucket/*.log --recursive\n```",
+    );
+  });
+});

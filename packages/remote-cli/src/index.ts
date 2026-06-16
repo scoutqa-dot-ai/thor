@@ -57,6 +57,7 @@ import {
   THOR_SHA_LABEL,
 } from "./sandbox.ts";
 import {
+  awsCommandRequiresApproval,
   resolveGitArgs,
   validateAwsArgs,
   validateCwd,
@@ -800,7 +801,23 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
-      logInfo(log, "exec_aws", { args, cwd, ...thorIds(req) });
+      const ids = thorIds(req);
+
+      // Mutating ("write-alike") aws commands are gated behind human approval;
+      // the approved command runs verbatim from the stored action. Read-only
+      // commands run immediately below.
+      if (awsCommandRequiresApproval(args)) {
+        logInfo(log, "exec_aws_pending_approval", { args, cwd, ...ids });
+        const result = await requestCliApproval(approvalService, getCliApprovalDefinition("aws"), {
+          cwd,
+          args,
+          ...ids,
+        });
+        res.status(result.exitCode === 0 ? 200 : 400).json(result);
+        return;
+      }
+
+      logInfo(log, "exec_aws", { args, cwd, ...ids });
       // aws inherits the container's AWS credential chain (IAM role / AWS_* env).
       // AWS_PAGER="" disables the v2 pager — output is captured non-interactively,
       // and the container has no pager (`less`) to redirect to.

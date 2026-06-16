@@ -238,6 +238,10 @@ function getMetabaseAllowedSchemas(): Set<string> {
 // own environment (IAM role / AWS_* env). Scope is governed by those IAM
 // credentials, not by an in-process allowlist. If a future plan needs to
 // restrict which services/subcommands agents can reach, add the allowlist here.
+//
+// Mutating ("write-alike") commands are additionally gated behind human
+// approval (see awsCommandRequiresApproval). validateAwsArgs only checks the
+// request is well-formed; the read/write split decides the execution path.
 
 export function validateAwsArgs(args: string[]): string | null {
   if (!Array.isArray(args) || args.length === 0) {
@@ -245,4 +249,88 @@ export function validateAwsArgs(args: string[]): string | null {
   }
 
   return null;
+}
+
+// Global options that consume the following token as their value. Used to skip
+// option values when locating the positional service/operation tokens (e.g.
+// `aws --region us-east-1 ec2 run-instances` → service "ec2", op "run-instances").
+const AWS_GLOBAL_VALUE_OPTIONS: ReadonlySet<string> = new Set([
+  "--region",
+  "--profile",
+  "--output",
+  "--endpoint-url",
+  "--query",
+  "--color",
+  "--ca-bundle",
+  "--cli-read-timeout",
+  "--cli-connect-timeout",
+  "--cli-binary-format",
+]);
+
+// Operation verb prefixes that only read state. A command counts as read-only
+// when its operation token equals one of these or starts with "<verb>-"
+// (e.g. describe-instances, list-buckets, get-object, batch-get-item).
+const AWS_READ_ONLY_VERBS: readonly string[] = [
+  "describe",
+  "list",
+  "get",
+  "lookup",
+  "search",
+  "scan",
+  "query",
+  "head",
+  "select",
+  "view",
+  "preview",
+  "estimate",
+  "batch-get",
+  "wait",
+];
+
+// Read-only operations whose names are not verb-prefixed: s3 high-level `ls`,
+// the local `presign` URL helper, and `help`.
+const AWS_READ_ONLY_EXACT: ReadonlySet<string> = new Set(["ls", "presign", "help"]);
+
+// Extract up to the first two positional tokens (service, operation), skipping
+// global flags and their values.
+function awsPositionalTokens(args: string[]): string[] {
+  const positionals: string[] = [];
+  for (let i = 0; i < args.length && positionals.length < 2; i += 1) {
+    const token = args[i];
+    if (token.startsWith("-")) {
+      // "--opt=value" carries its own value; a bare value-option consumes the
+      // next token, so skip it to avoid treating the value as a positional.
+      if (!token.includes("=") && AWS_GLOBAL_VALUE_OPTIONS.has(token)) {
+        i += 1;
+      }
+      continue;
+    }
+    positionals.push(token);
+  }
+  return positionals;
+}
+
+function isReadOnlyAwsOperation(operation: string): boolean {
+  if (AWS_READ_ONLY_EXACT.has(operation)) return true;
+  return AWS_READ_ONLY_VERBS.some((verb) => operation === verb || operation.startsWith(`${verb}-`));
+}
+
+/**
+ * Whether an aws command mutates state and must be gated behind human approval.
+ *
+ * Fail-closed: a command skips approval only when it requests help/version or
+ * its operation is a recognized read-only verb. Any other (or unrecognized)
+ * operation — create-*, delete-*, put-*, run-*, s3 cp/mv/rm/sync, etc. — is
+ * treated as a write and requires approval.
+ */
+export function awsCommandRequiresApproval(args: string[]): boolean {
+  if (!Array.isArray(args) || args.length === 0) return false;
+  if (args.includes("help") || args.includes("--version")) return false;
+
+  const [service, operation] = awsPositionalTokens(args);
+  // No operation token (bare `aws s3`, or only global flags): nothing to
+  // mutate — aws just prints usage/help.
+  if (!service || !operation) return false;
+
+  return !isReadOnlyAwsOperation(operation);
 }

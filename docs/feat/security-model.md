@@ -104,7 +104,9 @@ Approval creation **fails closed** when remote-cli cannot resolve or post to the
 
 ### Command policy
 
-`git`, `gh`, `metabase`, `ldcli`, and `scoutqa` go through remote-cli `POST /exec/*` endpoints with server-side allowlists per command. The OpenCode-side wrappers are convenience — bypassing them by calling raw binaries inside OpenCode does not exist as a path because credentials live in remote-cli.
+`git`, `gh`, `metabase`, `ldcli`, `scoutqa`, and `aws` go through remote-cli `POST /exec/*` endpoints with server-side policy per command. The OpenCode-side wrappers are convenience — bypassing them by calling raw binaries inside OpenCode does not exist as a path because credentials live in remote-cli.
+
+`aws` is a generic passthrough scoped by the container's IAM credentials, but mutating ("write-alike") commands are additionally gated behind the same human-approval path as `gh issue create`. The split is **fail-closed**: a command runs immediately only when it requests help/version or its operation is a recognized read-only verb (`describe-*`, `list-*`, `get-*`, `scan`, `query`, `s3 ls`, …). Any other operation — `create-*`, `delete-*`, `put-*`, `run-*`, `s3 cp/mv/rm/sync`, unrecognized verbs — requires a human to approve the reviewed command before it executes.
 
 ### Credential handling
 
