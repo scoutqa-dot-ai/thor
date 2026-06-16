@@ -3,7 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { createLogger, logError, logInfo, type ProxyUpstream } from "@thor/common";
+import { createLogger, logError, logInfo, logWarn, type ProxyUpstream } from "@thor/common";
 
 const log = createLogger("mcp");
 
@@ -77,9 +77,10 @@ export async function connectUpstream(
   }
 
   client.onclose = () => {
-    logError(log, "upstream_disconnected", "upstream closed unexpectedly", {
+    logWarn(log, "upstream_disconnected", {
       name,
       target,
+      willReconnect: !!onDisconnect,
     });
     onDisconnect?.();
   };

@@ -8,6 +8,7 @@ import {
   errorMessage,
   logError,
   logInfo,
+  logWarn,
   loadRemoteCliAppEnv,
   loadRemoteCliEnv,
   loadRemoteCliGitHubEnv,
@@ -31,7 +32,14 @@ import {
   parseSlackPostMessageArgs,
   type SlackPostMessageDeps,
 } from "./slack-post-message.ts";
-import { listSchemas, listTables, getColumns, executeQuery, getQuestion } from "./metabase.ts";
+import {
+  listSchemas,
+  listTables,
+  getColumns,
+  executeQuery,
+  getQuestion,
+  MetabaseError,
+} from "./metabase.ts";
 import {
   createSandbox,
   deleteSandbox,
@@ -815,7 +823,19 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       res.json({ stdout: JSON.stringify(result, null, 2), stderr: "", exitCode: 0 });
     } catch (err) {
       const message = errorMessage(err);
-      logError(log, "exec_metabase_error", message, thorIds(req));
+      const { args } = req.body ?? {};
+      const subcommand = Array.isArray(args) ? args[0] : undefined;
+      if (err instanceof MetabaseError && err.userFailure) {
+        logWarn(log, "exec_metabase_query_failure", {
+          category: "metabase_query_failure",
+          subcommand,
+          error: message,
+          ...thorIds(req),
+        });
+        res.json({ stdout: "", stderr: message, exitCode: 1 });
+        return;
+      }
+      logError(log, "exec_metabase_error", message, { subcommand, ...thorIds(req) });
       res.status(500).json({ stdout: "", stderr: message, exitCode: 1 });
     }
   });
