@@ -294,7 +294,15 @@ const AWS_READ_ONLY_EXACT: ReadonlySet<string> = new Set(["ls", "presign", "help
 // Credential/token-adjacent reads expose sensitive auth material or IAM shape.
 // Check these before the read-only verb allowlist so `get-*` token helpers do
 // not bypass approval.
-const AWS_APPROVAL_KEYWORDS: readonly string[] = ["credential", "password", "role", "sts", "token"];
+const AWS_APPROVAL_KEYWORDS: readonly string[] = [
+  "credential",
+  "password",
+  "role",
+  "secret",
+  "ssm",
+  "sts",
+  "token",
+];
 
 // Extract positional tokens (service, operation), skipping global flags and
 // their values. Keep indexes so help can be recognized only when it follows the

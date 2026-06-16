@@ -1902,7 +1902,9 @@ describe("awsCommandRequiresApproval", () => {
       ["sts", "get-session-token"],
       ["ecr", "get-authorization-token"],
       ["ecr", "get-login-password"],
+      ["secretsmanager", "get-secret-value", "--secret-id", "prod/db"],
       ["sso", "get-role-credentials"],
+      ["ssm", "get-parameter", "--with-decryption", "--name", "/prod/db"],
       ["iam", "get-role", "--role-name", "admin"],
       ["--region", "us-east-1", "sts", "get-caller-identity"],
     ];
