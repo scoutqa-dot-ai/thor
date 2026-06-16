@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { normalize as normalizePosix } from "node:path/posix";
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import {
+  awsCommandRequiresApproval,
   resolveGitArgs,
+  validateAwsArgs,
   validateCwd,
   validateGitArgs,
   validateGhArgs,
@@ -915,12 +917,12 @@ describe("validateGhArgs", () => {
       }
     });
 
-    it("allows append-only pr create with explicit title/body", () => {
+    it("allows append-only pr create with explicit title/body-file stdin", () => {
       expect(
-        validateGhArgs(["pr", "create", "--title", "Add feature", "--body", "Summary"]),
+        validateGhArgs(["pr", "create", "--title", "Add feature", "--body-file", "-"]),
       ).toBeNull();
       expect(
-        validateGhArgs(["pr", "create", "-t", "Add feature", "-b", "Summary", "--draft"]),
+        validateGhArgs(["pr", "create", "-t", "Add feature", "--body-file", "-", "--draft"]),
       ).toBeNull();
       expect(
         validateGhArgs([
@@ -930,22 +932,22 @@ describe("validateGhArgs", () => {
           "main",
           "--title",
           "Add feature",
-          "--body",
-          "Summary",
+          "--body-file",
+          "-",
         ]),
       ).toBeNull();
-      expect(validateGhArgs(["pr", "create", "--title=Add feature", "--body=Summary"])).toBeNull();
+      expect(validateGhArgs(["pr", "create", "--title=Add feature", "--body-file=-"])).toBeNull();
     });
 
-    it("allows pr create with explicit body and creation-time metadata", () => {
+    it("allows pr create with explicit stdin body and creation-time metadata", () => {
       expect(
         validateGhArgs([
           "pr",
           "create",
           "--title",
           "x",
-          "--body",
-          "y",
+          "--body-file",
+          "-",
           "--label",
           "bug",
           "--label",
@@ -997,42 +999,34 @@ describe("validateGhArgs", () => {
       expect(validateGhArgs(["workflow", "run", "ci.yml", "--field", "retries=null"])).toBeNull();
     });
 
-    it("allows issue create with explicit title and body", () => {
-      expect(validateGhArgs(["issue", "create", "--title", "Bug", "--body", "Broken"])).toBeNull();
-      expect(validateGhArgs(["issue", "create", "-t", "Bug", "-b", "Broken"])).toBeNull();
-      expect(validateGhArgs(["issue", "create", "--title=Bug", "--body=Broken"])).toBeNull();
+    it("allows issue create with explicit title and stdin body-file", () => {
+      expect(validateGhArgs(["issue", "create", "--title", "Bug", "--body-file", "-"])).toBeNull();
+      expect(validateGhArgs(["issue", "create", "--title=Bug", "--body-file=-"])).toBeNull();
       expect(
         validateGhArgs([
           "issue",
           "create",
           "--title",
           "Bug",
-          "--body",
-          "Broken",
+          "--body-file",
+          "-",
           "--assignee",
           "alice",
         ]),
       ).toBeNull();
-      expect(
-        validateGhArgs(["issue", "create", "-t", "Bug", "-b", "Broken", "-a", "alice"]),
-      ).toBeNull();
     });
 
     it("allows append-only pr and issue comments", () => {
-      expect(validateGhArgs(["pr", "comment", "123", "--body", "noted"])).toBeNull();
-      expect(validateGhArgs(["pr", "comment", "123", "-b", "noted"])).toBeNull();
-      expect(validateGhArgs(["issue", "comment", "42", "--body=noted"])).toBeNull();
-      expect(validateGhArgs(["issue", "comment", "42", "-b", "noted"])).toBeNull();
+      expect(validateGhArgs(["pr", "comment", "123", "--body-file", "-"])).toBeNull();
+      expect(validateGhArgs(["issue", "comment", "42", "--body-file=-"])).toBeNull();
     });
 
     it("allows append-only pr reviews for comment/request-changes", () => {
-      expect(validateGhArgs(["pr", "review", "--comment", "--body", "LGTM-ish"])).toBeNull();
-      expect(validateGhArgs(["pr", "review", "123", "--comment", "--body", "LGTM-ish"])).toBeNull();
+      expect(validateGhArgs(["pr", "review", "--comment", "--body-file", "-"])).toBeNull();
+      expect(validateGhArgs(["pr", "review", "123", "--comment", "--body-file", "-"])).toBeNull();
       expect(
-        validateGhArgs(["pr", "review", "123", "--request-changes", "--body", "needs tests"]),
+        validateGhArgs(["pr", "review", "123", "--request-changes", "--body-file", "-"]),
       ).toBeNull();
-      expect(validateGhArgs(["pr", "review", "123", "-c", "-b", "review body"])).toBeNull();
-      expect(validateGhArgs(["pr", "review", "123", "-r", "--body=review body"])).toBeNull();
     });
 
     it("allows implicit-get gh api reads with output shaping only", () => {
@@ -1047,66 +1041,20 @@ describe("validateGhArgs", () => {
       ).toBeNull();
     });
 
-    it("allows append-only gh api replies to current-repo PR review comments", () => {
-      expect(
-        validateGhArgs([
-          "api",
-          "repos/{owner}/{repo}/pulls/53/comments/123/replies",
-          "--method",
-          "POST",
-          "-f",
-          "body=Thanks, I fixed this.",
-        ]),
-      ).toBeNull();
-      expect(
-        validateGhArgs([
-          "api",
-          "/repos/{owner}/{repo}/pulls/53/comments/123/replies",
-          "--method=POST",
-          "--raw-field=body=Thanks, I fixed this.",
-        ]),
-      ).toBeNull();
-      expect(
-        validateGhArgs([
-          "api",
-          "repos/{owner}/{repo}/pulls/53/comments/123/replies",
-          "-X",
-          "POST",
-          "--raw-field",
-          "body=Done.",
-        ]),
-      ).toBeNull();
-      withOriginRemote("git@github.com:acme/web.git", (cwd) => {
-        expect(
-          validateGhArgs(
-            [
-              "api",
-              "repos/acme/web/pulls/53/comments/123/replies",
-              "--method",
-              "POST",
-              "-f",
-              "body=Thanks, I fixed this.",
-            ],
-            cwd,
-          ),
-        ).toBeNull();
-        expect(
-          validateGhArgs(
-            [
-              "api",
-              "/repos/ACME/WEB/pulls/53/comments/123/replies",
-              "--method=POST",
-              "--raw-field=body=Thanks, I fixed this.",
-            ],
-            cwd,
-          ),
-        ).toBeNull();
-      });
+    it("blocks gh api replies with inline prose bodies", () => {
+      expectGhDenied([
+        "api",
+        "repos/{owner}/{repo}/pulls/53/comments/123/replies",
+        "--method",
+        "POST",
+        "-f",
+        "body=Thanks",
+      ]);
     });
 
     it("does not route body values that look like help flags into the help path", () => {
-      expect(validateGhArgs(["pr", "comment", "123", "--body", "-h"])).toBeNull();
-      expect(validateGhArgs(["pr", "review", "123", "--comment", "--body", "--help"])).toBeNull();
+      expect(validateGhArgs(["pr", "comment", "123", "--body-file", "-"])).toBeNull();
+      expect(validateGhArgs(["pr", "review", "123", "--comment", "--body-file", "-"])).toBeNull();
     });
 
     it("allows gh run view --log and --log-failed for CI log inspection", () => {
@@ -1169,7 +1117,7 @@ describe("validateGhArgs", () => {
         ["repo-targeting flags are blocked", "cd into the intended repo or worktree"],
       );
       expectGhDeniedWith(
-        ["pr", "create", "--head", "feat/other", "--title", "x", "--body", "y"],
+        ["pr", "create", "--head", "feat/other", "--title", "x", "--body-file", "-"],
         [
           '--head "feat/other" does not match cwd branch "feat/test".',
           "cd into /workspace/worktrees/<repo>/feat/other or omit --head",
@@ -1182,11 +1130,11 @@ describe("validateGhArgs", () => {
       );
       expectGhDeniedWith(
         ["pr", "comment", "123"],
-        ["numeric PR", "gh pr comment <number> --body <text>"],
+        ["numeric PR", "gh pr comment <number> --body-file -"],
       );
       expectGhDeniedWith(
         ["issue", "comment", "abc"],
-        ["numeric issue", "gh issue comment <number> --body <text>"],
+        ["numeric issue", "gh issue comment <number> --body-file -"],
       );
     });
 
@@ -1213,19 +1161,19 @@ describe("validateGhArgs", () => {
     it("allows --head only when it matches the branch implied by cwd", () => {
       expect(
         validateGhArgs(
-          ["pr", "create", "--head", "feat/test", "--title", "x", "--body", "y"],
+          ["pr", "create", "--head", "feat/test", "--title", "x", "--body-file", "-"],
           HEAD_CWD,
         ),
       ).toBeNull();
       expect(
         validateGhArgs(
-          ["pr", "create", "-H", "feat/test", "--title", "x", "--body", "y"],
+          ["pr", "create", "-H", "feat/test", "--title", "x", "--body-file", "-"],
           HEAD_CWD,
         ),
       ).toBeNull();
       expect(
         validateGhArgs(
-          ["pr", "create", "--head=feat/test", "--title", "x", "--body", "y"],
+          ["pr", "create", "--head=feat/test", "--title", "x", "--body-file", "-"],
           HEAD_CWD,
         ),
       ).toBeNull();
@@ -1234,7 +1182,7 @@ describe("validateGhArgs", () => {
     it("blocks --head when it does not match cwd's branch", () => {
       // Different branch in the same repo
       expectGhDeniedWith(
-        ["pr", "create", "--head", "feat/other", "--title", "x", "--body", "y"],
+        ["pr", "create", "--head", "feat/other", "--title", "x", "--body-file", "-"],
         [
           '--head "feat/other" does not match cwd branch "feat/test".',
           "cd into /workspace/worktrees/<repo>/feat/other or omit --head",
@@ -1243,18 +1191,18 @@ describe("validateGhArgs", () => {
       );
       // Cross-fork form: monalisa:feat/test cannot match cwd's branch (feat/test)
       expectGhDeniedWith(
-        ["pr", "create", "--head", "monalisa:feat/test", "--title", "x", "--body", "y"],
+        ["pr", "create", "--head", "monalisa:feat/test", "--title", "x", "--body-file", "-"],
         ['--head "monalisa:feat/test" uses a cross-fork selector', "omit --head"],
         HEAD_CWD,
       );
       // Protected branches deny early even if cwd were to claim them
       expectGhDeniedWith(
-        ["pr", "create", "--head", "main", "--title", "x", "--body", "y"],
+        ["pr", "create", "--head", "main", "--title", "x", "--body-file", "-"],
         ['--head "main" targets a protected branch.', "feature worktree branch"],
         "/workspace/worktrees/myrepo/main",
       );
       expectGhDeniedWith(
-        ["pr", "create", "--head", "master", "--title", "x", "--body", "y"],
+        ["pr", "create", "--head", "master", "--title", "x", "--body-file", "-"],
         ['--head "master" targets a protected branch.', "feature worktree branch"],
         "/workspace/worktrees/myrepo/master",
       );
@@ -1269,15 +1217,15 @@ describe("validateGhArgs", () => {
           "feat/test",
           "--title",
           "x",
-          "--body",
-          "y",
+          "--body-file",
+          "-",
         ],
         ["multiple --head values are ambiguous.", "provide at most one --head value"],
         HEAD_CWD,
       );
       // Argument-injection-shaped values are rejected before the cwd check
       expectGhDeniedWith(
-        ["pr", "create", "--head", "-rm", "--title", "x", "--body", "y"],
+        ["pr", "create", "--head", "-rm", "--title", "x", "--body-file", "-"],
         ['--head "-rm" is not a valid branch value.', "omit --head"],
         HEAD_CWD,
       );
@@ -1285,18 +1233,18 @@ describe("validateGhArgs", () => {
 
     it("blocks --head when cwd is outside /workspace/worktrees/", () => {
       expectGhDeniedWith(
-        ["pr", "create", "--head", "feat/test", "--title", "x", "--body", "y"],
+        ["pr", "create", "--head", "feat/test", "--title", "x", "--body-file", "-"],
         ['--head "feat/test" cannot be checked because cwd is not a branch worktree.'],
         "/workspace/repos/myrepo",
       );
       expectGhDeniedWith(
-        ["pr", "create", "--head", "feat/test", "--title", "x", "--body", "y"],
+        ["pr", "create", "--head", "feat/test", "--title", "x", "--body-file", "-"],
         ['--head "feat/test" cannot be checked because cwd is not a branch worktree.'],
         undefined,
       );
       // cwd at the worktrees root with no branch segment
       expectGhDeniedWith(
-        ["pr", "create", "--head", "feat/test", "--title", "x", "--body", "y"],
+        ["pr", "create", "--head", "feat/test", "--title", "x", "--body-file", "-"],
         ['--head "feat/test" cannot be checked because cwd is not a branch worktree.'],
         "/workspace/worktrees/myrepo",
       );
@@ -1309,10 +1257,10 @@ describe("validateGhArgs", () => {
       expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "--fill"]);
       expectGhDenied(["pr", "create", "--fill", "--title", "x"]);
       expectGhDenied(["pr", "create", "--fill", "-F", "body.md"]);
-      // -F/--body-file are denied: direct writes require a mutable --body value
+      // Non-stdin body files are denied: direct writes require --body-file -
       expectGhDenied(["pr", "create", "--title", "x", "--body", "y", "-F", "body.md"]);
       expectGhDenied(["pr", "create", "-F", "body.md"]);
-      expectGhDenied(["pr", "create", "--title", "x", "-F", "a.md", "--body-file", "b.md"]);
+      expectGhDenied(["pr", "create", "--title", "x", "--body-file", "b.md"]);
     });
 
     it("blocks duplicate pr body flags that could bypass disclaimer injection", () => {
@@ -1343,11 +1291,11 @@ describe("validateGhArgs", () => {
       ]);
     });
 
-    it("blocks comment body-file forms", () => {
+    it("blocks non-stdin comment body-file forms", () => {
       expectGhDenied(["pr", "comment", "123", "--body", "x", "-F", "body.md"]);
-      expectGhDenied(["pr", "comment", "123", "-F", "body.md"]);
+      expectGhDenied(["pr", "comment", "123", "--body-file", "body.md"]);
       expectGhDenied(["issue", "comment", "42", "--body", "x", "-F", "body.md"]);
-      expectGhDenied(["issue", "comment", "42", "-F", "body.md"]);
+      expectGhDenied(["issue", "comment", "42", "--body-file", "body.md"]);
     });
 
     it("blocks unsafe run rerun / run download / workflow run shapes", () => {
@@ -1369,35 +1317,45 @@ describe("validateGhArgs", () => {
       expectGhDenied(["issue", "create"]);
       expectGhDeniedWith(
         ["issue", "create", "--title", "x"],
-        ["requires exactly one explicit --body value", "provide exactly one --body value"],
+        [
+          "requires exactly one explicit --body-file - value",
+          "provide exactly one --body-file - value",
+        ],
       );
       expectGhDeniedWith(
-        ["issue", "create", "--body", "y"],
+        ["issue", "create", "--body-file", "-"],
         ["requires exactly one explicit --title value", "provide exactly one --title value"],
       );
       expectGhDenied(["issue", "create", "--title", "x", "--body-file", "body.md"]);
       expectGhDenied(["issue", "create", "--title", "x", "--body", "y", "--repo", "org/repo"]);
     });
 
-    it("explains duplicate issue create title and body values", () => {
+    it("explains duplicate issue create title and body-file values", () => {
       expectGhDeniedWith(
-        ["issue", "create", "--title", "x", "--title", "y", "--body", "body"],
+        ["issue", "create", "--title", "x", "--title", "y", "--body-file", "-"],
         ["multiple --title values are ambiguous", "provide exactly one --title value"],
       );
       expectGhDeniedWith(
-        ["issue", "create", "--title", "x", "--body", "a", "--body", "b"],
+        ["issue", "create", "--title", "x", "--body-file", "-", "--body-file", "-"],
         [
-          "multiple --body values are ambiguous for disclaimer injection",
-          "provide exactly one --body value",
+          "multiple --body-file values are ambiguous for disclaimer injection",
+          "provide exactly one --body-file - value",
         ],
       );
     });
 
-    it("requires pr create to include --title and --body", () => {
+    it("requires pr create to include --title and --body-file -", () => {
       expectGhDenied(["pr", "create", "--title", "x"]);
-      expectGhDenied(["pr", "create", "--body", "y"]);
+      expectGhDenied(["pr", "create", "--body-file", "-"]);
       expectGhDenied(["pr", "create", "--title"]);
-      expectGhDenied(["pr", "create", "--body"]);
+      expectGhDenied(["pr", "create", "--body-file"]);
+    });
+
+    it("explains duplicate pr create title values", () => {
+      expectGhDeniedWith(
+        ["pr", "create", "--title", "x", "--title", "y", "--body-file", "-"],
+        ["multiple --title values are ambiguous", "provide exactly one --title value"],
+      );
     });
 
     it("blocks non-numeric or malformed comment selectors", () => {
@@ -1884,5 +1842,125 @@ describe("validateMetabaseArgs", () => {
       expect(validateMetabaseArgs(["question", "123abc"])).not.toBeNull();
       expect(validateMetabaseArgs(["question", "42/slug"])).not.toBeNull();
     });
+  });
+});
+
+// ── aws policy ───────────────────────────────────────────────────────────────
+
+describe("validateAwsArgs", () => {
+  it("rejects empty or non-array args", () => {
+    expect(validateAwsArgs([])).not.toBeNull();
+    expect(validateAwsArgs(undefined as unknown as string[])).not.toBeNull();
+  });
+
+  it("rejects non-string args before classification", () => {
+    expect(validateAwsArgs(["s3", "ls", 1])).toBe("args must be a string array");
+    expect(validateAwsArgs(["s3", "ls", { bad: true }])).toBe("args must be a string array");
+  });
+
+  it("allows any non-empty command (generic passthrough)", () => {
+    expect(validateAwsArgs(["s3", "ls"])).toBeNull();
+    expect(validateAwsArgs(["sts", "get-caller-identity"])).toBeNull();
+    expect(validateAwsArgs(["--version"])).toBeNull();
+  });
+});
+
+describe("awsCommandRequiresApproval", () => {
+  it("does not gate read-only operations", () => {
+    const reads: string[][] = [
+      ["ec2", "describe-instances"],
+      ["s3api", "list-buckets"],
+      ["s3api", "get-object", "--bucket", "b", "--key", "k", "out"],
+      ["s3api", "head-object", "--bucket", "b", "--key", "k"],
+      ["iam", "list-users"],
+      ["dynamodb", "scan", "--table-name", "t"],
+      ["dynamodb", "query", "--table-name", "t"],
+      ["dynamodb", "batch-get-item", "--request-items", "{}"],
+      ["logs", "describe-log-groups"],
+      ["ec2", "wait", "instance-running"],
+      ["s3", "ls"],
+      ["s3", "ls", "s3://bucket/prefix"],
+      ["s3", "presign", "s3://bucket/key"],
+      ["configure", "list"],
+      ["configure", "get", "region"],
+    ];
+    for (const args of reads) {
+      expect(awsCommandRequiresApproval(args)).toBe(false);
+    }
+  });
+
+  it("does not gate help or version, including per-command help", () => {
+    expect(awsCommandRequiresApproval(["help"])).toBe(false);
+    expect(awsCommandRequiresApproval(["--version"])).toBe(false);
+    expect(awsCommandRequiresApproval(["ec2", "help"])).toBe(false);
+    expect(awsCommandRequiresApproval(["ec2", "run-instances", "help"])).toBe(false);
+  });
+
+  it("does not gate a bare service with no operation", () => {
+    expect(awsCommandRequiresApproval(["s3"])).toBe(false);
+    expect(awsCommandRequiresApproval(["--region", "us-east-1", "ec2"])).toBe(false);
+  });
+
+  it("gates credential and IAM-shaped read operations", () => {
+    const sensitiveReads: string[][] = [
+      ["sts", "get-caller-identity"],
+      ["sts", "get-session-token"],
+      ["ecr", "get-authorization-token"],
+      ["ecr", "get-login-password"],
+      ["secretsmanager", "get-secret-value", "--secret-id", "prod/db"],
+      ["sso", "get-role-credentials"],
+      ["ssm", "get-parameter", "--with-decryption", "--name", "/prod/db"],
+      ["iam", "get-role", "--role-name", "admin"],
+      ["apigateway", "get-api-key", "--api-key", "abc", "--include-value"],
+      ["apigateway", "get-api-keys", "--include-values"],
+      ["--region", "us-east-1", "sts", "get-caller-identity"],
+    ];
+    for (const args of sensitiveReads) {
+      expect(awsCommandRequiresApproval(args)).toBe(true);
+    }
+  });
+
+  it("gates create / delete / put / run and other mutating operations", () => {
+    const writes: string[][] = [
+      ["ec2", "run-instances", "--image-id", "ami-123"],
+      ["ec2", "terminate-instances", "--instance-ids", "i-1"],
+      ["iam", "create-user", "--user-name", "bob"],
+      ["iam", "create-user", "--user-name", "help"],
+      ["iam", "delete-user", "--user-name", "bob"],
+      ["s3api", "put-object", "--bucket", "b", "--key", "k"],
+      ["s3api", "delete-object", "--bucket", "b", "--key", "k"],
+      ["dynamodb", "put-item", "--table-name", "t", "--item", "{}"],
+      ["lambda", "update-function-code", "--function-name", "f"],
+      ["configure", "set", "region", "us-east-1"],
+      ["sts", "assume-role", "--role-arn", "arn", "--role-session-name", "s"],
+      ["--query", "help", "ec2", "run-instances"],
+    ];
+    for (const args of writes) {
+      expect(awsCommandRequiresApproval(args)).toBe(true);
+    }
+  });
+
+  it("gates s3 high-level write verbs", () => {
+    expect(awsCommandRequiresApproval(["s3", "cp", "./f", "s3://b/k"])).toBe(true);
+    expect(awsCommandRequiresApproval(["s3", "cp", "help", "s3://b/k"])).toBe(true);
+    expect(awsCommandRequiresApproval(["s3", "mv", "s3://b/a", "s3://b/c"])).toBe(true);
+    expect(awsCommandRequiresApproval(["s3", "rm", "s3://b/k"])).toBe(true);
+    expect(awsCommandRequiresApproval(["s3", "sync", "./d", "s3://b"])).toBe(true);
+    expect(awsCommandRequiresApproval(["s3", "rb", "s3://b"])).toBe(true);
+  });
+
+  it("classifies on the operation, skipping global option values", () => {
+    // `--region us-east-1` must not be mistaken for the operation token.
+    expect(awsCommandRequiresApproval(["--region", "us-east-1", "ec2", "describe-instances"])).toBe(
+      false,
+    );
+    expect(awsCommandRequiresApproval(["--region", "us-east-1", "ec2", "run-instances"])).toBe(
+      true,
+    );
+    expect(awsCommandRequiresApproval(["--profile=foo", "iam", "create-user"])).toBe(true);
+  });
+
+  it("fails closed on unrecognized operations", () => {
+    expect(awsCommandRequiresApproval(["someservice", "frobnicate-thing"])).toBe(true);
   });
 });

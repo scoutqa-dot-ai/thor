@@ -599,6 +599,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
   app.post("/trigger", async (req, res) => {
     const parsed = TriggerRequestSchema.safeParse(req.body);
     if (!parsed.success) {
+      logWarn(log, "trigger_validation_failed", {
+        category: "request_validation",
+        issues: parsed.error.issues,
+      });
       res.status(400).json({ error: "Invalid request body", details: parsed.error.issues });
       return;
     }
@@ -611,15 +615,12 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
 
       const sessionDirectory = directory;
       if (!isAllowedDirectory(sessionDirectory)) {
-        logError(
-          log,
-          "directory_not_allowed",
-          `Directory not under allowed prefix: ${sessionDirectory}`,
-          {
-            directory: sessionDirectory,
-            correlationKey,
-          },
-        );
+        logWarn(log, "directory_not_allowed", {
+          category: "request_validation",
+          error: `Directory not under allowed prefix: ${sessionDirectory}`,
+          directory: sessionDirectory,
+          correlationKey,
+        });
         res.status(400).json({ error: `Directory not allowed: ${sessionDirectory}` });
         return;
       }
@@ -878,6 +879,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       }
       if (outcome.kind === "send_error") {
         endTrigger(outcome.triggerId, "error", { error: JSON.stringify(outcome.error) });
+        logError(log, "opencode_prompt_send_failed", outcome.error, {
+          category: "opencode_send_failure",
+          sessionId,
+        });
         res.status(500).json({
           error: "Failed to send prompt",
           detail: outcome.error,
@@ -994,7 +999,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
           });
           await progressChain;
         } catch (err) {
-          logError(log, "trigger_background_error", err);
+          logError(log, "trigger_stream_error", err, { category: "background_stream_failure" });
           endTrigger(triggerId, "error", {
             error: err instanceof Error ? err.message : String(err),
           });
@@ -1010,7 +1015,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         res.json({ accepted: true, sessionId, resumed });
       }
     } catch (err) {
-      logError(log, "trigger_error", err);
+      logError(log, "trigger_error", err, { category: "runner_trigger_failure" });
       // Emit trigger_end{status:"error"} so the trigger doesn't render as `in_flight`
       // forever or get superseded into `crashed`. No-op if endTrigger already ran.
       if (inflightTriggerId) {

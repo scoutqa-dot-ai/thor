@@ -293,7 +293,7 @@ export function createMcpService(
             logInfo(log, "upstream_reconnected", { name, afterAttempt: attempt });
           })
           .catch((err) => {
-            logError(log, "upstream_reconnect_failed", errorMessage(err), { name, attempt });
+            logWarn(log, "upstream_reconnect_failed", { name, attempt, error: errorMessage(err) });
             scheduleReconnect(attempt + 1);
           });
       }, delay);

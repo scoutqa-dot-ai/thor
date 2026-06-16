@@ -8,6 +8,7 @@ import {
   errorMessage,
   logError,
   logInfo,
+  logWarn,
   loadRemoteCliAppEnv,
   loadRemoteCliEnv,
   loadRemoteCliGitHubEnv,
@@ -31,7 +32,14 @@ import {
   parseSlackPostMessageArgs,
   type SlackPostMessageDeps,
 } from "./slack-post-message.ts";
-import { listSchemas, listTables, getColumns, executeQuery, getQuestion } from "./metabase.ts";
+import {
+  listSchemas,
+  listTables,
+  getColumns,
+  executeQuery,
+  getQuestion,
+  MetabaseError,
+} from "./metabase.ts";
 import {
   createSandbox,
   deleteSandbox,
@@ -49,7 +57,9 @@ import {
   THOR_SHA_LABEL,
 } from "./sandbox.ts";
 import {
+  awsCommandRequiresApproval,
   resolveGitArgs,
+  validateAwsArgs,
   validateCwd,
   validateGhArgs,
   validateLdcliArgs,
@@ -58,8 +68,9 @@ import {
 } from "./policy.ts";
 import {
   isGhHelpRequest,
+  usesBodyFileStdin,
   withGhAttribution,
-  withGhDisclaimer,
+  withGhStdinDisclaimer,
   withGitAttribution,
 } from "./gh-args.ts";
 
@@ -484,10 +495,20 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       // issue create is approval-gated: store raw args and inject the footer +
       // assignee at execution time so the approval card shows only the raw command.
       if (args[0] === "issue" && args[1] === "create" && !isGhHelpRequest(args)) {
+        const requestStdin = typeof req.body?.stdin === "string" ? req.body.stdin : undefined;
+        if (usesBodyFileStdin(args) && requestStdin === undefined) {
+          res.status(400).json({
+            stdout: "",
+            stderr: "Disclaimer required: gh stdin body is missing",
+            exitCode: 1,
+          });
+          return;
+        }
         logInfo(log, "exec_gh_pending_approval", { args, cwd, ...ids });
         const result = await requestCliApproval(approvalService, getCliApprovalDefinition("gh"), {
           cwd,
           args,
+          stdin: requestStdin,
           ...ids,
         });
         res.status(result.exitCode === 0 ? 200 : 400).json(result);
@@ -495,15 +516,19 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       }
 
       // Other mutating gh commands run immediately, so inject up front.
-      const disclaimerArgs = withGhDisclaimer(args, ids.sessionId);
-      if (!Array.isArray(disclaimerArgs)) {
-        res.status(400).json({ stdout: "", stderr: disclaimerArgs.error, exitCode: 1 });
+      const stdinBody = usesBodyFileStdin(args)
+        ? withGhStdinDisclaimer(req.body?.stdin, ids.sessionId)
+        : undefined;
+      if (stdinBody && typeof stdinBody !== "string") {
+        res.status(400).json({ stdout: "", stderr: stdinBody.error, exitCode: 1 });
         return;
       }
-      const effectiveArgs = withGhAttribution(disclaimerArgs, ids.sessionId, getConfig);
+      const effectiveArgs = withGhAttribution(args, ids.sessionId, getConfig);
 
       logInfo(log, "exec_gh", { args: effectiveArgs, cwd, ...ids });
-      const result = await execCommand("gh", effectiveArgs, cwd);
+      const result = await execCommand("gh", effectiveArgs, cwd, {
+        ...(stdinBody !== undefined ? { stdin: stdinBody } : {}),
+      });
       res.json(result);
     } catch (err) {
       logError(log, "exec_gh_error", errorMessage(err), thorIds(req));
@@ -760,6 +785,50 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     }
   });
 
+  app.post("/exec/aws", async (req, res) => {
+    try {
+      const { args, cwd } = req.body ?? {};
+
+      const cwdError = validateCwd(cwd);
+      if (cwdError) {
+        res.status(400).json({ stdout: "", stderr: cwdError, exitCode: 1 });
+        return;
+      }
+
+      const argsError = validateAwsArgs(args);
+      if (argsError) {
+        res.status(400).json({ stdout: "", stderr: argsError, exitCode: 1 });
+        return;
+      }
+
+      const ids = thorIds(req);
+
+      // Mutating ("write-alike") aws commands are gated behind human approval;
+      // the approved command runs verbatim from the stored action. Read-only
+      // commands run immediately below.
+      if (awsCommandRequiresApproval(args)) {
+        logInfo(log, "exec_aws_pending_approval", { args, cwd, ...ids });
+        const result = await requestCliApproval(approvalService, getCliApprovalDefinition("aws"), {
+          cwd,
+          args,
+          ...ids,
+        });
+        res.status(result.exitCode === 0 ? 200 : 400).json(result);
+        return;
+      }
+
+      logInfo(log, "exec_aws", { args, cwd, ...ids });
+      // aws inherits the container's AWS credential chain (IAM role / AWS_* env).
+      // AWS_PAGER="" disables the v2 pager — output is captured non-interactively,
+      // and the container has no pager (`less`) to redirect to.
+      const result = await execCommand("aws", args, cwd, { env: { AWS_PAGER: "" } });
+      res.json(result);
+    } catch (err) {
+      logError(log, "exec_aws_error", errorMessage(err), thorIds(req));
+      res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
+    }
+  });
+
   app.post("/exec/metabase", async (req, res) => {
     try {
       const { args } = req.body ?? {};
@@ -800,7 +869,19 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       res.json({ stdout: JSON.stringify(result, null, 2), stderr: "", exitCode: 0 });
     } catch (err) {
       const message = errorMessage(err);
-      logError(log, "exec_metabase_error", message, thorIds(req));
+      const { args } = req.body ?? {};
+      const subcommand = Array.isArray(args) ? args[0] : undefined;
+      if (err instanceof MetabaseError && err.userFailure) {
+        logWarn(log, "exec_metabase_query_failure", {
+          category: "metabase_query_failure",
+          subcommand,
+          error: message,
+          ...thorIds(req),
+        });
+        res.json({ stdout: "", stderr: message, exitCode: 1 });
+        return;
+      }
+      logError(log, "exec_metabase_error", message, { subcommand, ...thorIds(req) });
       res.status(500).json({ stdout: "", stderr: message, exitCode: 1 });
     }
   });

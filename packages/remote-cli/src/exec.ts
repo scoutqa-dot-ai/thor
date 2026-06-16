@@ -13,6 +13,7 @@ import type { ExecResult } from "@thor/common";
 export interface ExecCommandOptions {
   env?: NodeJS.ProcessEnv;
   maxBuffer?: number;
+  stdin?: string;
 }
 
 export function execCommand(
@@ -27,7 +28,7 @@ export function execCommand(
   const maxBuffer = options.maxBuffer ?? Infinity;
 
   return new Promise((resolve) => {
-    execFile(
+    const child = execFile(
       binary,
       args,
       {
@@ -47,6 +48,9 @@ export function execCommand(
         });
       },
     );
+    if (options.stdin !== undefined) {
+      child.stdin?.end(options.stdin);
+    }
   });
 }
 
