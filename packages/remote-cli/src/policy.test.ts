@@ -1906,6 +1906,8 @@ describe("awsCommandRequiresApproval", () => {
       ["sso", "get-role-credentials"],
       ["ssm", "get-parameter", "--with-decryption", "--name", "/prod/db"],
       ["iam", "get-role", "--role-name", "admin"],
+      ["apigateway", "get-api-key", "--api-key", "abc", "--include-value"],
+      ["apigateway", "get-api-keys", "--include-values"],
       ["--region", "us-east-1", "sts", "get-caller-identity"],
     ];
     for (const args of sensitiveReads) {

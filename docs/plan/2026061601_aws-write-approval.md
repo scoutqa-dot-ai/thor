@@ -40,3 +40,11 @@ Gate mutating AWS CLI commands behind the existing Slack-button human-approval p
 - Write-alike `/exec/aws` requests create a pending approval and never reach `execCommand` before approval; the approved command runs once, verbatim, with `AWS_PAGER=""`.
 - Read-only `/exec/aws` requests are unchanged.
 - `@thor/remote-cli` and `@thor/common` typecheck; targeted suites green.
+
+## Residual disclosure gaps (acknowledged, not yet gated)
+
+The read/write split plus the credential-keyword override (`awsCommandRequiresApproval`) catches most secret-bearing reads, but a 2026-06-16 audit found false negatives that still auto-run with no approval. Acknowledged here; not closed in this change.
+
+- **`*-access` / `*-access-details` reads.** `lightsail get-instance-access-details` and `gamelift get-instance-access` return SSH **private keys** / temporary connection credentials, but contain no current keyword (`access-details`/`-access` are not in the set) and match the `get-` read verb. A `access-details` (or broader `-access`) keyword would close these cheaply, at near-zero false-positive cost.
+- **`s3 presign`.** Currently in the read-only exact allowlist, so it auto-runs. It mints a **pre-signed URL** — a time-limited, shareable bearer credential for an object — without a network call or approval. Should be removed from `AWS_READ_ONLY_EXACT` (i.e. gated) rather than treated as a read.
+- **Structural limits (not closable by keywords).** The operation-token keyword filter cannot see argument-borne secrets (`aws configure get aws_secret_access_key`, where the secret is the argument), and AWS's inconsistent operation naming means new credential-returning `get-*`/`describe-*` ops (e.g. `lambda get-function` env vars, `cloudformation get-template`) will keep leaking past substring matching. Closing these needs a small exact `"<service> <operation>"` deny-set plus periodic re-audit as new services are adopted.

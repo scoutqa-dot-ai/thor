@@ -295,6 +295,7 @@ const AWS_READ_ONLY_EXACT: ReadonlySet<string> = new Set(["ls", "presign", "help
 // Check these before the read-only verb allowlist so `get-*` token helpers do
 // not bypass approval.
 const AWS_APPROVAL_KEYWORDS: readonly string[] = [
+  "api-key",
   "credential",
   "password",
   "role",
