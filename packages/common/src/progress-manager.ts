@@ -414,6 +414,10 @@ class ProgressSession {
         threadTs: this.threadTs,
         toolCallCount: this.toolCallCount,
       });
+      // The normal done path never ran, so run its cleanup here: delete any
+      // progress message this orphan posted and drop its registry entry.
+      // Without this, both leak for a thread that may never run again.
+      await onSessionEnd(this.channel, this.threadTs);
       return;
     }
     try {

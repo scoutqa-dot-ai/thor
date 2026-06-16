@@ -364,15 +364,15 @@ async function trigger(url: string, body: Record<string, unknown>) {
   // one terminal "done" line. For fire-and-forget the body is a single
   // JSON object ({accepted,sessionId,resumed}).
   const lines = text.trim().split("\n").filter(Boolean);
-  const events = lines
-    .map((line) => {
-      try {
-        return JSON.parse(line) as unknown;
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
+  // Fail fast on malformed NDJSON: a corrupt line is a protocol regression the
+  // test must surface, not silently drop.
+  const events = lines.map((line, idx) => {
+    try {
+      return JSON.parse(line) as unknown;
+    } catch {
+      throw new Error(`Invalid NDJSON from /trigger at line ${idx + 1}: ${line}`);
+    }
+  });
   const json = events[0];
   return { response, json, events };
 }

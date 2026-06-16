@@ -636,6 +636,23 @@ describe("ProgressManager", () => {
     expect(ticksAt60s).toBeLessThanOrEqual(7);
   });
 
+  it("orphan eviction past max age deletes the progress message and prunes the registry", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 3);
+    expect(getRegistrySize()).toBe(1);
+
+    // No terminal `done` ever arrives. Advance past the 6h backstop so the
+    // ticker self-evicts; the orphan path must run the same cleanup as done,
+    // or the registry entry and the Slack message leak forever.
+    await vi.advanceTimersByTimeAsync(6 * 60 * 60_000 + 60_000);
+
+    expect(chat(deps).delete).toHaveBeenCalledWith({
+      channel: "C123",
+      ts: "msg.001",
+    });
+    expect(getRegistrySize()).toBe(0);
+  });
+
   it("finish with completed status deletes the progress message without a transient edit", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);
