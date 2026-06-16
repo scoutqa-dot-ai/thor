@@ -333,15 +333,14 @@ function buildGhIssueCreatePresentation(args: Record<string, unknown>): Approval
 
 function buildAwsExecPresentation(args: Record<string, unknown>): ApprovalPresentation {
   const parsed = AwsExecApprovalArgsSchema.parse(args);
-  const command = `aws ${parsed.args.join(" ")}`.trim();
+  const commandArgvJson = JSON.stringify(["aws", ...parsed.args], null, 2).replace(/`/g, "\\u0060");
   return {
     title: "Run aws command",
     markdown: joinMarkdown([
       bullet("Directory", parsed.cwd),
-      // Code-fence the command so shell metacharacters (`*` `_` `~` backticks)
-      // render literally instead of being parsed as Slack mrkdwn — the operator
-      // must review the exact command, not a formatted rewrite of it.
-      `*Command:*\n\`\`\`\n${command}\n\`\`\``,
+      // Render the exact argv shape; escaping backticks prevents an argument
+      // from closing the Slack code fence.
+      `*Command argv:*\n\`\`\`json\n${commandArgvJson}\n\`\`\``,
     ]),
   };
 }

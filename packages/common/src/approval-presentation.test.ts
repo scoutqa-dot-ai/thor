@@ -21,7 +21,7 @@ describe("buildApprovalPresentation — gh issue create", () => {
 });
 
 describe("buildApprovalPresentation — aws write command", () => {
-  it("renders the reviewed aws command in a code block with the working directory", () => {
+  it("renders the reviewed aws command argv in a JSON code block with the working directory", () => {
     const presentation = buildApprovalPresentation("awsExec", {
       cwd: "/workspace/repos/thor",
       args: ["s3", "cp", "./build.zip", "s3://my-bucket/build.zip"],
@@ -31,20 +31,40 @@ describe("buildApprovalPresentation — aws write command", () => {
     expect(presentation!.title).toBe("Run aws command");
     expect(presentation!.markdown).toContain("*Directory:* /workspace/repos/thor");
     expect(presentation!.markdown).toContain(
-      "*Command:*\n```\naws s3 cp ./build.zip s3://my-bucket/build.zip\n```",
+      [
+        "*Command argv:*",
+        "```json",
+        "[",
+        '  "aws",',
+        '  "s3",',
+        '  "cp",',
+        '  "./build.zip",',
+        '  "s3://my-bucket/build.zip"',
+        "]",
+        "```",
+      ].join("\n"),
     );
   });
 
-  it("preserves shell metacharacters literally instead of parsing them as mrkdwn", () => {
+  it("preserves spaces and escapes backticks inside the JSON argv fence", () => {
     const presentation = buildApprovalPresentation("awsExec", {
       cwd: "/workspace/repos/thor",
-      args: ["s3", "rm", "s3://my-bucket/*.log", "--recursive"],
+      args: [
+        "ec2",
+        "run-instances",
+        "--tag-specifications",
+        "ResourceType=instance,Tags=[{Key=Name,Value=build worker}]",
+        "--user-data",
+        "line one\nline two with `ticks` and ``` fence",
+      ],
     });
 
     expect(presentation).toBeDefined();
-    // The `*` must survive verbatim inside the fence, not toggle bold.
     expect(presentation!.markdown).toContain(
-      "```\naws s3 rm s3://my-bucket/*.log --recursive\n```",
+      '"ResourceType=instance,Tags=[{Key=Name,Value=build worker}]"',
+    );
+    expect(presentation!.markdown).toContain(
+      '"line one\\nline two with \\u0060ticks\\u0060 and \\u0060\\u0060\\u0060 fence"',
     );
   });
 });
