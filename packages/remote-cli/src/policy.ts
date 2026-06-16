@@ -291,10 +291,11 @@ const AWS_READ_ONLY_VERBS: readonly string[] = [
 // the local `presign` URL helper, and `help`.
 const AWS_READ_ONLY_EXACT: ReadonlySet<string> = new Set(["ls", "presign", "help"]);
 
-// Extract up to the first two positional tokens (service, operation), skipping
-// global flags and their values.
-function awsPositionalTokens(args: string[]): string[] {
-  const positionals: string[] = [];
+// Extract positional tokens (service, operation), skipping global flags and
+// their values. Keep indexes so help can be recognized only when it follows the
+// operation token, not when it is merely an option value.
+function awsPositionals(args: string[]): Array<{ token: string; index: number }> {
+  const positionals: Array<{ token: string; index: number }> = [];
   for (let i = 0; i < args.length && positionals.length < 2; i += 1) {
     const token = args[i];
     if (token.startsWith("-")) {
@@ -305,7 +306,7 @@ function awsPositionalTokens(args: string[]): string[] {
       }
       continue;
     }
-    positionals.push(token);
+    positionals.push({ token, index: i });
   }
   return positionals;
 }
@@ -313,6 +314,10 @@ function awsPositionalTokens(args: string[]): string[] {
 function isReadOnlyAwsOperation(operation: string): boolean {
   if (AWS_READ_ONLY_EXACT.has(operation)) return true;
   return AWS_READ_ONLY_VERBS.some((verb) => operation === verb || operation.startsWith(`${verb}-`));
+}
+
+function isAwsHelpRequest(args: string[], operationIndex: number): boolean {
+  return args[operationIndex + 1] === "help" && operationIndex + 2 === args.length;
 }
 
 /**
@@ -325,12 +330,13 @@ function isReadOnlyAwsOperation(operation: string): boolean {
  */
 export function awsCommandRequiresApproval(args: string[]): boolean {
   if (!Array.isArray(args) || args.length === 0) return false;
-  if (args.includes("help") || args.includes("--version")) return false;
+  if (args.includes("--version")) return false;
 
-  const [service, operation] = awsPositionalTokens(args);
+  const [servicePositional, operationPositional] = awsPositionals(args);
   // No operation token (bare `aws s3`, or only global flags): nothing to
   // mutate — aws just prints usage/help.
-  if (!service || !operation) return false;
+  if (!servicePositional || !operationPositional) return false;
 
-  return !isReadOnlyAwsOperation(operation);
+  if (isAwsHelpRequest(args, operationPositional.index)) return false;
+  return !isReadOnlyAwsOperation(operationPositional.token);
 }

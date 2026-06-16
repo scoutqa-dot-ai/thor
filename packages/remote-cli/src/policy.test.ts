@@ -1902,6 +1902,7 @@ describe("awsCommandRequiresApproval", () => {
       ["ec2", "run-instances", "--image-id", "ami-123"],
       ["ec2", "terminate-instances", "--instance-ids", "i-1"],
       ["iam", "create-user", "--user-name", "bob"],
+      ["iam", "create-user", "--user-name", "help"],
       ["iam", "delete-user", "--user-name", "bob"],
       ["s3api", "put-object", "--bucket", "b", "--key", "k"],
       ["s3api", "delete-object", "--bucket", "b", "--key", "k"],
@@ -1909,6 +1910,7 @@ describe("awsCommandRequiresApproval", () => {
       ["lambda", "update-function-code", "--function-name", "f"],
       ["configure", "set", "region", "us-east-1"],
       ["sts", "assume-role", "--role-arn", "arn", "--role-session-name", "s"],
+      ["--query", "help", "ec2", "run-instances"],
     ];
     for (const args of writes) {
       expect(awsCommandRequiresApproval(args)).toBe(true);
@@ -1917,6 +1919,7 @@ describe("awsCommandRequiresApproval", () => {
 
   it("gates s3 high-level write verbs", () => {
     expect(awsCommandRequiresApproval(["s3", "cp", "./f", "s3://b/k"])).toBe(true);
+    expect(awsCommandRequiresApproval(["s3", "cp", "help", "s3://b/k"])).toBe(true);
     expect(awsCommandRequiresApproval(["s3", "mv", "s3://b/a", "s3://b/c"])).toBe(true);
     expect(awsCommandRequiresApproval(["s3", "rm", "s3://b/k"])).toBe(true);
     expect(awsCommandRequiresApproval(["s3", "sync", "./d", "s3://b"])).toBe(true);
