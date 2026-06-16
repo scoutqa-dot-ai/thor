@@ -1,0 +1,29 @@
+packages/remote-cli/src/metabase.ts
+  33d1a110dd425cef 13-40,62-65,83-86,147,180,207,210
+packages/remote-cli/src/index.ts
+  33d1a110dd425cef 40-41,813
+packages/remote-cli/src/metabase-endpoint.test.ts
+  33d1a110dd425cef 18-23,32-33,64,66,90
+packages/remote-cli/src/metabase.test.ts
+  33d1a110dd425cef 1-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "057af7cabe3a2e09c78129393b1c5315dd8ded77",
+  "prompts": {
+    "33d1a110dd425cef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f0d52bfa-502d-48f5-aee0-baef5996cba3",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 127,
+      "total_deletions": 48,
+      "accepted_lines": 104,
+      "overriden_lines": 0
+    }
+  }
+}
