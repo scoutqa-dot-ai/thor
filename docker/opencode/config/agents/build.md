@@ -45,6 +45,19 @@ echo 'Looking into this now. I will report back in-thread.' | \
   slack-post-message --channel C123 --thread-ts 1710000000.001
 ```
 
+For GitHub PR/issue/comment/review prose bodies, use `gh ... --body-file -`:
+it takes the Markdown body on stdin. Feed it with a quoted heredoc; never put
+Markdown prose in `--body`/`-b` or `body=...` shell arguments.
+
+```bash
+gh pr create --title "..." --body-file - <<'EOF'
+...markdown body...
+EOF
+```
+
+Use the quoted delimiter `<<'EOF'` (not `<<EOF`) so backticks and `$()` are not
+interpolated.
+
 For any Slack task beyond a simple post, use the `slack` skill.
 
 ### MCP tools

@@ -178,6 +178,21 @@ export function withGhDisclaimer(args: string[], sessionId?: string): string[] |
   return injectBodyFooter(args, footer);
 }
 
+export function withGhStdinDisclaimer(
+  stdin: unknown,
+  sessionId?: string,
+): string | { error: string } {
+  if (typeof stdin !== "string") return { error: "Disclaimer required: gh stdin body is missing" };
+  try {
+    return `${stdin}\n${buildThorDisclaimerForSession(sessionId, getRunnerBaseUrl()).footer}`;
+  } catch (err) {
+    return {
+      error:
+        err instanceof Error ? err.message : "Disclaimer required: unable to build Thor disclaimer",
+    };
+  }
+}
+
 /**
  * Post-approval injection for `gh issue create`: builds the disclaimer from the
  * trigger snapshotted onto the action (not a live lookup) and appends the
@@ -186,18 +201,33 @@ export function withGhDisclaimer(args: string[], sessionId?: string): string[] |
 export function injectGhIssueCreateExec(
   args: string[],
   opts: {
+    stdin?: unknown;
     trigger?: { anchorId: string; triggerId?: string };
     sessionId?: string;
     getConfig: ConfigLoader;
   },
-): string[] | { error: string } {
+): { args: string[]; stdin?: string } | { error: string } {
   if (!opts.trigger) {
     return { error: "Disclaimer required: approval action is missing Thor trigger context" };
   }
   const footer = `\n${buildThorDisclaimer(opts.trigger, getRunnerBaseUrl()).footer}`;
+  if (usesBodyFileStdin(args)) {
+    if (typeof opts.stdin !== "string")
+      return { error: "Disclaimer required: gh stdin body is missing" };
+    return {
+      args: withGhAttribution(args, opts.sessionId, opts.getConfig),
+      stdin: `${opts.stdin}${footer}`,
+    };
+  }
   const withFooter = injectBodyFooter(args, footer);
   if ("error" in withFooter) return withFooter;
-  return withGhAttribution(withFooter, opts.sessionId, opts.getConfig);
+  return { args: withGhAttribution(withFooter, opts.sessionId, opts.getConfig) };
+}
+
+export function usesBodyFileStdin(args: string[]): boolean {
+  return args.some(
+    (arg, index) => arg === "--body-file=-" || (arg === "--body-file" && args[index + 1] === "-"),
+  );
 }
 
 function injectBodyFooter(args: string[], footer: string): string[] | { error: string } {
@@ -207,7 +237,9 @@ function injectBodyFooter(args: string[], footer: string): string[] | { error: s
           match: "single",
           valuePrefix: "body=",
         })
-      : rewriteValueFlag(args, ["--body", "-b"], footer, { match: "single" });
+      : usesBodyFileStdin(args)
+        ? args
+        : rewriteValueFlag(args, ["--body", "-b"], footer, { match: "single" });
   if ("error" in result) {
     return {
       error:

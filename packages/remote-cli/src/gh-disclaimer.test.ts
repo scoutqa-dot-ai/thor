@@ -17,23 +17,27 @@ vi.hoisted(() => {
   process.env.RUNNER_BASE_URL = "https://thor.example.com";
 });
 
-const execCalls = vi.hoisted(() => [] as Array<{ bin: string; args: string[]; cwd: string }>);
+const execCalls = vi.hoisted(
+  () => [] as Array<{ bin: string; args: string[]; cwd: string; stdin?: string }>,
+);
 
 vi.mock("./exec.ts", () => ({
-  execCommand: vi.fn(async (bin: string, args: string[], cwd: string) => {
-    execCalls.push({ bin, args, cwd });
-    if (bin === "gh" && args[0] === "issue" && args[1] === "create") {
-      return { stdout: "https://github.com/acme/thor/issues/42\n", stderr: "", exitCode: 0 };
-    }
-    if (bin === "gh" && args[0] === "issue" && args[1] === "comment") {
-      return {
-        stdout: "https://github.com/acme/thor/issues/42#issuecomment-1\n",
-        stderr: "",
-        exitCode: 0,
-      };
-    }
-    return { stdout: "ok", stderr: "", exitCode: 0 };
-  }),
+  execCommand: vi.fn(
+    async (bin: string, args: string[], cwd: string, options?: { stdin?: string }) => {
+      execCalls.push({ bin, args, cwd, stdin: options?.stdin });
+      if (bin === "gh" && args[0] === "issue" && args[1] === "create") {
+        return { stdout: "https://github.com/acme/thor/issues/42\n", stderr: "", exitCode: 0 };
+      }
+      if (bin === "gh" && args[0] === "issue" && args[1] === "comment") {
+        return {
+          stdout: "https://github.com/acme/thor/issues/42#issuecomment-1\n",
+          stderr: "",
+          exitCode: 0,
+        };
+      }
+      return { stdout: "ok", stderr: "", exitCode: 0 };
+    },
+  ),
   execCommandStream: vi.fn(),
 }));
 
@@ -75,14 +79,14 @@ async function withServer<T>(
   }
 }
 
-async function postGh(url: string, args: string[], sessionId?: string) {
+async function postGh(url: string, args: string[], sessionId?: string, stdin?: string) {
   const response = await fetch(`${url}/exec/gh`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       ...(sessionId ? { "x-thor-session-id": sessionId } : {}),
     },
-    body: JSON.stringify({ args, cwd }),
+    body: JSON.stringify({ args, cwd, ...(stdin !== undefined ? { stdin } : {}) }),
   });
   return {
     response,
@@ -230,8 +234,9 @@ describe("gh disclaimer injection", () => {
       async (url) => {
         await postGh(
           url,
-          ["pr", "create", "--title", "x", "--body", "Body", "--assignee", "bob"],
+          ["pr", "create", "--title", "x", "--body-file", "-", "--assignee", "bob"],
           "parent",
+          "Body",
         );
         expect(execCalls[0].args.filter((arg) => arg === "--assignee")).toHaveLength(1);
         expect(execCalls[0].args).toContain("bob");
@@ -245,8 +250,9 @@ describe("gh disclaimer injection", () => {
     await withServer(async (url) => {
       const { response, body } = await postGh(
         url,
-        ["issue", "create", "--title", "Bug", "--body", "Broken"],
+        ["issue", "create", "--title", "Bug", "--body-file", "-"],
         "parent",
+        "Broken",
       );
       expect(response.status).toBe(200);
       expect(execCalls).toHaveLength(0);
@@ -256,7 +262,7 @@ describe("gh disclaimer injection", () => {
       expect(payload.command).toBe(`approval status ${payload.actionId}`);
       // The pending action (and thus the approval card) carries only the
       // author's reviewed command — no disclaimer footer, no auto-assignee.
-      expect(payload.args.args).toEqual(["issue", "create", "--title", "Bug", "--body", "Broken"]);
+      expect(payload.args.args).toEqual(["issue", "create", "--title", "Bug", "--body-file", "-"]);
 
       // The footer and assignee attribution are injected at execution, after approval.
       const approved = await postApprovalResolve(url, payload.actionId);
@@ -266,11 +272,14 @@ describe("gh disclaimer injection", () => {
         "create",
         "--title",
         "Bug",
-        "--body",
-        `Broken\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
+        "--body-file",
+        "-",
         "--assignee",
         "alice",
       ]);
+      expect(execCalls[0].stdin).toBe(
+        `Broken\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
+      );
     }, approvalConfig({ configLoader }));
   });
 
@@ -279,8 +288,9 @@ describe("gh disclaimer injection", () => {
     await withServer(async (url) => {
       const { body } = await postGh(
         url,
-        ["issue", "create", "--title", "x", "--body", "Body", "-a", "bob"],
+        ["issue", "create", "--title", "x", "--body-file", "-", "-a", "bob"],
         "parent",
+        "Body",
       );
       const payload = JSON.parse(body.stdout);
       expect(
@@ -362,7 +372,12 @@ describe("gh disclaimer injection", () => {
       );
       expect(worktree.response.status).toBe(200);
 
-      const pr = await postGh(url, ["pr", "create", "--title", "x", "--body", "body"], "parent");
+      const pr = await postGh(
+        url,
+        ["pr", "create", "--title", "x", "--body-file", "-"],
+        "parent",
+        "body",
+      );
       expect(pr.response.status).toBe(200);
     });
 
@@ -390,10 +405,20 @@ describe("gh disclaimer injection", () => {
 
   it("fails closed without a Thor session id", async () => {
     await withServer(async (url) => {
-      const { response, body } = await postGh(url, ["pr", "comment", "123", "--body", "note"]);
+      const { response, body } = await postGh(
+        url,
+        ["pr", "comment", "123", "--body-file", "-"],
+        undefined,
+        "note",
+      );
       expect(response.status).toBe(400);
       expect(body.stderr).toContain("missing Thor session id");
-      const issue = await postGh(url, ["issue", "comment", "42", "--body", "note"]);
+      const issue = await postGh(
+        url,
+        ["issue", "comment", "42", "--body-file", "-"],
+        undefined,
+        "note",
+      );
       expect(issue.response.status).toBe(400);
       expect(issue.body.stderr).toContain("missing Thor session id");
       expect(execCalls).toHaveLength(0);
@@ -411,8 +436,9 @@ describe("gh disclaimer injection", () => {
     await withServer(async (url) => {
       const { response, body } = await postGh(
         url,
-        ["issue", "create", "--title", "Bug", "--body", "Broken"],
+        ["issue", "create", "--title", "Bug", "--body-file", "-"],
         "parent",
+        "Broken",
       );
       expect(response.status).toBe(200);
       expect(execCalls).toHaveLength(0);
@@ -425,14 +451,10 @@ describe("gh disclaimer injection", () => {
       const payload = JSON.parse(body.stdout);
       const approved = await postApprovalResolve(url, payload.actionId);
       expect(approved.response.status).toBe(200);
-      expect(execCalls[0].args).toEqual([
-        "issue",
-        "create",
-        "--title",
-        "Bug",
-        "--body",
+      expect(execCalls[0].args).toEqual(["issue", "create", "--title", "Bug", "--body-file", "-"]);
+      expect(execCalls[0].stdin).toBe(
         `Broken\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
-      ]);
+      );
       expect(
         resolveAlias({
           aliasType: "github.issue",
@@ -453,8 +475,9 @@ describe("gh disclaimer injection", () => {
     await withServer(async (url) => {
       const { body } = await postGh(
         url,
-        ["issue", "create", "--title", "Bug", "--body", "Broken"],
+        ["issue", "create", "--title", "Bug", "--body-file", "-"],
         "parent",
+        "Broken",
       );
       const payload = JSON.parse(body.stdout);
 
@@ -483,7 +506,12 @@ describe("gh disclaimer injection", () => {
 
   it("fails closed when the session has no anchor context", async () => {
     await withServer(async (url) => {
-      const missing = await postGh(url, ["pr", "comment", "123", "--body", "note"], "missing");
+      const missing = await postGh(
+        url,
+        ["pr", "comment", "123", "--body-file", "-"],
+        "missing",
+        "note",
+      );
       expect(missing.response.status).toBe(400);
       expect(missing.body.stderr).toContain("(none)");
       expect(execCalls).toHaveLength(0);
@@ -494,15 +522,17 @@ describe("gh disclaimer injection", () => {
     bindSessionToAnchor("idle", anchorParent);
 
     await withServer(async (url) => {
-      const { response } = await postGh(url, ["pr", "comment", "123", "--body", "note"], "idle");
+      const { response } = await postGh(
+        url,
+        ["pr", "comment", "123", "--body-file", "-"],
+        "idle",
+        "note",
+      );
       expect(response.status).toBe(200);
-      expect(execCalls[0].args).toEqual([
-        "pr",
-        "comment",
-        "123",
-        "--body",
+      expect(execCalls[0].args).toEqual(["pr", "comment", "123", "--body-file", "-"]);
+      expect(execCalls[0].stdin).toBe(
         `note\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}`)}`,
-      ]);
+      );
     });
   });
 
@@ -514,17 +544,15 @@ describe("gh disclaimer injection", () => {
     await withServer(async (url) => {
       const { response } = await postGh(
         url,
-        ["pr", "comment", "123", "--body", "note"],
+        ["pr", "comment", "123", "--body-file", "-"],
         "superseded",
+        "note",
       );
       expect(response.status).toBe(200);
-      expect(execCalls[0].args).toEqual([
-        "pr",
-        "comment",
-        "123",
-        "--body",
+      expect(execCalls[0].args).toEqual(["pr", "comment", "123", "--body-file", "-"]);
+      expect(execCalls[0].stdin).toBe(
         `note\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorSuperseded}/${secondTriggerId}`)}`,
-      ]);
+      );
     });
   });
 
@@ -540,23 +568,20 @@ describe("gh disclaimer injection", () => {
     await withServer(async (url) => {
       const { response } = await postGh(
         url,
-        ["pr", "create", "--title", "x", "--body", "body"],
+        ["pr", "create", "--title", "x", "--body-file", "-"],
         "child",
+        "body",
       );
       expect(response.status).toBe(200);
       expect(execCalls[0]).toMatchObject({ bin: "gh" });
-      expect(execCalls[0].args).toEqual([
-        "pr",
-        "create",
-        "--title",
-        "x",
-        "--body",
+      expect(execCalls[0].args).toEqual(["pr", "create", "--title", "x", "--body-file", "-"]);
+      expect(execCalls[0].stdin).toBe(
         `body\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorChild}/${triggerId}`)}`,
-      ]);
+      );
     });
   });
 
-  it("injects into PR review-comment reply bodies", async () => {
+  it("denies PR review-comment reply bodies before execution", async () => {
     bindSessionToAnchor("parent", anchorParent);
     appendSessionEvent("parent", { type: "trigger_start", triggerId });
 
@@ -573,14 +598,12 @@ describe("gh disclaimer injection", () => {
         ],
         "parent",
       );
-      expect(response.status).toBe(200);
-      expect(execCalls[0].args.at(-1)).toBe(
-        `body=Done\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
-      );
+      expect(response.status).toBe(400);
+      expect(execCalls).toHaveLength(0);
     });
   });
 
-  it("denies gh body-file content creation shapes", async () => {
+  it("allows only stdin gh body-file content creation shapes", async () => {
     bindSessionToAnchor("parent", anchorParent);
     appendSessionEvent("parent", { type: "trigger_start", triggerId });
 
@@ -604,11 +627,15 @@ describe("gh disclaimer injection", () => {
       );
       expect(issue.response.status).toBe(400);
       expect(issue.body.stderr).toContain("gh issue comment");
-      expect(execCalls).toHaveLength(0);
+
+      const ok = await postGh(url, ["pr", "comment", "123", "--body-file", "-"], "parent", "hi");
+      expect(ok.response.status).toBe(200);
+      expect(execCalls).toHaveLength(1);
+      expect(execCalls[0].stdin).toContain("hi\n");
     });
   });
 
-  it("fails closed for duplicate mutable body fields", async () => {
+  it("fails closed for duplicate or inline mutable body fields", async () => {
     bindSessionToAnchor("parent", anchorParent);
     appendSessionEvent("parent", { type: "trigger_start", triggerId });
 
@@ -619,7 +646,7 @@ describe("gh disclaimer injection", () => {
         "parent",
       );
       expect(comment.response.status).toBe(400);
-      expect(comment.body.stderr).toContain("multiple --body values");
+      expect(comment.body.stderr).toContain("gh pr comment");
 
       const issue = await postGh(
         url,
@@ -627,7 +654,7 @@ describe("gh disclaimer injection", () => {
         "parent",
       );
       expect(issue.response.status).toBe(400);
-      expect(issue.body.stderr).toContain("multiple --body values");
+      expect(issue.body.stderr).toContain("gh issue comment");
 
       const reply = await postGh(
         url,

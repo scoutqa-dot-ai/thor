@@ -58,8 +58,10 @@ import {
 } from "./policy.ts";
 import {
   isGhHelpRequest,
+  usesBodyFileStdin,
   withGhAttribution,
   withGhDisclaimer,
+  withGhStdinDisclaimer,
   withGitAttribution,
 } from "./gh-args.ts";
 
@@ -488,6 +490,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         const result = await requestCliApproval(approvalService, getCliApprovalDefinition("gh"), {
           cwd,
           args,
+          stdin: typeof req.body?.stdin === "string" ? req.body.stdin : undefined,
           ...ids,
         });
         res.status(result.exitCode === 0 ? 200 : 400).json(result);
@@ -495,6 +498,13 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       }
 
       // Other mutating gh commands run immediately, so inject up front.
+      const stdinBody = usesBodyFileStdin(args)
+        ? withGhStdinDisclaimer(req.body?.stdin, ids.sessionId)
+        : undefined;
+      if (stdinBody && typeof stdinBody !== "string") {
+        res.status(400).json({ stdout: "", stderr: stdinBody.error, exitCode: 1 });
+        return;
+      }
       const disclaimerArgs = withGhDisclaimer(args, ids.sessionId);
       if (!Array.isArray(disclaimerArgs)) {
         res.status(400).json({ stdout: "", stderr: disclaimerArgs.error, exitCode: 1 });
@@ -503,7 +513,9 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       const effectiveArgs = withGhAttribution(disclaimerArgs, ids.sessionId, getConfig);
 
       logInfo(log, "exec_gh", { args: effectiveArgs, cwd, ...ids });
-      const result = await execCommand("gh", effectiveArgs, cwd);
+      const result = await execCommand("gh", effectiveArgs, cwd, {
+        ...(stdinBody !== undefined ? { stdin: stdinBody } : {}),
+      });
       res.json(result);
     } catch (err) {
       logError(log, "exec_gh_error", errorMessage(err), thorIds(req));
