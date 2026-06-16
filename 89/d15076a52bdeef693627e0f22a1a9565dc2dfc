@@ -1,0 +1,37 @@
+packages/runner/src/event-bus.ts
+  70084e935533872b 2,4-6,8-11,22,26-28,30-32,37,49,51,57-73,76-79,117,132-144,158,166-168,177,180-181,187,204,221,231,236,243-257,260,263,273-279,281,401-405
+packages/runner/src/prompt-stream.ts
+  70084e935533872b 116,236,301,370,423-425
+packages/common/src/progress-manager.ts
+  70084e935533872b 557
+packages/runner/src/event-bus.test.ts
+  70084e935533872b 281,291-293,296-308,312,314-317,375-449
+packages/runner/src/progress-listener.ts
+  70084e935533872b 1-230
+packages/common/src/progress-manager.test.ts
+  70084e935533872b 639,654-655,663,679-681,725,814
+packages/runner/src/trigger.test.ts
+  70084e935533872b 260,363-371,373-374
+packages/runner/src/index.ts
+  70084e935533872b 65,413-421,932-933,937,945-948,952-956,960,962-966
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "89d15076a52bdeef693627e0f22a1a9565dc2dfc",
+  "prompts": {
+    "70084e935533872b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d5819ea-64c5-458f-b117-fa04855988ef",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 527,
+      "total_deletions": 575,
+      "accepted_lines": 510,
+      "overriden_lines": 0
+    }
+  }
+}
