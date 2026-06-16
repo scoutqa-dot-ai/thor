@@ -131,6 +131,48 @@ Keep Slack finalization timerless.
 - If `session.error` is never followed by activity or idle, the bubble remains
   live with inline error activity. This rare orphan is accepted.
 
+#### Finding (2026-06-16): pending-error clear is narrower than the spec
+
+A code review flagged that the implementation deviates from the "clear on the
+next parent `message.part.updated`" rule above. In
+`packages/runner/src/progress-listener.ts`, `pendingErrors` is cleared only
+inside the `part.type === "tool"` branch of `message.part.updated` (plus a
+separate `message.updated` branch). A non-tool parent part — `text`, `retry`,
+or `step-finish` — does **not** clear the pending error.
+
+The HTTP `/trigger` path (`runPromptStream` + `SessionErrorGrace`) is broader:
+its seq-based `clearIfRecovered` treats _any_ later parent `message.part.updated`
+as recovery, regardless of `part.type`. So the two finalization paths use
+asymmetric recovery criteria. In principle this lets the Slack bubble finalize
+as `error` while `/trigger` returns `completed` for the same run, when recovery
+arrives as a non-tool part with no intervening parent `message.updated`.
+
+**Verified not currently triggered.** Thor scanned its worklog session-event
+JSONL (`/workspace/worklog/sessions/*.jsonl`): 3,235 parent sessions, 902
+`session.error -> next session.idle` windows.
+
+- 0 / 902 windows had a parent `message.part.updated` of type `text` / `retry` /
+  `step-finish` between the error and idle.
+- 0 / 902 had a parent `message.updated` in that window either.
+- Typical real pattern is just `session.error -> session.status(idle) ->
+session.idle`; the next parent `message.updated` arrives _after_ idle.
+- First event after a parent `session.error` (n=902): `session.status` 851,
+  another `session.error` 51, `retry`/`step-finish` parts 0.
+
+So the divergence is a **latent inconsistency, not a live bug** — no real run
+exercises the gap today. The masking reason is not that a `message.updated`
+reliably precedes idle (it does not); it is that no recovery event of any kind
+appears before idle in practice.
+
+**Resolution (2026-06-16): fixed.** The parent `pendingErrors.delete(sessionId)`
+was hoisted above the `part.type === "tool"` check in `progress-listener.ts`, so
+any parent `message.part.updated` — tool, text, retry, or step-finish — now
+clears the pending error, matching the HTTP path and this section's stated rule.
+Added a regression test
+(`clears the pending error on a non-tool recovery part before idle`) covering
+`session.error -> non-tool message.part.updated -> idle` finalizing as
+`completed`; the prior suite only covered recovery via a tool part.
+
 ### Sink Changes
 
 Simplify `progress-manager.ts` around the listener-owned model.
@@ -248,13 +290,14 @@ Required tests:
 
 ## Decision Log
 
-| ID  | Decision                                                         | Reason                                                                                   |
-| --- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| D1  | Slack progress has one producer: `ProgressListener`.             | Removes duplicate request-scoped producers and their races.                              |
-| D2  | `GlobalEventBus` is process-owned, not subscription-owned.       | The firehose must serve operator-UI sessions when no `/trigger` is active.               |
-| D3  | Per-session subscriptions only manage listeners.                 | Closing a trigger stream should not affect global SSE liveness.                          |
-| D4  | Slack finalization is driven by parent `session.idle`.           | Keeps the listener passive and event-derived.                                            |
-| D5  | Error finalization is timerless.                                 | A pending error is committed only by idle or cleared by later activity.                  |
-| D6  | The sink is thread-keyed and does not match `sessionId` on done. | OpenCode can reuse session ids across turns; the listener owns terminal-event filtering. |
-| D7  | `stream: true` is terminal-only NDJSON.                          | Intermediate progress is now Slack-listener state, not an HTTP stream contract.          |
-| D8  | No compatibility shim or dual producer.                          | Greenfield project; the clean end state is cheaper and safer.                            |
+| ID  | Decision                                                                           | Reason                                                                                                                                                                                                  |
+| --- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | Slack progress has one producer: `ProgressListener`.                               | Removes duplicate request-scoped producers and their races.                                                                                                                                             |
+| D2  | `GlobalEventBus` is process-owned, not subscription-owned.                         | The firehose must serve operator-UI sessions when no `/trigger` is active.                                                                                                                              |
+| D3  | Per-session subscriptions only manage listeners.                                   | Closing a trigger stream should not affect global SSE liveness.                                                                                                                                         |
+| D4  | Slack finalization is driven by parent `session.idle`.                             | Keeps the listener passive and event-derived.                                                                                                                                                           |
+| D5  | Error finalization is timerless.                                                   | A pending error is committed only by idle or cleared by later activity.                                                                                                                                 |
+| D6  | The sink is thread-keyed and does not match `sessionId` on done.                   | OpenCode can reuse session ids across turns; the listener owns terminal-event filtering.                                                                                                                |
+| D7  | `stream: true` is terminal-only NDJSON.                                            | Intermediate progress is now Slack-listener state, not an HTTP stream contract.                                                                                                                         |
+| D8  | No compatibility shim or dual producer.                                            | Greenfield project; the clean end state is cheaper and safer.                                                                                                                                           |
+| D9  | Pending-error clear covers any parent `message.part.updated`, not just tool parts. | Matches the HTTP `/trigger` recovery criteria and the Error Semantics rule. Verified latent (0/902 real windows hit the gap); fixed anyway for consistency + regression test. See Finding (2026-06-16). |

@@ -104,15 +104,17 @@ export class ProgressListener {
     if (event.type === "message.part.updated") {
       const part = event.properties.part;
 
+      // Any parent part — tool, text, retry, step-finish — means the session is
+      // still running, so an earlier session.error has been recovered. Clear
+      // before the tool-type check so a non-tool recovery part counts too,
+      // matching the HTTP /trigger path (seq-based clearIfRecovered).
+      if (isParent) {
+        this.pendingErrors.delete(sessionId);
+      }
+
       if (part.type === "tool") {
         const toolPart = part as ToolPart;
         const status = toolPart.state.status;
-
-        // Any parent tool activity clears the pending error — the session is
-        // still running so an earlier session.error has been recovered.
-        if (isParent) {
-          this.pendingErrors.delete(sessionId);
-        }
 
         this.maybeEmitDelegate(toolPart, progressTarget);
 

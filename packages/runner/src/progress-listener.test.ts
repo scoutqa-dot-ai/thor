@@ -74,6 +74,16 @@ function toolEvent(
   } as unknown as Event;
 }
 
+/** A non-tool parent part (e.g. recovered assistant text) via message.part.updated. */
+function textPartEvent(sessionID: string, text = "recovered"): Event {
+  return {
+    type: "message.part.updated",
+    properties: {
+      part: { type: "text", sessionID, messageID: "m1", text },
+    },
+  } as unknown as Event;
+}
+
 const idleEvent = (): Event => ({ type: "session.idle", properties: {} }) as unknown as Event;
 const errorEvent = (): Event =>
   ({
@@ -183,6 +193,19 @@ describe("ProgressListener", () => {
 
     observer(errorEvent(), PARENT);
     observer(toolEvent(PARENT, "running", { callID: "c9" }), PARENT); // recovery activity
+    observer(idleEvent(), PARENT);
+    await drain();
+
+    const done = emitted().find((e) => e.event.type === "done");
+    expect((done?.event as { status: string }).status).toBe("completed");
+    expect((done?.event as { error?: string }).error).toBeUndefined();
+  });
+
+  it("clears the pending error on a non-tool recovery part before idle", async () => {
+    setupThread();
+
+    observer(errorEvent(), PARENT);
+    observer(textPartEvent(PARENT), PARENT); // non-tool recovery via message.part.updated
     observer(idleEvent(), PARENT);
     await drain();
 
