@@ -153,7 +153,15 @@ Simplify `progress-manager.ts` around the listener-owned model.
 The HTTP response is one terminal line:
 
 ```json
-{"type":"done","sessionId":"...","status":"completed","response":"...","toolCalls":[],"durationMs":123,"resumed":false}
+{
+  "type": "done",
+  "sessionId": "...",
+  "status": "completed",
+  "response": "...",
+  "toolCalls": [],
+  "durationMs": 123,
+  "resumed": false
+}
 ```
 
 On errors, the same terminal shape uses `status: "error"` and includes `error`.
@@ -166,6 +174,8 @@ the listener and sink.
 ## Out Of Scope
 
 - Replaying past OpenCode events after runner restart.
+- Retrying a failed initial firehose connection before a later subscription
+  calls `ensureConnected`.
 - Duplicating child-session discovery in the listener. Operator-UI sessions may
   miss delegated child progress until a separate need proves this matters.
 - Turn ids, run tokens, debounce windows, or ordering protocols.
@@ -238,13 +248,13 @@ Required tests:
 
 ## Decision Log
 
-| ID | Decision | Reason |
-| --- | --- | --- |
-| D1 | Slack progress has one producer: `ProgressListener`. | Removes duplicate request-scoped producers and their races. |
-| D2 | `GlobalEventBus` is process-owned, not subscription-owned. | The firehose must serve operator-UI sessions when no `/trigger` is active. |
-| D3 | Per-session subscriptions only manage listeners. | Closing a trigger stream should not affect global SSE liveness. |
-| D4 | Slack finalization is driven by parent `session.idle`. | Keeps the listener passive and event-derived. |
-| D5 | Error finalization is timerless. | A pending error is committed only by idle or cleared by later activity. |
-| D6 | The sink is thread-keyed and does not match `sessionId` on done. | OpenCode can reuse session ids across turns; the listener owns terminal-event filtering. |
-| D7 | `stream: true` is terminal-only NDJSON. | Intermediate progress is now Slack-listener state, not an HTTP stream contract. |
-| D8 | No compatibility shim or dual producer. | Greenfield project; the clean end state is cheaper and safer. |
+| ID  | Decision                                                         | Reason                                                                                   |
+| --- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| D1  | Slack progress has one producer: `ProgressListener`.             | Removes duplicate request-scoped producers and their races.                              |
+| D2  | `GlobalEventBus` is process-owned, not subscription-owned.       | The firehose must serve operator-UI sessions when no `/trigger` is active.               |
+| D3  | Per-session subscriptions only manage listeners.                 | Closing a trigger stream should not affect global SSE liveness.                          |
+| D4  | Slack finalization is driven by parent `session.idle`.           | Keeps the listener passive and event-derived.                                            |
+| D5  | Error finalization is timerless.                                 | A pending error is committed only by idle or cleared by later activity.                  |
+| D6  | The sink is thread-keyed and does not match `sessionId` on done. | OpenCode can reuse session ids across turns; the listener owns terminal-event filtering. |
+| D7  | `stream: true` is terminal-only NDJSON.                          | Intermediate progress is now Slack-listener state, not an HTTP stream contract.          |
+| D8  | No compatibility shim or dual producer.                          | Greenfield project; the clean end state is cheaper and safer.                            |
