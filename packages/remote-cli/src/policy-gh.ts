@@ -100,24 +100,24 @@ const GH_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
     reason:
       "PR creation is limited to the current worktree branch and an explicit non-interactive body source.",
     instead:
-      "gh pr create --title <title> --body <body>; omit --head unless it matches the current worktree branch",
+      "gh pr create --title <title> --body-file -; omit --head unless it matches the current worktree branch",
   },
   "gh issue create": {
     reason:
       "issue creation requires an explicit non-interactive title and body so Thor can inject the trigger viewer link.",
-    instead: "gh issue create --title <title> --body <body>",
+    instead: "gh issue create --title <title> --body-file -",
   },
   "gh pr comment": {
     reason: "PR comments must target a numeric PR and provide exactly one body source.",
-    instead: "gh pr comment <number> --body <text>",
+    instead: "gh pr comment <number> --body-file -",
   },
   "gh issue comment": {
     reason: "issue comments must target a numeric issue and provide exactly one body source.",
-    instead: "gh issue comment <number> --body <text>",
+    instead: "gh issue comment <number> --body-file -",
   },
   "gh pr review": {
-    reason: "reviews must be append-only comments or request-changes reviews with an inline body.",
-    instead: "gh pr review <number> --comment --body <text>",
+    reason: "reviews must be append-only comments or request-changes reviews submitted via stdin.",
+    instead: "gh pr review <number> --comment --body-file -",
   },
   "gh run rerun": {
     reason: "run rerun requires a numeric run ID and only supports --failed and --debug.",
@@ -146,8 +146,7 @@ const GH_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
   },
   "gh api": {
     reason: "gh api is limited to implicit GET reads, plus explicit append-only REST shapes.",
-    instead:
-      "gh api <endpoint> --jq <filter> or gh api repos/{owner}/{repo}/pulls/<pr>/comments/<id>/replies --method POST -f body=<text>",
+    instead: "gh api <endpoint> --jq <filter>",
   },
 };
 
@@ -262,7 +261,7 @@ function validateGhPrCreateArgs(args: string[], cwd?: string): string | null {
     { name: "draft", kind: "boolean", aliases: ["--draft"] },
     { name: "fill", kind: "boolean", aliases: ["--fill"] },
     { name: "title", kind: "value", aliases: ["-t", "--title"] },
-    { name: "body", kind: "value", aliases: ["-b", "--body"] },
+    { name: "body-file", kind: "value", aliases: ["--body-file"] },
     { name: "base", kind: "value", aliases: ["-B", "--base"] },
     { name: "head", kind: "value", aliases: ["-H", "--head"] },
     { name: "label", kind: "value", aliases: ["-l", "--label"] },
@@ -274,14 +273,21 @@ function validateGhPrCreateArgs(args: string[], cwd?: string): string | null {
   }
 
   const titles = valueFlagValues(parsed, "title");
-  const bodies = valueFlagValues(parsed, "body");
+  const bodies = valueFlagValues(parsed, "body-file");
   const heads = valueFlagValues(parsed, "head");
   const fill = booleanFlagCount(parsed, "fill") > 0;
 
+  if (titles.length > 1) {
+    return denyMessage("gh pr create", {
+      reason: "multiple --title values are ambiguous.",
+      instead: "provide exactly one --title value",
+    });
+  }
+
   if (bodies.length > 1) {
     return denyMessage("gh pr create", {
-      reason: "multiple --body values are ambiguous for disclaimer injection.",
-      instead: "provide exactly one --body value",
+      reason: "multiple --body-file values are ambiguous for disclaimer injection.",
+      instead: "provide exactly one --body-file - value",
     });
   }
 
@@ -339,11 +345,13 @@ function validateGhPrCreateArgs(args: string[], cwd?: string): string | null {
   if (fill) {
     return denyMessage("gh pr create", {
       reason:
-        "--fill is denied: PR creation must include an explicit --body so Thor can inject the trigger viewer link.",
-      instead: "gh pr create --title <title> --body <body>",
+        "--fill is denied: PR creation must include an explicit --body-file - so Thor can inject the trigger viewer link.",
+      instead: "gh pr create --title <title> --body-file -",
     });
   }
-  return titles.length > 0 && bodies.length === 1 ? null : denyMessage("gh pr create");
+  return titles.length === 1 && bodies.length === 1 && bodies[0] === "-"
+    ? null
+    : denyMessage("gh pr create");
 }
 
 function validateGhPrCommentArgs(args: string[]): string | null {
@@ -353,26 +361,26 @@ function validateGhPrCommentArgs(args: string[]): string | null {
   }
 
   const parsed = scanPolicyArgs(args, 3, [
-    { name: "body", kind: "value", aliases: ["-b", "--body"] },
+    { name: "body-file", kind: "value", aliases: ["--body-file"] },
   ]);
   if (!parsed || parsed.positionals.length > 0) {
     return denyMessage("gh pr comment");
   }
 
-  const bodies = valueFlagValues(parsed, "body");
+  const bodies = valueFlagValues(parsed, "body-file");
   if (bodies.length > 1) {
     return denyMessage("gh pr comment", {
-      reason: "multiple --body values are ambiguous for disclaimer injection.",
-      instead: "provide exactly one --body value",
+      reason: "multiple --body-file values are ambiguous for disclaimer injection.",
+      instead: "provide exactly one --body-file - value",
     });
   }
-  return bodies.length === 1 ? null : denyMessage("gh pr comment");
+  return bodies.length === 1 && bodies[0] === "-" ? null : denyMessage("gh pr comment");
 }
 
 function validateGhIssueCreateArgs(args: string[]): string | null {
   const parsed = scanPolicyArgs(args, 2, [
     { name: "title", kind: "value", aliases: ["-t", "--title"] },
-    { name: "body", kind: "value", aliases: ["-b", "--body"] },
+    { name: "body-file", kind: "value", aliases: ["--body-file"] },
     { name: "label", kind: "value", aliases: ["-l", "--label"] },
     { name: "assignee", kind: "value", aliases: ["-a", "--assignee"] },
   ]);
@@ -381,7 +389,7 @@ function validateGhIssueCreateArgs(args: string[]): string | null {
   }
 
   const titles = valueFlagValues(parsed, "title");
-  const bodies = valueFlagValues(parsed, "body");
+  const bodies = valueFlagValues(parsed, "body-file");
   if (titles.length > 1) {
     return denyMessage("gh issue create", {
       reason: "multiple --title values are ambiguous.",
@@ -390,8 +398,8 @@ function validateGhIssueCreateArgs(args: string[]): string | null {
   }
   if (bodies.length > 1) {
     return denyMessage("gh issue create", {
-      reason: "multiple --body values are ambiguous for disclaimer injection.",
-      instead: "provide exactly one --body value",
+      reason: "multiple --body-file values are ambiguous for disclaimer injection.",
+      instead: "provide exactly one --body-file - value",
     });
   }
   if (titles.length !== 1) {
@@ -403,11 +411,11 @@ function validateGhIssueCreateArgs(args: string[]): string | null {
   if (bodies.length !== 1) {
     return denyMessage("gh issue create", {
       reason:
-        "issue creation requires exactly one explicit --body value so Thor can inject the trigger viewer link.",
-      instead: "provide exactly one --body value",
+        "issue creation requires exactly one explicit --body-file - value so Thor can inject the trigger viewer link.",
+      instead: "provide exactly one --body-file - value",
     });
   }
-  return null;
+  return bodies[0] === "-" ? null : denyMessage("gh issue create");
 }
 
 function validateGhIssueCommentArgs(args: string[]): string | null {
@@ -417,20 +425,20 @@ function validateGhIssueCommentArgs(args: string[]): string | null {
   }
 
   const parsed = scanPolicyArgs(args, 3, [
-    { name: "body", kind: "value", aliases: ["-b", "--body"] },
+    { name: "body-file", kind: "value", aliases: ["--body-file"] },
   ]);
   if (!parsed || parsed.positionals.length > 0) {
     return denyMessage("gh issue comment");
   }
 
-  const bodies = valueFlagValues(parsed, "body");
+  const bodies = valueFlagValues(parsed, "body-file");
   if (bodies.length > 1) {
     return denyMessage("gh issue comment", {
-      reason: "multiple --body values are ambiguous for disclaimer injection.",
-      instead: "provide exactly one --body value",
+      reason: "multiple --body-file values are ambiguous for disclaimer injection.",
+      instead: "provide exactly one --body-file - value",
     });
   }
-  return bodies.length === 1 ? null : denyMessage("gh issue comment");
+  return bodies.length === 1 && bodies[0] === "-" ? null : denyMessage("gh issue comment");
 }
 
 function validateGhPrReviewArgs(args: string[]): string | null {
@@ -445,7 +453,7 @@ function validateGhPrReviewArgs(args: string[]): string | null {
   const parsed = scanPolicyArgs(args, i, [
     { name: "comment", kind: "boolean", aliases: ["-c", "--comment"] },
     { name: "request-changes", kind: "boolean", aliases: ["-r", "--request-changes"] },
-    { name: "body", kind: "value", aliases: ["-b", "--body"] },
+    { name: "body-file", kind: "value", aliases: ["--body-file"] },
   ]);
   if (!parsed || parsed.positionals.length > 0) {
     return denyMessage("gh pr review");
@@ -453,13 +461,13 @@ function validateGhPrReviewArgs(args: string[]): string | null {
 
   const hasComment = booleanFlagCount(parsed, "comment") > 0;
   const hasRequestChanges = booleanFlagCount(parsed, "request-changes") > 0;
-  const bodies = valueFlagValues(parsed, "body");
-  const hasBody = bodies.length === 1;
+  const bodies = valueFlagValues(parsed, "body-file");
+  const hasBody = bodies.length === 1 && bodies[0] === "-";
 
   if (bodies.length > 1) {
     return denyMessage("gh pr review", {
-      reason: "multiple --body values are ambiguous for disclaimer injection.",
-      instead: "provide exactly one --body value",
+      reason: "multiple --body-file values are ambiguous for disclaimer injection.",
+      instead: "provide exactly one --body-file - value",
     });
   }
 
@@ -552,30 +560,11 @@ function validateGhApiArgs(args: string[], cwd?: string): string | null {
 }
 
 function validateGhApiReviewReplyArgs(args: string[]): string | null {
-  const parsed = scanPolicyArgs(args, 2, [
-    { name: "method", kind: "value", aliases: ["--method", "-X"] },
-    { name: "raw-field", kind: "value", aliases: ["-f", "--raw-field"] },
-  ]);
-  if (!parsed || parsed.positionals.length > 0) {
-    return denyMessage("gh api");
-  }
-
-  const methods = valueFlagValues(parsed, "method");
-  if (methods.length !== 1 || methods[0] !== "POST") {
-    return denyMessage("gh api");
-  }
-
-  const rawFields = valueFlagValues(parsed, "raw-field");
-  if (rawFields.length !== 1) {
-    return denyMessage("gh api");
-  }
-
-  const [field] = rawFields;
-  if (!field?.startsWith("body=") || field.slice("body=".length).trim().length === 0) {
-    return denyMessage("gh api");
-  }
-
-  return null;
+  return denyMessage("gh api", {
+    reason:
+      "gh api prose bodies are blocked; use supported gh pr/issue commands with --body-file -.",
+    instead: "gh pr comment <number> --body-file -",
+  });
 }
 
 function validateGhApiExplicitReviewReplyArgs(args: string[], cwd?: string): string | null {

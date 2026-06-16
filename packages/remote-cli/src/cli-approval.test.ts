@@ -58,7 +58,7 @@ describe("cli-approval framework", () => {
       const plan = await executor.resolve(action);
       const outcome = await plan.execute();
 
-      expect(exec).toHaveBeenCalledWith("faketool", ["run", "--x"], "/work");
+      expect(exec).toHaveBeenCalledWith("faketool", ["run", "--x"], "/work", {});
       expect(outcome).toEqual({
         ok: true,
         stdout: "https://issue/1",

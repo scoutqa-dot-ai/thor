@@ -22,6 +22,7 @@ export interface CliCommand {
   bin: string;
   args: string[];
   cwd: string;
+  stdin?: string;
 }
 
 /**
@@ -43,7 +44,7 @@ export interface CliApprovalDefinition {
    * May throw to reject a malformed request. The stored args must capture the
    * exact, reviewed command (including any server-added flags).
    */
-  buildRequestArgs(input: { cwd: string; args: string[] }): Record<string, unknown>;
+  buildRequestArgs(input: { cwd: string; args: string[]; stdin?: string }): Record<string, unknown>;
   /**
    * Recover the command to run from a stored action at approval time. Server
    * additions reserved for the side effect (disclaimer footer, attribution) are
@@ -60,6 +61,7 @@ export interface CliApprovalRequest {
   args: string[];
   sessionId?: string;
   callId?: string;
+  stdin?: string;
 }
 
 async function runCliApproval(
@@ -72,7 +74,9 @@ async function runCliApproval(
   if ("error" in command) {
     return { ok: false, stdout: "", stderr: command.error, sideEffectAttempted: false };
   }
-  const result = await execCommandFn(command.bin, command.args, command.cwd);
+  const result = await execCommandFn(command.bin, command.args, command.cwd, {
+    ...(command.stdin !== undefined ? { stdin: command.stdin } : {}),
+  });
   if (result.exitCode !== 0) {
     return {
       ok: false,
@@ -116,7 +120,7 @@ export async function requestCliApproval(
   if (!input.sessionId) {
     return fail(`Approval required for "${def.displayName}": missing Thor session id`);
   }
-  const args = def.buildRequestArgs({ cwd: input.cwd, args: input.args });
+  const args = def.buildRequestArgs({ cwd: input.cwd, args: input.args, stdin: input.stdin });
   return approvalService.createPending({
     storeName: def.store,
     tool: def.tool,
@@ -166,8 +170,13 @@ const ghIssueCreate: CliApprovalDefinition = {
   store: "gh",
   tool: "ghIssueCreate",
   displayName: "gh issue create",
-  buildRequestArgs: ({ cwd, args }) =>
-    GhIssueCreateApprovalArgsSchema.parse({ cwd, args, ...parseGhIssueDisplay(args) }),
+  buildRequestArgs: ({ cwd, args, stdin }) =>
+    GhIssueCreateApprovalArgsSchema.parse({
+      cwd,
+      args,
+      ...(stdin !== undefined ? { stdin, bodyPreview: stdin.length > 700 ? `${stdin.slice(0, 700)}…` : stdin } : {}),
+      ...parseGhIssueDisplay(args),
+    }),
   resolveCommand: (action, deps) => {
     const parsed = GhIssueCreateApprovalArgsSchema.safeParse(action.args);
     if (!parsed.success) {
@@ -177,12 +186,13 @@ const ghIssueCreate: CliApprovalDefinition = {
     }
     // Inject the footer + assignee now, at execution, so they stay off the card.
     const injected = injectGhIssueCreateExec(parsed.data.args, {
+      stdin: (parsed.data as { stdin?: unknown }).stdin,
       trigger: action.origin?.trigger,
       sessionId: action.origin?.sessionId,
       getConfig: deps.getConfig,
     });
     if ("error" in injected) return injected;
-    return { bin: "gh", args: injected, cwd: parsed.data.cwd };
+    return { bin: "gh", args: injected.args, cwd: parsed.data.cwd, stdin: injected.stdin };
   },
   onSuccess: (action, command, stdout) =>
     registerCreatedIssueCorrelationAlias(action.origin?.sessionId, command.cwd, stdout),
