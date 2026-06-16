@@ -31,10 +31,6 @@ type OpencodeClient = ReturnType<typeof createOpencodeClient>;
 /** Terminal error when an assistant message idles without producing output. */
 export const ASSISTANT_EMPTY_ERROR_OUTPUT = "Assistant message failed before producing output";
 
-export function isExpectedAbortSessionError(message: string): boolean {
-  return /\b(abort(?:ed)?|cancell?ed|interrupted)\b/i.test(message);
-}
-
 // ---------------------------------------------------------------------------
 // Event filtering — what gets a JSON file, what gets a stdout log, what's ignored
 // ---------------------------------------------------------------------------
@@ -577,19 +573,10 @@ export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStr
         errorGrace.record(errorMessage, seq);
         collectedToolCalls.push({ tool: "error", state: "error" });
         emit({ type: "tool", tool: "error", status: "error" });
-        const logFields = {
+        logError(log, "session_error", errorMessage, {
           sessionId,
           errorDetail: JSON.stringify(errorProps.error),
-        };
-        if (isExpectedAbortSessionError(errorMessage)) {
-          logInfo(log, "session_error", {
-            ...logFields,
-            category: "expected_abort",
-            reason: errorMessage,
-          });
-        } else {
-          logError(log, "session_error", errorMessage, logFields);
-        }
+        });
       } else if (event.type === "session.idle") {
         const failedAssistantIdle = autoResume.isFailedAssistantIdle();
         const resumeMessageId = autoResume.decideResume();

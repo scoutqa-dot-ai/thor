@@ -75,7 +75,6 @@ const INTERNAL_EXEC_MAX_OUTPUT = 1024 * 1024;
 export function isMetabaseUserFailure(subcommand: string | undefined, message: string): boolean {
   if (!subcommand) return false;
   if (/^Query failed:/i.test(message)) return subcommand === "query";
-  if (/\bnot found\b/i.test(message)) return ["tables", "columns", "question"].includes(subcommand);
   if (/not a native SQL question/i.test(message)) return subcommand === "question";
   if (/^Metabase (?:GET|POST) .*→ (?:400|404|422):/i.test(message)) {
     return ["tables", "columns", "query", "question"].includes(subcommand);
