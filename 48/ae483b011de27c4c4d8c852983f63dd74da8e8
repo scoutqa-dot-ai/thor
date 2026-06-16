@@ -1,0 +1,27 @@
+packages/runner/src/progress-listener.test.ts
+  09d5405756e2422b 77-86,204-216
+packages/runner/src/progress-listener.ts
+  09d5405756e2422b 107-110,114
+docs/plan/2026061301_progress-update.md
+  09d5405756e2422b 134-175,303
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "48ae483b011de27c4c4d8c852983f63dd74da8e8",
+  "prompts": {
+    "09d5405756e2422b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e064f15f-c605-407b-908a-193067668329",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 80,
+      "total_deletions": 12,
+      "accepted_lines": 71,
+      "overriden_lines": 0
+    }
+  }
+}
