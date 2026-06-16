@@ -30,6 +30,10 @@ Gate mutating AWS CLI commands behind the existing Slack-button human-approval p
 | `docs/feat/security-model.md`                  | Document the read/write split and approval gating                                                |
 | tests                                          | `policy.test.ts` classification cases, `cli-approval.test.ts` aws definition, presentation test  |
 
+## Known limitations
+
+- Slack approval cards cap section text at Slack's message limit, so very long AWS argv payloads are intentionally truncated in the approval card. The stored approval action still executes the full reviewed argv. Operators should reject and ask for a smaller command or external review artifact when the visible card does not contain enough context to evaluate the command safely.
+
 ## Exit criteria
 
 - `awsCommandRequiresApproval` gates mutating verbs, unknown operations, and credential-looking reads, passes ordinary reads/help/version, and ignores global option values when locating the operation.
