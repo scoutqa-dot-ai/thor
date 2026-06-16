@@ -10,6 +10,34 @@
 
 import { loadMetabaseEnv } from "@thor/common";
 
+/**
+ * Error from the Metabase client. `userFailure` records — at the throw site,
+ * where the full context is known — whether the failure was caused by the
+ * caller's input (bad SQL, missing table/resource, unsupported question, a 4xx
+ * request) rather than a service or config fault. Callers classify on this flag
+ * instead of parsing the message, so behavior survives upstream wording changes.
+ */
+export class MetabaseError extends Error {
+  readonly userFailure: boolean;
+  readonly status?: number;
+
+  constructor(message: string, userFailure: boolean, status?: number) {
+    super(message);
+    this.name = "MetabaseError";
+    this.userFailure = userFailure;
+    this.status = status;
+  }
+}
+
+/**
+ * A 4xx that reflects the caller's request (bad input or a missing resource the
+ * caller named). Auth (401/403), rate limiting (429), and 5xx are service/config
+ * faults that should still page.
+ */
+function isUserFailureStatus(status: number): boolean {
+  return status === 400 || status === 404 || status === 422;
+}
+
 // ── Config (read once at startup, cached) ──────────────────────────────────
 
 let _config: ReturnType<typeof loadMetabaseEnv> | null = null;
@@ -31,7 +59,11 @@ async function mbGet<T>(path: string): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Metabase GET ${path} → ${res.status}: ${body.slice(0, 500)}`);
+    throw new MetabaseError(
+      `Metabase GET ${path} → ${res.status}: ${body.slice(0, 500)}`,
+      isUserFailureStatus(res.status),
+      res.status,
+    );
   }
   return res.json() as Promise<T>;
 }
@@ -48,7 +80,11 @@ async function mbPost<T>(path: string, body: unknown): Promise<T> {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Metabase POST ${path} → ${res.status}: ${text.slice(0, 500)}`);
+    throw new MetabaseError(
+      `Metabase POST ${path} → ${res.status}: ${text.slice(0, 500)}`,
+      isUserFailureStatus(res.status),
+      res.status,
+    );
   }
   return res.json() as Promise<T>;
 }
@@ -108,7 +144,7 @@ export async function getColumns(schema: string, tableName: string): Promise<Col
   const tables = await listTables(schema);
   const table = tables.find((t) => t.name === tableName);
   if (!table) {
-    throw new Error(`Table "${tableName}" not found in schema "${schema}"`);
+    throw new MetabaseError(`Table "${tableName}" not found in schema "${schema}"`, true);
   }
 
   const meta = await mbGet<{
@@ -141,7 +177,7 @@ export async function executeQuery(sql: string): Promise<QueryResult> {
   });
 
   if (result.status !== "completed" || result.error) {
-    throw new Error(`Query failed: ${result.error || result.status}`);
+    throw new MetabaseError(`Query failed: ${result.error || result.status}`, true);
   }
 
   return {
@@ -168,9 +204,10 @@ export async function getQuestion(questionRef: string): Promise<QuestionInfo> {
   }>(`/api/card/${encodeURIComponent(questionRef)}`);
 
   if (card.dataset_query.type !== "native" || !card.dataset_query.native?.query) {
-    throw new Error(
+    throw new MetabaseError(
       `Question ${questionRef} is not a native SQL question (type: ${card.dataset_query.type}). ` +
         `Only native SQL questions are supported.`,
+      true,
     );
   }
 

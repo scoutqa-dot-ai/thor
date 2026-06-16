@@ -15,30 +15,22 @@ vi.mock("@thor/common", async (importOriginal) => {
   return { ...actual, logError: logErrorMock, logWarn: logWarnMock };
 });
 
-vi.mock("./metabase.ts", () => ({
-  listSchemas: vi.fn(),
-  listTables: listTablesMock,
-  getColumns: vi.fn(),
-  executeQuery: executeQueryMock,
-  getQuestion: vi.fn(),
-}));
-
-import { createRemoteCliApp, isMetabaseUserFailure } from "./index.ts";
-
-describe("metabase failure classification", () => {
-  it("classifies bounded user/query failures only", () => {
-    expect(isMetabaseUserFailure("query", "Query failed: syntax error at or near SELECT")).toBe(
-      true,
-    );
-    expect(
-      isMetabaseUserFailure("tables", "Metabase GET /api/database/1/schema/missing → 404: nope"),
-    ).toBe(true);
-    expect(isMetabaseUserFailure("query", "Metabase POST /api/dataset → 401: Unauthorized")).toBe(
-      false,
-    );
-    expect(isMetabaseUserFailure("query", "fetch failed")).toBe(false);
-  });
+// Preserve the real MetabaseError class so the endpoint can classify on type;
+// only the network-backed client functions are replaced with mocks.
+vi.mock("./metabase.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./metabase.ts")>();
+  return {
+    ...actual,
+    listSchemas: vi.fn(),
+    listTables: listTablesMock,
+    getColumns: vi.fn(),
+    executeQuery: executeQueryMock,
+    getQuestion: vi.fn(),
+  };
 });
+
+import { createRemoteCliApp } from "./index.ts";
+import { MetabaseError } from "./metabase.ts";
 
 describe("remote-cli metabase endpoint", () => {
   let server: Server;
@@ -69,8 +61,10 @@ describe("remote-cli metabase endpoint", () => {
     await closeRemoteCli();
   });
 
-  it("returns a normal tool failure for bad SQL without error logging", async () => {
-    executeQueryMock.mockRejectedValue(new Error("Query failed: syntax error at or near FROM"));
+  it("returns a normal tool failure for user errors without error logging", async () => {
+    executeQueryMock.mockRejectedValue(
+      new MetabaseError("Query failed: syntax error at or near FROM", true),
+    );
 
     const response = await postJson("/exec/metabase", { args: ["query", "select * from"] });
     const body = (await response.json()) as { stderr: string; exitCode: number };
@@ -92,7 +86,9 @@ describe("remote-cli metabase endpoint", () => {
   });
 
   it("keeps service/auth failures as HTTP 500 error logs", async () => {
-    executeQueryMock.mockRejectedValue(new Error("Metabase POST /api/dataset → 401: Unauthorized"));
+    executeQueryMock.mockRejectedValue(
+      new MetabaseError("Metabase POST /api/dataset → 401: Unauthorized", false, 401),
+    );
 
     const response = await postJson("/exec/metabase", { args: ["query", "select 1"] });
     const body = (await response.json()) as { stderr: string; exitCode: number };

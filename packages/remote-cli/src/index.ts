@@ -32,7 +32,14 @@ import {
   parseSlackPostMessageArgs,
   type SlackPostMessageDeps,
 } from "./slack-post-message.ts";
-import { listSchemas, listTables, getColumns, executeQuery, getQuestion } from "./metabase.ts";
+import {
+  listSchemas,
+  listTables,
+  getColumns,
+  executeQuery,
+  getQuestion,
+  MetabaseError,
+} from "./metabase.ts";
 import {
   createSandbox,
   deleteSandbox,
@@ -71,16 +78,6 @@ const WORKTREE_ROOT = "/workspace/worktrees";
 const WORKTREE_PREFIX = `${WORKTREE_ROOT}/`;
 const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 const INTERNAL_EXEC_MAX_OUTPUT = 1024 * 1024;
-
-export function isMetabaseUserFailure(subcommand: string | undefined, message: string): boolean {
-  if (!subcommand) return false;
-  if (/^Query failed:/i.test(message)) return subcommand === "query";
-  if (/not a native SQL question/i.test(message)) return subcommand === "question";
-  if (/^Metabase (?:GET|POST) .*→ (?:400|404|422):/i.test(message)) {
-    return ["tables", "columns", "query", "question"].includes(subcommand);
-  }
-  return false;
-}
 
 export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env): void {
   loadRemoteCliGitHubEnv(env);
@@ -813,7 +810,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       const message = errorMessage(err);
       const { args } = req.body ?? {};
       const subcommand = Array.isArray(args) ? args[0] : undefined;
-      if (isMetabaseUserFailure(subcommand, message)) {
+      if (err instanceof MetabaseError && err.userFailure) {
         logWarn(log, "exec_metabase_query_failure", {
           category: "metabase_query_failure",
           subcommand,
