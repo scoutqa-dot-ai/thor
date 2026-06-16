@@ -127,9 +127,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
 RUN npm i -g @scoutqa/cli@latest @launchdarkly/ldcli@2.2.0
-# AWS CLI v2 (official installer; uname -m maps directly to AWS's arch names)
+# AWS CLI v2 (official installer; uname -m maps directly to AWS's arch names).
+# Pinned to a specific release for reproducible builds; override with
+# --build-arg AWSCLI_VERSION=x.y.z. Versions: https://github.com/aws/aws-cli/blob/v2/CHANGELOG.rst
+ARG AWSCLI_VERSION=2.35.5
 RUN apt-get update && apt-get install -y --no-install-recommends unzip \
-    && curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscliv2.zip \
+    && curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m)-${AWSCLI_VERSION}.zip" -o /tmp/awscliv2.zip \
     && unzip -q /tmp/awscliv2.zip -d /tmp \
     && /tmp/aws/install \
     && rm -rf /tmp/aws /tmp/awscliv2.zip \
