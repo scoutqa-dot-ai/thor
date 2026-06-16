@@ -243,9 +243,12 @@ function getMetabaseAllowedSchemas(): Set<string> {
 // approval (see awsCommandRequiresApproval). validateAwsArgs only checks the
 // request is well-formed; the read/write split decides the execution path.
 
-export function validateAwsArgs(args: string[]): string | null {
+export function validateAwsArgs(args: unknown): string | null {
   if (!Array.isArray(args) || args.length === 0) {
     return "args must be a non-empty array";
+  }
+  if (!args.every((arg) => typeof arg === "string")) {
+    return "args must be a string array";
   }
 
   return null;

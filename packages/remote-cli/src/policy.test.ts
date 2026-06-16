@@ -1853,6 +1853,11 @@ describe("validateAwsArgs", () => {
     expect(validateAwsArgs(undefined as unknown as string[])).not.toBeNull();
   });
 
+  it("rejects non-string args before classification", () => {
+    expect(validateAwsArgs(["s3", "ls", 1])).toBe("args must be a string array");
+    expect(validateAwsArgs(["s3", "ls", { bad: true }])).toBe("args must be a string array");
+  });
+
   it("allows any non-empty command (generic passthrough)", () => {
     expect(validateAwsArgs(["s3", "ls"])).toBeNull();
     expect(validateAwsArgs(["sts", "get-caller-identity"])).toBeNull();
