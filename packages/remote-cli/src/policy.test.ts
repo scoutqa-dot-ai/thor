@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { normalize as normalizePosix } from "node:path/posix";
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import {
+  awsCommandRequiresApproval,
   resolveGitArgs,
+  validateAwsArgs,
   validateCwd,
   validateGitArgs,
   validateGhArgs,
@@ -1840,5 +1842,125 @@ describe("validateMetabaseArgs", () => {
       expect(validateMetabaseArgs(["question", "123abc"])).not.toBeNull();
       expect(validateMetabaseArgs(["question", "42/slug"])).not.toBeNull();
     });
+  });
+});
+
+// ── aws policy ───────────────────────────────────────────────────────────────
+
+describe("validateAwsArgs", () => {
+  it("rejects empty or non-array args", () => {
+    expect(validateAwsArgs([])).not.toBeNull();
+    expect(validateAwsArgs(undefined as unknown as string[])).not.toBeNull();
+  });
+
+  it("rejects non-string args before classification", () => {
+    expect(validateAwsArgs(["s3", "ls", 1])).toBe("args must be a string array");
+    expect(validateAwsArgs(["s3", "ls", { bad: true }])).toBe("args must be a string array");
+  });
+
+  it("allows any non-empty command (generic passthrough)", () => {
+    expect(validateAwsArgs(["s3", "ls"])).toBeNull();
+    expect(validateAwsArgs(["sts", "get-caller-identity"])).toBeNull();
+    expect(validateAwsArgs(["--version"])).toBeNull();
+  });
+});
+
+describe("awsCommandRequiresApproval", () => {
+  it("does not gate read-only operations", () => {
+    const reads: string[][] = [
+      ["ec2", "describe-instances"],
+      ["s3api", "list-buckets"],
+      ["s3api", "get-object", "--bucket", "b", "--key", "k", "out"],
+      ["s3api", "head-object", "--bucket", "b", "--key", "k"],
+      ["iam", "list-users"],
+      ["dynamodb", "scan", "--table-name", "t"],
+      ["dynamodb", "query", "--table-name", "t"],
+      ["dynamodb", "batch-get-item", "--request-items", "{}"],
+      ["logs", "describe-log-groups"],
+      ["ec2", "wait", "instance-running"],
+      ["s3", "ls"],
+      ["s3", "ls", "s3://bucket/prefix"],
+      ["s3", "presign", "s3://bucket/key"],
+      ["configure", "list"],
+      ["configure", "get", "region"],
+    ];
+    for (const args of reads) {
+      expect(awsCommandRequiresApproval(args)).toBe(false);
+    }
+  });
+
+  it("does not gate help or version, including per-command help", () => {
+    expect(awsCommandRequiresApproval(["help"])).toBe(false);
+    expect(awsCommandRequiresApproval(["--version"])).toBe(false);
+    expect(awsCommandRequiresApproval(["ec2", "help"])).toBe(false);
+    expect(awsCommandRequiresApproval(["ec2", "run-instances", "help"])).toBe(false);
+  });
+
+  it("does not gate a bare service with no operation", () => {
+    expect(awsCommandRequiresApproval(["s3"])).toBe(false);
+    expect(awsCommandRequiresApproval(["--region", "us-east-1", "ec2"])).toBe(false);
+  });
+
+  it("gates credential and IAM-shaped read operations", () => {
+    const sensitiveReads: string[][] = [
+      ["sts", "get-caller-identity"],
+      ["sts", "get-session-token"],
+      ["ecr", "get-authorization-token"],
+      ["ecr", "get-login-password"],
+      ["secretsmanager", "get-secret-value", "--secret-id", "prod/db"],
+      ["sso", "get-role-credentials"],
+      ["ssm", "get-parameter", "--with-decryption", "--name", "/prod/db"],
+      ["iam", "get-role", "--role-name", "admin"],
+      ["apigateway", "get-api-key", "--api-key", "abc", "--include-value"],
+      ["apigateway", "get-api-keys", "--include-values"],
+      ["--region", "us-east-1", "sts", "get-caller-identity"],
+    ];
+    for (const args of sensitiveReads) {
+      expect(awsCommandRequiresApproval(args)).toBe(true);
+    }
+  });
+
+  it("gates create / delete / put / run and other mutating operations", () => {
+    const writes: string[][] = [
+      ["ec2", "run-instances", "--image-id", "ami-123"],
+      ["ec2", "terminate-instances", "--instance-ids", "i-1"],
+      ["iam", "create-user", "--user-name", "bob"],
+      ["iam", "create-user", "--user-name", "help"],
+      ["iam", "delete-user", "--user-name", "bob"],
+      ["s3api", "put-object", "--bucket", "b", "--key", "k"],
+      ["s3api", "delete-object", "--bucket", "b", "--key", "k"],
+      ["dynamodb", "put-item", "--table-name", "t", "--item", "{}"],
+      ["lambda", "update-function-code", "--function-name", "f"],
+      ["configure", "set", "region", "us-east-1"],
+      ["sts", "assume-role", "--role-arn", "arn", "--role-session-name", "s"],
+      ["--query", "help", "ec2", "run-instances"],
+    ];
+    for (const args of writes) {
+      expect(awsCommandRequiresApproval(args)).toBe(true);
+    }
+  });
+
+  it("gates s3 high-level write verbs", () => {
+    expect(awsCommandRequiresApproval(["s3", "cp", "./f", "s3://b/k"])).toBe(true);
+    expect(awsCommandRequiresApproval(["s3", "cp", "help", "s3://b/k"])).toBe(true);
+    expect(awsCommandRequiresApproval(["s3", "mv", "s3://b/a", "s3://b/c"])).toBe(true);
+    expect(awsCommandRequiresApproval(["s3", "rm", "s3://b/k"])).toBe(true);
+    expect(awsCommandRequiresApproval(["s3", "sync", "./d", "s3://b"])).toBe(true);
+    expect(awsCommandRequiresApproval(["s3", "rb", "s3://b"])).toBe(true);
+  });
+
+  it("classifies on the operation, skipping global option values", () => {
+    // `--region us-east-1` must not be mistaken for the operation token.
+    expect(awsCommandRequiresApproval(["--region", "us-east-1", "ec2", "describe-instances"])).toBe(
+      false,
+    );
+    expect(awsCommandRequiresApproval(["--region", "us-east-1", "ec2", "run-instances"])).toBe(
+      true,
+    );
+    expect(awsCommandRequiresApproval(["--profile=foo", "iam", "create-user"])).toBe(true);
+  });
+
+  it("fails closed on unrecognized operations", () => {
+    expect(awsCommandRequiresApproval(["someservice", "frobnicate-thing"])).toBe(true);
   });
 });

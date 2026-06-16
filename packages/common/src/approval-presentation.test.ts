@@ -19,3 +19,52 @@ describe("buildApprovalPresentation — gh issue create", () => {
     expect(presentation!.markdown).not.toContain("gh issue create");
   });
 });
+
+describe("buildApprovalPresentation — aws write command", () => {
+  it("renders the reviewed aws command argv in a JSON code block with the working directory", () => {
+    const presentation = buildApprovalPresentation("awsExec", {
+      cwd: "/workspace/repos/thor",
+      args: ["s3", "cp", "./build.zip", "s3://my-bucket/build.zip"],
+    });
+
+    expect(presentation).toBeDefined();
+    expect(presentation!.title).toBe("Run aws command");
+    expect(presentation!.markdown).toContain("*Directory:* /workspace/repos/thor");
+    expect(presentation!.markdown).toContain(
+      [
+        "*Command argv:*",
+        "```json",
+        "[",
+        '  "aws",',
+        '  "s3",',
+        '  "cp",',
+        '  "./build.zip",',
+        '  "s3://my-bucket/build.zip"',
+        "]",
+        "```",
+      ].join("\n"),
+    );
+  });
+
+  it("preserves spaces and escapes backticks inside the JSON argv fence", () => {
+    const presentation = buildApprovalPresentation("awsExec", {
+      cwd: "/workspace/repos/thor",
+      args: [
+        "ec2",
+        "run-instances",
+        "--tag-specifications",
+        "ResourceType=instance,Tags=[{Key=Name,Value=build worker}]",
+        "--user-data",
+        "line one\nline two with `ticks` and ``` fence",
+      ],
+    });
+
+    expect(presentation).toBeDefined();
+    expect(presentation!.markdown).toContain(
+      '"ResourceType=instance,Tags=[{Key=Name,Value=build worker}]"',
+    );
+    expect(presentation!.markdown).toContain(
+      '"line one\\nline two with \\u0060ticks\\u0060 and \\u0060\\u0060\\u0060 fence"',
+    );
+  });
+});

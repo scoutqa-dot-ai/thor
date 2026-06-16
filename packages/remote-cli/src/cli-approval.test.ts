@@ -151,6 +151,38 @@ describe("cli-approval framework", () => {
       expect(def.displayName).toBe("gh issue create");
     });
 
+    it("resolves the registered aws definition and runs the reviewed command with the pager disabled", () => {
+      const def = getCliApprovalDefinition("aws");
+      expect(def.tool).toBe("awsExec");
+
+      const action = pendingAction({
+        cwd: "/workspace/repos/thor",
+        args: ["ec2", "run-instances"],
+      });
+      action.tool = "awsExec";
+      const command = def.resolveCommand(action, fakeDeps);
+      expect(command).toEqual({
+        bin: "aws",
+        args: ["ec2", "run-instances"],
+        cwd: "/workspace/repos/thor",
+        env: { AWS_PAGER: "" },
+      });
+    });
+
+    it("passes the command env through to execCommand on approval", async () => {
+      const def = getCliApprovalDefinition("aws");
+      const exec = execStub({ stdout: "{}", stderr: "", exitCode: 0 });
+      const executor = createCliApprovalExecutor(def, exec, fakeDeps);
+
+      const action = pendingAction({ cwd: "/workspace/repos/thor", args: ["iam", "create-user"] });
+      action.tool = "awsExec";
+      await (await executor.resolve(action)).execute();
+
+      expect(exec).toHaveBeenCalledWith("aws", ["iam", "create-user"], "/workspace/repos/thor", {
+        env: { AWS_PAGER: "" },
+      });
+    });
+
     it("throws for an unregistered store rather than silently routing to MCP", () => {
       expect(() => getCliApprovalDefinition("nope")).toThrow(
         'No CLI approval definition registered for store "nope"',

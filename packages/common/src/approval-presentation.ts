@@ -2,6 +2,7 @@ import {
   AddCommentToJiraIssueApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
   GhIssueCreateApprovalArgsSchema,
+  AwsExecApprovalArgsSchema,
   CreateJiraIssueApprovalArgsSchema,
   type ApprovalToolName,
 } from "./approval-events.ts";
@@ -167,6 +168,8 @@ export function buildApprovalPresentation(
         return buildCreateFeatureFlagPresentation(args);
       case "ghIssueCreate":
         return buildGhIssueCreatePresentation(args);
+      case "awsExec":
+        return buildAwsExecPresentation(args);
       default:
         return undefined;
     }
@@ -324,6 +327,20 @@ function buildGhIssueCreatePresentation(args: Record<string, unknown>): Approval
       bullet("Labels", parsed.labels?.join(", ")),
       bullet("Assignees", parsed.assignees?.join(", ")),
       section("Body preview", parsed.bodyPreview),
+    ]),
+  };
+}
+
+function buildAwsExecPresentation(args: Record<string, unknown>): ApprovalPresentation {
+  const parsed = AwsExecApprovalArgsSchema.parse(args);
+  const commandArgvJson = JSON.stringify(["aws", ...parsed.args], null, 2).replace(/`/g, "\\u0060");
+  return {
+    title: "Run aws command",
+    markdown: joinMarkdown([
+      bullet("Directory", parsed.cwd),
+      // Render the exact argv shape; escaping backticks prevents an argument
+      // from closing the Slack code fence.
+      `*Command argv:*\n\`\`\`json\n${commandArgvJson}\n\`\`\``,
     ]),
   };
 }
