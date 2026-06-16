@@ -349,7 +349,6 @@ export function clearRegistry(): void {
 // ---------------------------------------------------------------------------
 
 class ProgressSession {
-  readonly sessionId: string | undefined;
   private channel: string;
   private threadTs: string;
   private sourceTs: string;
@@ -372,13 +371,12 @@ class ProgressSession {
   private progressTarget: ProgressTarget;
   private transport: ProgressTransport;
 
-  constructor(progressTarget: ProgressTarget, transport: ProgressTransport, sessionId?: string) {
+  constructor(progressTarget: ProgressTarget, transport: ProgressTransport) {
     this.progressTarget = progressTarget;
     this.transport = transport;
     this.channel = progressTarget.key;
     this.threadTs = progressTarget.key;
     this.sourceTs = progressTarget.sourceTs;
-    this.sessionId = sessionId;
     this.startTime = Date.now();
     this.scheduleNextTick();
   }
@@ -556,13 +554,7 @@ class ProgressSession {
     const elapsed = formatDuration(Date.now() - this.startTime);
 
     if (status === "completed") {
-      // Only update an existing progress message — never create a new "Done" post.
-      // If no progress message was posted (e.g. bot replied before threshold), stay silent.
-      if (this.messageTs) {
-        const text = `✅ Done — ${this.toolCallCount} tool calls in ${elapsed}`;
-        await this.update(text);
-        updateProgressStatus(this.channel, this.threadTs, this.messageTs, "completed");
-      }
+      // No transient "Done" edit — the cleanup path deletes non-error messages.
       return;
     }
 
@@ -699,19 +691,8 @@ export async function handleProgressEvent(
     ts: Date.now(),
   });
 
-  if (event.type === "start") {
-    // Abandon any prior session on this thread so its tickTimer stops and it
-    // can no longer post or edit messages — otherwise the orphan keeps
-    // editing the OLD progress message while the new session runs.
-    const prior = activeSessions.get(key);
-    if (prior) prior.abandon();
-    activeSessions.set(key, new ProgressSession(target, transport, event.sessionId));
-    return;
-  }
-
   let session = activeSessions.get(key);
   if (!session) {
-    // Late-arriving event without start — create session on the fly
     session = new ProgressSession(target, transport);
     activeSessions.set(key, session);
   }
@@ -737,26 +718,10 @@ export async function handleProgressEvent(
       });
       break;
     case "done": {
-      // A late `done` from a superseded stream must not finish the current
-      // session. Match the event's sessionId to the active session — if they
-      // differ, this `done` belongs to an older stream and is ignored.
-      if (session.sessionId && event.sessionId && session.sessionId !== event.sessionId) {
-        logInfo(log, "done_session_mismatch", {
-          key,
-          eventSessionId: event.sessionId,
-          activeSessionId: session.sessionId,
-        });
-        return;
-      }
       await session.finish(event.status === "completed" ? "completed" : "error", event.error);
       activeSessions.delete(key);
       await onSessionEnd(target.key, target.key);
       break;
     }
-    case "error":
-      await session.finish("error", event.error);
-      activeSessions.delete(key);
-      await onSessionEnd(target.key, target.key);
-      break;
   }
 }
