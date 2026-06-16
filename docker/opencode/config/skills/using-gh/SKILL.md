@@ -1,16 +1,16 @@
 ---
 name: using-gh
-description: "GitHub CLI surface allowed by Thor's remote-cli server policy. Append-only: Thor can create PRs, comments, and non-approval reviews but cannot approve, merge, edit, or delete prior artifacts."
+description: "GitHub CLI surface allowed by Thor's server-side gh policy. Append-only: Thor can create PRs, comments, and non-approval reviews but cannot approve, merge, edit, or delete prior artifacts."
 ---
 
 ## Posture
 
-All `gh` commands go through Thor's remote-cli which enforces:
+All `gh` commands go through a server-side policy which enforces:
 
 - **Append-only writes.** Create PRs, post PR/issue comments, submit `--comment`/`--request-changes` reviews. Issue creation is supported only after human approval. Approval, merge, edit, and delete are human gates.
 - **`cd` into the target worktree** before running write commands — repo-targeting flags aren't part of the supported surface. For cross-repo API reads, use explicit REST endpoints such as `repos/<owner>/<repo>/...`.
-- **Stdin prose bodies only.** For GitHub PR/issue/comment/review prose bodies, use `gh ... --body-file -`: it takes the Markdown body on stdin. Feed it with a quoted heredoc; never put Markdown prose in `--body`/`-b` or `body=...` shell arguments.
-- **`gh api` is a small explicit subset.** REST implicit GET reads are allowed with output shaping. GraphQL, arbitrary `--method` use, and inline `body=...` writes are out of scope.
+- **Stdin prose bodies only.** For GitHub PR/issue/comment/review prose bodies, use `gh ... --body-file -`: it takes the Markdown body on stdin. Feed it with a quoted heredoc (see below).
+- **`gh api` is a small explicit subset.** REST implicit GET reads are allowed with output shaping.
 - **PR review through the worktree.** `gh pr diff` is fine for a quick scan; a fetched worktree gives the deeper surface (tests, grep, build). See `using-git` for the fetch + worktree-add pattern.
 
 Anything not listed below — or any unsupported flag combination — returns a policy denial; treat that as the authoritative signal.
@@ -67,7 +67,7 @@ Required: workflow selector (workflow file name or numeric ID, positional, no fl
 
 REST read path: implicit GET only. Required: REST endpoint as the first positional argument. Optional flags: `--jq`/`-q`, `--template`/`-t`, `--silent`, `--include`/`-i`, and `--paginate` (follow `Link` headers across pages).
 
-Inline prose `body=...` writes are blocked. Use the structured PR/issue/comment/review commands with `--body-file -`.
+For prose writes, use the structured PR/issue/comment/review commands with `--body-file -`.
 
 ## Read-only (passthrough) commands
 
@@ -96,5 +96,3 @@ Inline prose `body=...` writes are blocked. Use the structured PR/issue/comment/
 ## Additional constrained read-only commands
 
 - `gh release view <tag|latest> ...`
-
-`gh release download` is still blocked because it has local filesystem side effects.
