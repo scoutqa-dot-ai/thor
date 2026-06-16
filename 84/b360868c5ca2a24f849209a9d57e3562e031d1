@@ -1,0 +1,29 @@
+packages/remote-cli/src/policy.test.ts
+  47f8b7419688463a 1953-1954
+docs/plan/2026061601_aws-write-approval.md
+  47f8b7419688463a 43-50
+packages/remote-cli/src/policy.ts
+  47f8b7419688463a 298
+docs/feat/security-model.md
+  47f8b7419688463a 109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "84b360868c5ca2a24f849209a9d57e3562e031d1",
+  "prompts": {
+    "47f8b7419688463a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec611c14-13ca-4c24-9305-35d4694abd7b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 13,
+      "total_deletions": 2,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    }
+  }
+}
