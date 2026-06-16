@@ -646,7 +646,8 @@ elif assert_attribution_config; then
     export pr_title pr_body
     pr_create_payload=$(node -e "
       console.log(JSON.stringify({
-        args: ['pr', 'create', '--title', process.env.pr_title, '--body', process.env.pr_body],
+        args: ['pr', 'create', '--title', process.env.pr_title, '--body-file', '-'],
+        stdin: process.env.pr_body,
         cwd: process.env.REMOTE_CLI_WORKTREE_DIR
       }));
     ")
@@ -685,11 +686,12 @@ elif assert_attribution_config; then
           'create',
           '--title',
           process.env.issue_title,
-          '--body',
-          process.env.issue_body,
+          '--body-file',
+          '-',
           '--label',
           process.env.issue_missing_label
         ],
+        stdin: process.env.issue_body,
         cwd: process.env.REMOTE_CLI_WORKTREE_DIR
       }));
     ")
@@ -706,9 +708,12 @@ elif assert_attribution_config; then
     # Scope assertions to the issue-create pending-approval line; the prior
     # pr-create exec_gh line can share the same --since second.
     issue_pending_line=$(printf '%s\n' "$issue_logs" | grep '"event":"exec_gh_pending_approval"' | tail -1)
-    assert '[[ "$issue_pending_line" == *"\"issue\""*"\"create\""*"$issue_body"* ]]' \
-      "attribution e2e: gh issue create requests approval with the raw author body" \
-      "expected raw body marker in pending-approval args; line: ${issue_pending_line:0:1500}"
+    assert '[[ "$issue_pending_line" == *"\"issue\""*"\"create\""*"\"--body-file\""*"\"-\""* ]]' \
+      "attribution e2e: gh issue create requests approval with stdin body-file args" \
+      "expected --body-file - in pending-approval args; line: ${issue_pending_line:0:1500}"
+    assert '[[ -n "$issue_pending_line" && "$issue_pending_line" != *"$issue_body"* ]]' \
+      "attribution e2e: gh issue create approval card args exclude the raw stdin body" \
+      "did not expect raw stdin body content in pending-approval args; line: ${issue_pending_line:0:1500}"
     assert '[[ -n "$issue_pending_line" && "$issue_pending_line" != *"--assignee"* ]]' \
       "attribution e2e: gh issue create approval card args exclude the auto-injected assignee" \
       "did not expect --assignee in pending-approval args (injected post-approval); line: ${issue_pending_line:0:1500}"
