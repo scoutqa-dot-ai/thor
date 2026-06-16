@@ -38,11 +38,19 @@ export const GhIssueCreateApprovalArgsSchema = z
   })
   .passthrough();
 
+export const AwsExecApprovalArgsSchema = z
+  .object({
+    cwd: z.string().min(1),
+    args: z.array(z.string()),
+  })
+  .passthrough();
+
 export const ApprovalArgsSchema = z.union([
   CreateJiraIssueApprovalArgsSchema,
   AddCommentToJiraIssueApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
   GhIssueCreateApprovalArgsSchema,
+  AwsExecApprovalArgsSchema,
 ]);
 
 const ApprovalRequiredEventBaseSchema = z.object({
@@ -67,6 +75,10 @@ export const ApprovalRequiredEventPayloadSchema = z.discriminatedUnion("tool", [
   ApprovalRequiredEventBaseSchema.extend({
     tool: z.literal("ghIssueCreate"),
     args: GhIssueCreateApprovalArgsSchema,
+  }),
+  ApprovalRequiredEventBaseSchema.extend({
+    tool: z.literal("awsExec"),
+    args: AwsExecApprovalArgsSchema,
   }),
 ]);
 
@@ -126,6 +138,7 @@ export function injectApprovalDisclaimer(
         commentBody: `${parsed.data.args.commentBody}\n${footer}`,
       };
     case "ghIssueCreate":
+    case "awsExec":
       return parsed.data.args;
   }
 }

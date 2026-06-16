@@ -32,6 +32,7 @@ export {
   AddCommentToJiraIssueApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
   GhIssueCreateApprovalArgsSchema,
+  AwsExecApprovalArgsSchema,
   approvalToolRequiresDisclaimer,
   injectApprovalDisclaimer,
   validateDisclaimerCompatibleArgs,

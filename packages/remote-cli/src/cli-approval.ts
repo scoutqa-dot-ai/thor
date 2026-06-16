@@ -1,4 +1,8 @@
-import { GhIssueCreateApprovalArgsSchema, type ConfigLoader } from "@thor/common";
+import {
+  AwsExecApprovalArgsSchema,
+  GhIssueCreateApprovalArgsSchema,
+  type ConfigLoader,
+} from "@thor/common";
 import type { ApprovalAction } from "./approval-store.ts";
 import {
   fail,
@@ -23,6 +27,8 @@ export interface CliCommand {
   args: string[];
   cwd: string;
   stdin?: string;
+  /** Extra environment for the approved run (merged over the process env). */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -76,6 +82,7 @@ async function runCliApproval(
   }
   const result = await execCommandFn(command.bin, command.args, command.cwd, {
     ...(command.stdin !== undefined ? { stdin: command.stdin } : {}),
+    ...(command.env ? { env: command.env } : {}),
   });
   if (result.exitCode !== 0) {
     return {
@@ -200,8 +207,31 @@ const ghIssueCreate: CliApprovalDefinition = {
     registerCreatedIssueCorrelationAlias(action.origin?.sessionId, command.cwd, stdout),
 };
 
+/**
+ * Mutating `aws` commands. The `/exec/aws` route classifies read vs write
+ * (see awsCommandRequiresApproval) and only routes write-alike commands here.
+ * Unlike `gh issue create`, there are no server-added args: the reviewed
+ * command is exactly what runs. `AWS_PAGER=""` mirrors the immediate path so
+ * the v2 pager never blocks captured output.
+ */
+const awsExec: CliApprovalDefinition = {
+  store: "aws",
+  tool: "awsExec",
+  displayName: "aws write command",
+  buildRequestArgs: ({ cwd, args }) => AwsExecApprovalArgsSchema.parse({ cwd, args }),
+  resolveCommand: (action) => {
+    const parsed = AwsExecApprovalArgsSchema.safeParse(action.args);
+    if (!parsed.success) {
+      return {
+        error: `Stored aws approval action ${action.id} is invalid: ${parsed.error.message}`,
+      };
+    }
+    return { bin: "aws", args: parsed.data.args, cwd: parsed.data.cwd, env: { AWS_PAGER: "" } };
+  },
+};
+
 /** Every CLI command gated behind approval. Add new CLIs here. */
-export const CLI_APPROVAL_DEFINITIONS: CliApprovalDefinition[] = [ghIssueCreate];
+export const CLI_APPROVAL_DEFINITIONS: CliApprovalDefinition[] = [ghIssueCreate, awsExec];
 
 export function getCliApprovalDefinition(store: string): CliApprovalDefinition {
   const def = CLI_APPROVAL_DEFINITIONS.find((d) => d.store === store);

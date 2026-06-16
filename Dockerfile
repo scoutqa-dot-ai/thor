@@ -97,6 +97,7 @@ COPY docker/opencode/bin/gh /usr/local/bin/gh
 COPY docker/opencode/bin/scoutqa /usr/local/bin/scoutqa
 COPY docker/opencode/bin/metabase /usr/local/bin/metabase
 COPY docker/opencode/bin/ldcli /usr/local/bin/ldcli
+COPY docker/opencode/bin/aws /usr/local/bin/aws
 COPY docker/opencode/bin/sandbox /usr/local/bin/sandbox
 COPY docker/opencode/bin/rg /usr/local/bin/rg
 # npm/npx/pnpm wrappers — redirect to sandbox so code runs in the cloud
@@ -126,6 +127,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
 RUN npm i -g @scoutqa/cli@latest @launchdarkly/ldcli@2.2.0
+# AWS CLI v2 (official installer; uname -m maps directly to AWS's arch names).
+# Pinned to a specific release for reproducible builds; override with
+# --build-arg AWSCLI_VERSION=x.y.z. Versions: https://github.com/aws/aws-cli/blob/v2/CHANGELOG.rst
+ARG AWSCLI_VERSION=2.35.5
+RUN apt-get update && apt-get install -y --no-install-recommends unzip \
+    && curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m)-${AWSCLI_VERSION}.zip" -o /tmp/awscliv2.zip \
+    && unzip -q /tmp/awscliv2.zip -d /tmp \
+    && /tmp/aws/install \
+    && rm -rf /tmp/aws /tmp/awscliv2.zip \
+    && apt-get purge -y unzip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 COPY --from=grafana/mcp-grafana:0.14.0 /app/mcp-grafana /usr/local/bin/mcp-grafana
 
 FROM remote-cli-tools AS remote-cli
