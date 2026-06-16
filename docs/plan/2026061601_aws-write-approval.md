@@ -15,6 +15,7 @@ Gate mutating AWS CLI commands behind the existing Slack-button human-approval p
 | 3   | Store + execute the command **verbatim** (no server-added args), with `AWS_PAGER=""`              | Unlike `gh issue create`, aws has no footer/attribution to inject; the reviewed command is exactly what runs. The pager env mirrors the immediate path so v2 never blocks on captured output.      | Threading aws-specific env handling into the generic executor differently                    |
 | 4   | Skip approval for `help` / `--version` and for a bare service with no operation                   | These cannot mutate state; gating them is pure friction.                                                                                                                                           | Gating everything that is not an exact read (would block `aws ec2 help`)                     |
 | 5   | Render the approval-card command as a JSON argv array                                             | AWS write commands often carry JSON, spaces, newlines, and shell metacharacters; an argv array is the only concise display that preserves what will execute without lossy shell reconstruction.    | A space-joined shell string or ad hoc shell quoting in Slack mrkdwn                          |
+| 6   | Force approval for credential-looking AWS reads by keyword (`token`, `role`, `credential`, etc.)  | Some AWS `get-*` operations return temporary credentials or auth tokens. A small keyword check keeps the defense-in-depth boundary simple, even if it over-gates harmless IAM/STS reads.           | Maintaining a full per-service sensitive-read registry                                       |
 
 ## File-level impact
 
@@ -31,7 +32,7 @@ Gate mutating AWS CLI commands behind the existing Slack-button human-approval p
 
 ## Exit criteria
 
-- `awsCommandRequiresApproval` gates mutating verbs and unknown operations, passes reads/help/version, and ignores global option values when locating the operation.
+- `awsCommandRequiresApproval` gates mutating verbs, unknown operations, and credential-looking reads, passes ordinary reads/help/version, and ignores global option values when locating the operation.
 - Write-alike `/exec/aws` requests create a pending approval and never reach `execCommand` before approval; the approved command runs once, verbatim, with `AWS_PAGER=""`.
 - Read-only `/exec/aws` requests are unchanged.
 - `@thor/remote-cli` and `@thor/common` typecheck; targeted suites green.

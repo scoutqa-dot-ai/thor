@@ -1867,7 +1867,6 @@ describe("awsCommandRequiresApproval", () => {
       ["s3api", "list-buckets"],
       ["s3api", "get-object", "--bucket", "b", "--key", "k", "out"],
       ["s3api", "head-object", "--bucket", "b", "--key", "k"],
-      ["sts", "get-caller-identity"],
       ["iam", "list-users"],
       ["dynamodb", "scan", "--table-name", "t"],
       ["dynamodb", "query", "--table-name", "t"],
@@ -1895,6 +1894,21 @@ describe("awsCommandRequiresApproval", () => {
   it("does not gate a bare service with no operation", () => {
     expect(awsCommandRequiresApproval(["s3"])).toBe(false);
     expect(awsCommandRequiresApproval(["--region", "us-east-1", "ec2"])).toBe(false);
+  });
+
+  it("gates credential and IAM-shaped read operations", () => {
+    const sensitiveReads: string[][] = [
+      ["sts", "get-caller-identity"],
+      ["sts", "get-session-token"],
+      ["ecr", "get-authorization-token"],
+      ["ecr", "get-login-password"],
+      ["sso", "get-role-credentials"],
+      ["iam", "get-role", "--role-name", "admin"],
+      ["--region", "us-east-1", "sts", "get-caller-identity"],
+    ];
+    for (const args of sensitiveReads) {
+      expect(awsCommandRequiresApproval(args)).toBe(true);
+    }
   });
 
   it("gates create / delete / put / run and other mutating operations", () => {

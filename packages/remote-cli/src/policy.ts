@@ -291,6 +291,11 @@ const AWS_READ_ONLY_VERBS: readonly string[] = [
 // the local `presign` URL helper, and `help`.
 const AWS_READ_ONLY_EXACT: ReadonlySet<string> = new Set(["ls", "presign", "help"]);
 
+// Credential/token-adjacent reads expose sensitive auth material or IAM shape.
+// Check these before the read-only verb allowlist so `get-*` token helpers do
+// not bypass approval.
+const AWS_APPROVAL_KEYWORDS: readonly string[] = ["credential", "password", "role", "sts", "token"];
+
 // Extract positional tokens (service, operation), skipping global flags and
 // their values. Keep indexes so help can be recognized only when it follows the
 // operation token, not when it is merely an option value.
@@ -320,6 +325,11 @@ function isAwsHelpRequest(args: string[], operationIndex: number): boolean {
   return args[operationIndex + 1] === "help" && operationIndex + 2 === args.length;
 }
 
+function hasAwsApprovalKeyword(service: string, operation: string): boolean {
+  const command = `${service} ${operation}`;
+  return AWS_APPROVAL_KEYWORDS.some((keyword) => command.includes(keyword));
+}
+
 /**
  * Whether an aws command mutates state and must be gated behind human approval.
  *
@@ -338,5 +348,6 @@ export function awsCommandRequiresApproval(args: string[]): boolean {
   if (!servicePositional || !operationPositional) return false;
 
   if (isAwsHelpRequest(args, operationPositional.index)) return false;
+  if (hasAwsApprovalKeyword(servicePositional.token, operationPositional.token)) return true;
   return !isReadOnlyAwsOperation(operationPositional.token);
 }
