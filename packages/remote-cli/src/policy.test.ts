@@ -1349,6 +1349,13 @@ describe("validateGhArgs", () => {
       expectGhDenied(["pr", "create", "--body-file"]);
     });
 
+    it("explains duplicate pr create title values", () => {
+      expectGhDeniedWith(
+        ["pr", "create", "--title", "x", "--title", "y", "--body-file", "-"],
+        ["multiple --title values are ambiguous", "provide exactly one --title value"],
+      );
+    });
+
     it("blocks non-numeric or malformed comment selectors", () => {
       expectGhDenied(["pr", "comment", "feat/test", "--body", "x"]);
       expectGhDenied(["issue", "comment", "abc", "--body", "x"]);

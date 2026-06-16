@@ -75,4 +75,10 @@ describe("gh body transport guard", () => {
       stdin: "hello\n",
     });
   });
+
+  it("does not block non-prose workflow inputs that happen to use body=...", async () => {
+    const result = await invoke(["workflow", "run", "ci.yml", "--field", "body=hi"]);
+    expect(result.code).toBe(0);
+    expect(result.fetchImpl).toHaveBeenCalledTimes(1);
+  });
 });

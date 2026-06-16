@@ -194,7 +194,7 @@ After step 7 the run sits in `Lifecycle: open` waiting on the PR. Some GitHub ev
 
 `issue_comment.created` — top-level PR comment mentioning you. The body can be Q&A or a change request. `gh pr comment <N>` replies in the same surface.
 
-`pull_request_review.submitted` with `pull_request_review_comment.created` — inline file/line review comment, anchored by `comment.path`, `comment.line`, and `comment.diff_hunk`. Inline comments live on a review thread keyed by `comment.id`; Reply to the same thread using `gh api repos/<owner>/<repo>/pulls/<N>/comments/<comment.id>/replies --method POST -f body=...`.
+`pull_request_review.submitted` with `pull_request_review_comment.created` — inline file/line review comment, anchored by `comment.path`, `comment.line`, and `comment.diff_hunk`. Inline review-thread prose replies are outside Thor's supported gh policy surface; use the supported top-level PR comment/review paths, or escalate to a human when a true inline-thread reply is required.
 
 `push` — branch was updated by someone, re-read HEAD to reorient yourself. `sender.login` distinguishes your own pushes from others; `git log <before>..<after>` shows what landed on a fast-forward, but on a divergent reset `<before>` may not be reachable, so use `git log -10` against the new HEAD instead.
 

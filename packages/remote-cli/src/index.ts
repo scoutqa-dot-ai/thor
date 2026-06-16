@@ -486,11 +486,20 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       // issue create is approval-gated: store raw args and inject the footer +
       // assignee at execution time so the approval card shows only the raw command.
       if (args[0] === "issue" && args[1] === "create" && !isGhHelpRequest(args)) {
+        const requestStdin = typeof req.body?.stdin === "string" ? req.body.stdin : undefined;
+        if (usesBodyFileStdin(args) && requestStdin === undefined) {
+          res.status(400).json({
+            stdout: "",
+            stderr: "Disclaimer required: gh stdin body is missing",
+            exitCode: 1,
+          });
+          return;
+        }
         logInfo(log, "exec_gh_pending_approval", { args, cwd, ...ids });
         const result = await requestCliApproval(approvalService, getCliApprovalDefinition("gh"), {
           cwd,
           args,
-          stdin: typeof req.body?.stdin === "string" ? req.body.stdin : undefined,
+          stdin: requestStdin,
           ...ids,
         });
         res.status(result.exitCode === 0 ? 200 : 400).json(result);

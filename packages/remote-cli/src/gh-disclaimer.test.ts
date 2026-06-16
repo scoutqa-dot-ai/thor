@@ -283,6 +283,21 @@ describe("gh disclaimer injection", () => {
     }, approvalConfig({ configLoader }));
   });
 
+  it("fails closed before approval when gh issue create stdin is missing", async () => {
+    seedActor();
+    await withServer(async (url) => {
+      const { response, body } = await postGh(
+        url,
+        ["issue", "create", "--title", "Bug", "--body-file", "-"],
+        "parent",
+      );
+      expect(response.status).toBe(400);
+      expect(body.stderr).toContain("Disclaimer required: gh stdin body is missing");
+      expect(body.stdout).toBe("");
+      expect(execCalls).toHaveLength(0);
+    }, approvalConfig({ configLoader }));
+  });
+
   it("keeps an existing issue assignee", async () => {
     seedActor();
     await withServer(async (url) => {

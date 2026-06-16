@@ -116,7 +116,7 @@ const GH_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
     instead: "gh issue comment <number> --body-file -",
   },
   "gh pr review": {
-    reason: "reviews must be append-only comments or request-changes reviews with an inline body.",
+    reason: "reviews must be append-only comments or request-changes reviews submitted via stdin.",
     instead: "gh pr review <number> --comment --body-file -",
   },
   "gh run rerun": {
@@ -277,6 +277,13 @@ function validateGhPrCreateArgs(args: string[], cwd?: string): string | null {
   const heads = valueFlagValues(parsed, "head");
   const fill = booleanFlagCount(parsed, "fill") > 0;
 
+  if (titles.length > 1) {
+    return denyMessage("gh pr create", {
+      reason: "multiple --title values are ambiguous.",
+      instead: "provide exactly one --title value",
+    });
+  }
+
   if (bodies.length > 1) {
     return denyMessage("gh pr create", {
       reason: "multiple --body-file values are ambiguous for disclaimer injection.",
@@ -342,7 +349,7 @@ function validateGhPrCreateArgs(args: string[], cwd?: string): string | null {
       instead: "gh pr create --title <title> --body-file -",
     });
   }
-  return titles.length > 0 && bodies.length === 1 && bodies[0] === "-"
+  return titles.length === 1 && bodies.length === 1 && bodies[0] === "-"
     ? null
     : denyMessage("gh pr create");
 }

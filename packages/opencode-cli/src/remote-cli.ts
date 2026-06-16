@@ -34,6 +34,7 @@ function isGhProseWriteCommand(args: string[]): boolean {
 
 export function validateGhBodyTransport(args: string[]): string | null {
   const proseWrite = isGhProseWriteCommand(args);
+  const ghApi = args[0] === "api";
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (
@@ -52,19 +53,21 @@ export function validateGhBodyTransport(args: string[]): string | null {
     }
     if (arg.startsWith("--body-file=") && arg !== "--body-file=-") return GH_BODY_STDIN_ERROR;
     if (proseWrite && arg === "-F") return GH_BODY_STDIN_ERROR;
-    if ((arg === "-f" || arg === "-F") && args[i + 1]?.startsWith("body=")) {
+    if (ghApi && (arg === "-f" || arg === "-F") && args[i + 1]?.startsWith("body=")) {
       return GH_BODY_STDIN_ERROR;
     }
     if (
+      ghApi &&
       (arg.startsWith("-fbody=") || arg.startsWith("-Fbody=")) &&
       arg.length > 7
     ) {
       return GH_BODY_STDIN_ERROR;
     }
-    if (arg.startsWith("--raw-field=body=") || arg.startsWith("--field=body=")) {
+    if (ghApi && (arg.startsWith("--raw-field=body=") || arg.startsWith("--field=body="))) {
       return GH_BODY_STDIN_ERROR;
     }
     if (
+      ghApi &&
       (arg === "--raw-field" || arg === "--field") &&
       args[i + 1]?.startsWith("body=")
     ) {
