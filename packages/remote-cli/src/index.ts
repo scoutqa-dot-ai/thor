@@ -8,6 +8,7 @@ import {
   errorMessage,
   logError,
   logInfo,
+  logWarn,
   loadRemoteCliAppEnv,
   loadRemoteCliEnv,
   loadRemoteCliGitHubEnv,
@@ -70,6 +71,17 @@ const WORKTREE_ROOT = "/workspace/worktrees";
 const WORKTREE_PREFIX = `${WORKTREE_ROOT}/`;
 const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 const INTERNAL_EXEC_MAX_OUTPUT = 1024 * 1024;
+
+export function isMetabaseUserFailure(subcommand: string | undefined, message: string): boolean {
+  if (!subcommand) return false;
+  if (/^Query failed:/i.test(message)) return subcommand === "query";
+  if (/\bnot found\b/i.test(message)) return ["tables", "columns", "question"].includes(subcommand);
+  if (/not a native SQL question/i.test(message)) return subcommand === "question";
+  if (/^Metabase (?:GET|POST) .*→ (?:400|404|422):/i.test(message)) {
+    return ["tables", "columns", "query", "question"].includes(subcommand);
+  }
+  return false;
+}
 
 export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env): void {
   loadRemoteCliGitHubEnv(env);
@@ -800,7 +812,19 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       res.json({ stdout: JSON.stringify(result, null, 2), stderr: "", exitCode: 0 });
     } catch (err) {
       const message = errorMessage(err);
-      logError(log, "exec_metabase_error", message, thorIds(req));
+      const { args } = req.body ?? {};
+      const subcommand = Array.isArray(args) ? args[0] : undefined;
+      if (isMetabaseUserFailure(subcommand, message)) {
+        logWarn(log, "exec_metabase_query_failure", {
+          category: "metabase_query_failure",
+          subcommand,
+          error: message,
+          ...thorIds(req),
+        });
+        res.json({ stdout: "", stderr: message, exitCode: 1 });
+        return;
+      }
+      logError(log, "exec_metabase_error", message, { subcommand, ...thorIds(req) });
       res.status(500).json({ stdout: "", stderr: message, exitCode: 1 });
     }
   });

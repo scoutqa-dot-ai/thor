@@ -308,6 +308,8 @@ async function cleanupProgressMessages(channel: string, threadTs: string): Promi
           const message = err instanceof Error ? err.message : String(err);
           if (message.includes("message_not_found")) {
             thread.delete(messageTs);
+            logInfo(log, "progress_delete_message_not_found", { channel, ts: messageTs, threadTs });
+            return;
           }
           logError(log, "delete_error", message);
         }),
