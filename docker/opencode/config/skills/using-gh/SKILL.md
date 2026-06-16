@@ -37,7 +37,7 @@ Use the quoted delimiter `<<'EOF'` (not `<<EOF`) so backticks and `$()` are not 
 
 ### `gh issue create`
 
-Required: `--title`/`-t` plus `--body-file -`. Optional: `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable). Issue creation requires human approval: calling it returns an action ID instead of creating the issue; check status with `approval status <action-id>`. Only after approval does Thor execute the exact reviewed command.
+Required: `--title`/`-t` plus `--body-file -`. Optional: `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable). Issue creation requires human approval: calling it returns an action ID instead of creating the issue; check status with `approval status <action-id>` for the approved result.
 
 ### `gh pr comment`
 
