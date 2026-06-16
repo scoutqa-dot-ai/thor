@@ -159,25 +159,6 @@ export function isGhHelpRequest(args: string[]): boolean {
   return false;
 }
 
-export function withGhDisclaimer(args: string[], sessionId?: string): string[] | { error: string } {
-  if (isGhHelpRequest(args)) return args;
-  const eligible =
-    (args[0] === "pr" && ["create", "comment", "review"].includes(args[1] ?? "")) ||
-    (args[0] === "issue" && ["create", "comment"].includes(args[1] ?? "")) ||
-    (args[0] === "api" && args.some((arg) => /pulls\/\d+\/comments\/\d+\/replies/.test(arg)));
-  if (!eligible) return args;
-  let footer: string;
-  try {
-    footer = `\n${buildThorDisclaimerForSession(sessionId, getRunnerBaseUrl()).footer}`;
-  } catch (err) {
-    return {
-      error:
-        err instanceof Error ? err.message : "Disclaimer required: unable to build Thor disclaimer",
-    };
-  }
-  return injectBodyFooter(args, footer);
-}
-
 export function withGhStdinDisclaimer(
   stdin: unknown,
   sessionId?: string,
@@ -206,47 +187,22 @@ export function injectGhIssueCreateExec(
     sessionId?: string;
     getConfig: ConfigLoader;
   },
-): { args: string[]; stdin?: string } | { error: string } {
+): { args: string[]; stdin: string } | { error: string } {
   if (!opts.trigger) {
     return { error: "Disclaimer required: approval action is missing Thor trigger context" };
   }
-  const footer = `\n${buildThorDisclaimer(opts.trigger, getRunnerBaseUrl()).footer}`;
-  if (usesBodyFileStdin(args)) {
-    if (typeof opts.stdin !== "string")
-      return { error: "Disclaimer required: gh stdin body is missing" };
-    return {
-      args: withGhAttribution(args, opts.sessionId, opts.getConfig),
-      stdin: `${opts.stdin}${footer}`,
-    };
+  if (typeof opts.stdin !== "string") {
+    return { error: "Disclaimer required: gh stdin body is missing" };
   }
-  const withFooter = injectBodyFooter(args, footer);
-  if ("error" in withFooter) return withFooter;
-  return { args: withGhAttribution(withFooter, opts.sessionId, opts.getConfig) };
+  const footer = `\n${buildThorDisclaimer(opts.trigger, getRunnerBaseUrl()).footer}`;
+  return {
+    args: withGhAttribution(args, opts.sessionId, opts.getConfig),
+    stdin: `${opts.stdin}${footer}`,
+  };
 }
 
 export function usesBodyFileStdin(args: string[]): boolean {
   return args.some(
     (arg, index) => arg === "--body-file=-" || (arg === "--body-file" && args[index + 1] === "-"),
   );
-}
-
-function injectBodyFooter(args: string[], footer: string): string[] | { error: string } {
-  const result =
-    args[0] === "api"
-      ? rewriteValueFlag(args, ["-f", "--raw-field"], footer, {
-          match: "single",
-          valuePrefix: "body=",
-        })
-      : usesBodyFileStdin(args)
-        ? args
-        : rewriteValueFlag(args, ["--body", "-b"], footer, { match: "single" });
-  if ("error" in result) {
-    return {
-      error:
-        result.error === "duplicate"
-          ? "Disclaimer required: multiple mutable gh body fields"
-          : "Disclaimer required: could not find a mutable gh body field",
-    };
-  }
-  return result;
 }

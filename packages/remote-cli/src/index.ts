@@ -60,7 +60,6 @@ import {
   isGhHelpRequest,
   usesBodyFileStdin,
   withGhAttribution,
-  withGhDisclaimer,
   withGhStdinDisclaimer,
   withGitAttribution,
 } from "./gh-args.ts";
@@ -514,12 +513,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         res.status(400).json({ stdout: "", stderr: stdinBody.error, exitCode: 1 });
         return;
       }
-      const disclaimerArgs = withGhDisclaimer(args, ids.sessionId);
-      if (!Array.isArray(disclaimerArgs)) {
-        res.status(400).json({ stdout: "", stderr: disclaimerArgs.error, exitCode: 1 });
-        return;
-      }
-      const effectiveArgs = withGhAttribution(disclaimerArgs, ids.sessionId, getConfig);
+      const effectiveArgs = withGhAttribution(args, ids.sessionId, getConfig);
 
       logInfo(log, "exec_gh", { args: effectiveArgs, cwd, ...ids });
       const result = await execCommand("gh", effectiveArgs, cwd, {
