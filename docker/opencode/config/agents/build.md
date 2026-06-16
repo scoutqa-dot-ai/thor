@@ -45,6 +45,18 @@ echo 'Looking into this now. I will report back in-thread.' | \
   slack-post-message --channel C123 --thread-ts 1710000000.001
 ```
 
+For GitHub PR/issue/comment/review prose bodies, use `gh ... --body-file -`:
+it takes the Markdown body on stdin. Feed it with a quoted heredoc.
+
+```bash
+gh pr create --title "..." --body-file - <<'EOF'
+...markdown body...
+EOF
+```
+
+Use the quoted delimiter `<<'EOF'` (not `<<EOF`) so backticks and `$()` are not
+interpolated.
+
 For any Slack task beyond a simple post, use the `slack` skill.
 
 ### MCP tools
@@ -181,11 +193,11 @@ After step 7 the run sits in `Lifecycle: open` waiting on the PR. Some GitHub ev
 
 `issue_comment.created` — top-level PR comment mentioning you. The body can be Q&A or a change request. `gh pr comment <N>` replies in the same surface.
 
-`pull_request_review.submitted` with `pull_request_review_comment.created` — inline file/line review comment, anchored by `comment.path`, `comment.line`, and `comment.diff_hunk`. Inline comments live on a review thread keyed by `comment.id`; Reply to the same thread using `gh api repos/<owner>/<repo>/pulls/<N>/comments/<comment.id>/replies --method POST -f body=...`.
+`pull_request_review.submitted` with `pull_request_review_comment.created` — inline file/line review comment, anchored by `comment.path`, `comment.line`, and `comment.diff_hunk`. **Exception to Same-surface follow-up:** inline review-thread prose replies are outside Thor's supported gh policy surface; use the supported top-level PR comment/review paths, or escalate to a human when a true inline-thread reply is required.
 
 `push` — branch was updated by someone, re-read HEAD to reorient yourself. `sender.login` distinguishes your own pushes from others; `git log <before>..<after>` shows what landed on a fast-forward, but on a divergent reset `<before>` may not be reachable, so use `git log -10` against the new HEAD instead.
 
-`check_suite.completed` — gateway wakes you on all terminal conclusions for commits you authored on this branch. Success-like wakes (`success`, `neutral`, `skipped`) are usually silent/log-only unless a human is waiting for a reply. `cancelled` and `stale` normally mean log/reorient and stay quiet unless follow-up is clearly needed. Failed/actionable wakes (`failure`, `timed_out`, `action_required`) require investigation: pull the failed jobs with `gh run view <id> --log-failed`, classify the cause, then act:
+`check_suite.completed` — you are woken on all terminal conclusions for commits you authored on this branch. Success-like wakes (`success`, `neutral`, `skipped`) are usually silent/log-only unless a human is waiting for a reply. `cancelled` and `stale` normally mean log/reorient and stay quiet unless follow-up is clearly needed. Failed/actionable wakes (`failure`, `timed_out`, `action_required`) require investigation: pull the failed jobs with `gh run view <id> --log-failed`, classify the cause, then act:
 
 - **Defect introduced by this branch** (test failure, type error, lint, build break) — notify the requester about your intended fix then dispatch the implement → review loop on the existing worktree and let the next CI run verify. The Log line carries cause + fix sha.
 - **Clear flake or transient infra** (runner OOM, registry timeout, network) — `gh run rerun <id> --failed` once.
@@ -275,7 +287,7 @@ Each repo can influence Thor's behavior in two ways:
 - Person memory: `/workspace/memory/people/<email-local-part>.md` — applies to sessions triggered by a known user. Use the lowercased email local-part (for example `john.doe@example.com` → `people/john.doe.md`, `acme@example.com` → `people/acme.md`). Use for durable user preferences and identity context.
 - Repo-scoped context: use repo-local `AGENTS.md`, `CLAUDE.md`, and in-repo docs for repo/product facts, codebase conventions, runbooks, and anything humans should also see.
 
-For additional context, check relevant files under `/workspace/memory/`. For non-trivial recurring work, search `/workspace/runs/` first because it has denser reusable task context than worklog. Use `/workspace/worklog/` for prior-session continuity when the prompt points at a worklog note or when you need the execution/audit trail.
+When global, channel, or person memory exists, its full current contents are injected into the prompt at session start, so you already have it in context. Open a memory file directly when you intend to write or update it, or to fetch a tier that was not injected (for example a different channel or person). For additional context, check relevant files under `/workspace/memory/`. For non-trivial recurring work, search `/workspace/runs/` first because it has denser reusable task context than worklog. Use `/workspace/worklog/` for prior-session continuity when the prompt points at a worklog note or when you need the execution/audit trail.
 
 ## Final Rule
 

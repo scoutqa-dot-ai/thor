@@ -646,7 +646,8 @@ elif assert_attribution_config; then
     export pr_title pr_body
     pr_create_payload=$(node -e "
       console.log(JSON.stringify({
-        args: ['pr', 'create', '--title', process.env.pr_title, '--body', process.env.pr_body],
+        args: ['pr', 'create', '--title', process.env.pr_title, '--body-file', '-'],
+        stdin: process.env.pr_body,
         cwd: process.env.REMOTE_CLI_WORKTREE_DIR
       }));
     ")
@@ -667,9 +668,12 @@ elif assert_attribution_config; then
       "attribution e2e: gh pr create invocation includes --assignee with the configured github login" \
       "expected --assignee ${ATTRIBUTION_E2E_GITHUB} in exec_gh args; logs: ${gh_logs:0:1500}"
 
-    # gh issue create: use a unique missing label so the underlying gh call is
-    # expected to fail before creating an issue, while still proving Thor
-    # injected --assignee <github> and preserved disclaimer body rewriting.
+    # gh issue create is gated behind human approval. Thor stores the raw,
+    # reviewed author args and injects the disclaimer footer + assignee
+    # attribution only at execution (post-approval), matching the MCP flow — so
+    # the pending-approval args that back the Slack approval card must stay
+    # clean. This session has no Slack approval thread, so the request fails
+    # closed before an action is created; we assert on the pending-approval log.
     issue_log_since=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     issue_title="Thor issue attribution e2e ${REMOTE_CLI_AUTH_TS}"
     issue_body="Thor issue attribution e2e marker ${REMOTE_CLI_AUTH_TS}"
@@ -682,11 +686,12 @@ elif assert_attribution_config; then
           'create',
           '--title',
           process.env.issue_title,
-          '--body',
-          process.env.issue_body,
+          '--body-file',
+          '-',
           '--label',
           process.env.issue_missing_label
         ],
+        stdin: process.env.issue_body,
         cwd: process.env.REMOTE_CLI_WORKTREE_DIR
       }));
     ")
@@ -697,18 +702,24 @@ elif assert_attribution_config; then
       2>/dev/null || echo '{}')
     issue_create_exit=$(json_field "$issue_create_raw" "exitCode")
     issue_logs=$(docker logs --since "$issue_log_since" "$remote_cli_container" 2>&1 || true)
-    assert '[[ "$issue_create_exit" != "0" ]]' \
-      "attribution e2e: gh issue create fails before creating an issue" \
+    assert '[[ "$issue_create_exit" != "0" && "$issue_create_raw" == *"has no Slack trigger correlation key"* ]]' \
+      "attribution e2e: gh issue create fails closed when no Slack approval thread is available" \
       "exitCode='$issue_create_exit' response: ${issue_create_raw:0:500}"
-    assert '[[ "$issue_logs" == *"\"surface\":\"gh-assignee\",\"outcome\":\"applied\""* ]]' \
-      "attribution e2e: gh issue create attribution was applied" \
-      "logs: ${issue_logs:0:1000}"
-    assert '[[ "$issue_logs" == *"\"event\":\"exec_gh\""*"\"issue\""*"\"create\""*"\"--assignee\""*"\"${ATTRIBUTION_E2E_GITHUB}\""* ]]' \
-      "attribution e2e: gh issue create invocation includes --assignee with the configured github login" \
-      "expected --assignee ${ATTRIBUTION_E2E_GITHUB} in issue create exec_gh args; logs: ${issue_logs:0:1500}"
-    assert '[[ "$issue_logs" == *"\"event\":\"exec_gh\""*"$issue_body"*"View Thor context"* ]]' \
-      "attribution e2e: gh issue create invocation keeps the traced body footer" \
-      "expected original body marker and Thor context footer in exec_gh args; logs: ${issue_logs:0:1500}"
+    # Scope assertions to the issue-create pending-approval line; the prior
+    # pr-create exec_gh line can share the same --since second.
+    issue_pending_line=$(printf '%s\n' "$issue_logs" | grep '"event":"exec_gh_pending_approval"' | tail -1)
+    assert '[[ "$issue_pending_line" == *"\"issue\""*"\"create\""*"\"--body-file\""*"\"-\""* ]]' \
+      "attribution e2e: gh issue create requests approval with stdin body-file args" \
+      "expected --body-file - in pending-approval args; line: ${issue_pending_line:0:1500}"
+    assert '[[ -n "$issue_pending_line" && "$issue_pending_line" != *"$issue_body"* ]]' \
+      "attribution e2e: gh issue create approval card args exclude the raw stdin body" \
+      "did not expect raw stdin body content in pending-approval args; line: ${issue_pending_line:0:1500}"
+    assert '[[ -n "$issue_pending_line" && "$issue_pending_line" != *"--assignee"* ]]' \
+      "attribution e2e: gh issue create approval card args exclude the auto-injected assignee" \
+      "did not expect --assignee in pending-approval args (injected post-approval); line: ${issue_pending_line:0:1500}"
+    assert '[[ -n "$issue_pending_line" && "$issue_pending_line" != *"View Thor context"* ]]' \
+      "attribution e2e: gh issue create approval card args exclude the disclaimer footer" \
+      "did not expect Thor context footer in pending-approval args (injected post-approval); line: ${issue_pending_line:0:1500}"
   fi
 fi
 
@@ -897,7 +908,7 @@ else
       # the create payload with assignee_account_id.
       echo "  Approving Jira approval $action_id..."
       jira_log_since=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-      resolve_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
+      resolve_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/approval" \
         -H 'Content-Type: application/json' \
         -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
         -d "{\"args\":[\"resolve\",\"$action_id\",\"approved\",\"e2e-test\",\"e2e test - automated Jira assignee verification\"]}" \
@@ -914,8 +925,6 @@ else
       jira_create_entry=$(find_jira_tool_worklog_entry "createJiraIssue" 2>/dev/null || echo "")
       jira_injected_account_id=$(json_field "$jira_create_entry" "args.assignee_account_id")
       jira_create_project_key=$(json_field "$jira_create_entry" "args.projectKey")
-      jira_create_error=$(json_field "$jira_create_entry" "error")
-      jira_create_is_error=$(json_field "$jira_create_entry" "result.isError")
       assert '[[ -n "$jira_lookup_entry" ]]' \
         "jira attribution e2e: lookupJiraAccountId ran for the configured user email" \
         "expected cloud='$ATLASSIAN_CLOUD_ID' email='$THOR_E2E_JIRA_EMAIL'"
@@ -925,9 +934,12 @@ else
       assert '[[ -n "$jira_injected_account_id" ]]' \
         "jira attribution e2e: createJiraIssue received an assignee_account_id" \
         "worklog entry: ${jira_create_entry:0:800}"
-      assert '[[ "$jira_create_is_error" == "true" || -n "$jira_create_error" || -n "$resolve_stderr" || "$resolve_exit" != "0" ]]' \
-        "jira attribution e2e: failed create call recorded an upstream error" \
-        "isError='$jira_create_is_error' worklog error='$jira_create_error' stderr='${resolve_stderr:0:500}' response: ${resolve_raw:0:500}"
+      # The MCP executor normalizes any upstream-reported failure — SDK throw
+      # or `CallToolResult.isError: true` — into exitCode 1. A single signal,
+      # checked once.
+      assert '[[ "$resolve_exit" != "0" ]]' \
+        "jira attribution e2e: failed create call surfaced as non-zero exit" \
+        "exitCode='$resolve_exit' stderr='${resolve_stderr:0:500}' response: ${resolve_raw:0:500}"
 
       issue_key=$(extract_jira_issue_key "$resolve_stdout $resolve_stderr $resolve_raw $jira_create_entry")
       if [[ -n "$issue_key" ]]; then
@@ -939,7 +951,7 @@ else
     else
       # 4d. Reject the approval (safe — no side effects on the upstream MCP)
       echo "  Rejecting approval $action_id..."
-      resolve_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/mcp" \
+      resolve_raw=$(curl -sf -X POST "$REMOTE_CLI_URL/exec/approval" \
         -H 'Content-Type: application/json' \
         -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
         -d "{\"args\":[\"resolve\",\"$action_id\",\"rejected\",\"e2e-test\",\"e2e test - automated rejection\"]}" \
@@ -954,7 +966,11 @@ else
       -d "{\"args\":[\"status\",\"$action_id\"]}" \
       2>/dev/null || echo '{}')
     final_status=$(exec_stdout_field "$final_raw" "status")
-    expected_final_status=$([[ "$jira_assignee_live" == "true" ]] && echo "approved" || echo "rejected")
+    # When jira_assignee_live=true the e2e creates against a fake project key
+    # (THORE2E) so Atlassian returns a CallToolResult with isError: true. The
+    # MCP executor now normalizes that into a side-effect-attempted failure,
+    # so the action stays pending for retry instead of flipping to approved.
+    expected_final_status=$([[ "$jira_assignee_live" == "true" ]] && echo "pending" || echo "rejected")
     assert '[[ "$final_status" == "$expected_final_status" ]]' \
       "remote-cli: final status confirms '$expected_final_status'" \
       "status='$final_status'"

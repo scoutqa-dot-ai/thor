@@ -770,6 +770,50 @@ describe("onSessionEnd (via handleProgressEvent done)", () => {
     expect(getRegistrySize()).toBe(0);
   });
 
+  it("drops registry entries when Slack cleanup races message_not_found", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 3);
+    chat(deps).delete.mockRejectedValueOnce(new Error("slack error: message_not_found"));
+
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      {
+        type: "done",
+        sessionId: "s1",
+        resumed: false,
+        status: "completed",
+        response: "",
+        toolCalls: [],
+        durationMs: 1000,
+      },
+      transport,
+    );
+
+    expect(getRegistrySize()).toBe(0);
+  });
+
+  it("retains registry entries for retryable Slack delete failures", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 3);
+    chat(deps).delete.mockRejectedValueOnce(new Error("slack error: ratelimited"));
+
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      {
+        type: "done",
+        sessionId: "s1",
+        resumed: false,
+        status: "completed",
+        response: "",
+        toolCalls: [],
+        durationMs: 1000,
+      },
+      transport,
+    );
+
+    expect(getRegistrySize()).toBe(1);
+  });
+
   it("preserves error progress messages", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);

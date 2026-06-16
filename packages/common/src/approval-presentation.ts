@@ -1,6 +1,7 @@
 import {
   AddCommentToJiraIssueApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
+  GhIssueCreateApprovalArgsSchema,
   CreateJiraIssueApprovalArgsSchema,
   type ApprovalToolName,
 } from "./approval-events.ts";
@@ -164,6 +165,8 @@ export function buildApprovalPresentation(
         return buildAddJiraCommentPresentation(args);
       case "create-feature-flag":
         return buildCreateFeatureFlagPresentation(args);
+      case "ghIssueCreate":
+        return buildGhIssueCreatePresentation(args);
       default:
         return undefined;
     }
@@ -307,6 +310,20 @@ function buildCreateFeatureFlagPresentation(args: Record<string, unknown>): Appr
       bullet("Active", parsed.active),
       bullet("Rollout", parsed.rolloutPercentage),
       bullet("Filters", parsed.filters),
+    ]),
+  };
+}
+
+function buildGhIssueCreatePresentation(args: Record<string, unknown>): ApprovalPresentation {
+  const parsed = GhIssueCreateApprovalArgsSchema.parse(args);
+  return {
+    title: `Create GitHub issue: ${renderValue(parsed.title) ?? "Untitled issue"}`,
+    markdown: joinMarkdown([
+      bullet("Directory", parsed.cwd),
+      bullet("Title", parsed.title),
+      bullet("Labels", parsed.labels?.join(", ")),
+      bullet("Assignees", parsed.assignees?.join(", ")),
+      section("Body preview", parsed.bodyPreview),
     ]),
   };
 }

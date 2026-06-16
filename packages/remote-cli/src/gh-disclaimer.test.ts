@@ -17,27 +17,32 @@ vi.hoisted(() => {
   process.env.RUNNER_BASE_URL = "https://thor.example.com";
 });
 
-const execCalls = vi.hoisted(() => [] as Array<{ bin: string; args: string[]; cwd: string }>);
+const execCalls = vi.hoisted(
+  () => [] as Array<{ bin: string; args: string[]; cwd: string; stdin?: string }>,
+);
 
 vi.mock("./exec.ts", () => ({
-  execCommand: vi.fn(async (bin: string, args: string[], cwd: string) => {
-    execCalls.push({ bin, args, cwd });
-    if (bin === "gh" && args[0] === "issue" && args[1] === "create") {
-      return { stdout: "https://github.com/acme/thor/issues/42\n", stderr: "", exitCode: 0 };
-    }
-    if (bin === "gh" && args[0] === "issue" && args[1] === "comment") {
-      return {
-        stdout: "https://github.com/acme/thor/issues/42#issuecomment-1\n",
-        stderr: "",
-        exitCode: 0,
-      };
-    }
-    return { stdout: "ok", stderr: "", exitCode: 0 };
-  }),
+  execCommand: vi.fn(
+    async (bin: string, args: string[], cwd: string, options?: { stdin?: string }) => {
+      execCalls.push({ bin, args, cwd, stdin: options?.stdin });
+      if (bin === "gh" && args[0] === "issue" && args[1] === "create") {
+        return { stdout: "https://github.com/acme/thor/issues/42\n", stderr: "", exitCode: 0 };
+      }
+      if (bin === "gh" && args[0] === "issue" && args[1] === "comment") {
+        return {
+          stdout: "https://github.com/acme/thor/issues/42#issuecomment-1\n",
+          stderr: "",
+          exitCode: 0,
+        };
+      }
+      return { stdout: "ok", stderr: "", exitCode: 0 };
+    },
+  ),
   execCommandStream: vi.fn(),
 }));
 
 import { createRemoteCliApp, type RemoteCliAppConfig } from "./index.ts";
+import { execCommand } from "./exec.ts";
 
 const worklogRoot = "/tmp/thor-remote-cli-gh-test";
 const cwd = "/workspace/worktrees/acme/feat/test";
@@ -74,14 +79,14 @@ async function withServer<T>(
   }
 }
 
-async function postGh(url: string, args: string[], sessionId?: string) {
+async function postGh(url: string, args: string[], sessionId?: string, stdin?: string) {
   const response = await fetch(`${url}/exec/gh`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       ...(sessionId ? { "x-thor-session-id": sessionId } : {}),
     },
-    body: JSON.stringify({ args, cwd }),
+    body: JSON.stringify({ args, cwd, ...(stdin !== undefined ? { stdin } : {}) }),
   });
   return {
     response,
@@ -97,6 +102,21 @@ async function postGit(url: string, args: string[], sessionId?: string) {
       ...(sessionId ? { "x-thor-session-id": sessionId } : {}),
     },
     body: JSON.stringify({ args, cwd }),
+  });
+  return {
+    response,
+    body: (await response.json()) as { stdout: string; stderr: string; exitCode: number },
+  };
+}
+
+async function postApprovalResolve(url: string, actionId: string) {
+  const response = await fetch(`${url}/exec/approval`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-thor-internal-secret": "test-secret",
+    },
+    body: JSON.stringify({ args: ["resolve", actionId, "approved", "UAPPROVER"] }),
   });
   return {
     response,
@@ -135,8 +155,26 @@ describe("gh disclaimer injection", () => {
       type: "trigger_start",
       triggerId,
       triggerSlackId: "UABCDEF1",
+      correlationKey: "slack:thread:C123/177.1",
     });
   }
+
+  const approvalConfig = (extra: RemoteCliAppConfig = {}): RemoteCliAppConfig => ({
+    appEnv: { isProduction: false, thorInternalSecret: "test-secret" },
+    ...extra,
+    mcp: {
+      approvalsDir: `${worklogRoot}/approvals`,
+      fetchImpl: vi.fn(
+        async () =>
+          new Response(JSON.stringify({ ok: true, ts: "177.2" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      ) as unknown as typeof fetch,
+      slack: { botToken: "xoxb-test", apiBaseUrl: "https://slack.example.com/api" },
+      ...extra.mcp,
+    },
+  });
 
   const configLoader = () => ({
     users: [{ email: "alice@example.com", name: "Alice", slack: "UABCDEF1", github: "alice" }],
@@ -196,8 +234,9 @@ describe("gh disclaimer injection", () => {
       async (url) => {
         await postGh(
           url,
-          ["pr", "create", "--title", "x", "--body", "Body", "--assignee", "bob"],
+          ["pr", "create", "--title", "x", "--body-file", "-", "--assignee", "bob"],
           "parent",
+          "Body",
         );
         expect(execCalls[0].args.filter((arg) => arg === "--assignee")).toHaveLength(1);
         expect(execCalls[0].args).toContain("bob");
@@ -206,48 +245,86 @@ describe("gh disclaimer injection", () => {
     );
   });
 
-  it("appends a GitHub assignee to issue create when trigger user resolves", async () => {
+  it("stores raw author args for the approval card and injects footer + assignee only at execution", async () => {
     seedActor();
-    await withServer(
-      async (url) => {
-        const { response } = await postGh(
-          url,
-          ["issue", "create", "--title", "Bug", "--body", "Broken"],
-          "parent",
-        );
-        expect(response.status).toBe(200);
-        expect(execCalls[0].args).toEqual([
-          "issue",
-          "create",
-          "--title",
-          "Bug",
-          "--body",
-          `Broken\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
-          "--assignee",
-          "alice",
-        ]);
-      },
-      { configLoader },
-    );
+    await withServer(async (url) => {
+      const { response, body } = await postGh(
+        url,
+        ["issue", "create", "--title", "Bug", "--body-file", "-"],
+        "parent",
+        "Broken",
+      );
+      expect(response.status).toBe(200);
+      expect(execCalls).toHaveLength(0);
+      const payload = JSON.parse(body.stdout);
+      expect(payload.type).toBe("approval_required");
+      expect(payload.tool).toBe("ghIssueCreate");
+      expect(payload.command).toBe(`approval status ${payload.actionId}`);
+      // The pending action (and thus the approval card) carries only the
+      // author's reviewed command — no disclaimer footer, no auto-assignee.
+      expect(payload.args.args).toEqual(["issue", "create", "--title", "Bug", "--body-file", "-"]);
+
+      // The footer and assignee attribution are injected at execution, after approval.
+      const approved = await postApprovalResolve(url, payload.actionId);
+      expect(approved.response.status).toBe(200);
+      expect(execCalls[0].args).toEqual([
+        "issue",
+        "create",
+        "--title",
+        "Bug",
+        "--body-file",
+        "-",
+        "--assignee",
+        "alice",
+      ]);
+      expect(execCalls[0].stdin).toBe(
+        `Broken\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
+      );
+    }, approvalConfig({ configLoader }));
+  });
+
+  it("fails closed before approval when gh issue create stdin is missing", async () => {
+    seedActor();
+    await withServer(async (url) => {
+      const { response, body } = await postGh(
+        url,
+        ["issue", "create", "--title", "Bug", "--body-file", "-"],
+        "parent",
+      );
+      expect(response.status).toBe(400);
+      expect(body.stderr).toContain("Disclaimer required: gh stdin body is missing");
+      expect(body.stdout).toBe("");
+      expect(execCalls).toHaveLength(0);
+    }, approvalConfig({ configLoader }));
   });
 
   it("keeps an existing issue assignee", async () => {
     seedActor();
-    await withServer(
-      async (url) => {
-        await postGh(
-          url,
-          ["issue", "create", "--title", "x", "--body", "Body", "-a", "bob"],
-          "parent",
-        );
-        expect(
-          execCalls[0].args.filter((arg) => arg === "-a" || arg === "--assignee"),
-        ).toHaveLength(1);
-        expect(execCalls[0].args).toContain("bob");
-        expect(execCalls[0].args).not.toContain("alice");
-      },
-      { configLoader },
-    );
+    await withServer(async (url) => {
+      const { body } = await postGh(
+        url,
+        ["issue", "create", "--title", "x", "--body-file", "-", "-a", "bob"],
+        "parent",
+        "Body",
+      );
+      const payload = JSON.parse(body.stdout);
+      expect(
+        payload.args.args.filter((arg: string) => arg === "-a" || arg === "--assignee"),
+      ).toHaveLength(1);
+      expect(payload.args.args).toContain("bob");
+      expect(payload.args.args).not.toContain("alice");
+    }, approvalConfig({ configLoader }));
+  });
+
+  it("does not attach an assignee or request approval for gh issue create --help", async () => {
+    seedActor();
+    await withServer(async (url) => {
+      const { response, body } = await postGh(url, ["issue", "create", "--help"], "parent");
+      expect(response.status).toBe(200);
+      expect(body.stdout).not.toContain("approval_required");
+      expect(execCalls).toHaveLength(1);
+      expect(execCalls[0].args).toEqual(["issue", "create", "--help"]);
+    }, approvalConfig({ configLoader }));
   });
 
   it("passes git commit through when attribution config is unavailable", async () => {
@@ -310,7 +387,12 @@ describe("gh disclaimer injection", () => {
       );
       expect(worktree.response.status).toBe(200);
 
-      const pr = await postGh(url, ["pr", "create", "--title", "x", "--body", "body"], "parent");
+      const pr = await postGh(
+        url,
+        ["pr", "create", "--title", "x", "--body-file", "-"],
+        "parent",
+        "body",
+      );
       expect(pr.response.status).toBe(200);
     });
 
@@ -321,6 +403,7 @@ describe("gh disclaimer injection", () => {
     await withServer(async (url) => {
       const commands = [
         ["pr", "create", "--help"],
+        ["issue", "create", "--help"],
         ["pr", "comment", "--help"],
         ["issue", "comment", "--help"],
         ["pr", "review", "-h"],
@@ -337,47 +420,113 @@ describe("gh disclaimer injection", () => {
 
   it("fails closed without a Thor session id", async () => {
     await withServer(async (url) => {
-      const { response, body } = await postGh(url, ["pr", "comment", "123", "--body", "note"]);
+      const { response, body } = await postGh(
+        url,
+        ["pr", "comment", "123", "--body-file", "-"],
+        undefined,
+        "note",
+      );
       expect(response.status).toBe(400);
       expect(body.stderr).toContain("missing Thor session id");
-      const issue = await postGh(url, ["issue", "comment", "42", "--body", "note"]);
+      const issue = await postGh(
+        url,
+        ["issue", "comment", "42", "--body-file", "-"],
+        undefined,
+        "note",
+      );
       expect(issue.response.status).toBe(400);
       expect(issue.body.stderr).toContain("missing Thor session id");
       expect(execCalls).toHaveLength(0);
     });
   });
 
-  it("injects into issue create bodies and binds the created issue alias with GitHub repo basename", async () => {
+  it("binds the created issue alias only after approved issue create succeeds", async () => {
     bindSessionToAnchor("parent", anchorParent);
-    appendSessionEvent("parent", { type: "trigger_start", triggerId });
+    appendSessionEvent("parent", {
+      type: "trigger_start",
+      triggerId,
+      correlationKey: "slack:thread:C123/177.1",
+    });
 
     await withServer(async (url) => {
-      const { response } = await postGh(
+      const { response, body } = await postGh(
         url,
-        ["issue", "create", "--title", "Bug", "--body", "Broken"],
+        ["issue", "create", "--title", "Bug", "--body-file", "-"],
         "parent",
+        "Broken",
       );
       expect(response.status).toBe(200);
-      expect(execCalls[0].args).toEqual([
-        "issue",
-        "create",
-        "--title",
-        "Bug",
-        "--body",
+      expect(execCalls).toHaveLength(0);
+      expect(
+        resolveAlias({
+          aliasType: "github.issue",
+          aliasValue: Buffer.from("github:issue:thor:acme/thor#42").toString("base64url"),
+        }),
+      ).toBeUndefined();
+      const payload = JSON.parse(body.stdout);
+      const approved = await postApprovalResolve(url, payload.actionId);
+      expect(approved.response.status).toBe(200);
+      expect(execCalls[0].args).toEqual(["issue", "create", "--title", "Bug", "--body-file", "-"]);
+      expect(execCalls[0].stdin).toBe(
         `Broken\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
-      ]);
+      );
       expect(
         resolveAlias({
           aliasType: "github.issue",
           aliasValue: Buffer.from("github:issue:thor:acme/thor#42").toString("base64url"),
         }),
       ).toBe(anchorParent);
+    }, approvalConfig());
+  });
+
+  it("returns a side-effect-attempted failure when an approved gh issue create fails", async () => {
+    bindSessionToAnchor("parent", anchorParent);
+    appendSessionEvent("parent", {
+      type: "trigger_start",
+      triggerId,
+      correlationKey: "slack:thread:C123/177.1",
     });
+
+    await withServer(async (url) => {
+      const { body } = await postGh(
+        url,
+        ["issue", "create", "--title", "Bug", "--body-file", "-"],
+        "parent",
+        "Broken",
+      );
+      const payload = JSON.parse(body.stdout);
+
+      vi.mocked(execCommand).mockImplementationOnce(async (bin, args, cwd) => {
+        execCalls.push({ bin, args, cwd });
+        return {
+          stdout: "",
+          stderr: "could not create issue: repository not found\n",
+          exitCode: 1,
+        };
+      });
+
+      const resolved = await postApprovalResolve(url, payload.actionId);
+      expect(resolved.response.status).toBe(200);
+      expect(resolved.body.exitCode).toBe(1);
+      expect(resolved.body.stderr).toContain("repository not found");
+      expect((resolved.body as { sideEffectAttempted?: boolean }).sideEffectAttempted).toBe(true);
+      expect(
+        resolveAlias({
+          aliasType: "github.issue",
+          aliasValue: Buffer.from("github:issue:thor:acme/thor#42").toString("base64url"),
+        }),
+      ).toBeUndefined();
+    }, approvalConfig());
   });
 
   it("fails closed when the session has no anchor context", async () => {
     await withServer(async (url) => {
-      const missing = await postGh(url, ["pr", "comment", "123", "--body", "note"], "missing");
+      const missing = await postGh(
+        url,
+        ["pr", "comment", "123", "--body-file", "-"],
+        "missing",
+        "note",
+      );
       expect(missing.response.status).toBe(400);
       expect(missing.body.stderr).toContain("(none)");
       expect(execCalls).toHaveLength(0);
@@ -388,15 +537,17 @@ describe("gh disclaimer injection", () => {
     bindSessionToAnchor("idle", anchorParent);
 
     await withServer(async (url) => {
-      const { response } = await postGh(url, ["pr", "comment", "123", "--body", "note"], "idle");
+      const { response } = await postGh(
+        url,
+        ["pr", "comment", "123", "--body-file", "-"],
+        "idle",
+        "note",
+      );
       expect(response.status).toBe(200);
-      expect(execCalls[0].args).toEqual([
-        "pr",
-        "comment",
-        "123",
-        "--body",
+      expect(execCalls[0].args).toEqual(["pr", "comment", "123", "--body-file", "-"]);
+      expect(execCalls[0].stdin).toBe(
         `note\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}`)}`,
-      ]);
+      );
     });
   });
 
@@ -408,17 +559,15 @@ describe("gh disclaimer injection", () => {
     await withServer(async (url) => {
       const { response } = await postGh(
         url,
-        ["pr", "comment", "123", "--body", "note"],
+        ["pr", "comment", "123", "--body-file", "-"],
         "superseded",
+        "note",
       );
       expect(response.status).toBe(200);
-      expect(execCalls[0].args).toEqual([
-        "pr",
-        "comment",
-        "123",
-        "--body",
+      expect(execCalls[0].args).toEqual(["pr", "comment", "123", "--body-file", "-"]);
+      expect(execCalls[0].stdin).toBe(
         `note\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorSuperseded}/${secondTriggerId}`)}`,
-      ]);
+      );
     });
   });
 
@@ -434,23 +583,20 @@ describe("gh disclaimer injection", () => {
     await withServer(async (url) => {
       const { response } = await postGh(
         url,
-        ["pr", "create", "--title", "x", "--body", "body"],
+        ["pr", "create", "--title", "x", "--body-file", "-"],
         "child",
+        "body",
       );
       expect(response.status).toBe(200);
       expect(execCalls[0]).toMatchObject({ bin: "gh" });
-      expect(execCalls[0].args).toEqual([
-        "pr",
-        "create",
-        "--title",
-        "x",
-        "--body",
+      expect(execCalls[0].args).toEqual(["pr", "create", "--title", "x", "--body-file", "-"]);
+      expect(execCalls[0].stdin).toBe(
         `body\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorChild}/${triggerId}`)}`,
-      ]);
+      );
     });
   });
 
-  it("injects into PR review-comment reply bodies", async () => {
+  it("denies PR review-comment reply bodies before execution", async () => {
     bindSessionToAnchor("parent", anchorParent);
     appendSessionEvent("parent", { type: "trigger_start", triggerId });
 
@@ -467,14 +613,12 @@ describe("gh disclaimer injection", () => {
         ],
         "parent",
       );
-      expect(response.status).toBe(200);
-      expect(execCalls[0].args.at(-1)).toBe(
-        `body=Done\n${formatThorContextFooter(`https://thor.example.com/runner/v/${anchorParent}/${triggerId}`)}`,
-      );
+      expect(response.status).toBe(400);
+      expect(execCalls).toHaveLength(0);
     });
   });
 
-  it("denies gh body-file content creation shapes", async () => {
+  it("allows only stdin gh body-file content creation shapes", async () => {
     bindSessionToAnchor("parent", anchorParent);
     appendSessionEvent("parent", { type: "trigger_start", triggerId });
 
@@ -498,11 +642,15 @@ describe("gh disclaimer injection", () => {
       );
       expect(issue.response.status).toBe(400);
       expect(issue.body.stderr).toContain("gh issue comment");
-      expect(execCalls).toHaveLength(0);
+
+      const ok = await postGh(url, ["pr", "comment", "123", "--body-file", "-"], "parent", "hi");
+      expect(ok.response.status).toBe(200);
+      expect(execCalls).toHaveLength(1);
+      expect(execCalls[0].stdin).toContain("hi\n");
     });
   });
 
-  it("fails closed for duplicate mutable body fields", async () => {
+  it("fails closed for duplicate or inline mutable body fields", async () => {
     bindSessionToAnchor("parent", anchorParent);
     appendSessionEvent("parent", { type: "trigger_start", triggerId });
 
@@ -513,7 +661,7 @@ describe("gh disclaimer injection", () => {
         "parent",
       );
       expect(comment.response.status).toBe(400);
-      expect(comment.body.stderr).toContain("multiple --body values");
+      expect(comment.body.stderr).toContain("gh pr comment");
 
       const issue = await postGh(
         url,
@@ -521,7 +669,7 @@ describe("gh disclaimer injection", () => {
         "parent",
       );
       expect(issue.response.status).toBe(400);
-      expect(issue.body.stderr).toContain("multiple --body values");
+      expect(issue.body.stderr).toContain("gh issue comment");
 
       const reply = await postGh(
         url,

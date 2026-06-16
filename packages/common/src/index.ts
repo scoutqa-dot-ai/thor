@@ -26,12 +26,12 @@ export {
   resolveProxyConfig,
 } from "./proxies.ts";
 export {
-  APPROVAL_TOOL_NAMES,
   ApprovalArgsSchema,
   ApprovalRequiredEventPayloadSchema,
   CreateJiraIssueApprovalArgsSchema,
   AddCommentToJiraIssueApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
+  GhIssueCreateApprovalArgsSchema,
   approvalToolRequiresDisclaimer,
   injectApprovalDisclaimer,
   validateDisclaimerCompatibleArgs,

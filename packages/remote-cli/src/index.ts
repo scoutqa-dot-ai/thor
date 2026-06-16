@@ -3,15 +3,12 @@ import { access } from "node:fs/promises";
 import { dirname, normalize as normalizePosix } from "node:path/posix";
 import { fileURLToPath } from "node:url";
 import {
-  appendCorrelationAlias,
-  buildThorDisclaimerForSession,
-  computeGitCorrelationKey,
   createConfigLoader,
   createLogger,
   errorMessage,
-  getRunnerBaseUrl,
   logError,
   logInfo,
+  logWarn,
   loadRemoteCliAppEnv,
   loadRemoteCliEnv,
   loadRemoteCliGitHubEnv,
@@ -22,14 +19,27 @@ import {
   type ConfigLoader,
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.ts";
-import { resolveOwnerRepoFromRemote } from "./github-app-auth.ts";
 import { createMcpService, type McpServiceDeps } from "./mcp-handler.ts";
+import { createApprovalService } from "./approval-service.ts";
+import {
+  getCliApprovalDefinition,
+  registerCliApprovals,
+  requestCliApproval,
+} from "./cli-approval.ts";
+import { registerGitCorrelationAlias } from "./gh-issue-alias.js";
 import {
   handleSlackPostMessage,
   parseSlackPostMessageArgs,
   type SlackPostMessageDeps,
 } from "./slack-post-message.ts";
-import { listSchemas, listTables, getColumns, executeQuery, getQuestion } from "./metabase.ts";
+import {
+  listSchemas,
+  listTables,
+  getColumns,
+  executeQuery,
+  getQuestion,
+  MetabaseError,
+} from "./metabase.ts";
 import {
   createSandbox,
   deleteSandbox,
@@ -54,7 +64,13 @@ import {
   validateMetabaseArgs,
   validateScoutqaArgs,
 } from "./policy.ts";
-import { attributionFields, resolveTriggerUser } from "./attribution.ts";
+import {
+  isGhHelpRequest,
+  usesBodyFileStdin,
+  withGhAttribution,
+  withGhStdinDisclaimer,
+  withGitAttribution,
+} from "./gh-args.ts";
 
 const log = createLogger("remote-cli");
 
@@ -63,8 +79,6 @@ const WORKTREE_ROOT = "/workspace/worktrees";
 const WORKTREE_PREFIX = `${WORKTREE_ROOT}/`;
 const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 const INTERNAL_EXEC_MAX_OUTPUT = 1024 * 1024;
-const GITHUB_ISSUE_URL_RE =
-  /https:\/\/github\.com\/([^\s/]+)\/([^\s/]+)\/issues\/(\d+)(?:\b|[/?#])/;
 
 export function validateRemoteCliGitHubEnv(env: NodeJS.ProcessEnv = process.env): void {
   loadRemoteCliGitHubEnv(env);
@@ -107,267 +121,6 @@ function thorIds(req: express.Request): { sessionId?: string; callId?: string } 
     ...(sessionId && { sessionId }),
     ...(callId && { callId }),
   };
-}
-
-function registerGitCorrelationAlias(
-  sessionId: string | undefined,
-  args: string[],
-  cwd: string,
-): void {
-  if (!sessionId) return;
-  const correlationKey = computeGitCorrelationKey(args, cwd);
-  if (!correlationKey) return;
-
-  try {
-    appendCorrelationAlias(sessionId, correlationKey);
-  } catch (err) {
-    logError(log, "alias_registration_error", err instanceof Error ? err.message : String(err), {
-      sessionId,
-      correlationKey,
-    });
-    return;
-  }
-  logInfo(log, "alias_registered", { sessionId, correlationKey, source: "git" });
-}
-
-function buildIssueCorrelationKey(owner: string, repo: string, number: string): string {
-  // Gateway issue correlation uses the GitHub repo basename as the local repo
-  // component. Keep producer-side aliases aligned even when the local worktree
-  // parent directory is not the same as owner/repo's basename.
-  return `github:issue:${repo}:${owner}/${repo}#${number}`;
-}
-
-function parseIssueUrl(
-  stdout: string,
-): { owner: string; repo: string; number: string } | undefined {
-  const match = stdout.match(GITHUB_ISSUE_URL_RE);
-  if (!match) return undefined;
-  const [, owner, repo, number] = match;
-  if (!owner || !repo || !number) return undefined;
-  return { owner, repo, number };
-}
-
-function ownerRepoMatches(
-  cwdRepo: ReturnType<typeof resolveOwnerRepoFromRemote> | undefined,
-  owner: string,
-  repo: string,
-): boolean {
-  return (
-    !cwdRepo ||
-    (cwdRepo.host === "github.com" &&
-      cwdRepo.owner.toLowerCase() === owner.toLowerCase() &&
-      cwdRepo.repo.toLowerCase() === repo.toLowerCase())
-  );
-}
-
-function parseCreatedIssueCorrelationKey(stdout: string, cwd: string): string | undefined {
-  const issue = parseIssueUrl(stdout);
-  if (!issue) return undefined;
-  const cwdRepo = resolveOwnerRepoFromRemote(cwd);
-  if (!ownerRepoMatches(cwdRepo, issue.owner, issue.repo)) return undefined;
-  return buildIssueCorrelationKey(issue.owner, issue.repo, issue.number);
-}
-
-function registerCreatedIssueCorrelationAlias(
-  sessionId: string | undefined,
-  cwd: string,
-  stdout: string,
-): void {
-  if (!sessionId) return;
-  const correlationKey = parseCreatedIssueCorrelationKey(stdout, cwd);
-  if (!correlationKey) return;
-  try {
-    appendCorrelationAlias(sessionId, correlationKey);
-  } catch (err) {
-    logError(log, "alias_registration_error", err instanceof Error ? err.message : String(err), {
-      sessionId,
-      correlationKey,
-    });
-    return;
-  }
-  logInfo(log, "alias_registered", { sessionId, correlationKey, source: "gh" });
-}
-
-type FlagMatch = { index: number; valueIndex?: number; inlinePrefix?: string };
-
-function rewriteValueFlag(
-  args: string[],
-  names: string[],
-  append: string | ((value: string) => string),
-  options: { valuePrefix?: string; match: "single" | "last" } = { match: "single" },
-): string[] | { error: "duplicate" | "notFound" } {
-  const { valuePrefix, match: mode } = options;
-  const matches: FlagMatch[] = [];
-  for (let i = 0; i < args.length; i++) {
-    for (const name of names) {
-      if (args[i] === name && i + 1 < args.length) {
-        if (valuePrefix && !args[i + 1].startsWith(valuePrefix)) continue;
-        matches.push({ index: i, valueIndex: i + 1 });
-        i += 1;
-        break;
-      }
-      if (args[i].startsWith(`${name}=`)) {
-        const value = args[i].slice(name.length + 1);
-        if (valuePrefix && !value.startsWith(valuePrefix)) continue;
-        matches.push({ index: i, inlinePrefix: `${name}=` });
-        break;
-      }
-    }
-  }
-  if (matches.length === 0) return { error: "notFound" };
-  if (matches.length > 1 && mode === "single") return { error: "duplicate" };
-  const m = mode === "last" ? matches[matches.length - 1] : matches[0];
-  const out = [...args];
-  const rewrite = (value: string) =>
-    typeof append === "function" ? append(value) : `${value}${append}`;
-  if (m.valueIndex !== undefined) {
-    out[m.valueIndex] = rewrite(out[m.valueIndex]);
-  } else if (m.inlinePrefix) {
-    out[m.index] = `${m.inlinePrefix}${rewrite(out[m.index].slice(m.inlinePrefix.length))}`;
-  }
-  return out;
-}
-
-function hasFlag(args: string[], names: string[]): boolean {
-  return args.some((arg) => names.some((name) => arg === name || arg.startsWith(`${name}=`)));
-}
-
-function logAttribution(surface: string, outcome: string, extra: Record<string, unknown> = {}) {
-  logInfo(log, "attribution_applied", { surface, outcome, ...extra });
-}
-
-function withGitAttribution(
-  args: string[],
-  sessionId: string | undefined,
-  getConfig: ConfigLoader,
-): string[] {
-  if (args[0] !== "commit") return args;
-  const resolved = resolveTriggerUser(sessionId, getConfig);
-  if (!resolved.user) {
-    logAttribution(
-      "git",
-      resolved.reason ?? "skipped_no_user_record",
-      attributionFields(resolved.actor),
-    );
-    return args;
-  }
-  if (hasFlag(args, ["-F", "--file"])) {
-    logAttribution(
-      "git",
-      "skipped_unsupported_arg_shape",
-      attributionFields(resolved.actor, resolved.user),
-    );
-    return args;
-  }
-  const trailerLine = `Co-authored-by: ${resolved.user.name} <${resolved.user.email}>`;
-  const attributionEmail = resolved.user.email.toLowerCase();
-  let alreadyAttributed = false;
-  const rewritten = rewriteValueFlag(
-    args,
-    ["-m", "--message"],
-    (message) => {
-      if (message.toLowerCase().includes(attributionEmail)) {
-        alreadyAttributed = true;
-        return message;
-      }
-      return `${message}${message.endsWith("\n") ? "\n" : "\n\n"}${trailerLine}`;
-    },
-    { match: "last" },
-  );
-  if ("error" in rewritten) {
-    logAttribution(
-      "git",
-      "skipped_unsupported_arg_shape",
-      attributionFields(resolved.actor, resolved.user),
-    );
-    return args;
-  }
-  if (alreadyAttributed) {
-    logAttribution(
-      "git",
-      "skipped_already_attributed",
-      attributionFields(resolved.actor, resolved.user),
-    );
-    return args;
-  }
-  logAttribution("git", "applied", attributionFields(resolved.actor, resolved.user));
-  return rewritten;
-}
-
-function withGhAttribution(
-  args: string[],
-  sessionId: string | undefined,
-  getConfig: ConfigLoader,
-): string[] {
-  if (!((args[0] === "pr" || args[0] === "issue") && args[1] === "create")) return args;
-  const resolved = resolveTriggerUser(sessionId, getConfig);
-  if (hasFlag(args, ["--assignee", "-a"])) {
-    logAttribution(
-      "gh-assignee",
-      "skipped_existing_assignee",
-      attributionFields(resolved.actor, resolved.user),
-    );
-    return args;
-  }
-  if (!resolved.user) {
-    logAttribution(
-      "gh-assignee",
-      resolved.reason ?? "skipped_no_user_record",
-      attributionFields(resolved.actor),
-    );
-    return args;
-  }
-  if (!resolved.user.github) {
-    logAttribution("gh-assignee", "skipped_missing_identity_field", {
-      field: "github",
-      ...attributionFields(resolved.actor, resolved.user),
-    });
-    return args;
-  }
-  logAttribution("gh-assignee", "applied", attributionFields(resolved.actor, resolved.user));
-  return [...args, "--assignee", resolved.user.github];
-}
-
-function isGhHelpRequest(args: string[]): boolean {
-  if (args[0] === "help") return true;
-  if (args.length === 1 && ["-h", "--help"].includes(args[0] ?? "")) return true;
-  if (args.length === 2 && ["-h", "--help"].includes(args[1] ?? "")) return true;
-  if (args.length === 3 && ["-h", "--help"].includes(args[2] ?? "")) return true;
-  return false;
-}
-
-function withGhDisclaimer(args: string[], sessionId?: string): string[] | { error: string } {
-  if (isGhHelpRequest(args)) return args;
-  const eligible =
-    (args[0] === "pr" && ["create", "comment", "review"].includes(args[1] ?? "")) ||
-    (args[0] === "issue" && ["create", "comment"].includes(args[1] ?? "")) ||
-    (args[0] === "api" && args.some((arg) => /pulls\/\d+\/comments\/\d+\/replies/.test(arg)));
-  if (!eligible) return args;
-  let footer: string;
-  try {
-    footer = `\n${buildThorDisclaimerForSession(sessionId, getRunnerBaseUrl()).footer}`;
-  } catch (err) {
-    return {
-      error:
-        err instanceof Error ? err.message : "Disclaimer required: unable to build Thor disclaimer",
-    };
-  }
-  const result =
-    args[0] === "api"
-      ? rewriteValueFlag(args, ["-f", "--raw-field"], footer, {
-          match: "single",
-          valuePrefix: "body=",
-        })
-      : rewriteValueFlag(args, ["--body", "-b"], footer, { match: "single" });
-  if ("error" in result) {
-    return {
-      error:
-        result.error === "duplicate"
-          ? "Disclaimer required: multiple mutable gh body fields"
-          : "Disclaimer required: could not find a mutable gh body field",
-    };
-  }
-  return result;
 }
 
 /**
@@ -488,7 +241,9 @@ async function resolveWorktreeRoot(cwd: string): Promise<{ root: string; subpath
 
   const containingRoot = await findContainingWorktreeRoot(root);
   if (containingRoot) {
-    throw new Error(`git toplevel is nested under another working tree: ${root} (parent ${containingRoot})`);
+    throw new Error(
+      `git toplevel is nested under another working tree: ${root} (parent ${containingRoot})`,
+    );
   }
 
   const subpath = cwd.startsWith(root + "/") ? cwd.slice(root.length + 1) : "";
@@ -646,7 +401,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   const envConfig = config.env;
   const internalSecret = appEnv.thorInternalSecret;
   const getConfig = config.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
-  const mcpService = createMcpService({
+  const mcpConfig: McpServiceDeps = {
     isProduction: appEnv.isProduction,
     ...config.mcp,
     configLoader: config.mcp?.configLoader ?? getConfig,
@@ -654,7 +409,17 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       botToken: envConfig?.slackBotToken,
       apiBaseUrl: envConfig?.slackApiBaseUrl,
     },
+  };
+  // The approval engine is a registry owned here at the composition root; the
+  // MCP service and CLI approvals register their stores into it.
+  const approvalService = createApprovalService({
+    ...(mcpConfig.approvalsDir ? { approvalsDir: mcpConfig.approvalsDir } : {}),
+    ...(mcpConfig.writeToolCallLogFn ? { writeToolCallLogFn: mcpConfig.writeToolCallLogFn } : {}),
+    ...(mcpConfig.slack ? { slack: mcpConfig.slack } : {}),
+    ...(mcpConfig.fetchImpl ? { fetchImpl: mcpConfig.fetchImpl } : {}),
   });
+  const mcpService = createMcpService(mcpConfig, approvalService);
+  registerCliApprovals(approvalService, execCommand, { getConfig });
 
   const app = express();
   app.use(express.json());
@@ -702,12 +467,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       }
       res.json(result);
     } catch (err) {
-      logError(
-        log,
-        "exec_git_error",
-        errorMessage(err),
-        thorIds(req),
-      );
+      logError(log, "exec_git_error", errorMessage(err), thorIds(req));
       res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
@@ -729,28 +489,47 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       }
 
       const ids = thorIds(req);
-      const disclaimerArgs = withGhDisclaimer(args, ids.sessionId);
-      if (!Array.isArray(disclaimerArgs)) {
-        res.status(400).json({ stdout: "", stderr: disclaimerArgs.error, exitCode: 1 });
+
+      // issue create is approval-gated: store raw args and inject the footer +
+      // assignee at execution time so the approval card shows only the raw command.
+      if (args[0] === "issue" && args[1] === "create" && !isGhHelpRequest(args)) {
+        const requestStdin = typeof req.body?.stdin === "string" ? req.body.stdin : undefined;
+        if (usesBodyFileStdin(args) && requestStdin === undefined) {
+          res.status(400).json({
+            stdout: "",
+            stderr: "Disclaimer required: gh stdin body is missing",
+            exitCode: 1,
+          });
+          return;
+        }
+        logInfo(log, "exec_gh_pending_approval", { args, cwd, ...ids });
+        const result = await requestCliApproval(approvalService, getCliApprovalDefinition("gh"), {
+          cwd,
+          args,
+          stdin: requestStdin,
+          ...ids,
+        });
+        res.status(result.exitCode === 0 ? 200 : 400).json(result);
         return;
       }
-      const effectiveArgs = withGhAttribution(disclaimerArgs, ids.sessionId, getConfig);
+
+      // Other mutating gh commands run immediately, so inject up front.
+      const stdinBody = usesBodyFileStdin(args)
+        ? withGhStdinDisclaimer(req.body?.stdin, ids.sessionId)
+        : undefined;
+      if (stdinBody && typeof stdinBody !== "string") {
+        res.status(400).json({ stdout: "", stderr: stdinBody.error, exitCode: 1 });
+        return;
+      }
+      const effectiveArgs = withGhAttribution(args, ids.sessionId, getConfig);
 
       logInfo(log, "exec_gh", { args: effectiveArgs, cwd, ...ids });
-      const result = await execCommand("gh", effectiveArgs, cwd);
-      if ((result.exitCode ?? 0) === 0) {
-        if (effectiveArgs[0] === "issue" && effectiveArgs[1] === "create") {
-          registerCreatedIssueCorrelationAlias(ids.sessionId, cwd, result.stdout);
-        }
-      }
+      const result = await execCommand("gh", effectiveArgs, cwd, {
+        ...(stdinBody !== undefined ? { stdin: stdinBody } : {}),
+      });
       res.json(result);
     } catch (err) {
-      logError(
-        log,
-        "exec_gh_error",
-        errorMessage(err),
-        thorIds(req),
-      );
+      logError(log, "exec_gh_error", errorMessage(err), thorIds(req));
       res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
@@ -767,22 +546,21 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
       logInfo(log, "exec_scoutqa", { args, ...thorIds(req) });
 
-      await streamNdjsonResponse(res, (err) => {
-        logError(log, "exec_scoutqa_error", errorMessage(err), thorIds(req));
-      }, async (write) => {
-        const exitCode = await execCommandStream("scoutqa", args, "/workspace", {
-          onStdout: (data) => write({ type: "stdout", data }),
-          onStderr: (data) => write({ type: "stderr", data }),
-        });
-        write({ type: "exit", exitCode });
-      });
-    } catch (err) {
-      logError(
-        log,
-        "exec_scoutqa_error",
-        errorMessage(err),
-        thorIds(req),
+      await streamNdjsonResponse(
+        res,
+        (err) => {
+          logError(log, "exec_scoutqa_error", errorMessage(err), thorIds(req));
+        },
+        async (write) => {
+          const exitCode = await execCommandStream("scoutqa", args, "/workspace", {
+            onStdout: (data) => write({ type: "stdout", data }),
+            onStderr: (data) => write({ type: "stderr", data }),
+          });
+          write({ type: "exit", exitCode });
+        },
       );
+    } catch (err) {
+      logError(log, "exec_scoutqa_error", errorMessage(err), thorIds(req));
       res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
@@ -819,12 +597,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       });
       res.status((execResult.exitCode ?? 0) === 0 ? 200 : 400).json(execResult);
     } catch (err) {
-      logError(
-        log,
-        "exec_slack_post_message_error",
-        errorMessage(err),
-        ids,
-      );
+      logError(log, "exec_slack_post_message_error", errorMessage(err), ids);
       res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
@@ -937,38 +710,42 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       // Streaming exec runs outside the lock — parallel commands are OK.
       // Known limitation: parallel execs share one sandbox filesystem, so
       // concurrent writes to the same file produce last-writer-wins pull results.
-      await streamNdjsonResponse(res, (err) => {
-        logError(log, "exec_sandbox_error", errorMessage(err), thorIds(req));
-      }, async (writeNdjson) => {
-        const exitCode = await execInSandboxStream(result.sandboxId, result.command, {
-          onStdout: (chunk) => writeNdjson({ type: "stdout", data: chunk }),
-          onStderr: (chunk) => writeNdjson({ type: "stderr", data: chunk }),
-        });
-        let finalExitCode = exitCode;
+      await streamNdjsonResponse(
+        res,
+        (err) => {
+          logError(log, "exec_sandbox_error", errorMessage(err), thorIds(req));
+        },
+        async (writeNdjson) => {
+          const exitCode = await execInSandboxStream(result.sandboxId, result.command, {
+            onStdout: (chunk) => writeNdjson({ type: "stdout", data: chunk }),
+            onStderr: (chunk) => writeNdjson({ type: "stderr", data: chunk }),
+          });
+          let finalExitCode = exitCode;
 
-        // Pull changes back only on success — failed commands may leave partial artifacts
-        if (exitCode === 0) {
-          try {
-            const pull = await withCwdLock(worktreeRoot, () =>
-              pullSandboxChanges(result.sandboxId, worktreeRoot),
-            );
-            if (pull.pulled.length > 0 || pull.deleted.length > 0) {
-              logInfo(log, "sandbox_pull", {
-                pulled: pull.pulled,
-                deleted: pull.deleted,
-                cwd: worktreeRoot,
-              });
+          // Pull changes back only on success — failed commands may leave partial artifacts
+          if (exitCode === 0) {
+            try {
+              const pull = await withCwdLock(worktreeRoot, () =>
+                pullSandboxChanges(result.sandboxId, worktreeRoot),
+              );
+              if (pull.pulled.length > 0 || pull.deleted.length > 0) {
+                logInfo(log, "sandbox_pull", {
+                  pulled: pull.pulled,
+                  deleted: pull.deleted,
+                  cwd: worktreeRoot,
+                });
+              }
+            } catch (pullErr) {
+              const message = errorMessage(pullErr);
+              logError(log, "sandbox_pull_error", message, thorIds(req));
+              writeNdjson({ type: "stderr", data: `${message}\n` });
+              finalExitCode = 1;
             }
-          } catch (pullErr) {
-            const message = errorMessage(pullErr);
-            logError(log, "sandbox_pull_error", message, thorIds(req));
-            writeNdjson({ type: "stderr", data: `${message}\n` });
-            finalExitCode = 1;
           }
-        }
 
-        writeNdjson({ type: "exit", exitCode: finalExitCode });
-      });
+          writeNdjson({ type: "exit", exitCode: finalExitCode });
+        },
+      );
     } catch (err) {
       const message = errorMessage(err);
       logError(log, "exec_sandbox_error", message, thorIds(req));
@@ -1001,12 +778,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       });
       res.json(result);
     } catch (err) {
-      logError(
-        log,
-        "exec_ldcli_error",
-        errorMessage(err),
-        thorIds(req),
-      );
+      logError(log, "exec_ldcli_error", errorMessage(err), thorIds(req));
       res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
@@ -1051,7 +823,19 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       res.json({ stdout: JSON.stringify(result, null, 2), stderr: "", exitCode: 0 });
     } catch (err) {
       const message = errorMessage(err);
-      logError(log, "exec_metabase_error", message, thorIds(req));
+      const { args } = req.body ?? {};
+      const subcommand = Array.isArray(args) ? args[0] : undefined;
+      if (err instanceof MetabaseError && err.userFailure) {
+        logWarn(log, "exec_metabase_query_failure", {
+          category: "metabase_query_failure",
+          subcommand,
+          error: message,
+          ...thorIds(req),
+        });
+        res.json({ stdout: "", stderr: message, exitCode: 1 });
+        return;
+      }
+      logError(log, "exec_metabase_error", message, { subcommand, ...thorIds(req) });
       res.status(500).json({ stdout: "", stderr: message, exitCode: 1 });
     }
   });
@@ -1064,24 +848,11 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
-      if (args[0] === "resolve") {
-        const providedSecret = getInternalSecretHeader(req);
-        if (!matchesInternalSecret(internalSecret, providedSecret)) {
-          res.status(401).json({ error: "Unauthorized" });
-          return;
-        }
-      }
-
       const result = await mcpService.executeMcp(args, thorIds(req));
 
       res.json(result);
     } catch (err) {
-      logError(
-        log,
-        "exec_mcp_error",
-        errorMessage(err),
-        thorIds(req),
-      );
+      logError(log, "exec_mcp_error", errorMessage(err), thorIds(req));
       res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
@@ -1141,15 +912,18 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
-      const result = await mcpService.executeApproval(args);
+      if (args[0] === "resolve") {
+        const providedSecret = getInternalSecretHeader(req);
+        if (!matchesInternalSecret(internalSecret, providedSecret)) {
+          res.status(401).json({ error: "Unauthorized" });
+          return;
+        }
+      }
+
+      const result = await approvalService.executeApproval(args);
       res.json(result);
     } catch (err) {
-      logError(
-        log,
-        "exec_approval_error",
-        errorMessage(err),
-        thorIds(req),
-      );
+      logError(log, "exec_approval_error", errorMessage(err), thorIds(req));
       res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });

@@ -95,6 +95,70 @@ describe("resolveApproval", () => {
     expect(result).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
+
+  it("returns non-zero resolver bodies even when no side effect was attempted", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        execResponse({ status: "error", reason: "profile re-resolution failed" }, "", 1),
+      );
+
+    const { resolveApproval } = await import("./service.ts");
+    const result = await resolveApproval(
+      "act-1",
+      "approved",
+      "U123",
+      "http://remote-cli:3004",
+      "internal-secret",
+      fetchImpl,
+    );
+
+    expect(result?.exitCode).toBe(1);
+    expect(result?.stdout).toContain("profile re-resolution failed");
+    expect(result?.sideEffectAttempted).toBeUndefined();
+  });
+});
+
+describe("buildApprovalOutcomePrompt", () => {
+  it("does not use do-not-replay guidance for pre-write approval failures", async () => {
+    const { buildApprovalOutcomePrompt } = await import("./service.ts");
+
+    const prompt = buildApprovalOutcomePrompt([
+      {
+        actionId: "act-1",
+        decision: "approved",
+        reviewer: "U123",
+        channel: "C123",
+        threadTs: "1710000000.001",
+        resolutionExitCode: 1,
+        resolutionSideEffectAttempted: false,
+        resolutionSummary: "profile re-resolution failed",
+      },
+    ]);
+
+    expect(prompt).toContain("failed before executing the approved side effect");
+    expect(prompt).toContain("profile re-resolution failed");
+    expect(prompt).not.toContain("do not replay or re-run");
+  });
+
+  it("keeps do-not-replay guidance after an approval side effect was attempted", async () => {
+    const { buildApprovalOutcomePrompt } = await import("./service.ts");
+
+    const prompt = buildApprovalOutcomePrompt([
+      {
+        actionId: "act-1",
+        decision: "approved",
+        reviewer: "U123",
+        channel: "C123",
+        threadTs: "1710000000.001",
+        resolutionExitCode: 1,
+        resolutionSideEffectAttempted: true,
+      },
+    ]);
+
+    expect(prompt).toContain("already attempted the approved side effect");
+    expect(prompt).toContain("do not replay or re-run");
+  });
 });
 
 describe("triggerRunnerSlack edge cases", () => {
