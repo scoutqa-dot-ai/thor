@@ -183,21 +183,17 @@ export {
 } from "./disclaimer.ts";
 export type { ThorDisclaimerContext } from "./disclaimer.ts";
 export {
-  ProgressStartSchema,
   ProgressToolSchema,
   ProgressMemorySchema,
   ProgressDelegateSchema,
   ProgressDoneSchema,
-  ProgressErrorSchema,
   ProgressEventSchema,
 } from "./progress-events.ts";
 export type {
-  ProgressStart,
   ProgressTool,
   ProgressMemory,
   ProgressDelegate,
   ProgressDone,
-  ProgressError,
   ProgressEvent,
 } from "./progress-events.ts";
 export { handleProgressEvent, getRegistrySize, clearRegistry } from "./progress-manager.ts";

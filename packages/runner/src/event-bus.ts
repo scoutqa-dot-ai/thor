@@ -73,10 +73,6 @@ class GlobalEventBus {
     this.firehoseObservers.add(observer);
   }
 
-  removeFirehoseObserver(observer: FirehoseObserver): void {
-    this.firehoseObservers.delete(observer);
-  }
-
   /**
    * Ensure the SSE connection is up. Multiple callers share the same promise
    * until it resolves, so only one connection attempt happens at a time.

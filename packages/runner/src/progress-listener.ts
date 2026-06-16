@@ -24,6 +24,7 @@ import {
   logError,
   handleProgressEvent,
   resolveSessionAnchorId,
+  anchorHasExternalKeyType,
   reverseLookupAnchor,
   type ProgressEvent,
   type ProgressTransport,
@@ -45,10 +46,15 @@ const log = createLogger("progress-listener");
 export class ProgressListener {
   /** sessionId -> error message for the parent session's last session.error */
   private pendingErrors = new Map<string, string>();
-  /** "sessionID|messageID|callID" — emit once per tool call start */
-  private emittedToolStarts = new Set<string>();
-  /** "sessionID|messageID|callID" — emit once per task delegation */
-  private emittedTaskDelegates = new Set<string>();
+  /**
+   * threadKey -> set of "sessionID|messageID|callID" emitted once per tool start.
+   * Keyed by thread (not flat) so the whole set can be dropped when the thread's
+   * parent session.idle finalizes — otherwise it would grow unbounded over the
+   * process-lifetime listener.
+   */
+  private emittedToolStarts = new Map<string, Set<string>>();
+  /** threadKey -> set of "sessionID|messageID|callID" emitted once per delegation. */
+  private emittedTaskDelegates = new Map<string, Set<string>>();
   /** Per-thread serialized Slack API call chain. Key = progressTarget.key */
   private progressChains = new Map<string, Promise<void>>();
   private transport: ProgressTransport<SlackProgressTransportTarget>;
@@ -69,6 +75,10 @@ export class ProgressListener {
 
     const anchorId = resolveSessionAnchorId(sessionId);
     if (!anchorId) return;
+
+    // Cheap reject before materializing a full ReverseAnchorEntry — the firehose
+    // sees every event process-wide and most anchors have no slack.thread.
+    if (!anchorHasExternalKeyType(anchorId, "slack.thread")) return;
 
     const anchor = reverseLookupAnchor(anchorId);
 
@@ -168,6 +178,11 @@ export class ProgressListener {
           this.transport,
         ),
       );
+
+      // The turn ended: drop per-thread dedup state so it cannot accumulate
+      // over the process-lifetime listener. The next turn re-emits from scratch.
+      this.emittedToolStarts.delete(progressTarget.key);
+      this.emittedTaskDelegates.delete(progressTarget.key);
     }
   }
 
@@ -177,8 +192,10 @@ export class ProgressListener {
     progressTarget: ProgressTarget<SlackProgressTransportTarget>,
   ): void {
     const key = `${toolPart.sessionID}|${toolPart.messageID}|${toolPart.callID}`;
-    if (this.emittedToolStarts.has(key)) return;
-    this.emittedToolStarts.add(key);
+    const seen = this.emittedToolStarts.get(progressTarget.key) ?? new Set<string>();
+    if (seen.has(key)) return;
+    seen.add(key);
+    this.emittedToolStarts.set(progressTarget.key, seen);
     const displayName = toolDisplayName(toolPart);
     this.enqueue(progressTarget.key, () =>
       handleProgressEvent(
@@ -203,8 +220,10 @@ export class ProgressListener {
     if (!agent) return;
 
     const key = `${toolPart.sessionID}|${toolPart.messageID}|${toolPart.callID}`;
-    if (this.emittedTaskDelegates.has(key)) return;
-    this.emittedTaskDelegates.add(key);
+    const seen = this.emittedTaskDelegates.get(progressTarget.key) ?? new Set<string>();
+    if (seen.has(key)) return;
+    seen.add(key);
+    this.emittedTaskDelegates.set(progressTarget.key, seen);
 
     this.enqueue(progressTarget.key, () =>
       handleProgressEvent(progressTarget, { type: "delegate", agent }, this.transport),
@@ -217,14 +236,20 @@ export class ProgressListener {
    */
   private enqueue(threadKey: string, fn: () => Promise<void>): void {
     const chain = this.progressChains.get(threadKey) ?? Promise.resolve();
-    this.progressChains.set(
-      threadKey,
-      chain
-        .catch(() => undefined)
-        .then(fn)
-        .catch((err) => {
-          logError(log, "progress_enqueue_error", err instanceof Error ? err.message : String(err));
-        }),
-    );
+    const next: Promise<void> = chain
+      .catch(() => undefined)
+      .then(fn)
+      .catch((err) => {
+        logError(log, "progress_enqueue_error", err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        // Drop the entry once this thread's queue drains so idle threads don't
+        // retain a resolved promise for the process lifetime. If newer work was
+        // chained after us, the map already points past `next` — leave it.
+        if (this.progressChains.get(threadKey) === next) {
+          this.progressChains.delete(threadKey);
+        }
+      });
+    this.progressChains.set(threadKey, next);
   }
 }

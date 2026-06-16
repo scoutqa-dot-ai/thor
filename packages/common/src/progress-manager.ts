@@ -12,6 +12,16 @@ const UPDATE_INTERVAL_MS = 10_000;
 /** Base ticker cadence: refresh elapsed timer in Slack when no events arrive. */
 const TICK_INTERVAL_MS = 10_000;
 
+/**
+ * Backstop max age for a live session. Slack progress is now finalized only by
+ * the listener's parent `session.idle`; if that idle never arrives (dropped
+ * SSE, runner restart mid-run, OpenCode crash, abort without idle) the session
+ * would tick and stay resident forever. Evict it after this window so orphans
+ * cannot accumulate over process uptime. Generous on purpose — a backstop, not
+ * a normal completion path. The orphan Slack bubble is left as-is.
+ */
+const SESSION_MAX_AGE_MS = 6 * 60 * 60_000; // 6h
+
 /** Pick ticker delay based on how long the session has been running.
  * Long-running sessions tick less often so we don't waste Slack updates on
  * a counter ticking up by tiny relative increments. */
@@ -381,21 +391,6 @@ class ProgressSession {
     this.scheduleNextTick();
   }
 
-  /**
-   * Stop ticking and refuse further updates without posting any final state.
-   * Used when this session is superseded by a newer one (e.g. a duplicate
-   * `start` arrives) so the orphaned tickTimer chain doesn't keep editing
-   * messages owned by the new session.
-   */
-  abandon(): void {
-    if (this.finished) return;
-    this.finished = true;
-    if (this.tickTimer) {
-      clearTimeout(this.tickTimer);
-      this.tickTimer = undefined;
-    }
-  }
-
   private scheduleNextTick(): void {
     if (this.finished) return;
     const delay = tickDelayForElapsed(Date.now() - this.startTime);
@@ -407,6 +402,18 @@ class ProgressSession {
   private async onTick(): Promise<void> {
     this.tickTimer = undefined;
     if (this.finished) return;
+    // Orphan backstop: a session that never receives a terminal idle would
+    // otherwise reschedule forever and stay in activeSessions. Self-evict.
+    if (Date.now() - this.startTime >= SESSION_MAX_AGE_MS) {
+      this.finished = true;
+      activeSessions.delete(this.channel);
+      logInfo(log, "session_orphan_evicted", {
+        channel: this.channel,
+        threadTs: this.threadTs,
+        toolCallCount: this.toolCallCount,
+      });
+      return;
+    }
     try {
       if (this.thresholdMet && this.messageTs) {
         if (Date.now() - this.lastUpdateTime >= UPDATE_INTERVAL_MS) {
