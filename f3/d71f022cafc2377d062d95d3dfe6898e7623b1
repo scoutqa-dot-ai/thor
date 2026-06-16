@@ -1,0 +1,23 @@
+packages/runner/src/prompt-stream.ts
+  33d1a110dd425cef 576
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "f3d71f022cafc2377d062d95d3dfe6898e7623b1",
+  "prompts": {
+    "33d1a110dd425cef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f0d52bfa-502d-48f5-aee0-baef5996cba3",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 16,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
