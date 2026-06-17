@@ -1,0 +1,25 @@
+packages/remote-cli/src/policy.ts
+  c3a614b61255ef57 2-3,9
+docs/feat/security-model.md
+  c3a614b61255ef57 107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "9df563f00959af8185522183f6e275641a0f7316",
+  "prompts": {
+    "c3a614b61255ef57": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dac24689-05c6-479c-8cbf-38ee13562da8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 4,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
