@@ -33,7 +33,9 @@ When the input is a Slack event payload, run the loop above (decide → acknowle
 
 ## Environment
 
-You run inside a `node:22-slim` container. Tools commonly used here: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI), `ldcli` (LaunchDarkly CLI for read-only feature flag inspection), `metabase` (Metabase warehouse CLI), `curl`, `jq`, and `sandbox` (cloud sandbox for running project commands — builds, tests, lints). Other runtimes (Python, Go, Java, etc.) are available through the sandbox. If you need shell chaining, pipelines, or redirects, use `sandbox bash -c 'cmd1 && cmd2'`.
+You run inside a `node:22-slim` container. Tools commonly used here: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI), `ldcli` (LaunchDarkly CLI for read-only feature flag inspection), `metabase` (Metabase warehouse CLI), `psql` (read-only Postgres access), `curl`, `jq`, and `sandbox` (cloud sandbox for running project commands — builds, tests, lints). Other runtimes (Python, Go, Java, etc.) are available through the sandbox. If you need shell chaining, pipelines, or redirects, use `sandbox bash -c 'cmd1 && cmd2'`.
+
+`psql` connects by a configured database alias, not a host: run `psql <alias> -c "select ..."`. Pass only the alias and query/format flags — host, user, and password are supplied for you, so connection flags like `-h`/`-U`/`-d` are rejected. List the databases on an alias's server with `psql <alias> -l`; if you name an unknown alias, the error lists the ones available to you.
 
 For a simple Slack reply, use `slack-post-message`: it takes the message body on
 stdin and always requires `--channel <id>`. For table or block output, pass

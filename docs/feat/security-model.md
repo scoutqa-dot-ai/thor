@@ -104,15 +104,18 @@ Approval creation **fails closed** when remote-cli cannot resolve or post to the
 
 ### Command policy
 
-`git`, `gh`, `metabase`, `ldcli`, `scoutqa`, and `aws` go through remote-cli `POST /exec/*` endpoints with server-side policy per command. The OpenCode-side wrappers are convenience — bypassing them by calling raw binaries inside OpenCode does not exist as a path because credentials live in remote-cli.
+`git`, `gh`, `metabase`, `ldcli`, `scoutqa`, `aws`, and `psql` go through remote-cli `POST /exec/*` endpoints with server-side policy per command. The OpenCode-side wrappers are convenience — bypassing them by calling raw binaries inside OpenCode does not exist as a path because credentials live in remote-cli.
 
 `aws` is a generic passthrough scoped by the container's IAM credentials, but mutating ("write-alike") commands are additionally gated behind the same human-approval path as `gh issue create`. The split is **fail-closed**: a command runs immediately only when it requests help/version or its operation matches an allowlist of read-only verbs (`describe-*`, `list-*`, `get-*`, …). Everything else requires a human to approve the reviewed command before it executes — unrecognized operations and any mutating verb, but also reads whose service or operation looks credential-bearing (matched against a keyword set), since those can exfiltrate secrets without changing state. The verb allowlist and keyword set live in `awsCommandRequiresApproval` (`packages/remote-cli/src/policy.ts`); treat that function as the source of truth rather than enumerating it here.
+
+`psql` is a read-only Postgres surface. The agent runs `psql <alias> [query flags]`, where the lone positional is a **server-side connection alias**, never a host. remote-cli resolves the alias against the session profile's `PSQL_DATABASES[_<PROFILE>]` bundle and injects host/port/database/user/password through `PG*` env, so credentials never appear in argv (`/proc/<pid>/cmdline`) and the agent cannot point them at another endpoint: connection-control flags (`-h`/`-p`/`-U`/`-d`/`-W` and long forms) are rejected fail-closed, and an alias that is not a clean token (a libpq URI or conninfo string) is rejected. The trust boundary is _model chooses the logical target, operator config owns the network target and credentials_ — `parsePsqlInvocation` (`packages/remote-cli/src/policy.ts`) is the source of truth for the arg policy. Read-only is enforced two ways that do not depend on parsing SQL: a read-only DB role per target (the authoritative boundary, an operator responsibility) and `PGOPTIONS=-c default_transaction_read_only=on` on every connection. Because no statement can mutate state, there is no write/approval split as there is for `aws`.
 
 ### Credential handling
 
 - `git` uses GitHub App installation tokens minted on demand through `GIT_ASKPASS` when the target owner resolves from the command or repo remote.
 - `gh` resolves GitHub App auth before execution and exports `GH_TOKEN` only with the short-lived installation token for the resolved owner.
 - OpenCode never receives direct API credentials for MCP upstreams.
+- `psql` database credentials live only in remote-cli's `PSQL_DATABASES[_<PROFILE>]` env and reach `psql` via injected `PG*` env, never argv. The agent supplies only a connection alias.
 - **ChatGPT subscription credentials live in `codex-lb`, not OpenCode.** opencode points its `openai` provider at `http://codex-lb:2455/v1` with a literal in-network token (`codex-lb-local`) that has no value outside the docker network. The OAuth refresh tokens and account cookies for ChatGPT are persisted under `codex-lb`'s own SQLite store at `/var/lib/codex-lb`, which is never mounted into OpenCode. An agent that reads opencode's auth/config files finds no ChatGPT credential it can replay.
 
 ## Layer 5: Blast radius limits

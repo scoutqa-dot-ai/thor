@@ -1,5 +1,5 @@
 /**
- * Server-side command policy for git, gh, scoutqa, ldcli, metabase, aws.
+ * Server-side command policy for git, gh, scoutqa, ldcli, metabase, aws, psql.
  *
  * All validation happens here — the OpenCode wrapper scripts are untrusted.
  *
