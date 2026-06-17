@@ -1,0 +1,29 @@
+packages/remote-cli/src/index.ts
+  c3a614b61255ef57 17-18,63,835-930
+packages/remote-cli/src/policy.test.ts
+  c3a614b61255ef57 9,1968-2043
+packages/remote-cli/src/psql-endpoint.test.ts
+  c3a614b61255ef57 1-128
+packages/remote-cli/src/policy.ts
+  c3a614b61255ef57 234-381
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "94bb738e2ae7bcc0a1cedd79939035fa5271e4d3",
+  "prompts": {
+    "c3a614b61255ef57": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dac24689-05c6-479c-8cbf-38ee13562da8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 453,
+      "total_deletions": 0,
+      "accepted_lines": 453,
+      "overriden_lines": 0
+    }
+  }
+}
