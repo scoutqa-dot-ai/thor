@@ -1,0 +1,35 @@
+packages/remote-cli/src/policy.ts
+  c3a614b61255ef57 239,241-250,254-264,266-276,279-287,301-302,305-309,315-319,340-354,361,364-365,367,369-370,383
+packages/remote-cli/src/index.ts
+  c3a614b61255ef57 913-916,925-927
+packages/remote-cli/src/policy.test.ts
+  c3a614b61255ef57 2015-2026,2028,2034-2063,2065
+packages/remote-cli/src/psql-endpoint.test.ts
+  c3a614b61255ef57 99,101,105-118
+docker/opencode/config/agents/build.md
+  c3a614b61255ef57 38
+docs/plan/2026061801_psql-database-access.md
+  c3a614b61255ef57 21,46
+docs/feat/security-model.md
+  c3a614b61255ef57 111-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "13dc844b5aaaabb402006ca729cd02731220445d",
+  "prompts": {
+    "c3a614b61255ef57": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dac24689-05c6-479c-8cbf-38ee13562da8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 155,
+      "total_deletions": 70,
+      "accepted_lines": 154,
+      "overriden_lines": 0
+    }
+  }
+}
