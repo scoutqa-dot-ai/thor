@@ -96,8 +96,26 @@ describe("remote-cli psql endpoint", () => {
       PGPASSWORD: "s3cret",
       PGSSLMODE: "require",
       PGOPTIONS: "-c default_transaction_read_only=on",
+      SHELL: "/bin/false",
     });
+    expect(options.stdin).toBe(""); // EOF so a missing -c does not hang
     expect(JSON.stringify(args)).not.toContain("s3cret");
+  });
+
+  it("rejects a \\! meta-command before reaching psql", async () => {
+    const response = await postPsql(["commerce", "-c", "\\! cat /etc/passwd"]);
+    const body = (await response.json()) as { stderr: string };
+    expect(response.status).toBe(400);
+    expect(body.stderr).toMatch(/meta-commands are not allowed/);
+    expect(execCommandMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects the -f file flag before reaching psql", async () => {
+    const response = await postPsql(["commerce", "-f", "/var/lib/remote-cli/github-app/key.pem"]);
+    const body = (await response.json()) as { stderr: string };
+    expect(response.status).toBe(400);
+    expect(body.stderr).toMatch(/is not allowed/);
+    expect(execCommandMock).not.toHaveBeenCalled();
   });
 
   it("returns the available aliases for an unknown alias and does not exec", async () => {

@@ -910,6 +910,10 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         ["-X", "-w", "-v", "ON_ERROR_STOP=1", ...parsed.passthroughArgs],
         cwd,
         {
+          // Close stdin (EOF) so an invocation without -c/-f exits immediately
+          // instead of blocking on psql's interactive stdin read — the client
+          // never pipes stdin to this endpoint.
+          stdin: "",
           env: {
             PGHOST: target.host,
             PGPORT: String(target.port),
@@ -918,6 +922,9 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
             PGPASSWORD: target.password,
             PGSSLMODE: target.sslmode,
             PGOPTIONS: "-c default_transaction_read_only=on",
+            // Defense-in-depth: if a psql shell meta-command (\!) ever slips
+            // past the arg allowlist, give it no usable shell to run.
+            SHELL: "/bin/false",
           },
         },
       );

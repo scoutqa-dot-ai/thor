@@ -2012,15 +2012,59 @@ describe("parsePsqlInvocation", () => {
     });
   });
 
+  it("allows output-format flags and -l", () => {
+    expect(ok(["commerce", "-l"])).toEqual({ alias: "commerce", passthroughArgs: ["-l"] });
+    expect(ok(["commerce", "-Atx", "-c", "select 1"])).toEqual({
+      alias: "commerce",
+      passthroughArgs: ["-Atx", "-c", "select 1"],
+    });
+    expect(ok(["commerce", "--csv", "-c", "select 1"])).toEqual({
+      alias: "commerce",
+      passthroughArgs: ["--csv", "-c", "select 1"],
+    });
+  });
+
   it.each(["-h", "--host", "-p", "--port", "-U", "--username", "-d", "--dbname", "-W"])(
-    "rejects the connection-control flag %s",
+    "rejects the connection-control flag %s (not on the allowlist)",
     (flag) => {
       expect(err(["commerce", flag, "x"])).toMatch(/is not allowed/);
     },
   );
 
-  it("rejects --dbname=value and a connection flag inside a short cluster", () => {
-    expect(err(["commerce", "--dbname=other"])).toMatch(/is not allowed/);
+  it.each([
+    ["-f", ["commerce", "-f", "/etc/passwd"]],
+    ["--file", ["commerce", "--file=/etc/passwd"]],
+    ["-o", ["commerce", "-o", "/var/lib/remote-cli/x", "-c", "select 1"]],
+    ["--output", ["commerce", "--output=/tmp/x", "-c", "select 1"]],
+    ["-L", ["commerce", "-L", "/tmp/log", "-c", "select 1"]],
+  ])("rejects the file flag %s (server-side file read/write)", (_label, argv) => {
+    expect(err(argv as string[])).toMatch(/is not allowed/);
+  });
+
+  it("rejects an unknown flag by default (allowlist)", () => {
+    expect(err(["commerce", "--single-transaction", "-c", "select 1"])).toMatch(/is not allowed/);
+    expect(err(["commerce", "-1", "-c", "select 1"])).toMatch(/is not allowed/);
+  });
+
+  it("rejects a -c meta-command in every form (\\! / \\copy shell+file escape)", () => {
+    expect(err(["commerce", "-c", "\\! cat /etc/passwd"])).toBe(
+      'psql meta-commands are not allowed in -c (they run shell/file operations on the server); pass SQL, e.g. -c "select ..."',
+    );
+    expect(err(["commerce", "-c", "  \\copy x to '/tmp/y'"])).toMatch(
+      /meta-commands are not allowed/,
+    );
+    expect(err(["commerce", "--command=\\! id"])).toMatch(/meta-commands are not allowed/);
+    expect(err(["commerce", "-Xc", "\\! id"])).toMatch(/meta-commands are not allowed/);
+  });
+
+  it("allows ordinary SQL via -c", () => {
+    expect(ok(["commerce", "-c", "select * from orders limit 1"])).toEqual({
+      alias: "commerce",
+      passthroughArgs: ["-c", "select * from orders limit 1"],
+    });
+  });
+
+  it("rejects a connection flag inside a short cluster", () => {
     expect(err(["commerce", "-Xh", "evil-host"])).toMatch(/is not allowed/);
   });
 
