@@ -231,6 +231,154 @@ function getMetabaseAllowedSchemas(): Set<string> {
   );
 }
 
+// ── psql policy ────────────────────────────────────────────────────────────
+//
+// The agent runs `psql <alias> [options]`, where the lone positional is a
+// server-side connection alias (not a real dbname). remote-cli resolves the
+// alias to host/port/database/user/password and injects them via PG* env, so
+// the agent never supplies a network target or credentials. This parser:
+//   - rejects connection-control flags (-h/-p/-U/-d/-W and long forms), so the
+//     agent cannot redirect the injected credentials at another endpoint;
+//   - extracts the single alias positional (skipping value-taking option
+//     values so a query like `-c "select 1"` is not mistaken for the alias);
+//   - returns the remaining args verbatim for psql (query/format flags).
+// Read-only is enforced at execution (read-only role + PGOPTIONS), not here.
+
+const PSQL_ALIAS_RE = /^[a-zA-Z0-9_-]+$/;
+
+// Connection-control flags. Their values would let the agent point the injected
+// credentials at an arbitrary host/database/user, so they are denied outright.
+const PSQL_DENIED_FLAGS: ReadonlySet<string> = new Set([
+  "-h",
+  "--host",
+  "-p",
+  "--port",
+  "-U",
+  "--username",
+  "-d",
+  "--dbname",
+  "-W",
+  "--password",
+]);
+
+// Same connection-control options as single chars, for short clusters (-Xh).
+const PSQL_DENIED_SHORT: ReadonlySet<string> = new Set(["h", "p", "U", "d", "W"]);
+
+// Short options that consume the next token as their value when not attached.
+const PSQL_SHORT_VALUE_OPTS: ReadonlySet<string> = new Set([
+  "c",
+  "d",
+  "f",
+  "v",
+  "o",
+  "L",
+  "F",
+  "R",
+  "P",
+  "T",
+  "h",
+  "p",
+  "U",
+]);
+
+// Long options that consume the next token as their value (when no "=value").
+const PSQL_LONG_VALUE_OPTS: ReadonlySet<string> = new Set([
+  "--command",
+  "--dbname",
+  "--file",
+  "--set",
+  "--variable",
+  "--output",
+  "--log-file",
+  "--field-separator",
+  "--record-separator",
+  "--pset",
+  "--table-attr",
+  "--host",
+  "--port",
+  "--username",
+]);
+
+export interface PsqlInvocation {
+  alias: string;
+  passthroughArgs: string[];
+}
+
+function psqlDeniedFlagError(flag: string): string {
+  return `flag "${flag}" is not allowed — the database alias selects the connection; pass only the alias and query flags (e.g. psql <alias> -c "select 1")`;
+}
+
+/**
+ * Parse a psql argv into its connection alias and the args to forward to psql.
+ *
+ * Returns `{ error }` for a malformed or disallowed invocation (no alias, more
+ * than one positional, a connection-control flag, or an alias that is not a
+ * clean token). Connection URIs and libpq conninfo strings are rejected
+ * implicitly because they fail the alias token check.
+ */
+export function parsePsqlInvocation(args: unknown): PsqlInvocation | { error: string } {
+  if (!Array.isArray(args) || args.length === 0 || !args.every((a) => typeof a === "string")) {
+    return { error: "args must be a non-empty string array" };
+  }
+
+  const positionals: number[] = [];
+  let sawDoubleDash = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const token = args[i];
+    if (sawDoubleDash) {
+      positionals.push(i);
+      continue;
+    }
+    if (token === "--") {
+      sawDoubleDash = true;
+      continue;
+    }
+
+    if (token.startsWith("--")) {
+      const name = token.includes("=") ? token.slice(0, token.indexOf("=")) : token;
+      if (PSQL_DENIED_FLAGS.has(name)) return { error: psqlDeniedFlagError(name) };
+      if (!token.includes("=") && PSQL_LONG_VALUE_OPTS.has(name)) i += 1;
+      continue;
+    }
+
+    if (token.startsWith("-") && token.length > 1) {
+      const chars = token.slice(1);
+      for (let j = 0; j < chars.length; j += 1) {
+        const ch = chars[j];
+        if (PSQL_DENIED_SHORT.has(ch)) return { error: psqlDeniedFlagError(`-${ch}`) };
+        if (PSQL_SHORT_VALUE_OPTS.has(ch)) {
+          // Value-taking: when it is the last char of the cluster, the value is
+          // the next token; otherwise the value is attached (e.g. -cSELECT).
+          if (j === chars.length - 1) i += 1;
+          break;
+        }
+      }
+      continue;
+    }
+
+    positionals.push(i);
+  }
+
+  if (positionals.length === 0) {
+    return { error: 'specify a database alias, e.g. psql <alias> -c "select 1"' };
+  }
+  if (positionals.length > 1) {
+    return {
+      error: "only one database alias is allowed; pass SQL with -c or -f, not as extra arguments",
+    };
+  }
+
+  const aliasIndex = positionals[0];
+  const alias = args[aliasIndex];
+  if (!PSQL_ALIAS_RE.test(alias)) {
+    return {
+      error: `invalid database alias "${alias}": use letters, digits, hyphen, or underscore`,
+    };
+  }
+
+  return { alias, passthroughArgs: args.filter((_, idx) => idx !== aliasIndex) };
+}
+
 // ── aws policy ─────────────────────────────────────────────────────────────
 //
 // The aws endpoint is a generic passthrough — any AWS CLI command is forwarded
