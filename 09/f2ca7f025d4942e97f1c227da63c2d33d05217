@@ -1,0 +1,29 @@
+docs/plan/2026061801_psql-database-access.md
+  c3a614b61255ef57 1-87
+packages/common/src/psql-databases.test.ts
+  c3a614b61255ef57 1-87
+packages/common/src/index.ts
+  c3a614b61255ef57 77-78
+packages/common/src/psql-databases.ts
+  c3a614b61255ef57 1-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "09f2ca7f025d4942e97f1c227da63c2d33d05217",
+  "prompts": {
+    "c3a614b61255ef57": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dac24689-05c6-479c-8cbf-38ee13562da8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 288,
+      "total_deletions": 0,
+      "accepted_lines": 288,
+      "overriden_lines": 0
+    }
+  }
+}
