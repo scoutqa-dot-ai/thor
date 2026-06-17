@@ -1,12 +1,12 @@
 /**
- * Server-side command policy for git, gh, scoutqa, ldcli, metabase, aws, psql.
+ * Server-side command policy for the binaries exposed through remote-cli's
+ * `POST /exec/*` endpoints.
  *
  * All validation happens here — the OpenCode wrapper scripts are untrusted.
  *
  * Git and gh policy live in policy-git.ts and policy-gh.ts respectively, each
  * an explicit allowlist of supported workflows that share a small token-scanning
- * helper in policy-args.ts. The smaller validators (scoutqa, ldcli, metabase)
- * stay inline below.
+ * helper in policy-args.ts. The smaller per-command validators stay inline below.
  */
 
 export { resolveGitArgs, validateGitArgs } from "./policy-git.ts";
