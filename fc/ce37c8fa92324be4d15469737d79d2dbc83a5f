@@ -1,0 +1,25 @@
+docker/opencode/bin/psql
+  c3a614b61255ef57 1-2
+Dockerfile
+  c3a614b61255ef57 101,126
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "fcce37c8fa92324be4d15469737d79d2dbc83a5f",
+  "prompts": {
+    "c3a614b61255ef57": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dac24689-05c6-479c-8cbf-38ee13562da8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 1,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
