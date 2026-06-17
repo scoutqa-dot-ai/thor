@@ -1,0 +1,35 @@
+README.md
+  c3a614b61255ef57 99,126
+docs/feat/security-model.md
+  c3a614b61255ef57 107,111,118
+docker/opencode/config/agents/build.md
+  c3a614b61255ef57 36-38
+docs/plan/2026061801_psql-database-access.md
+  c3a614b61255ef57 22,28-30,32,38,40,49,53-54,57,62-65,67,70-71,74-76
+packages/remote-cli/src/policy.ts
+  c3a614b61255ef57 2
+.env.example
+  c3a614b61255ef57 62-70
+docs/feat/profile.md
+  c3a614b61255ef57 43-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "3c1a36f78d09f2b5ad0f1de390c76eac5bf19ea5",
+  "prompts": {
+    "c3a614b61255ef57": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dac24689-05c6-479c-8cbf-38ee13562da8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 52,
+      "total_deletions": 33,
+      "accepted_lines": 42,
+      "overriden_lines": 0
+    }
+  }
+}
