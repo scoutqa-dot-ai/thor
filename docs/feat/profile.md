@@ -40,6 +40,8 @@ Multi-value integrations (Grafana, Langfuse, Atlassian) are bundles: a profile m
 
 Atlassian bundles `ATLASSIAN_AUTH` + `ATLASSIAN_CLOUD_ID`. Profile suffixes re-route MCP calls only; direct mitmproxy egress still uses the global `ATLASSIAN_AUTH` (see [`security-model.md`](security-model.md) → Built-in defaults).
 
+The `psql` passthrough resolves `PSQL_DATABASES_<PROFILE>` first, then the global `PSQL_DATABASES`. Each is a single JSON variable holding one bundle of database targets keyed by alias, so the all-or-nothing concern does not apply: the profile-scoped bundle replaces the global one wholesale rather than merging. See [`security-model.md`](security-model.md) → psql passthrough.
+
 ## Resolution
 
 1. Resolve the session anchor from `x-thor-session-id`.
