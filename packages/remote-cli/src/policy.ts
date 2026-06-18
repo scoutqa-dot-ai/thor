@@ -1,12 +1,12 @@
 /**
- * Server-side command policy for git, gh, scoutqa, ldcli, metabase, aws.
+ * Server-side command policy for the binaries exposed through remote-cli's
+ * `POST /exec/*` endpoints.
  *
  * All validation happens here — the OpenCode wrapper scripts are untrusted.
  *
  * Git and gh policy live in policy-git.ts and policy-gh.ts respectively, each
  * an explicit allowlist of supported workflows that share a small token-scanning
- * helper in policy-args.ts. The smaller validators (scoutqa, ldcli, metabase)
- * stay inline below.
+ * helper in policy-args.ts. The smaller per-command validators stay inline below.
  */
 
 export { resolveGitArgs, validateGitArgs } from "./policy-git.ts";
@@ -229,6 +229,170 @@ function getMetabaseAllowedSchemas(): Set<string> {
       .map((s) => s.trim())
       .filter(Boolean),
   );
+}
+
+// ── psql policy ────────────────────────────────────────────────────────────
+//
+// The agent runs `psql <alias> [options]`, where the lone positional is a
+// server-side connection alias (not a real dbname). remote-cli resolves the
+// alias to host/port/database/user/password and injects them via PG* env, so
+// the agent never supplies a network target or credentials.
+//
+// psql is not just a SQL runner: meta-commands (\!, \copy, \o, \i) and the
+// -f/-o/-L file flags run shell commands and read/write files ON the remote-cli
+// container — independent of the database's read-only role. That container holds
+// the GitHub App key and other secrets, so this surface MUST fail closed. We use
+// an ALLOWLIST (like git/gh/ldcli/metabase), not a denylist: only the alias,
+// -c "<sql>", and a small set of output-format flags pass; everything else —
+// connection flags, file flags, and any flag we haven't enumerated — is rejected
+// by default. A -c value that is itself a meta-command (starts with "\") is
+// rejected so it cannot smuggle \! / \copy. Read-only SQL is enforced at
+// execution by the read-only DB role.
+
+const PSQL_ALIAS_RE = /^[a-zA-Z0-9_-]+$/;
+
+// Allowed boolean (no-value) flags: listing + output formatting only.
+const PSQL_ALLOWED_BOOL_SHORT: ReadonlySet<string> = new Set([
+  "l", // --list
+  "A", // --no-align
+  "t", // --tuples-only
+  "x", // --expanded
+  "q", // --quiet
+  "X", // --no-psqlrc
+  "n", // --no-readline
+  "z", // --field-separator-zero
+  "0", // --record-separator-zero
+]);
+const PSQL_ALLOWED_BOOL_LONG: ReadonlySet<string> = new Set([
+  "--list",
+  "--no-align",
+  "--tuples-only",
+  "--expanded",
+  "--quiet",
+  "--no-psqlrc",
+  "--no-readline",
+  "--csv",
+  "--field-separator-zero",
+  "--record-separator-zero",
+]);
+
+// Allowed value-taking flags: the SQL command, variables, and output separators.
+const PSQL_ALLOWED_VALUE_SHORT: ReadonlySet<string> = new Set([
+  "c", // --command
+  "v", // --set / --variable
+  "F", // --field-separator
+  "R", // --record-separator
+  "P", // --pset
+]);
+const PSQL_ALLOWED_VALUE_LONG: ReadonlySet<string> = new Set([
+  "--command",
+  "--set",
+  "--variable",
+  "--field-separator",
+  "--record-separator",
+  "--pset",
+]);
+
+export interface PsqlInvocation {
+  alias: string;
+  passthroughArgs: string[];
+}
+
+function psqlNotAllowedError(flag: string): string {
+  return `flag "${flag}" is not allowed — psql access supports only the database alias, -c "<sql>", and output-format flags (e.g. psql <alias> -c "select 1")`;
+}
+
+const PSQL_META_COMMAND_ERROR =
+  'psql meta-commands are not allowed in -c (they run shell/file operations on the server); pass SQL, e.g. -c "select ..."';
+
+function isPsqlMetaCommand(value: string | undefined): boolean {
+  return typeof value === "string" && value.trimStart().startsWith("\\");
+}
+
+/**
+ * Parse a psql argv into its connection alias and the args to forward to psql.
+ *
+ * Allowlist-based: returns `{ error }` for any flag outside the allowed set, a
+ * -c value that is a meta-command, an alias that is not a clean token, or the
+ * wrong number of positionals. Connection flags (-h/-U/-d/...), file flags
+ * (-f/-o/-L), URIs, and conninfo strings are all rejected by being absent from
+ * the allowlist (or failing the alias token check).
+ */
+export function parsePsqlInvocation(args: unknown): PsqlInvocation | { error: string } {
+  if (!Array.isArray(args) || args.length === 0 || !args.every((a) => typeof a === "string")) {
+    return { error: "args must be a non-empty string array" };
+  }
+
+  const positionals: number[] = [];
+  let sawDoubleDash = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const token = args[i];
+    if (sawDoubleDash) {
+      positionals.push(i);
+      continue;
+    }
+    if (token === "--") {
+      sawDoubleDash = true;
+      continue;
+    }
+
+    if (token.startsWith("--")) {
+      const eq = token.indexOf("=");
+      const name = eq === -1 ? token : token.slice(0, eq);
+      if (PSQL_ALLOWED_VALUE_LONG.has(name)) {
+        const value = eq === -1 ? args[i + 1] : token.slice(eq + 1);
+        if (name === "--command" && isPsqlMetaCommand(value)) {
+          return { error: PSQL_META_COMMAND_ERROR };
+        }
+        if (eq === -1) i += 1; // consume the value token
+        continue;
+      }
+      if (PSQL_ALLOWED_BOOL_LONG.has(name)) {
+        if (eq !== -1) return { error: `flag "${name}" does not take a value` };
+        continue;
+      }
+      return { error: psqlNotAllowedError(name) };
+    }
+
+    if (token.startsWith("-") && token.length > 1) {
+      const chars = token.slice(1);
+      for (let j = 0; j < chars.length; j += 1) {
+        const ch = chars[j];
+        if (PSQL_ALLOWED_VALUE_SHORT.has(ch)) {
+          // Value-taking: when it is the last char of the cluster, the value is
+          // the next token; otherwise the value is attached (e.g. -cSELECT).
+          const value = j === chars.length - 1 ? args[i + 1] : chars.slice(j + 1);
+          if (ch === "c" && isPsqlMetaCommand(value)) return { error: PSQL_META_COMMAND_ERROR };
+          if (j === chars.length - 1) i += 1;
+          break; // rest of the cluster is this option's attached value
+        }
+        if (PSQL_ALLOWED_BOOL_SHORT.has(ch)) continue;
+        return { error: psqlNotAllowedError(`-${ch}`) };
+      }
+      continue;
+    }
+
+    positionals.push(i);
+  }
+
+  if (positionals.length === 0) {
+    return { error: 'specify a database alias, e.g. psql <alias> -c "select 1"' };
+  }
+  if (positionals.length > 1) {
+    return {
+      error: "only one database alias is allowed; pass SQL with -c, not as extra arguments",
+    };
+  }
+
+  const aliasIndex = positionals[0];
+  const alias = args[aliasIndex];
+  if (!PSQL_ALIAS_RE.test(alias)) {
+    return {
+      error: `invalid database alias "${alias}": use letters, digits, hyphen, or underscore`,
+    };
+  }
+
+  return { alias, passthroughArgs: args.filter((_, idx) => idx !== aliasIndex) };
 }
 
 // ── aws policy ─────────────────────────────────────────────────────────────

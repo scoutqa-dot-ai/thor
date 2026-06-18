@@ -74,6 +74,8 @@ export type {
   ValidationResult,
 } from "./workspace-config.ts";
 export type { ProxyName, ProxyUpstream } from "./proxies.ts";
+export { resolvePsqlDatabases } from "./psql-databases.ts";
+export type { PsqlDatabaseTarget } from "./psql-databases.ts";
 export { writeToolCallLog, appendJsonlWorklog } from "./worklog.ts";
 export type { ToolCallLogEntry, InboundWebhookHistoryEntry } from "./worklog.ts";
 export {

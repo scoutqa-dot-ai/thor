@@ -6,6 +6,7 @@ import { normalize as normalizePosix } from "node:path/posix";
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import {
   awsCommandRequiresApproval,
+  parsePsqlInvocation,
   resolveGitArgs,
   validateAwsArgs,
   validateCwd,
@@ -1962,5 +1963,125 @@ describe("awsCommandRequiresApproval", () => {
 
   it("fails closed on unrecognized operations", () => {
     expect(awsCommandRequiresApproval(["someservice", "frobnicate-thing"])).toBe(true);
+  });
+});
+
+describe("parsePsqlInvocation", () => {
+  const ok = (args: string[]) => {
+    const result = parsePsqlInvocation(args);
+    if ("error" in result) throw new Error(`expected success, got: ${result.error}`);
+    return result;
+  };
+  const err = (args: string[]) => {
+    const result = parsePsqlInvocation(args);
+    if (!("error" in result)) throw new Error("expected an error");
+    return result.error;
+  };
+
+  it("extracts the alias and forwards query flags", () => {
+    expect(ok(["commerce", "-c", "select 1"])).toEqual({
+      alias: "commerce",
+      passthroughArgs: ["-c", "select 1"],
+    });
+  });
+
+  it("finds the alias regardless of position, skipping option values", () => {
+    // The `select 1` after -c must not be mistaken for the alias.
+    expect(ok(["-c", "select 1", "commerce"])).toEqual({
+      alias: "commerce",
+      passthroughArgs: ["-c", "select 1"],
+    });
+  });
+
+  it("treats -l as a flag, leaving the alias as the connection", () => {
+    expect(ok(["scout", "-l"])).toEqual({ alias: "scout", passthroughArgs: ["-l"] });
+  });
+
+  it("handles a clustered flag whose last char consumes the next token", () => {
+    // -Xc → X (boolean) then c (value): the next token is the command value.
+    expect(ok(["kit", "-Xc", "select 1"])).toEqual({
+      alias: "kit",
+      passthroughArgs: ["-Xc", "select 1"],
+    });
+  });
+
+  it("accepts an attached short-option value without consuming a positional", () => {
+    expect(ok(["-cselect 1", "tunnel"])).toEqual({
+      alias: "tunnel",
+      passthroughArgs: ["-cselect 1"],
+    });
+  });
+
+  it("allows output-format flags and -l", () => {
+    expect(ok(["commerce", "-l"])).toEqual({ alias: "commerce", passthroughArgs: ["-l"] });
+    expect(ok(["commerce", "-Atx", "-c", "select 1"])).toEqual({
+      alias: "commerce",
+      passthroughArgs: ["-Atx", "-c", "select 1"],
+    });
+    expect(ok(["commerce", "--csv", "-c", "select 1"])).toEqual({
+      alias: "commerce",
+      passthroughArgs: ["--csv", "-c", "select 1"],
+    });
+  });
+
+  it.each(["-h", "--host", "-p", "--port", "-U", "--username", "-d", "--dbname", "-W"])(
+    "rejects the connection-control flag %s (not on the allowlist)",
+    (flag) => {
+      expect(err(["commerce", flag, "x"])).toMatch(/is not allowed/);
+    },
+  );
+
+  it.each([
+    ["-f", ["commerce", "-f", "/etc/passwd"]],
+    ["--file", ["commerce", "--file=/etc/passwd"]],
+    ["-o", ["commerce", "-o", "/var/lib/remote-cli/x", "-c", "select 1"]],
+    ["--output", ["commerce", "--output=/tmp/x", "-c", "select 1"]],
+    ["-L", ["commerce", "-L", "/tmp/log", "-c", "select 1"]],
+  ])("rejects the file flag %s (server-side file read/write)", (_label, argv) => {
+    expect(err(argv as string[])).toMatch(/is not allowed/);
+  });
+
+  it("rejects an unknown flag by default (allowlist)", () => {
+    expect(err(["commerce", "--single-transaction", "-c", "select 1"])).toMatch(/is not allowed/);
+    expect(err(["commerce", "-1", "-c", "select 1"])).toMatch(/is not allowed/);
+  });
+
+  it("rejects a -c meta-command in every form (\\! / \\copy shell+file escape)", () => {
+    expect(err(["commerce", "-c", "\\! cat /etc/passwd"])).toBe(
+      'psql meta-commands are not allowed in -c (they run shell/file operations on the server); pass SQL, e.g. -c "select ..."',
+    );
+    expect(err(["commerce", "-c", "  \\copy x to '/tmp/y'"])).toMatch(
+      /meta-commands are not allowed/,
+    );
+    expect(err(["commerce", "--command=\\! id"])).toMatch(/meta-commands are not allowed/);
+    expect(err(["commerce", "-Xc", "\\! id"])).toMatch(/meta-commands are not allowed/);
+  });
+
+  it("allows ordinary SQL via -c", () => {
+    expect(ok(["commerce", "-c", "select * from orders limit 1"])).toEqual({
+      alias: "commerce",
+      passthroughArgs: ["-c", "select * from orders limit 1"],
+    });
+  });
+
+  it("rejects a connection flag inside a short cluster", () => {
+    expect(err(["commerce", "-Xh", "evil-host"])).toMatch(/is not allowed/);
+  });
+
+  it("rejects a libpq URI or conninfo string as the alias", () => {
+    expect(err(["postgres://evil/db"])).toMatch(/invalid database alias/);
+    expect(err(["host=evil dbname=db"])).toMatch(/invalid database alias/);
+  });
+
+  it("requires exactly one alias positional", () => {
+    expect(err(["-c", "select 1"])).toMatch(/specify a database alias/);
+    expect(err(["commerce", "otheruser"])).toMatch(/only one database alias/);
+  });
+
+  it("rejects empty or non-string args", () => {
+    expect(err([])).toMatch(/non-empty string array/);
+    expect(parsePsqlInvocation([1, 2])).toEqual({
+      error: "args must be a non-empty string array",
+    });
   });
 });

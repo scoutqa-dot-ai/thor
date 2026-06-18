@@ -14,6 +14,8 @@ import {
   loadRemoteCliGitHubEnv,
   loadRemoteCliInternalEnv,
   matchesInternalSecret,
+  resolvePsqlDatabases,
+  resolveStrictProfileForSession,
   WORKSPACE_CONFIG_PATH,
   type ExecStreamEvent,
   type ConfigLoader,
@@ -58,6 +60,7 @@ import {
 } from "./sandbox.ts";
 import {
   awsCommandRequiresApproval,
+  parsePsqlInvocation,
   resolveGitArgs,
   validateAwsArgs,
   validateCwd,
@@ -825,6 +828,109 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       res.json(result);
     } catch (err) {
       logError(log, "exec_aws_error", errorMessage(err), thorIds(req));
+      res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
+    }
+  });
+
+  app.post("/exec/psql", async (req, res) => {
+    try {
+      const { args, cwd } = req.body ?? {};
+
+      const cwdError = validateCwd(cwd);
+      if (cwdError) {
+        res.status(400).json({ stdout: "", stderr: cwdError, exitCode: 1 });
+        return;
+      }
+
+      const parsed = parsePsqlInvocation(args);
+      if ("error" in parsed) {
+        res.status(400).json({ stdout: "", stderr: parsed.error, exitCode: 1 });
+        return;
+      }
+
+      const ids = thorIds(req);
+
+      // The session's profile selects which credential bundle applies. Fail
+      // closed on a profile conflict (one anchor bound to disagreeing profiles)
+      // rather than guessing which credentials to use.
+      const resolution = resolveStrictProfileForSession(getConfig(), ids.sessionId ?? "");
+      if (!resolution.ok) {
+        res.status(400).json({
+          stdout: "",
+          stderr: `psql access unavailable: ${resolution.error}`,
+          exitCode: 1,
+        });
+        return;
+      }
+      const profile = resolution.profile;
+
+      let targets: ReturnType<typeof resolvePsqlDatabases>;
+      try {
+        targets = resolvePsqlDatabases(profile);
+      } catch (err) {
+        // Malformed operator bundle — fail closed. The message names the env
+        // var and field, never a credential value.
+        logError(log, "exec_psql_config_error", errorMessage(err), ids);
+        res.status(400).json({
+          stdout: "",
+          stderr: `psql configuration error: ${errorMessage(err)}`,
+          exitCode: 1,
+        });
+        return;
+      }
+
+      const target = targets.get(parsed.alias);
+      if (!target) {
+        const available = [...targets.keys()].sort();
+        res.status(400).json({
+          stdout: "",
+          stderr: `unknown database alias "${parsed.alias}". Available: ${
+            available.length ? available.join(", ") : "(none configured)"
+          }`,
+          exitCode: 1,
+        });
+        return;
+      }
+
+      logInfo(log, "exec_psql", {
+        alias: parsed.alias,
+        database: target.database,
+        argc: parsed.passthroughArgs.length,
+        cwd,
+        ...(profile ? { profile } : {}),
+        ...ids,
+      });
+
+      // Connection + credentials go through PG* env, never argv, so the
+      // password never lands in /proc/<pid>/cmdline. PGOPTIONS forces every
+      // transaction read-only as defense-in-depth on top of the read-only DB
+      // role. -X skips ~/.psqlrc; -w never prompts (creds come from PGPASSWORD).
+      const result = await execCommand(
+        "psql",
+        ["-X", "-w", "-v", "ON_ERROR_STOP=1", ...parsed.passthroughArgs],
+        cwd,
+        {
+          // Close stdin (EOF) so an invocation without -c/-f exits immediately
+          // instead of blocking on psql's interactive stdin read — the client
+          // never pipes stdin to this endpoint.
+          stdin: "",
+          env: {
+            PGHOST: target.host,
+            PGPORT: String(target.port),
+            PGDATABASE: target.database,
+            PGUSER: target.username,
+            PGPASSWORD: target.password,
+            PGSSLMODE: target.sslmode,
+            PGOPTIONS: "-c default_transaction_read_only=on",
+            // Defense-in-depth: if a psql shell meta-command (\!) ever slips
+            // past the arg allowlist, give it no usable shell to run.
+            SHELL: "/bin/false",
+          },
+        },
+      );
+      res.json(result);
+    } catch (err) {
+      logError(log, "exec_psql_error", errorMessage(err), thorIds(req));
       res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
     }
   });
