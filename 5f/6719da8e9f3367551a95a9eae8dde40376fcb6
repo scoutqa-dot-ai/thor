@@ -1,0 +1,23 @@
+docs/feat/security-model.md
+  6ee76aa843dc7310 13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "5f6719da8e9f3367551a95a9eae8dde40376fcb6",
+  "prompts": {
+    "6ee76aa843dc7310": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d46a4403-ee4b-48c3-9c74-aeb5ef7ae125",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
