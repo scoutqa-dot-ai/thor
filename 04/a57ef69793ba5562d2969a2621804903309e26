@@ -1,0 +1,43 @@
+docs/feat/security-model.md
+  2eeb7c3c3d30e6e6 18
+packages/admin/src/index.ts
+  2eeb7c3c3d30e6e6 10-11
+docs/plan/2026062301_admin-config-write-auth.md
+  2eeb7c3c3d30e6e6 1-17,19-27,29-53
+packages/admin/src/app.ts
+  2eeb7c3c3d30e6e6 9,24,29,41-54
+docker-compose.yml
+  2eeb7c3c3d30e6e6 249,292
+packages/common/src/service-env.test.ts
+  2eeb7c3c3d30e6e6 151,155,159,161,166,169-171
+packages/common/src/service-env.ts
+  2eeb7c3c3d30e6e6 97
+.env.example
+  2eeb7c3c3d30e6e6 7-9
+docker/ingress/nginx.conf.template
+  2eeb7c3c3d30e6e6 145-150,156
+README.md
+  2eeb7c3c3d30e6e6 106
+packages/admin/src/app.test.ts
+  2eeb7c3c3d30e6e6 2,12-16,31,51,58-59,73,82,114,142,159,165-203
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "04a57ef69793ba5562d2969a2621804903309e26",
+  "prompts": {
+    "2eeb7c3c3d30e6e6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d43196e-4190-4839-9978-d441d4447a87",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 156,
+      "total_deletions": 14,
+      "accepted_lines": 150,
+      "overriden_lines": 2
+    }
+  }
+}
