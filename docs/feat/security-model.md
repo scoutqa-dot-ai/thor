@@ -15,6 +15,7 @@ The docker network — gateway, runner, remote-cli, mitmproxy — is the trust b
 ## Layer 1: Network boundary
 
 - **Ingress + Vouch.** `ingress` terminates TLS and delegates auth to Vouch. Vouch admits Google-authenticated users whose email domain matches `VOUCH_ALLOWED_EMAIL_DOMAINS`. The OpenCode SPA root and `/admin/` additionally require membership in `THOR_ADMIN_EMAILS`; `/runner/` viewer routes remain open to any allowed-domain user. Static OpenCode assets bypass Vouch for performance.
+- **Admin control-plane defense-in-depth.** The `admin` app writes `thor.json` (mitmproxy passthrough + credential-injection rules) and shares the Docker network with the untrusted `opencode` agent, which can reach `admin:3005` directly. So `admin` does not rely on the ingress gate alone: it re-validates `X-Thor-Internal-Secret` (timing-safe, `THOR_INTERNAL_SECRET`) on every `/admin/*` route and fails closed. `ingress` injects that header on `/admin/` only after Vouch + `THOR_ADMIN_EMAILS` pass, and `proxy_set_header` overwrites any client-supplied value, so a direct opencode→admin hit (no secret) and a forged ingress request (no Vouch cookie) are both rejected. The secret is not present in the `opencode` container env.
 - **Egress through mitmproxy.** All outbound HTTP(S) from OpenCode traverses mitmproxy. See Layer 1a for the routing path, built-in defaults, and custom rule format.
 - **Host port hardening.** `remote-cli` binds `127.0.0.1:3004:3004` so it is unreachable from outside the host.
 
