@@ -19,13 +19,13 @@ importers:
         version: 17.0.7
       prettier:
         specifier: ^3.8.1
-        version: 3.8.3
+        version: 3.8.4
       tsdown:
         specifier: ^0.22.1
         version: 0.22.2(typescript@6.0.3)
       vitest:
         specifier: ^4.1.5
-        version: 4.1.7(@opentelemetry/api@1.9.1)(@types/node@24.13.0)(vite@8.0.14(@types/node@24.13.0)(yaml@2.9.0))
+        version: 4.1.7(@opentelemetry/api@1.9.1)(@types/node@24.13.1)(vite@8.0.14(@types/node@24.13.1)(yaml@2.9.0))
 
   packages/admin:
     dependencies:
@@ -41,7 +41,7 @@ importers:
         version: 5.0.6
       '@types/node':
         specifier: ^24.0.0
-        version: 24.13.0
+        version: 24.13.1
       typescript:
         specifier: ^6.0.0
         version: 6.0.3
@@ -60,7 +60,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
-        version: 24.13.0
+        version: 24.13.1
       typescript:
         specifier: ^6.0.0
         version: 6.0.3
@@ -88,7 +88,7 @@ importers:
         version: 5.0.6
       '@types/node':
         specifier: ^24.0.0
-        version: 24.13.0
+        version: 24.13.1
       typescript:
         specifier: ^6.0.0
         version: 6.0.3
@@ -101,7 +101,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
-        version: 24.13.0
+        version: 24.13.1
       tsdown:
         specifier: ^0.22.1
         version: 0.22.2(typescript@6.0.3)
@@ -112,8 +112,8 @@ importers:
   packages/remote-cli:
     dependencies:
       '@daytonaio/sdk':
-        specifier: ^0.183.0
-        version: 0.183.0(ws@8.21.0)
+        specifier: ^0.185.0
+        version: 0.185.0(ws@8.21.0)
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.29.0(zod@4.4.3)
@@ -138,7 +138,7 @@ importers:
         version: 14.1.2
       '@types/node':
         specifier: ^24.0.0
-        version: 24.13.0
+        version: 24.13.1
       typescript:
         specifier: ^6.0.0
         version: 6.0.3
@@ -169,7 +169,7 @@ importers:
         version: 5.0.6
       '@types/node':
         specifier: ^24.0.0
-        version: 24.13.0
+        version: 24.13.1
       typescript:
         specifier: ^6.0.0
         version: 6.0.3
@@ -331,14 +331,14 @@ packages:
     resolution: {integrity: sha512-K8ponJDxBwDHigkeFqaqT5wLGl4bTlwMafR8k7b5CPxr6Ww+UG9ls8Yx6Tcpboxu97eeGVEEyKcHmEyOwN1vSw==}
     engines: {node: ^22.18.0 || >=24.11.0}
 
-  '@daytona/api-client@0.183.0':
-    resolution: {integrity: sha512-YUZMjxTL2XWpPA0NoaUIDlEDCUvEc8iT+yXTfSkSwjBpCRvwONZ+15p/9sXtIjPWVlSx0ZtUY+xa006maTlywg==}
+  '@daytona/api-client@0.185.0':
+    resolution: {integrity: sha512-7GkzODTein+yc9ZBPmPsOpwuHoL+t3/ukDkuEKasGGCIT5EoTr4blwCoyCft4C0iSVGx4ha5D68ECmFqbhKGAw==}
 
-  '@daytona/toolbox-api-client@0.183.0':
-    resolution: {integrity: sha512-mlFw/E6oB45mT0BtfsNC4Q/Tug80R243tBIz8wxsABG2BYVIAF/l8usDrNMagf3Szhc+P4cylkayKP1batdVZA==}
+  '@daytona/toolbox-api-client@0.185.0':
+    resolution: {integrity: sha512-ghUBaGGGiIuJ7MIhhKOlG/nn4cmNY1gB3Fd6s8X1aXEMoV9JgLCuAnkxrCiKYg74A4z7126dS7grILK4GNlzyw==}
 
-  '@daytonaio/sdk@0.183.0':
-    resolution: {integrity: sha512-t+MMlcThxmpOlqdvxY7123qEBRGR1e4X8voARquie6/s0OUXN865XnegujMIDTZg9V41Ld7WBmdWXL0+LUQqYg==}
+  '@daytonaio/sdk@0.185.0':
+    resolution: {integrity: sha512-yVOzRShA9fmoGSG+wlSq6JrRLmc4h9yUTAjjfGonD6f2NjzwQuu1FadUCYlyVOmasKEn/Du9w27NgmXdMQp6JA==}
     deprecated: 'Moved to @daytona/sdk, same API, no breaking changes. Please update: npm uninstall @daytonaio/sdk && npm i @daytona/sdk'
 
   '@emnapi/core@1.10.0':
@@ -930,8 +930,8 @@ packages:
   '@types/mdurl@2.0.0':
     resolution: {integrity: sha512-RGdgjQUZba5p6QEFAVx2OGb8rQDL/cPRG7GiedRzMcJ1tYnUANBncjbSB1NRGwbvjcPeikRABz2nshyPk1bhWg==}
 
-  '@types/node@24.13.0':
-    resolution: {integrity: sha512-5vtOqGQr4NJKeEzV441FcOi2MeG9UTWq9LqVLGneDdu4vlX17H8kQ2PA2UmNwCUGPVDj4oBjNhS7ReVEIWJJrg==}
+  '@types/node@24.13.1':
+    resolution: {integrity: sha512-RSpUJGmvsJ1ZeBehQZFhIdpsz+bIpES0nIQXko4Ybq+N+kX6XvOq3Jo+iJ82FWLdblFq85AsMikd3m35jgezYg==}
 
   '@types/qs@6.15.1':
     resolution: {integrity: sha512-GZHUBZR9hckSUhrxmp1nG6NwdpM9fCunJwyThLW1X3AyHgd9IlHb6VANpQQqDr2o/qQp6McZ3y/IA2rVzKzSbw==}
@@ -1662,8 +1662,8 @@ packages:
   ms@2.1.3:
     resolution: {integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==}
 
-  nanoid@3.3.13:
-    resolution: {integrity: sha512-sPdqC6ByMVVGvF1ynvvMo0/o+oD1VX7DaHhijt1bFgjvBkHBib4t49GoNDhf2NDta4oeUNlaGbSt5K7qjZ955Q==}
+  nanoid@3.3.15:
+    resolution: {integrity: sha512-y7Wygv/7mEOvxTuEQDB8StXdMRBWf1kR/tlhAzBRUFkB2jfcLOAxO/SHmOO2zgz1pVgK29/kyupn059/bCHdjA==}
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
@@ -1772,8 +1772,8 @@ packages:
     resolution: {integrity: sha512-FfR8sjd4em2T6fb3I2MwAJU7HWVMr9zba+enmQeeWFfCbm+UOC/0X4DS8XtpUTMwWMGbjKYP7xjfNekzyGmB3A==}
     engines: {node: ^10 || ^12 || >=14}
 
-  prettier@3.8.3:
-    resolution: {integrity: sha512-7igPTM53cGHMW8xWuVTydi2KO233VFiTNyF5hLJqpilHfmn8C8gPf+PS7dUT64YcXFbiMGZxS9pCSxL/Dxm/Jw==}
+  prettier@3.8.4:
+    resolution: {integrity: sha512-N2MylSdi48+5N/6S5j+maeHbUSIzzZ5uOcX5Hm4QpV8Dkb1HFjfAKTKX6yNPJQD9AhcT3ifHNB66tWTTJDi11Q==}
     engines: {node: '>=14'}
     hasBin: true
 
@@ -2594,26 +2594,26 @@ snapshots:
       '@babel/helper-string-parser': 8.0.0
       '@babel/helper-validator-identifier': 8.0.0
 
-  '@daytona/api-client@0.183.0':
+  '@daytona/api-client@0.185.0':
     dependencies:
       axios: 1.16.1
     transitivePeerDependencies:
       - debug
       - supports-color
 
-  '@daytona/toolbox-api-client@0.183.0':
+  '@daytona/toolbox-api-client@0.185.0':
     dependencies:
       axios: 1.16.1
     transitivePeerDependencies:
       - debug
       - supports-color
 
-  '@daytonaio/sdk@0.183.0(ws@8.21.0)':
+  '@daytonaio/sdk@0.185.0(ws@8.21.0)':
     dependencies:
       '@aws-sdk/client-s3': 3.1056.0
       '@aws-sdk/lib-storage': 3.1056.0(@aws-sdk/client-s3@3.1056.0)
-      '@daytona/api-client': 0.183.0
-      '@daytona/toolbox-api-client': 0.183.0
+      '@daytona/api-client': 0.185.0
+      '@daytona/toolbox-api-client': 0.185.0
       '@iarna/toml': 2.2.5
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/exporter-trace-otlp-http': 0.217.0(@opentelemetry/api@1.9.1)
@@ -3144,7 +3144,7 @@ snapshots:
 
   '@slack/logger@4.0.1':
     dependencies:
-      '@types/node': 24.13.0
+      '@types/node': 24.13.1
 
   '@slack/types@2.21.1': {}
 
@@ -3152,7 +3152,7 @@ snapshots:
     dependencies:
       '@slack/logger': 4.0.1
       '@slack/types': 2.21.1
-      '@types/node': 24.13.0
+      '@types/node': 24.13.1
       '@types/retry': 0.12.0
       axios: 1.16.1
       eventemitter3: 5.0.4
@@ -3224,7 +3224,7 @@ snapshots:
   '@types/body-parser@1.19.6':
     dependencies:
       '@types/connect': 3.4.38
-      '@types/node': 24.13.0
+      '@types/node': 24.13.1
 
   '@types/chai@5.2.3':
     dependencies:
@@ -3233,7 +3233,7 @@ snapshots:
 
   '@types/connect@3.4.38':
     dependencies:
-      '@types/node': 24.13.0
+      '@types/node': 24.13.1
 
   '@types/deep-eql@4.0.2': {}
 
@@ -3241,7 +3241,7 @@ snapshots:
 
   '@types/express-serve-static-core@5.1.1':
     dependencies:
-      '@types/node': 24.13.0
+      '@types/node': 24.13.1
       '@types/qs': 6.15.1
       '@types/range-parser': 1.2.7
       '@types/send': 1.2.1
@@ -3265,7 +3265,7 @@ snapshots:
 
   '@types/mdurl@2.0.0': {}
 
-  '@types/node@24.13.0':
+  '@types/node@24.13.1':
     dependencies:
       undici-types: 7.18.2
 
@@ -3277,12 +3277,12 @@ snapshots:
 
   '@types/send@1.2.1':
     dependencies:
-      '@types/node': 24.13.0
+      '@types/node': 24.13.1
 
   '@types/serve-static@2.2.0':
     dependencies:
       '@types/http-errors': 2.0.5
-      '@types/node': 24.13.0
+      '@types/node': 24.13.1
 
   '@vitest/expect@4.1.7':
     dependencies:
@@ -3293,13 +3293,13 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.0
 
-  '@vitest/mocker@4.1.7(vite@8.0.14(@types/node@24.13.0)(yaml@2.9.0))':
+  '@vitest/mocker@4.1.7(vite@8.0.14(@types/node@24.13.1)(yaml@2.9.0))':
     dependencies:
       '@vitest/spy': 4.1.7
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 8.0.14(@types/node@24.13.0)(yaml@2.9.0)
+      vite: 8.0.14(@types/node@24.13.1)(yaml@2.9.0)
 
   '@vitest/pretty-format@4.1.7':
     dependencies:
@@ -3937,7 +3937,7 @@ snapshots:
 
   ms@2.1.3: {}
 
-  nanoid@3.3.13: {}
+  nanoid@3.3.15: {}
 
   negotiator@1.0.0: {}
 
@@ -4023,11 +4023,11 @@ snapshots:
 
   postcss@8.5.15:
     dependencies:
-      nanoid: 3.3.13
+      nanoid: 3.3.15
       picocolors: 1.1.1
       source-map-js: 1.2.1
 
-  prettier@3.8.3: {}
+  prettier@3.8.4: {}
 
   process-warning@5.0.0: {}
 
@@ -4043,7 +4043,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.1
-      '@types/node': 24.13.0
+      '@types/node': 24.13.1
       long: 5.3.2
 
   protobufjs@8.0.1:
@@ -4058,7 +4058,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.1
-      '@types/node': 24.13.0
+      '@types/node': 24.13.1
       long: 5.3.2
 
   proxy-addr@2.0.7:
@@ -4426,7 +4426,7 @@ snapshots:
 
   vary@1.1.2: {}
 
-  vite@8.0.14(@types/node@24.13.0)(yaml@2.9.0):
+  vite@8.0.14(@types/node@24.13.1)(yaml@2.9.0):
     dependencies:
       lightningcss: 1.32.0
       picomatch: 4.0.4
@@ -4434,14 +4434,14 @@ snapshots:
       rolldown: 1.0.2
       tinyglobby: 0.2.17
     optionalDependencies:
-      '@types/node': 24.13.0
+      '@types/node': 24.13.1
       fsevents: 2.3.3
       yaml: 2.9.0
 
-  vitest@4.1.7(@opentelemetry/api@1.9.1)(@types/node@24.13.0)(vite@8.0.14(@types/node@24.13.0)(yaml@2.9.0)):
+  vitest@4.1.7(@opentelemetry/api@1.9.1)(@types/node@24.13.1)(vite@8.0.14(@types/node@24.13.1)(yaml@2.9.0)):
     dependencies:
       '@vitest/expect': 4.1.7
-      '@vitest/mocker': 4.1.7(vite@8.0.14(@types/node@24.13.0)(yaml@2.9.0))
+      '@vitest/mocker': 4.1.7(vite@8.0.14(@types/node@24.13.1)(yaml@2.9.0))
       '@vitest/pretty-format': 4.1.7
       '@vitest/runner': 4.1.7
       '@vitest/snapshot': 4.1.7
@@ -4458,11 +4458,11 @@ snapshots:
       tinyexec: 1.2.4
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.0
-      vite: 8.0.14(@types/node@24.13.0)(yaml@2.9.0)
+      vite: 8.0.14(@types/node@24.13.1)(yaml@2.9.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
-      '@types/node': 24.13.0
+      '@types/node': 24.13.1
     transitivePeerDependencies:
       - msw
 
