@@ -18,7 +18,6 @@ import {
   appendAlias,
 } from "@thor/common";
 import type { ProgressEvent } from "@thor/common";
-import { getMemoryProgressEvents } from "./memory-progress.ts";
 import type { SessionSubscription } from "./event-bus.ts";
 import { IdleAutoResume, type AssistantMessageSummary } from "./idle-auto-resume.ts";
 import { SessionErrorGrace } from "./session-error-grace.ts";
@@ -114,18 +113,7 @@ export function toolDisplayName(toolPart: ToolPart): string {
   return parts.slice(0, depth).join(" ");
 }
 
-function emitMemoryEventsFromToolPart(
-  toolPart: ToolPart,
-  emit: (event: ProgressEvent) => void,
-): void {
-  const status = toolPart.state.status;
-  const input = (toolPart.state as { input?: unknown }).input;
-  for (const event of getMemoryProgressEvents({ tool: toolPart.tool, status, input })) {
-    emit(event);
-  }
-}
-
-function sessionErrorMessage(error: unknown): string {
+export function sessionErrorMessage(error: unknown): string {
   if (!error || typeof error !== "object") return "Unknown error";
 
   const candidate = error as {
@@ -245,7 +233,7 @@ function logPartToStdout(sessionId: string, part: Part): void {
   // Everything else (step-start, reasoning, snapshot, patch, compaction, agent) — silent
 }
 
-function messageUpdatedInfo(event: Event): Record<string, unknown> | undefined {
+export function messageUpdatedInfo(event: Event): Record<string, unknown> | undefined {
   const properties = (event as unknown as { properties?: unknown }).properties;
   if (!isRecord(properties)) return undefined;
   const info = properties.info ?? properties.message;
@@ -310,7 +298,7 @@ function assistantMessageSummaryFromInfo(
   };
 }
 
-function emitContextProgressFromInfo(
+export function emitContextProgressFromInfo(
   info: Record<string, unknown>,
   limits: ModelContextLimits,
   emit: (event: ProgressEvent) => void,
@@ -342,12 +330,8 @@ export interface PromptStreamDeps {
   subscription: SessionSubscription;
   sessionId: string;
   anchorId: string;
-  /** Forward a progress event to NDJSON/Slack/log sinks. */
-  emit: (event: ProgressEvent) => void;
   /** Grace window for a session.error before it becomes terminal. */
   sessionErrorGraceMs: number;
-  /** Current model context-window limits, read fresh per message update. */
-  modelContextLimits: () => ModelContextLimits;
   /**
    * Serialize a session-scoped send against concurrent trigger sends. The idle
    * auto-resume "Continue" uses this so it can't double-send into a session a
@@ -374,7 +358,7 @@ export interface PromptStreamResult {
  * subscription is closed before returning.
  */
 export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStreamResult> {
-  const { client, subscription, sessionId, anchorId, emit } = deps;
+  const { client, subscription, sessionId, anchorId } = deps;
 
   let seq = 0;
   const collectedTextParts: string[] = [];
@@ -383,41 +367,12 @@ export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStr
   const errorGrace = new SessionErrorGrace(deps.sessionErrorGraceMs);
   const autoResume = new IdleAutoResume();
   let sawParentMessagePart = false;
-  // Track child session IDs for progress forwarding.
+  // Track child session IDs for child-session discovery.
   const childSessionIds = new Set<string>();
-  // Dedupe task delegate emissions across repeated part updates.
-  const emittedTaskDelegates = new Set<string>();
-  // Dedupe tool progress emissions — emit once per call when it starts running.
-  const emittedToolStarts = new Set<string>();
   // Text parts are roleless; learn parent message roles from message.updated
   // before allowing text to re-arm idle auto-resume.
   const parentMessageRoles = new Map<string, string>();
   const pendingNonEmptyTextMessageIds = new Set<string>();
-
-  function emitToolProgress(toolPart: ToolPart, status: "running" | "completed" | "error"): void {
-    const key = `${toolPart.sessionID}|${toolPart.messageID}|${toolPart.callID}`;
-    if (emittedToolStarts.has(key)) return;
-    emittedToolStarts.add(key);
-    const displayName = toolDisplayName(toolPart);
-    emit({ type: "tool", tool: displayName, status });
-  }
-
-  function emitTaskDelegateProgress(toolPart: ToolPart): void {
-    if (toolPart.tool !== "task") return;
-
-    const input = (toolPart.state as { input?: unknown }).input;
-    if (!isRecord(input)) return;
-    const raw = input.subagent_type;
-    if (typeof raw !== "string") return;
-    const agent = raw.trim();
-    if (!agent) return;
-
-    const key = `${toolPart.sessionID}|${toolPart.messageID}|${toolPart.callID}`;
-    if (emittedTaskDelegates.has(key)) return;
-    emittedTaskDelegates.add(key);
-
-    emit({ type: "delegate", agent });
-  }
 
   const iterator = subscription[Symbol.asyncIterator]();
   try {
@@ -462,33 +417,13 @@ export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStr
           if (assistantMessage) {
             autoResume.onAssistantMessageUpdate(assistantMessage);
           }
-          emitContextProgressFromInfo(info, deps.modelContextLimits(), emit);
         }
       }
 
-      // Forward tool progress from child sessions so
-      // Slack progress isn't silent while a task runs. Non-parent
-      // events must never drive parent terminal handling below — a
-      // child's session.idle / session.error would otherwise end the
-      // parent run before its final answer is emitted.
+      // Non-parent events (child sessions) must never drive parent terminal
+      // handling below — a child's session.idle / session.error would otherwise
+      // end the parent run before its final answer is emitted.
       if (!isParent) {
-        if (
-          event.type === "message.part.updated" &&
-          childSessionIds.has(event.properties.part.sessionID)
-        ) {
-          const part = event.properties.part;
-          if (part.type === "tool") {
-            const toolPart = part as ToolPart;
-            emitTaskDelegateProgress(toolPart);
-            const status = toolPart.state.status;
-            if (status === "running") {
-              emitToolProgress(toolPart, "running");
-            } else if (status === "completed" || status === "error") {
-              emitToolProgress(toolPart, status);
-              emitMemoryEventsFromToolPart(toolPart, emit);
-            }
-          }
-        }
         continue;
       }
 
@@ -517,7 +452,6 @@ export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStr
           }
         } else if (part.type === "tool") {
           const toolPart = part as ToolPart;
-          emitTaskDelegateProgress(toolPart);
           const status = toolPart.state.status;
 
           // Discover child sessions when a task tool starts running.
@@ -556,15 +490,9 @@ export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStr
               });
           }
 
-          if (status === "running") {
-            emitToolProgress(toolPart, "running");
-          }
-
           if (status === "completed" || status === "error") {
             const displayName = toolDisplayName(toolPart);
             collectedToolCalls.push({ tool: displayName, state: status });
-            emitToolProgress(toolPart, status);
-            emitMemoryEventsFromToolPart(toolPart, emit);
           }
         }
       } else if (event.type === "session.error") {
@@ -572,7 +500,6 @@ export async function runPromptStream(deps: PromptStreamDeps): Promise<PromptStr
         const errorMessage = sessionErrorMessage(errorProps.error);
         errorGrace.record(errorMessage, seq);
         collectedToolCalls.push({ tool: "error", state: "error" });
-        emit({ type: "tool", tool: "error", status: "error" });
         logError(log, "session_error", errorMessage, {
           sessionId,
           errorDetail: JSON.stringify(errorProps.error),

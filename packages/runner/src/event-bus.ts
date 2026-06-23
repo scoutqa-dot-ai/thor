@@ -1,13 +1,14 @@
 /**
- * Lazy shared SSE event bus for OpenCode.
+ * Process-owned SSE event bus for OpenCode.
  *
- * Instead of each trigger opening its own SSE connection, all triggers share
- * one global OpenCode event stream. Subscriptions register interest by session
- * id, and the global stream dispatches matching payloads to per-session listeners.
+ * Owns one global OpenCode SSE connection per base URL. Subscriptions register
+ * interest by session id and receive matching events. Firehose observers
+ * receive every decoded event regardless of session id.
  *
- * - Connects lazily on the first subscribe() call.
- * - If the stream ends while subscriptions are active, reconnects immediately.
- * - Listeners are cleaned up when the returned iterator is broken/returned.
+ * - Starts on the first subscribe() call (or via explicit start()).
+ * - Reconnects automatically whenever the stream ends.
+ * - Subscription close does not affect SSE connection lifetime.
+ * - Observer exceptions are caught and logged so they cannot kill the reader.
  */
 
 import { createOpencodeClient, type Event, type GlobalEvent } from "@opencode-ai/sdk";
@@ -18,16 +19,22 @@ const log = createLogger("event-bus");
 
 /**
  * Minimum delay between reconnect attempts. Guards against a tight loop if
- * opencode's SSE endpoint closes immediately (as `/event` did in 1.14.48).
+ * opencode's SSE endpoint closes immediately.
  */
 const RECONNECT_MIN_DELAY_MS = 1000;
 
+/** Receives every decoded event from the global SSE stream. */
+export type FirehoseObserver = (event: Event, sessionId: string | undefined) => void;
+
 /**
- * One global SSE connection. Dispatches events to session listeners.
+ * One global SSE connection. Dispatches events to per-session listeners and
+ * firehose observers. Process-owned: connection lifetime is independent of
+ * subscription count.
  */
 class GlobalEventBus {
   private emitter = new EventEmitter();
   private alive = false;
+  private started = false;
   private connectPromise: Promise<void> | null = null;
   private activeSubscriptions = 0;
   private connectionGeneration = 0;
@@ -37,15 +44,33 @@ class GlobalEventBus {
   private currentAbortController: AbortController | null = null;
   private closed = false;
   private baseUrl: string;
-  private onEmpty: () => void;
   private lastConnectAt = 0;
   private pendingReconnect: ReturnType<typeof setTimeout> | null = null;
+  private firehoseObservers = new Set<FirehoseObserver>();
 
-  constructor(baseUrl: string, onEmpty: () => void) {
+  constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
-    this.onEmpty = onEmpty;
     // Sessions can be numerous; raise the per-event limit.
     this.emitter.setMaxListeners(200);
+  }
+
+  /**
+   * Mark the bus as started and initiate the connection. Idempotent.
+   * Called by subscribe() and by EventBusRegistry.start() when a
+   * ProgressListener is registered.
+   */
+  start(): void {
+    if (this.started || this.closed) return;
+    this.started = true;
+    void this.ensureConnected().catch((err) => {
+      logError(log, "start_error", err instanceof Error ? err.message : String(err), {
+        baseUrl: this.baseUrl,
+      });
+    });
+  }
+
+  addFirehoseObserver(observer: FirehoseObserver): void {
+    this.firehoseObservers.add(observer);
   }
 
   /**
@@ -85,8 +110,7 @@ class GlobalEventBus {
     this.lastConnectAt = Date.now();
     logInfo(log, "connected", { baseUrl: this.baseUrl });
 
-    // Fire-and-forget reader loop. When the stream ends, active subscriptions
-    // trigger an immediate reconnect through ensureConnected().
+    // Fire-and-forget reader loop. When the stream ends, reconnect if started.
     void (async () => {
       const iterator = stream[Symbol.asyncIterator]();
       if (generation === this.connectionGeneration) {
@@ -101,6 +125,19 @@ class GlobalEventBus {
           if (sid) {
             this.emitter.emit(sid, event.payload);
           }
+          // Deliver to firehose observers; catch exceptions so they cannot kill
+          // the reader loop.
+          for (const observer of this.firehoseObservers) {
+            try {
+              observer(event.payload, sid);
+            } catch (err) {
+              logError(
+                log,
+                "firehose_observer_error",
+                err instanceof Error ? err.message : String(err),
+              );
+            }
+          }
         }
       } catch (err) {
         logError(log, "stream_error", err instanceof Error ? err.message : String(err), {
@@ -114,7 +151,7 @@ class GlobalEventBus {
           this.currentIterator = null;
           this.currentAbortController = null;
           logInfo(log, "disconnected", { baseUrl: this.baseUrl });
-          this.reconnectIfActive();
+          this.reconnect();
         }
       }
     })();
@@ -122,6 +159,9 @@ class GlobalEventBus {
 
   subscribe(sessionIds: string[]): SessionSubscription {
     if (this.closed) throw new Error("GlobalEventBus is closed");
+    // Ensure the bus is started so it reconnects independently of subscription
+    // count — first subscriber makes the bus persistent for the process lifetime.
+    this.start();
     this.activeSubscriptions++;
     return new SessionSubscription(this.emitter, sessionIds, () => this.releaseSubscription());
   }
@@ -130,19 +170,17 @@ class GlobalEventBus {
     if (this.activeSubscriptions > 0) {
       this.activeSubscriptions--;
     }
-    if (this.activeSubscriptions === 0) {
-      this.onEmpty();
-    }
+    // Bus lifetime is process-owned: no onEmpty or disposal on last close.
   }
 
-  private reconnectIfActive(): void {
-    if (this.closed || this.activeSubscriptions === 0) return;
+  private reconnect(): void {
+    if (this.closed || !this.started) return;
     if (this.pendingReconnect || this.connectPromise) return;
     const elapsed = Date.now() - this.lastConnectAt;
     const delay = elapsed >= RECONNECT_MIN_DELAY_MS ? 0 : RECONNECT_MIN_DELAY_MS - elapsed;
     const runReconnect = () => {
       this.pendingReconnect = null;
-      if (this.closed || this.activeSubscriptions === 0 || this.alive) return;
+      if (this.closed || !this.started || this.alive) return;
       void this.ensureConnected().catch((err) => {
         logError(log, "reconnect_error", err instanceof Error ? err.message : String(err), {
           baseUrl: this.baseUrl,
@@ -159,7 +197,7 @@ class GlobalEventBus {
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    this.activeSubscriptions = 0;
+    this.started = false;
     this.alive = false;
     this.connectPromise = null;
     this.connectionGeneration++;
@@ -176,6 +214,7 @@ class GlobalEventBus {
     this.currentStream = null;
     this.currentClient = null;
     this.emitter.removeAllListeners();
+    this.firehoseObservers.clear();
     abortController?.abort();
     void closeSseResource(iterator);
     if (stream !== iterator) void closeSseResource(stream);
@@ -185,31 +224,39 @@ class GlobalEventBus {
 
 /**
  * Registry that hands out one global event bus per OpenCode base URL.
+ * The bus is process-owned: it stays alive after all subscriptions close.
  */
 export class EventBusRegistry {
   private bus: GlobalEventBus | undefined;
   private baseUrl: string;
+  private observers = new Set<FirehoseObserver>();
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
   }
 
   /**
+   * Add a firehose observer that receives every decoded event. Registered
+   * immediately on the existing bus (if any) and on any future bus creation.
+   */
+  addFirehoseObserver(observer: FirehoseObserver): void {
+    this.observers.add(observer);
+    this.bus?.addFirehoseObserver(observer);
+  }
+
+  /**
+   * Explicitly start the bus (called by ProgressListener setup). Idempotent.
+   */
+  start(): void {
+    this.getOrCreateBus().start();
+  }
+
+  /**
    * Get a subscription for the given session IDs. Creates the bus lazily on
-   * first use; reconnects if the previous connection died.
+   * first use and ensures it is started.
    */
   async subscribe(sessionIds: string[]): Promise<SessionSubscription> {
-    let bus = this.bus;
-    if (!bus) {
-      const createdBus = new GlobalEventBus(this.baseUrl, () => {
-        if (this.bus === createdBus) {
-          this.bus = undefined;
-          createdBus.close();
-        }
-      });
-      bus = createdBus;
-      this.bus = bus;
-    }
+    const bus = this.getOrCreateBus();
     const subscription = bus.subscribe(sessionIds);
     try {
       await bus.ensureConnected();
@@ -218,6 +265,16 @@ export class EventBusRegistry {
       subscription.close();
       throw err;
     }
+  }
+
+  private getOrCreateBus(): GlobalEventBus {
+    if (!this.bus) {
+      this.bus = new GlobalEventBus(this.baseUrl);
+      for (const observer of this.observers) {
+        this.bus.addFirehoseObserver(observer);
+      }
+    }
+    return this.bus;
   }
 }
 
@@ -337,8 +394,11 @@ function extractSessionId(event: Event): string | undefined {
     return event.properties.part.sessionID;
   }
   if (event.type === "message.updated") {
-    const info = (event.properties as { info?: { sessionID?: string; sessionId?: string } })
-      .info;
+    // Align with prompt-stream.ts: check properties.info ?? properties.message
+    const properties = (event as unknown as { properties?: Record<string, unknown> }).properties;
+    const info = (properties?.info ?? properties?.message) as
+      | { sessionID?: string; sessionId?: string }
+      | undefined;
     return info?.sessionID ?? info?.sessionId;
   }
   if (

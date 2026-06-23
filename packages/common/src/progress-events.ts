@@ -2,13 +2,6 @@ import { z } from "zod/v4";
 
 // --- Individual event schemas ---
 
-export const ProgressStartSchema = z.object({
-  type: z.literal("start"),
-  sessionId: z.string(),
-  correlationKey: z.string().optional(),
-  resumed: z.boolean(),
-});
-
 export const ProgressToolSchema = z.object({
   type: z.literal("tool"),
   tool: z.string(),
@@ -48,11 +41,6 @@ export const ProgressDoneSchema = z.object({
   durationMs: z.number(),
 });
 
-export const ProgressErrorSchema = z.object({
-  type: z.literal("error"),
-  error: z.string(),
-});
-
 const ProgressHeartbeatSchema = z.object({
   type: z.literal("heartbeat"),
 });
@@ -60,22 +48,18 @@ const ProgressHeartbeatSchema = z.object({
 // --- Discriminated union ---
 
 export const ProgressEventSchema = z.union([
-  ProgressStartSchema,
   ProgressToolSchema,
   ProgressMemorySchema,
   ProgressDelegateSchema,
   ProgressContextSchema,
   ProgressDoneSchema,
-  ProgressErrorSchema,
   ProgressHeartbeatSchema,
 ]);
 
 // --- Inferred types ---
 
-export type ProgressStart = z.infer<typeof ProgressStartSchema>;
 export type ProgressTool = z.infer<typeof ProgressToolSchema>;
 export type ProgressMemory = z.infer<typeof ProgressMemorySchema>;
 export type ProgressDelegate = z.infer<typeof ProgressDelegateSchema>;
 export type ProgressDone = z.infer<typeof ProgressDoneSchema>;
-export type ProgressError = z.infer<typeof ProgressErrorSchema>;
 export type ProgressEvent = z.infer<typeof ProgressEventSchema>;

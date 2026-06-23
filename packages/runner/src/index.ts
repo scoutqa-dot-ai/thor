@@ -45,7 +45,6 @@ import {
   findUserByGithub,
   findUserBySlack,
   WORKSPACE_CONFIG_PATH,
-  handleProgressEvent,
 } from "@thor/common";
 import type {
   ConfigLoader,
@@ -57,13 +56,13 @@ import type {
   ParsedOpencodeEvent,
 } from "@thor/common";
 import type { ReverseAnchorEntry, SessionEventLogRecord } from "@thor/common";
-import type { ProgressEvent, ProgressTarget, ProgressTransport } from "@thor/common";
+import type { ProgressTransport } from "@thor/common";
 import { pathToFileURL } from "node:url";
 import {
   createSlackProgressTransport,
-  resolveSlackProgressTarget,
   type SlackProgressTransportTarget,
 } from "./slack-progress.ts";
+import { ProgressListener } from "./progress-listener.ts";
 
 const log = createLogger("runner");
 
@@ -106,7 +105,6 @@ export interface RunnerAppOptions {
   ensureOpencodeAvailable?: () => Promise<void>;
   workspaceConfigLoader?: ConfigLoader;
   progressTransport?: ProgressTransport<SlackProgressTransportTarget>;
-  progressEventSink?: (event: ProgressEvent) => void;
 }
 
 /** Read a file, returns trimmed content or undefined. */
@@ -411,6 +409,15 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       token: config.slackBotToken,
       slackApiUrl: config.slackApiBaseUrl,
     });
+
+  if (progressTransport) {
+    new ProgressListener(
+      (observer) => eventBuses.addFirehoseObserver(observer),
+      progressTransport,
+      currentModelContextLimits,
+    );
+    eventBuses.start();
+  }
 
   function routeParam(value: string | string[] | undefined): string {
     return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
@@ -896,76 +903,20 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
       // limits; subsequent calls within the cache TTL resolve immediately.
       await warmModelLimits;
 
-      const progressTarget = resolveSlackProgressTarget(correlationKey);
-      let progressChain = Promise.resolve();
-
       const stream = parsed.data.stream === true;
       if (stream) {
         res.setHeader("Content-Type", "application/x-ndjson");
         res.flushHeaders?.();
       }
 
-      function emit(event: ProgressEvent): void {
-        logInfo(log, "progress_emit", {
-          sessionId,
-          type: event.type,
-          ...(event.type === "tool" ? { tool: event.tool } : {}),
-          ...(event.type === "memory"
-            ? { action: event.action, path: event.path, source: event.source }
-            : {}),
-          ...(event.type === "delegate" ? { agent: event.agent } : {}),
-          ...(event.type === "context"
-            ? {
-                providerID: event.providerID,
-                modelID: event.modelID,
-                tokens: event.tokens,
-                limit: event.limit,
-                usagePercent: event.usagePercent,
-              }
-            : {}),
-          ...(event.type === "done"
-            ? { status: event.status, durationMs: (event as { durationMs?: number }).durationMs }
-            : {}),
-          ts: Date.now(),
-        });
-        options.progressEventSink?.(event);
-        if (stream && !res.writableEnded) {
-          res.write(JSON.stringify(event) + "\n");
-        }
-        if (!progressTarget || !progressTransport) return;
-        progressChain = progressChain
-          .catch(() => undefined)
-          .then(() =>
-            handleProgressEvent(
-              progressTarget as ProgressTarget<SlackProgressTransportTarget>,
-              event,
-              progressTransport,
-            ),
-          );
-      }
-
-      emit({
-        type: "start",
-        sessionId,
-        correlationKey,
-        resumed,
-      });
-
-      for (const path of bootstrapMemoryPaths) {
-        emit({ type: "memory", action: "read", path, source: "bootstrap" });
-      }
-
       const backgroundTask = (async () => {
         try {
-          // --- Stream processing ---
           const { terminalError, textParts, toolCalls, totalParts } = await runPromptStream({
             client,
             subscription,
             sessionId,
             anchorId,
-            emit,
             sessionErrorGraceMs: SESSION_ERROR_GRACE_MS,
-            modelContextLimits: currentModelContextLimits,
             sendLock: (fn) => withKeyLock(correlationKeyLocks, sessionSendKey, fn),
           });
 
@@ -985,31 +936,43 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
             durationMs,
           });
 
-          // Final NDJSON event
-          emit({
-            type: "done",
+          return {
+            type: "done" as const,
             sessionId,
             correlationKey,
             resumed,
-            status: terminalError ? "error" : "completed",
+            status: (terminalError ? "error" : "completed") as "completed" | "error",
             ...(terminalError ? { error: terminalError } : {}),
             response: textParts.join("\n\n"),
             toolCalls,
             durationMs,
-          });
-          await progressChain;
+          };
         } catch (err) {
-          logError(log, "trigger_stream_error", err, { category: "background_stream_failure" });
-          endTrigger(triggerId, "error", {
-            error: err instanceof Error ? err.message : String(err),
+          logError(log, "trigger_background_error", err, {
+            category: "background_task_failure",
           });
-          emit({ type: "error", error: err instanceof Error ? err.message : String(err) });
-          await progressChain;
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          endTrigger(triggerId, "error", { error: errorMsg });
+          return {
+            type: "done" as const,
+            sessionId,
+            correlationKey,
+            resumed,
+            status: "error" as const,
+            error: errorMsg,
+            response: "",
+            toolCalls: [],
+            durationMs: Date.now() - promptStart,
+          };
         }
       })();
+
       if (stream) {
-        await backgroundTask;
-        if (!res.writableEnded) res.end();
+        const doneEvent = await backgroundTask;
+        if (!res.writableEnded) {
+          res.write(JSON.stringify(doneEvent) + "\n");
+          res.end();
+        }
       } else {
         void backgroundTask;
         res.json({ accepted: true, sessionId, resumed });

@@ -278,7 +278,7 @@ describe("EventBusRegistry", () => {
     await expect(collected).resolves.toEqual([childPart, parentIdle]);
   });
 
-  it("keeps the global stream open until the last active subscription closes", async () => {
+  it("subscription close does not close the SSE connection", async () => {
     const reg = new EventBusRegistry("http://localhost:4096");
 
     const sub1 = await reg.subscribe(["s1"]);
@@ -288,19 +288,33 @@ describe("EventBusRegistry", () => {
     expect(mockStream.iteratorReturn).not.toHaveBeenCalled();
 
     sub2.close();
-    await vi.waitFor(() => expect(mockStream.iteratorReturn).toHaveBeenCalledTimes(1));
+    // Give the event loop a few ticks — bus must remain connected
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockStream.iteratorReturn).not.toHaveBeenCalled();
   });
 
-  it("does not reconnect after the stream closes with no active subscriptions", async () => {
+  it("reconnects when the stream closes even with no active subscriptions", async () => {
+    const newMockStream = createMockStream();
+    let callCount = 0;
+    vi.mocked(createOpencodeClient).mockImplementation(() => {
+      callCount++;
+      const selectedStream = callCount === 1 ? mockStream : newMockStream;
+      return {
+        global: {
+          event: vi.fn().mockResolvedValue({ stream: selectedStream.stream }),
+        },
+      } as never;
+    });
+
     const reg = new EventBusRegistry("http://localhost:4096");
 
     const sub = await reg.subscribe(["s1"]);
-    sub.close();
+    sub.close(); // subscription closes but bus stays started
 
-    await vi.waitFor(() => expect(mockStream.iteratorReturn).toHaveBeenCalledTimes(1));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(createOpencodeClient).toHaveBeenCalledTimes(1);
+    mockStream.end(); // stream ends — bus should reconnect because started=true
+    await vi.waitFor(() => expect(createOpencodeClient).toHaveBeenCalledTimes(2), {
+      timeout: 3_000,
+    });
   });
 
   it("reconnects existing subscriptions when the global stream ends", async () => {
@@ -356,6 +370,82 @@ describe("EventBusRegistry", () => {
     expect(elapsed).toBeGreaterThanOrEqual(900);
 
     sub.close();
+  });
+
+  it("firehose observer receives all events dispatched through the bus", async () => {
+    const reg = new EventBusRegistry("http://localhost:4096");
+
+    const observed: Array<{ event: Event; sessionId: string | undefined }> = [];
+    reg.addFirehoseObserver((event, sessionId) => {
+      observed.push({ event, sessionId });
+    });
+
+    const sub = await reg.subscribe(["s1"]);
+    const part = makePartEvent("s1");
+    const idle = makeIdleEvent("s1");
+
+    const collected = collectUntilIdle(sub);
+    mockStream.push(makeGlobalEvent("/repo/a", part));
+    mockStream.push(makeGlobalEvent("/repo/a", idle));
+
+    await expect(collected).resolves.toEqual([part, idle]);
+
+    expect(observed).toHaveLength(2);
+    expect(observed[0]!.event).toEqual(part);
+    expect(observed[0]!.sessionId).toBe("s1");
+    expect(observed[1]!.event).toEqual(idle);
+    expect(observed[1]!.sessionId).toBe("s1");
+
+    sub.close();
+  });
+
+  it("firehose observer exceptions do not stop the SSE reader", async () => {
+    const reg = new EventBusRegistry("http://localhost:4096");
+
+    let observerCallCount = 0;
+    reg.addFirehoseObserver(() => {
+      observerCallCount++;
+      throw new Error("observer error");
+    });
+
+    const sub = await reg.subscribe(["s1"]);
+    const part1 = makePartEvent("s1", "first");
+    const part2 = makePartEvent("s1", "second");
+    const idle = makeIdleEvent("s1");
+
+    const collected = collectUntilIdle(sub);
+    mockStream.push(makeGlobalEvent("/repo/a", part1));
+    mockStream.push(makeGlobalEvent("/repo/a", part2));
+    mockStream.push(makeGlobalEvent("/repo/a", idle));
+
+    // Despite observer throwing, all events should still reach session subscriptions
+    await expect(collected).resolves.toEqual([part1, part2, idle]);
+    expect(observerCallCount).toBe(3);
+
+    sub.close();
+  });
+
+  it("routes message.updated events by session id from properties.message.sessionID", async () => {
+    const reg = new EventBusRegistry("http://localhost:4096");
+    const sub = await reg.subscribe(["s1"]);
+
+    const updateViaMessage: Event = {
+      type: "message.updated",
+      properties: {
+        message: {
+          id: "msg-s1",
+          sessionID: "s1",
+          role: "assistant",
+        },
+      },
+    } as unknown as Event;
+    const idle = makeIdleEvent("s1");
+    const collected = collectUntilIdle(sub);
+
+    mockStream.push(makeGlobalEvent("/repo/a", updateViaMessage));
+    mockStream.push(makeGlobalEvent("/repo/a", idle));
+
+    await expect(collected).resolves.toEqual([updateViaMessage, idle]);
   });
 });
 

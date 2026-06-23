@@ -37,7 +37,9 @@ function buildIssueCorrelationKey(owner: string, repo: string, number: string): 
   return `github:issue:${repo}:${owner}/${repo}#${number}`;
 }
 
-function parseIssueUrl(stdout: string): { owner: string; repo: string; number: string } | undefined {
+function parseIssueUrl(
+  stdout: string,
+): { owner: string; repo: string; number: string } | undefined {
   const match = stdout.match(GITHUB_ISSUE_URL_RE);
   if (!match) return undefined;
   const [, owner, repo, number] = match;

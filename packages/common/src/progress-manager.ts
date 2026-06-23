@@ -12,6 +12,16 @@ const UPDATE_INTERVAL_MS = 10_000;
 /** Base ticker cadence: refresh elapsed timer in Slack when no events arrive. */
 const TICK_INTERVAL_MS = 10_000;
 
+/**
+ * Backstop max age for a live session. Slack progress is now finalized only by
+ * the listener's parent `session.idle`; if that idle never arrives (dropped
+ * SSE, runner restart mid-run, OpenCode crash, abort without idle) the session
+ * would tick and stay resident forever. Evict it after this window so orphans
+ * cannot accumulate over process uptime. Generous on purpose — a backstop, not
+ * a normal completion path. The orphan Slack bubble is left as-is.
+ */
+const SESSION_MAX_AGE_MS = 6 * 60 * 60_000; // 6h
+
 /** Pick ticker delay based on how long the session has been running.
  * Long-running sessions tick less often so we don't waste Slack updates on
  * a counter ticking up by tiny relative increments. */
@@ -351,7 +361,6 @@ export function clearRegistry(): void {
 // ---------------------------------------------------------------------------
 
 class ProgressSession {
-  readonly sessionId: string | undefined;
   private channel: string;
   private threadTs: string;
   private sourceTs: string;
@@ -374,30 +383,14 @@ class ProgressSession {
   private progressTarget: ProgressTarget;
   private transport: ProgressTransport;
 
-  constructor(progressTarget: ProgressTarget, transport: ProgressTransport, sessionId?: string) {
+  constructor(progressTarget: ProgressTarget, transport: ProgressTransport) {
     this.progressTarget = progressTarget;
     this.transport = transport;
     this.channel = progressTarget.key;
     this.threadTs = progressTarget.key;
     this.sourceTs = progressTarget.sourceTs;
-    this.sessionId = sessionId;
     this.startTime = Date.now();
     this.scheduleNextTick();
-  }
-
-  /**
-   * Stop ticking and refuse further updates without posting any final state.
-   * Used when this session is superseded by a newer one (e.g. a duplicate
-   * `start` arrives) so the orphaned tickTimer chain doesn't keep editing
-   * messages owned by the new session.
-   */
-  abandon(): void {
-    if (this.finished) return;
-    this.finished = true;
-    if (this.tickTimer) {
-      clearTimeout(this.tickTimer);
-      this.tickTimer = undefined;
-    }
   }
 
   private scheduleNextTick(): void {
@@ -411,6 +404,22 @@ class ProgressSession {
   private async onTick(): Promise<void> {
     this.tickTimer = undefined;
     if (this.finished) return;
+    // Orphan backstop: a session that never receives a terminal idle would
+    // otherwise reschedule forever and stay in activeSessions. Self-evict.
+    if (Date.now() - this.startTime >= SESSION_MAX_AGE_MS) {
+      this.finished = true;
+      activeSessions.delete(this.channel);
+      logInfo(log, "session_orphan_evicted", {
+        channel: this.channel,
+        threadTs: this.threadTs,
+        toolCallCount: this.toolCallCount,
+      });
+      // The normal done path never ran, so run its cleanup here: delete any
+      // progress message this orphan posted and drop its registry entry.
+      // Without this, both leak for a thread that may never run again.
+      await onSessionEnd(this.channel, this.threadTs);
+      return;
+    }
     try {
       if (this.thresholdMet && this.messageTs) {
         if (Date.now() - this.lastUpdateTime >= UPDATE_INTERVAL_MS) {
@@ -558,13 +567,7 @@ class ProgressSession {
     const elapsed = formatDuration(Date.now() - this.startTime);
 
     if (status === "completed") {
-      // Only update an existing progress message — never create a new "Done" post.
-      // If no progress message was posted (e.g. bot replied before threshold), stay silent.
-      if (this.messageTs) {
-        const text = `✅ Done — ${this.toolCallCount} tool calls in ${elapsed}`;
-        await this.update(text);
-        updateProgressStatus(this.channel, this.threadTs, this.messageTs, "completed");
-      }
+      // No transient "Done" edit — the cleanup path deletes non-error messages.
       return;
     }
 
@@ -701,19 +704,8 @@ export async function handleProgressEvent(
     ts: Date.now(),
   });
 
-  if (event.type === "start") {
-    // Abandon any prior session on this thread so its tickTimer stops and it
-    // can no longer post or edit messages — otherwise the orphan keeps
-    // editing the OLD progress message while the new session runs.
-    const prior = activeSessions.get(key);
-    if (prior) prior.abandon();
-    activeSessions.set(key, new ProgressSession(target, transport, event.sessionId));
-    return;
-  }
-
   let session = activeSessions.get(key);
   if (!session) {
-    // Late-arriving event without start — create session on the fly
     session = new ProgressSession(target, transport);
     activeSessions.set(key, session);
   }
@@ -739,26 +731,10 @@ export async function handleProgressEvent(
       });
       break;
     case "done": {
-      // A late `done` from a superseded stream must not finish the current
-      // session. Match the event's sessionId to the active session — if they
-      // differ, this `done` belongs to an older stream and is ignored.
-      if (session.sessionId && event.sessionId && session.sessionId !== event.sessionId) {
-        logInfo(log, "done_session_mismatch", {
-          key,
-          eventSessionId: event.sessionId,
-          activeSessionId: session.sessionId,
-        });
-        return;
-      }
       await session.finish(event.status === "completed" ? "completed" : "error", event.error);
       activeSessions.delete(key);
       await onSessionEnd(target.key, target.key);
       break;
     }
-    case "error":
-      await session.finish("error", event.error);
-      activeSessions.delete(key);
-      await onSessionEnd(target.key, target.key);
-      break;
   }
 }

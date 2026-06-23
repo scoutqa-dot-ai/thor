@@ -257,7 +257,7 @@ function createHarness(
   const busySessions = opts.busySessions ?? new Set<string>();
   const prompts: string[] = [];
   const aborts: string[] = [];
-  const progressEvents: unknown[] = [];
+  const progressEvents: unknown[] = []; // kept for API compat; no longer populated
   const abortedPending = new Set<string>();
   let counter = 0;
 
@@ -334,14 +334,10 @@ function createHarness(
     ensureOpencodeAvailable: async () => {},
     isOpencodeReachable: async () => true,
     workspaceConfigLoader: opts.workspaceConfig ? () => opts.workspaceConfig! : () => ({}),
-    progressEventSink: (event) => progressEvents.push(event),
   });
 
-  latestProgressEvents = progressEvents;
   return { app, prompts, aborts, existingSessions, busySessions, progressEvents };
 }
-
-let latestProgressEvents: unknown[] = [];
 
 async function withServer<T>(
   app: ReturnType<typeof createRunnerApp>,
@@ -358,27 +354,26 @@ async function withServer<T>(
 }
 
 async function trigger(url: string, body: Record<string, unknown>) {
-  const progressOffset = latestProgressEvents.length;
   const response = await fetch(`${url}/trigger`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ directory: sessionDir, ...body }),
   });
   const text = await response.text();
-  const json = text.trim() ? JSON.parse(text) : undefined;
-  let events = text
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
-  if (events.length === 1 && events[0]?.accepted === true) {
-    const deadline = Date.now() + 100;
-    do {
-      events = latestProgressEvents.slice(progressOffset);
-      if (events.some((event) => (event as { type?: string }).type === "done")) break;
-      await new Promise((resolve) => setTimeout(resolve, 1));
-    } while (Date.now() < deadline);
-  }
+  // Parse all NDJSON lines. For stream:true responses the body contains
+  // one terminal "done" line. For fire-and-forget the body is a single
+  // JSON object ({accepted,sessionId,resumed}).
+  const lines = text.trim().split("\n").filter(Boolean);
+  // Fail fast on malformed NDJSON: a corrupt line is a protocol regression the
+  // test must surface, not silently drop.
+  const events = lines.map((line, idx) => {
+    try {
+      return JSON.parse(line) as unknown;
+    } catch {
+      throw new Error(`Invalid NDJSON from /trigger at line ${idx + 1}: ${line}`);
+    }
+  });
+  const json = events[0];
   return { response, json, events };
 }
 
@@ -978,10 +973,9 @@ describe("runner /trigger orchestration", () => {
         prompt: "first",
         correlationKey,
         triggerSlackId: "UABCDEF1",
+        stream: true,
       });
-      const firstStart = first.events.find((e) => e.type === "start");
       const firstDone = first.events.find((e) => e.type === "done");
-      expect(firstStart).toMatchObject({ sessionId: "session-1", resumed: false });
       expect(firstDone).toMatchObject({
         sessionId: "session-1",
         resumed: false,
@@ -1011,10 +1005,8 @@ describe("runner /trigger orchestration", () => {
       expect(repoAlias.anchorId).toBe(sessionAlias.anchorId);
       expect(aliases).not.toContainEqual(expect.objectContaining({ aliasValue: correlationKey }));
 
-      const second = await trigger(url, { prompt: "second", correlationKey });
-      const secondStart = second.events.find((e) => e.type === "start");
+      const second = await trigger(url, { prompt: "second", correlationKey, stream: true });
       const secondDone = second.events.find((e) => e.type === "done");
-      expect(secondStart).toMatchObject({ sessionId: "session-1", resumed: true });
       expect(secondDone).toMatchObject({
         sessionId: "session-1",
         resumed: true,
@@ -1099,11 +1091,7 @@ describe("runner /trigger orchestration", () => {
     const h = createHarness();
 
     await withServer(h.app, async (url) => {
-      const result = await trigger(url, { prompt: "raw", correlationKey: "cron:direct" });
-      expect(result.events.find((e) => e.type === "start")).toMatchObject({
-        sessionId: "session-1",
-        resumed: false,
-      });
+      await trigger(url, { prompt: "raw", correlationKey: "cron:direct" });
     });
 
     const aliases = readAliases();
@@ -1120,14 +1108,10 @@ describe("runner /trigger orchestration", () => {
     const correlationKey = "slack:thread:C123/1710000000.060";
 
     await withServer(h.app, async (url) => {
-      const result = await trigger(url, {
+      await trigger(url, {
         prompt: "explicit",
         sessionId: "requested-session",
         correlationKey,
-      });
-      expect(result.events.find((e) => e.type === "start")).toMatchObject({
-        sessionId: "requested-session",
-        resumed: true,
       });
     });
 
@@ -1210,10 +1194,7 @@ describe("runner /trigger orchestration", () => {
       h.existingSessions.delete("session-1");
 
       const next = await trigger(url, { prompt: "new", correlationKey });
-      expect(next.events.find((e) => e.type === "start")).toMatchObject({
-        sessionId: "session-2",
-        resumed: false,
-      });
+      expect(next.json).toMatchObject({ sessionId: "session-2", resumed: false });
       expect(h.prompts.at(-1)).not.toContain("Previous session was lost");
       expect(h.prompts.at(-1)).not.toContain("Your notes from the prior session are at:");
     });
@@ -1255,6 +1236,7 @@ describe("runner /trigger orchestration", () => {
         prompt: "now",
         correlationKey: "slack:thread:C123/1710000000.004",
         interrupt: true,
+        stream: true,
       });
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
         sessionId: "busy-session",
@@ -1291,13 +1273,9 @@ describe("runner /trigger orchestration", () => {
         prompt: "now",
         correlationKey: "slack:thread:C123/1710000000.012",
         interrupt: true,
+        stream: true,
       });
 
-      expect(result.events.find((e) => e.type === "tool")).toMatchObject({
-        type: "tool",
-        tool: "git status",
-        status: "completed",
-      });
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
         sessionId: "busy-session",
         resumed: true,
@@ -1307,35 +1285,6 @@ describe("runner /trigger orchestration", () => {
 
     expect(h.aborts).toEqual(["busy-session"]);
     expect(h.prompts).toHaveLength(1);
-  });
-
-  it("labels python3 bash wrappers with one segment only", async () => {
-    const h = createHarness({
-      promptEvents: (sessionId) => [
-        toolEvent(
-          sessionId,
-          "bash",
-          "completed",
-          { command: "python3 - <<'PY'\nprint('hi')\nPY" },
-          { start: 1000, end: 1200 },
-          "ok",
-        ),
-        idleEvent(sessionId),
-      ],
-    });
-
-    await withServer(h.app, async (url) => {
-      const result = await trigger(url, {
-        prompt: "now",
-        correlationKey: "slack:thread:C123/1710000000.013",
-      });
-
-      expect(result.events.find((e) => e.type === "tool")).toMatchObject({
-        type: "tool",
-        tool: "python3",
-        status: "completed",
-      });
-    });
   });
 
   it("returns busy without prompting when a resumed session is busy and interrupt is false", async () => {
@@ -1384,31 +1333,11 @@ describe("runner /trigger orchestration", () => {
     });
 
     await withServer(h.app, async (url) => {
-      const first = await trigger(url, {
+      await trigger(url, {
         prompt: "first",
         correlationKey: "slack:thread:C123/1710000000.005",
         triggerSlackId: "UABCDEF1",
       });
-      expect(first.events.filter((e) => e.type === "memory")).toEqual([
-        {
-          type: "memory",
-          action: "read",
-          path: `${memoryDir}/README.md`,
-          source: "bootstrap",
-        },
-        {
-          type: "memory",
-          action: "read",
-          path: `${memoryDir}/channels/C123.md`,
-          source: "bootstrap",
-        },
-        {
-          type: "memory",
-          action: "read",
-          path: `${memoryDir}/people/son.dao.md`,
-          source: "bootstrap",
-        },
-      ]);
       expect(h.prompts[0]).toContain("global memory text");
       expect(h.prompts[0]).toContain("channel memory text");
       expect(h.prompts[0]).toContain("person memory text");
@@ -1450,19 +1379,11 @@ describe("runner /trigger orchestration", () => {
     const h = createHarness({ workspaceConfig: { users: [] } });
 
     await withServer(h.app, async (url) => {
-      const result = await trigger(url, {
+      await trigger(url, {
         prompt: "first",
         correlationKey: "slack:thread:1710000000.005",
         triggerSlackId: "UUNKNOWN",
       });
-      expect(result.events.filter((e) => e.type === "memory")).toEqual([
-        {
-          type: "memory",
-          action: "read",
-          path: `${memoryDir}/README.md`,
-          source: "bootstrap",
-        },
-      ]);
     });
 
     expect(h.prompts[0]).toContain("global memory text");
@@ -1489,174 +1410,15 @@ describe("runner /trigger orchestration", () => {
     });
 
     await withServer(h.app, async (url) => {
-      const result = await trigger(url, {
+      await trigger(url, {
         prompt: "first",
         correlationKey: "git:branch:thor:feat/memory-tiers",
         triggerGithubLogin: "sonkatalon",
       });
-      expect(result.events.filter((e) => e.type === "memory")).toEqual([
-        {
-          type: "memory",
-          action: "read",
-          path: `${memoryDir}/README.md`,
-          source: "bootstrap",
-        },
-        {
-          type: "memory",
-          action: "read",
-          path: `${memoryDir}/people/son.dao.md`,
-          source: "bootstrap",
-        },
-      ]);
     });
 
     expect(h.prompts[0]).toContain("person memory text");
     expect(h.prompts[0]).toContain("github: sonkatalon");
-  });
-
-  it("emits context progress from assistant message updates using configured model limits", async () => {
-    const h = createHarness({
-      providerList: {
-        all: [
-          {
-            id: "openai",
-            models: {
-              "gpt-5.5": { limit: { context: 200_000 } },
-            },
-          },
-        ],
-        default: {},
-        connected: [],
-      },
-      promptEvents: (sessionId) => [
-        messageUpdatedEvent(sessionId),
-        textEvent(sessionId, "done"),
-        idleEvent(sessionId),
-      ],
-    });
-
-    await withServer(h.app, async (url) => {
-      const result = await trigger(url, {
-        prompt: "large search",
-        correlationKey: "slack:thread:C0/1710000000.090",
-      });
-
-      expect(result.events.find((e) => e.type === "context")).toMatchObject({
-        type: "context",
-        providerID: "openai",
-        modelID: "gpt-5.5",
-        tokens: 126_000,
-        limit: 200_000,
-        usagePercent: 63,
-      });
-      expect(result.events.filter((e) => e.type === "tool")).toHaveLength(0);
-    });
-  });
-
-  it("keys context limits by provider and model to avoid same-model collisions", async () => {
-    const h = createHarness({
-      providerList: {
-        all: [
-          { id: "openai", models: { "gpt-5.4": { limit: { context: 200_000 } } } },
-          { id: "anthropic", models: { "gpt-5.4": { limit: { context: 1_000_000 } } } },
-        ],
-        default: {},
-        connected: [],
-      },
-      promptEvents: (sessionId) => [
-        messageUpdatedEvent(sessionId, {
-          providerID: "openai",
-          modelID: "gpt-5.4",
-          tokens: { input: 100_000, output: 20_000, reasoning: 6_000 },
-          role: "assistant",
-        }),
-        textEvent(sessionId, "done"),
-        idleEvent(sessionId),
-      ],
-    });
-
-    await withServer(h.app, async (url) => {
-      const result = await trigger(url, {
-        prompt: "large search",
-        correlationKey: "slack:thread:C0/1710000000.099",
-      });
-
-      expect(result.events.find((e) => e.type === "context")).toMatchObject({
-        providerID: "openai",
-        modelID: "gpt-5.4",
-        tokens: 126_000,
-        limit: 200_000,
-        usagePercent: 63,
-      });
-    });
-  });
-
-  it("extracts context totals only from displayed token usage fields", async () => {
-    const h = createHarness({
-      providerList: {
-        all: [{ id: "openai", models: { "gpt-5.5": { limit: { context: 200_000 } } } }],
-        default: {},
-        connected: [],
-      },
-      promptEvents: (sessionId) => [
-        messageUpdatedEvent(sessionId, {
-          providerID: "openai",
-          modelID: "gpt-5.5",
-          tokens: {
-            input: 100_000,
-            output: 20_000,
-            reasoning: 6_000,
-            cache: { read: 4_000, write: 99_000 },
-            metadata: { nested: 999_000 },
-          },
-          role: "assistant",
-        }),
-        textEvent(sessionId, "done"),
-        idleEvent(sessionId),
-      ],
-    });
-
-    await withServer(h.app, async (url) => {
-      const result = await trigger(url, {
-        prompt: "large search",
-        correlationKey: "slack:thread:C0/1710000000.100",
-      });
-
-      expect(result.events.find((e) => e.type === "context")).toMatchObject({
-        tokens: 130_000,
-        limit: 200_000,
-        usagePercent: 65,
-      });
-    });
-  });
-
-  it("suppresses zero-token assistant message context updates", async () => {
-    const h = createHarness({
-      providerList: {
-        all: [{ id: "openai", models: { "gpt-5.5": { limit: { context: 200_000 } } } }],
-        default: {},
-        connected: [],
-      },
-      promptEvents: (sessionId) => [
-        messageUpdatedEvent(sessionId, {
-          providerID: "openai",
-          modelID: "gpt-5.5",
-          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0 } },
-          role: "assistant",
-        }),
-        textEvent(sessionId, "done"),
-        idleEvent(sessionId),
-      ],
-    });
-
-    await withServer(h.app, async (url) => {
-      const result = await trigger(url, {
-        prompt: "fresh assistant",
-        correlationKey: "slack:thread:C0/1710000000.101",
-      });
-
-      expect(result.events.find((e) => e.type === "context")).toBeUndefined();
-    });
   });
 
   it("intercepts bad idle and sends Continue once before done", async () => {
@@ -1696,6 +1458,7 @@ describe("runner /trigger orchestration", () => {
       const result = await trigger(url, {
         prompt: "start",
         correlationKey: "slack:thread:1710000000.201",
+        stream: true,
       });
 
       expect(h.prompts).toHaveLength(2);
@@ -1749,6 +1512,7 @@ describe("runner /trigger orchestration", () => {
       const result = await trigger(url, {
         prompt: "start",
         correlationKey: "slack:thread:1710000000.207",
+        stream: true,
       });
 
       // Only the original prompt was sent — no Continue double-send into the
@@ -1797,6 +1561,7 @@ describe("runner /trigger orchestration", () => {
       const result = await trigger(url, {
         prompt: "start",
         correlationKey: "slack:thread:1710000000.204",
+        stream: true,
       });
 
       expect(h.prompts).toHaveLength(2);
@@ -1834,6 +1599,7 @@ describe("runner /trigger orchestration", () => {
       const result = await trigger(url, {
         prompt: "start",
         correlationKey: "slack:thread:1710000000.202",
+        stream: true,
       });
 
       expect(h.prompts).toHaveLength(2);
@@ -1906,6 +1672,7 @@ describe("runner /trigger orchestration", () => {
       const result = await trigger(url, {
         prompt: "start",
         correlationKey: "slack:thread:1710000000.203",
+        stream: true,
       });
 
       expect(h.prompts).toHaveLength(3);
@@ -1957,6 +1724,7 @@ describe("runner /trigger orchestration", () => {
       const result = await trigger(url, {
         prompt: "start",
         correlationKey: "slack:thread:1710000000.208",
+        stream: true,
       });
 
       expect(h.prompts).toHaveLength(2);
@@ -2022,6 +1790,7 @@ describe("runner /trigger orchestration", () => {
       const result = await trigger(url, {
         prompt: "start",
         correlationKey: "slack:thread:1710000000.209",
+        stream: true,
       });
 
       expect(h.prompts).toHaveLength(3);
@@ -2029,49 +1798,6 @@ describe("runner /trigger orchestration", () => {
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
         status: "completed",
         response: "made progress\n\nsecond continue ok",
-      });
-    });
-  });
-
-  it("normalizes context usage percent to an integer before emitting", async () => {
-    const h = createHarness({
-      providerList: {
-        all: [
-          {
-            id: "openai",
-            models: {
-              "gpt-5.5": { limit: { context: 200_000 } },
-            },
-          },
-        ],
-        default: {},
-        connected: [],
-      },
-      promptEvents: (sessionId) => [
-        messageUpdatedEvent(sessionId, {
-          providerID: "openai",
-          modelID: "gpt-5.5",
-          tokens: { input: 99_999 },
-          role: "assistant",
-        }),
-        textEvent(sessionId, "done"),
-        idleEvent(sessionId),
-      ],
-    });
-
-    await withServer(h.app, async (url) => {
-      const result = await trigger(url, {
-        prompt: "large search",
-        correlationKey: "slack:thread:C0/1710000000.092",
-      });
-
-      expect(result.events.find((e) => e.type === "context")).toMatchObject({
-        type: "context",
-        providerID: "openai",
-        modelID: "gpt-5.5",
-        tokens: 99_999,
-        limit: 200_000,
-        usagePercent: 50,
       });
     });
   });
@@ -2269,11 +1995,11 @@ describe("runner /trigger orchestration", () => {
     });
 
     await withServer(h.app, async (url) => {
-      const result = await trigger(url, {
+      await trigger(url, {
         prompt: "delegate",
         correlationKey: "slack:thread:C123/1710000000.006",
+        stream: true,
       });
-      expect(result.events.find((e) => e.type === "delegate")).toMatchObject({ agent: "general" });
     });
 
     const aliases = readFileSync(`${worklogDir}/aliases.jsonl`, "utf8")
@@ -2305,8 +2031,8 @@ describe("runner /trigger orchestration", () => {
       const result = await trigger(url, {
         prompt: "delegate without input",
         correlationKey: "slack:thread:C123/1710000000.061",
+        stream: true,
       });
-      expect(result.events.find((e) => e.type === "delegate")).toBeUndefined();
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
         status: "completed",
         response: "continued",
@@ -2327,8 +2053,8 @@ describe("runner /trigger orchestration", () => {
       const result = await trigger(url, {
         prompt: "large search",
         correlationKey: "slack:thread:C123/1710000000.007",
+        stream: true,
       });
-      expect(result.events).toContainEqual({ type: "tool", tool: "error", status: "error" });
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
         status: "completed",
         response: "continued after compaction",
@@ -2345,8 +2071,8 @@ describe("runner /trigger orchestration", () => {
       const result = await trigger(url, {
         prompt: "fail",
         correlationKey: "slack:thread:C123/1710000000.008",
+        stream: true,
       });
-      expect(result.events).toContainEqual({ type: "tool", tool: "error", status: "error" });
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
         status: "error",
         error: "provider unavailable",
@@ -2463,6 +2189,7 @@ describe("runner /trigger orchestration", () => {
       const result = await trigger(url, {
         prompt: "fail",
         correlationKey: "slack:thread:C123/1710000000.009",
+        stream: true,
       });
       expect(Date.now() - startedAt).toBeLessThan(100);
       expect(result.events.find((e) => e.type === "done")).toMatchObject({

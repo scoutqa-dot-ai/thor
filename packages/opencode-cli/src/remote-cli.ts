@@ -56,21 +56,13 @@ export function validateGhBodyTransport(args: string[]): string | null {
     if (ghApi && (arg === "-f" || arg === "-F") && args[i + 1]?.startsWith("body=")) {
       return GH_BODY_STDIN_ERROR;
     }
-    if (
-      ghApi &&
-      (arg.startsWith("-fbody=") || arg.startsWith("-Fbody=")) &&
-      arg.length > 7
-    ) {
+    if (ghApi && (arg.startsWith("-fbody=") || arg.startsWith("-Fbody=")) && arg.length > 7) {
       return GH_BODY_STDIN_ERROR;
     }
     if (ghApi && (arg.startsWith("--raw-field=body=") || arg.startsWith("--field=body="))) {
       return GH_BODY_STDIN_ERROR;
     }
-    if (
-      ghApi &&
-      (arg === "--raw-field" || arg === "--field") &&
-      args[i + 1]?.startsWith("body=")
-    ) {
+    if (ghApi && (arg === "--raw-field" || arg === "--field") && args[i + 1]?.startsWith("body=")) {
       return GH_BODY_STDIN_ERROR;
     }
   }
