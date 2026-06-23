@@ -10,7 +10,7 @@ Three things are assumed untrusted:
 - **OpenCode-side wrappers.** Skill scripts and CLI shims inside the OpenCode container are reachable by the agent and can be coerced. They are convenience, not enforcement.
 - **External webhook senders.** Inbound HTTP requests are hostile until a signature proves otherwise.
 
-The docker network — gateway, runner, remote-cli, mitmproxy — is the trust boundary. Everything inside it is treated as equally trusted; everything outside must authenticate.
+The docker network is the authentication boundary: everything outside must authenticate to enter. It is not, by itself, the trust boundary. The control-plane services on it — gateway, runner, remote-cli, mitmproxy, admin — trust each other and skip mutual authentication. The `opencode` agent shares the same network but stays untrusted (see above): it can open connections to those services, so network membership grants it reachability, not trust. Where an agent-reachable service performs privileged actions (e.g. `admin`), it adds its own control on top of network isolation rather than relying on the network alone — see Layer 1's admin control-plane defense-in-depth.
 
 ## Layer 1: Network boundary
 
