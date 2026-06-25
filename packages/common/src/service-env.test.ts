@@ -148,15 +148,26 @@ describe("service env", () => {
   });
 
   it("keeps the default admin audit log outside the agent-mounted config directory", () => {
-    expect(loadAdminEnv({})).toEqual({
+    expect(loadAdminEnv({ THOR_INTERNAL_SECRET: "secret" })).toEqual({
       port: 3005,
       configPath: WORKSPACE_CONFIG_PATH,
       auditLogPath: ADMIN_AUDIT_LOG_PATH,
+      thorInternalSecret: "secret",
     });
-    expect(loadAdminEnv({ CONFIG_PATH: "/workspace/config/custom.json" })).toEqual({
+    expect(
+      loadAdminEnv({
+        THOR_INTERNAL_SECRET: "secret",
+        CONFIG_PATH: "/workspace/config/custom.json",
+      }),
+    ).toEqual({
       port: 3005,
       configPath: "/workspace/config/custom.json",
       auditLogPath: ADMIN_AUDIT_LOG_PATH,
+      thorInternalSecret: "secret",
     });
+  });
+
+  it("fails closed when the admin internal secret is unset", () => {
+    expect(() => loadAdminEnv({})).toThrow("Missing required env var THOR_INTERNAL_SECRET");
   });
 });
