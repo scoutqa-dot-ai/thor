@@ -242,7 +242,7 @@ jobs:
             printf 'POSTHOG_API_KEY=%s\n' "$POSTHOG_API_KEY"
             printf 'GRAFANA_URL=%s\n' "$GRAFANA_URL"
             printf 'GRAFANA_SERVICE_ACCOUNT_TOKEN=%s\n' "$GRAFANA_SERVICE_ACCOUNT_TOKEN"
-            printf 'GRAFANA_ORG_ID=%s\n' "${GRAFANA_ORG_ID:-1}"
+            printf 'GRAFANA_ORG_ID=%s\n' "${GRAFANA_ORG_ID:-}"
             # CI cannot host a rootless bwrap sandbox; run mcp-grafana unsandboxed
             # so remote-cli starts cleanly. Safe here: credentials are fakes.
             printf 'THOR_MCP_DISABLE_SANDBOX=1\n'
