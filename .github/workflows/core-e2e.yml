@@ -61,7 +61,7 @@ jobs:
       GRAFANA_ORG_ID: ${{ vars.GRAFANA_ORG_ID }}
       LANGFUSE_PUBLIC_KEY: ${{ vars.LANGFUSE_PUBLIC_KEY }}
       LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
-      LANGFUSE_HOST: ${{ vars.LANGFUSE_HOST }}
+      LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
       # Fakes: services not exercised by e2e, but referenced at compose startup.
       METABASE_URL: http://localhost
       METABASE_API_KEY: ci-fake
@@ -127,7 +127,7 @@ jobs:
             printf 'THOR_MCP_DISABLE_SANDBOX=1\n'
             printf 'LANGFUSE_PUBLIC_KEY=%s\n' "$LANGFUSE_PUBLIC_KEY"
             printf 'LANGFUSE_SECRET_KEY=%s\n' "$LANGFUSE_SECRET_KEY"
-            printf 'LANGFUSE_BASE_URL=https://%s\n' "$LANGFUSE_HOST"
+            printf 'LANGFUSE_BASE_URL=%s\n' "$LANGFUSE_BASE_URL"
           } > .env
 
           export CRON_SECRET="$(openssl rand -hex 32)"
@@ -136,6 +136,12 @@ jobs:
             echo "CRON_SECRET=$CRON_SECRET"
             echo "THOR_INTERNAL_SECRET=$THOR_INTERNAL_SECRET"
           } >> "$GITHUB_ENV"
+
+          # mitmproxy passthrough needs the bare host (no scheme); derive it
+          # from the canonical LANGFUSE_BASE_URL.
+          LANGFUSE_HOST="${LANGFUSE_BASE_URL#http://}"
+          LANGFUSE_HOST="${LANGFUSE_HOST#https://}"
+          LANGFUSE_HOST="${LANGFUSE_HOST%/}"
 
           cat > docker-volumes/workspace/config/thor.json <<EOF
           {

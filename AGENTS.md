@@ -73,7 +73,7 @@ thor/
 
 - **Language**: TypeScript (strict mode)
 - **Package manager**: pnpm with workspaces
-- **Runtime**: Node.js 22+
+- **Runtime**: Node.js 24+
 - **Formatting**: Default TypeScript/ESLint conventions. No custom config until needed.
 - **OpenCode version alignment**: When bumping `@opencode-ai/sdk`, also bump the OpenCode server/package version in the Dockerfile in the same change so the client and server stay aligned.
 - **OpenCode event schema/viewer drift**: Before changing OpenCode event persistence, projection, parser schemas, unknown-event fallback rendering, or `unrecognized_opencode_event` handling, read `docs/plan/2026051601_opencode-event-view-schema.md`.
