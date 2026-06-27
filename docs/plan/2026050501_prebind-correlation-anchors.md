@@ -7,16 +7,8 @@
 ## Problem
 
 A single Slack mention can produce two OpenCode sessions for the same
-anchor. Captured in `logs.txt` for event `Ev0B1R2WFU84` (correlation key
-`slack:thread:1777940136.765199`):
-
-```text
-@138581  event_enqueued        slack:thread:1777940136.765199
-@138627  event_processing      lockKey=slack:thread:1777940136.765199
-@138929  event_processing      lockKey=anchor:019df57d-...  (same file, +302 ms)
-@140006  session_created       ses_20a82708 anchorId=019df57d-...
-@140358  session_created       ses_20a826f8 anchorId=019df57d-...  (same anchor)
-```
+anchor, because the gateway dispatches one queue file twice under two
+different lock keys.
 
 Root cause: `resolveCorrelationLockKey(correlationKey)` is time-varying.
 It returns the raw key (`slack:thread:X`) until a correlation alias exists,
@@ -43,20 +35,49 @@ helper before the runner computes its correlation lock key.
 
 ## Decisions
 
-| #   | Question                      | Decision                                                                                                                                                                                                                                                                                                                                                            |
-| --- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Q1  | Fix shape                     | Pre-bind known-prefix correlation keys before they enter lock-key based dispatch. This removes the raw-key-to-anchor transition for gateway files and direct no-session runner triggers.                                                                                                                                                                            |
-| Q2  | Helper location               | Add `ensureAnchorForCorrelationKey(correlationKey)` in `@thor/common` (`correlation.ts`). Gateway and runner already depend on common correlation helpers.                                                                                                                                                                                                          |
-| Q3  | Helper result                 | Return `{ anchorId: string; minted: boolean }` for supported keys, or `{ anchorId: undefined; minted: false; reason: "unsupported_prefix" }` for unsupported keys. This lets callers log the bound anchor without parsing aliases again.                                                                                                                            |
-| Q4  | Concurrency model             | Process-local promise chain keyed by raw correlation key. Use `Map<string, Promise<unknown>>` or a generic `withKeyLock` helper, not `Map<string, Promise<EnsureAnchorResult>>`, because the stored settled promise resolves to `undefined`.                                                                                                                        |
-| Q5  | Cross-process behavior        | No cross-process atomicity in this patch. Production gateway is single-process today. If the gateway is horizontally scaled later, add a file lock around `aliases.jsonl` or a shared keyed lock. Do not describe cross-process double-mint as idempotent; newest-wins aliases make it recoverable but transiently divergent.                                       |
-| Q6  | Unsupported prefixes          | No-op. Unknown keys keep the raw lock key. That key is stable because no alias is derivable or written by these helpers.                                                                                                                                                                                                                                            |
-| Q7  | Gateway integration           | `EventQueue.enqueue` becomes async and awaits `ensureAnchorForCorrelationKey` before writing the queue file. All production and test call sites must await it.                                                                                                                                                                                                      |
-| Q8  | Runner integration            | For `/trigger` requests with `correlationKey` and no explicit `sessionId`, call `ensureAnchorForCorrelationKey(correlationKey)` before computing `resolveCorrelationLockKey(correlationKey)`. Keep the existing runner mint fallback for unsupported prefixes and defensive recovery.                                                                               |
-| Q9  | Explicit `sessionId` triggers | Keep the existing `session:<id>` lock path. A request with explicit `sessionId` is already locked by stable session id; it may still bind the provided correlation key to that session's anchor after resolution. Mixed concurrent direct calls where one request supplies `sessionId` and another supplies only a brand-new key are out of scope for this bug fix. |
-| Q10 | Cross-source batching         | Pre-binding does not infer that a fresh Slack key and a fresh Git branch key belong to the same anchor. Cross-source batching remains guaranteed only when both aliases already resolve to the same anchor, usually because a running session registered the producer alias. Tests must seed that condition explicitly.                                             |
-| Q11 | Orphan anchors                | Acceptable. Dropped or dead-lettered gateway events may leave an unused alias. There is no alias janitor today; alias-log rotation or GC remains out of scope.                                                                                                                                                                                                      |
-| Q12 | Plan policy                   | New plan file. This is a follow-up bug fix to the shipped anchor/session-event-log system, not a continuation of the closed implementation plan.                                                                                                                                                                                                                    |
+- **Fix shape**: Pre-bind known-prefix correlation keys before they enter
+  lock-key based dispatch. This removes the raw-key-to-anchor transition for
+  gateway files and direct no-session runner triggers.
+- **Helper location**: Add `ensureAnchorForCorrelationKey(correlationKey)` in
+  `@thor/common` (`correlation.ts`). Gateway and runner already depend on
+  common correlation helpers.
+- **Helper result**: Return `{ anchorId: string; minted: boolean }` for
+  supported keys, or
+  `{ anchorId: undefined; minted: false; reason: "unsupported_prefix" }` for
+  unsupported keys, so callers can log the bound anchor without parsing
+  aliases again.
+- **Concurrency model**: Process-local promise chain keyed by raw correlation
+  key, using `Map<string, Promise<unknown>>` (a generic `withKeyLock` helper)
+  rather than `Map<string, Promise<EnsureAnchorResult>>`, because the stored
+  settled promise resolves to `undefined`.
+- **Cross-process behavior**: No cross-process atomicity in this patch. The
+  production gateway is single-process today. If the gateway is horizontally
+  scaled later, add a file lock around `aliases.jsonl` or a shared keyed lock.
+  Cross-process double-mint is not idempotent; newest-wins aliases make it
+  recoverable but transiently divergent.
+- **Unsupported prefixes**: No-op. Unknown keys keep the raw lock key, which is
+  stable because no alias is derivable or written by these helpers.
+- **Gateway integration**: `EventQueue.enqueue` becomes async and awaits
+  `ensureAnchorForCorrelationKey` before writing the queue file. All production
+  and test call sites must await it.
+- **Runner integration**: For `/trigger` requests with `correlationKey` and no
+  explicit `sessionId`, call `ensureAnchorForCorrelationKey(correlationKey)`
+  before computing `resolveCorrelationLockKey(correlationKey)`. Keep the
+  existing runner mint fallback for unsupported prefixes and defensive recovery.
+- **Explicit `sessionId` triggers**: Keep the existing `session:<id>` lock path.
+  A request with explicit `sessionId` is already locked by stable session id; it
+  may still bind the provided correlation key to that session's anchor after
+  resolution. Mixed concurrent direct calls where one request supplies
+  `sessionId` and another supplies only a brand-new key are out of scope for
+  this bug fix.
+- **Cross-source batching**: Pre-binding does not infer that a fresh Slack key
+  and a fresh Git branch key belong to the same anchor. Cross-source batching
+  remains guaranteed only when both aliases already resolve to the same anchor,
+  usually because a running session registered the producer alias. Tests must
+  seed that condition explicitly.
+- **Orphan anchors**: Acceptable. Dropped or dead-lettered gateway events may
+  leave an unused alias. There is no alias janitor today; alias-log rotation or
+  GC remains out of scope.
 
 ## Design
 

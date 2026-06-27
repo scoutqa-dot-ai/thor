@@ -1,10 +1,5 @@
 # Runner Idle Auto-Resume
 
-> Retroactive plan doc. The feature shipped across branch `feat/runner-idle-auto-resume`
-> before a plan existed; this document reverse-engineers the design and decision
-> log from the commit history so future sessions can reason about the behavior
-> without re-reading the whole stream loop.
-
 ## Problem
 
 OpenCode occasionally idles a session immediately after an assistant

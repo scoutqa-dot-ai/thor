@@ -1,11 +1,5 @@
 # Plan: Approval Flow for Dangerous MCP Tools
 
-**Date**: 2026-03-12
-**Branch**: `feat/approval`
-**Status**: Draft
-
----
-
 ## Problem
 
 The proxy currently has a binary model: tools are either **exposed** (always callable) or **hidden**. There's no middle ground for tools that should be available but require human approval before execution — e.g., `create_pull_request`, `update_pull_request`, Jira status changes.
@@ -226,32 +220,23 @@ The runner derives the notification target from the correlation key it already h
 
 ## Decision Log
 
-| #   | Decision                                            | Rationale                                                                                                                                           |
-| --- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Filesystem-based approval store, date-segmented     | Consistent with queue/worklog pattern, easy archival, survives restarts                                                                             |
-| 2   | One JSON file per action (no separate .result file) | Reduces noise — single file updated in-place on resolution                                                                                          |
-| 3   | No in-memory index                                  | Approval checks are infrequent; disk reads are fine, keeps code simple                                                                              |
-| 4   | Synthetic `check_approval_status` tool              | Agent doesn't need special protocol — just calls a tool                                                                                             |
-| 5   | Runner sends notifications, not proxy               | Proxy has no access to correlation key (OpenCode manages MCP sessions). Runner already has correlation key + slack-mcp access                       |
-| 6   | Notification goes to originating context            | Human sees approval where they're already working (Slack thread, PR comment)                                                                        |
-| 7   | Fallback channel for cron/unknown sources           | Config-level `fallbackApprovalChannel` for when no originating context exists                                                                       |
-| 8   | Non-blocking return                                 | Per mvp.md spec — agent should not be blocked waiting                                                                                               |
-| 9   | Gateway routes interactivity to proxy               | Gateway already owns Slack webhook handling; proxy owns policy                                                                                      |
-| 10  | Remote-cli owns per-process approval resolve dedup  | Low-traffic approval clicks only need honest same-process atomicity/idempotence; gateway stays stateless and duplicate Slack updates are acceptable |
-| 11  | Preserve gateway transport retries                  | Transient remote-cli/network failures can still use existing retry behavior without adding gateway-side click state                                 |
-| 12  | Approved stored results must parse as ExecResult    | Unexpected result shapes indicate corrupt/invalid state and should fail fast instead of replaying approved side-effecting tools                     |
-
-## 2026-05-07 Bug-fix Addendum: Approval Resolve Dedup Simplification
-
-Duplicate Slack approval clicks can reach remote-cli close together. The intended fix is deliberately scoped to the practical risk: within a single remote-cli process, duplicate same-decision resolves for the same `actionId` share one in-flight resolution and later return the stored terminal result. Conflicting concurrent or terminal decisions fail clearly.
-
-The gateway remains stateless. It continues to forward Slack actions and may retry transient transport/5xx failures using the existing retry behavior, but it does not maintain click deduplication state. Duplicate Slack message updates are acceptable for this low-traffic, non-critical workflow.
-
-Approved terminal actions now store the buffered remote-cli `ExecResult` shape (`stdout`, `stderr`, `exitCode`) and status/status-check paths validate that shape explicitly. Invalid approved-result files are treated as corrupt state and fail fast; no backward-compatibility or replay logic is added.
-
-## 2026-05-08 Bug-fix Addendum: Approval Payload Validation Before Persistence
-
-Strict approval payload schemas are now validated before `approvalStore.create(...)` writes a pending action. Invalid approval arguments return a normal CLI failure and leave no approval file behind, avoiding orphaned pending approvals that were never returned to the agent or forwarded to Slack.
+| #   | Decision                                                                             | Rationale                                                                                                                                                                                                                                                                              |
+| --- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Filesystem-based approval store, date-segmented                                      | Consistent with queue/worklog pattern, easy archival, survives restarts                                                                                                                                                                                                                |
+| 2   | One JSON file per action (no separate .result file)                                  | Reduces noise — single file updated in-place on resolution                                                                                                                                                                                                                             |
+| 3   | No in-memory index                                                                   | Approval checks are infrequent; disk reads are fine, keeps code simple                                                                                                                                                                                                                 |
+| 4   | Synthetic `check_approval_status` tool                                               | Agent doesn't need special protocol — just calls a tool                                                                                                                                                                                                                                |
+| 5   | Runner sends notifications, not proxy                                                | Proxy has no access to correlation key (OpenCode manages MCP sessions). Runner already has correlation key + slack-mcp access                                                                                                                                                          |
+| 6   | Notification goes to originating context                                             | Human sees approval where they're already working (Slack thread, PR comment)                                                                                                                                                                                                           |
+| 7   | Fallback channel for cron/unknown sources                                            | Config-level `fallbackApprovalChannel` for when no originating context exists                                                                                                                                                                                                          |
+| 8   | Non-blocking return                                                                  | Per mvp.md spec — agent should not be blocked waiting                                                                                                                                                                                                                                  |
+| 9   | Gateway routes interactivity to proxy                                                | Gateway already owns Slack webhook handling; proxy owns policy                                                                                                                                                                                                                         |
+| 10  | Remote-cli owns per-process approval resolve dedup                                   | Low-traffic approval clicks only need honest same-process atomicity/idempotence; gateway stays stateless and duplicate Slack updates are acceptable                                                                                                                                    |
+| 11  | Preserve gateway transport retries                                                   | Transient remote-cli/network failures can still use existing retry behavior without adding gateway-side click state                                                                                                                                                                    |
+| 12  | Approved stored results must parse as ExecResult                                     | Unexpected result shapes indicate corrupt/invalid state and should fail fast instead of replaying approved side-effecting tools                                                                                                                                                        |
+| 13  | Same-process resolve dedup in remote-cli                                             | Duplicate same-decision resolves for an `actionId` share one in-flight resolution and return the stored terminal result; conflicting concurrent/terminal decisions fail clearly. Gateway stays stateless; duplicate Slack message updates are acceptable for this low-traffic workflow |
+| 14  | Approved terminal actions store buffered `ExecResult` (`stdout`/`stderr`/`exitCode`) | Status/status-check paths validate that shape; invalid approved-result files fail fast with no backward-compat or replay logic                                                                                                                                                         |
+| 15  | Validate approval payload before persistence                                         | Strict payload schemas validated before the store writes a pending action, so invalid arguments return a normal CLI failure and leave no orphaned pending approval behind                                                                                                              |
 
 ## Out of Scope
 

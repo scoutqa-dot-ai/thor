@@ -1,6 +1,6 @@
 # refactor slack-mcp — 2026-04-23-01
 
-> **Note (2026-05-16):** One migration step references removing `"slack"` from
+> **Note:** A migration step references removing `"slack"` from
 > `repos.*.proxies`. The entire `repos` block has since been removed from
 > `WorkspaceConfigSchema`, so that step is now moot.
 
@@ -13,16 +13,6 @@ The target split is:
   existing mitmproxy path
 - system-driven Slack work lives inside `packages/gateway`
 - `packages/remote-cli` no longer exposes a `slack` MCP upstream
-
-## Workflow
-
-Implementation follows `AGENTS.md`:
-
-1. implement one phase only
-2. self-test against that phase's exit criteria
-3. stop for human review
-4. after approval, create one focused commit for that phase
-5. continue to the next phase
 
 ## Why this is now viable
 
@@ -93,20 +83,6 @@ OpenCode
   \--- curl / fetch / slack-upload --> mitmproxy --> slack.com / files.slack.com
 ```
 
-## Recommendation
-
-Remove `slack-mcp` by collapsing Slack responsibilities into two places only:
-
-1. `packages/gateway` becomes the only service-side Slack component.
-2. OpenCode uses the existing Slack skill plus real Slack Web API URLs for
-   agent-driven reads and writes.
-
-Do not build a new Slack-specific service or a new Slack MCP replacement.
-Use direct `curl` to Slack write endpoints through the existing mitmproxy auth
-path. Keep Slack reads on normal `curl` or built-in `fetch`. Direct-curl Slack
-thread alias registration was already broken before this refactor and remains a
-follow-up, not part of the `slack-mcp` removal.
-
 ## Decision Log
 
 | #   | Decision                                                                                                    | Rationale                                                                                                                                                                                                                          |
@@ -115,7 +91,7 @@ follow-up, not part of the `slack-mcp` removal.
 | D2  | Keep agent Slack traffic on real Slack URLs over mitmproxy                                                  | That path already exists, matches the current OpenCode instructions, and removes the main reason for a dedicated Slack service.                                                                                                    |
 | D3  | Do not replace `slack-mcp` with a general-purpose Slack CLI                                                 | A full wrapper would just recreate the MCP surface in another form. The repo already has `curl`, the Slack skill, and `slack-upload`.                                                                                              |
 | D4  | Leave direct-curl Slack thread alias repair out of scope                                                    | Alias registration was already broken on the direct `curl` path before this refactor. Fixing it via mitmproxy response mutation widens the PR and couples notes behavior to proxy internals.                                       |
-| D5  | Keep broad service-side Slack writes off the mitmproxy allowlist                                            | `chat.update`, `chat.delete`, and broad reaction management should remain in gateway. D13 supersedes the original reaction-add restriction with a narrow `reactions.add` exception for marking work done.                          |
+| D5  | Keep broad service-side Slack writes off the mitmproxy allowlist                                            | `chat.update`, `chat.delete`, and broad reaction management should remain in gateway. The one agent-side exception is the narrow `reactions.add` for marking work done (see D13).                                                  |
 | D6  | Reuse the proven Slack progress and approval formatting code instead of rewriting behavior at the same time | The operational risk is in changing ownership, not in changing UX. Move the logic first; simplify internals later if still useful.                                                                                                 |
 | D7  | Remove `slack` from repo proxy config immediately                                                           | This is a greenfield project. Carrying compatibility-only validation and prompt logic adds noise without protecting a real deployed population.                                                                                    |
 | D8  | Route approval outcomes back to OpenCode through the gateway queue                                          | A direct non-interrupt runner trigger can return `busy`. Queue-backed replay preserves ordering and retries until the session can accept the announcement.                                                                         |
@@ -124,6 +100,7 @@ follow-up, not part of the `slack-mcp` removal.
 | D11 | Fail gateway startup when `SLACK_BOT_TOKEN` is missing                                                      | Gateway now owns all Slack side effects. Starting without the bot token only creates a half-configured service that will accept work and then fail at runtime.                                                                     |
 | D12 | Drain accepted approval-outcome runner responses in the background                                          | Approval re-entry shares the same per-thread queue key as normal Slack traffic. Once runner accepts the event, gateway should release the queue lock immediately instead of waiting for the resumed session to finish.             |
 | D13 | Permit direct-curl `reactions.add` as the only agent reaction mutation                                      | Agents need to mark Slack work done with emoji reactions. Keep `chat.update`, `chat.delete`, and reaction removal out of the mitmproxy allowlist to avoid broad Slack mutation access.                                             |
+| D14 | Use `@slack/web-api` `WebClient` in gateway instead of a hand-rolled fetch wrapper                          | Official typings for `chat.postMessage` / `chat.update` / `chat.delete` / `reactions.add`, one timeout seam, and tests can mock the client object directly.                                                                        |
 
 ## Phases
 
@@ -161,7 +138,8 @@ Files likely affected:
 
 Scope:
 
-- move Slack Web API helper code needed for:
+- give gateway a Slack Web API client (via `@slack/web-api` `WebClient`, see
+  D14) for:
   - `chat.postMessage`
   - `chat.update`
   - `chat.delete`
@@ -240,6 +218,12 @@ Scope:
     later
   - this avoids losing the approval/rejection announcement while a session is
     still active
+- treat an approved-action execution failure from remote-cli as a delivered
+  outcome: update the Slack card with the failure summary and re-enter the
+  session with non-interrupt failure guidance rather than dropping the click
+- resolve `slack:thread:*` aliases before enqueueing so approval clicks resume
+  the canonical session when a Slack thread is an alias for a GitHub or cron
+  correlation key
 
 Files likely affected:
 
@@ -327,91 +311,17 @@ Files likely affected:
 - there are no runtime references to `http://slack-mcp:3003`
 - the architecture doc no longer shows Slack as an MCP service
 
-## Review Fixes
-
-- 2026-04-27: Approval outcome re-entry resolves `slack:thread:*` aliases before
-  enqueueing, so approval clicks resume the canonical session when a Slack thread
-  is an alias for a GitHub or cron correlation key.
-- 2026-04-27: Approved-action execution failures from remote-cli are treated as
-  delivered approval outcomes. Gateway updates the Slack card with the failure
-  summary and re-enters the agent session with non-interrupt failure guidance.
-- 2026-04-28: Mitmproxy response mutation and Slack write channel enforcement
-  were removed from this branch to keep the PR focused on deleting
-  `slack-mcp`. Direct-curl Slack thread alias registration remains a
-  pre-existing follow-up.
-- 2026-04-28: Added a 10s timeout around every Slack Web API call in gateway so
-  a hung Slack request can no longer stall the per-thread queue.
-- 2026-04-28: Capped the NDJSON line buffer used by the progress relay so an
-  oversized event line cannot OOM the gateway.
-- 2026-04-28: Hardened progress lifecycle — duplicate `start` events no longer
-  leak the previous session, `done` from a superseded NDJSON stream is ignored,
-  per-thread error progress entries are bounded, and the registry entry is only
-  removed once `chat.delete` confirms.
-- 2026-04-28: Sanitized approval-card output so remote-cli stderr cannot leak
-  raw upstream tool data into Slack.
-- 2026-04-28: Approval interactivity payload parsing catches both JSON parse
-  errors and `URIError` from malformed button values; the dead `version` field
-  was dropped.
-- 2026-04-28: Approval resolution retries `resolveApproval` on transient
-  remote-cli failures and surfaces a final error to the Slack card instead of
-  silently dropping the click.
-- 2026-04-28: Approval outcome batches relay progress events back into the
-  resumed thread so the Slack progress message keeps updating after re-entry.
-- 2026-04-28: `handleApprovalAction` extracted from the interactivity route and
-  simplified.
-
-## Beyond the original plan
-
-The following landed on this branch but were not in the original phase
-breakdown. They are recorded here so the plan reflects what shipped.
-
-- **Gateway Slack client switched to `@slack/web-api`.** The original plan said
-  "move Slack Web API helper code into gateway" without specifying transport.
-  The branch ends on a refactor that replaces the raw-fetch wrapper with the
-  official `@slack/web-api` `WebClient` and `@slack/types` block typings. Tests
-  inject a mock client instead of intercepting `fetch`. Rationale: compile-time
-  typing for `chat.postMessage` / `chat.update` / `chat.delete` / `reactions.add`
-  payloads, and a single place to plug the per-call timeout. See decision D13.
-
-## Decision Log additions
-
-| #   | Decision                                                                           | Rationale                                                                                                                                                                                           |
-| --- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D13 | Use `@slack/web-api` `WebClient` in gateway instead of a hand-rolled fetch wrapper | Official typings for the four methods we use, one timeout seam, and tests can mock the client object directly. The wrapper was already gateway-local — the cost of swapping is tests + a small dep. |
-
 ## Inherited progress-message behavior
 
-The following behavioral decisions originated in the deleted `2026031203_slack-progress-to-slack-mcp.md` and still ship now that gateway owns the progress lifecycle:
+These behavioral decisions still ship now that gateway owns the progress lifecycle:
 
-| #   | Decision                                                                                                 | Rationale                                                                                                                                                                                          |
-| --- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| P1  | Register progress messages as `in_progress` at post time, not at `finish()`                              | Closes the race where the bot replies before `finish()` runs — `onBotReply` can always find and delete the message because it was tracked the moment it was posted.                                |
-| P2  | Auto-delete progress on `post_message`, not on Slack event webhook echo                                  | The posting service knows immediately when the bot replies; no need to wait for Slack's event echo (which introduced a race window and required a 60s timeout fallback in the original design).    |
-| P3  | Status-aware cleanup — delete non-error progress, preserve error progress                                | Error messages stay visible as debugging evidence; only successful/in-progress messages are cleaned up when the agent replies.                                                                     |
-| P4  | Update cadence ~10s                                                                                      | Slack rate-limits `chat.update` to ~50/min per channel; 10s stays well within limits while still feeling responsive.                                                                               |
-| P5  | Threshold of 3+ tool calls before any progress message is posted                                         | Avoids posting a progress message for quick tasks that complete in a few tool calls.                                                                                                               |
-
-## Verification matrix
-
-Run these checks before considering the migration complete:
-
-1. Slack mention in an allowed channel adds `:eyes:` and starts a runner session.
-2. A session with 3+ tool calls posts and updates a progress message.
-3. A successful session removes non-error progress messages.
-4. A failed session leaves the error progress message visible.
-5. An approval-required tool posts a Slack approval card with working buttons.
-6. Clicking Approve or Reject updates the original Slack message correctly.
-7. Clicking Approve or Reject also re-enqueues a non-interrupt announcement to
-   the originating OpenCode session.
-8. If that session is busy, the approval-outcome event is deferred and retried
-   instead of being dropped.
-9. Agent can read a thread with direct `conversations.replies`.
-10. Agent can read recent channel history with direct `conversations.history`.
-11. Agent can fetch a Slack file via `files.info` plus direct download.
-12. Agent can upload a file with `slack-upload`.
-13. Agent can start a new Slack thread with direct `curl`. Notes alias
-    registration for that direct-curl thread is a known out-of-scope gap.
-14. `mcp slack ...` is no longer required anywhere in the active prompt path.
+| #   | Decision                                                                    | Rationale                                                                                                                                                           |
+| --- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P1  | Register progress messages as `in_progress` at post time, not at `finish()` | Closes the race where the bot replies before `finish()` runs — `onBotReply` can always find and delete the message because it was tracked the moment it was posted. |
+| P2  | Auto-delete progress on `post_message`, not on Slack event webhook echo     | The posting service knows immediately when the bot replies; no need to wait for Slack's event echo, which introduced a race window and a 60s timeout fallback.      |
+| P3  | Status-aware cleanup — delete non-error progress, preserve error progress   | Error messages stay visible as debugging evidence; only successful/in-progress messages are cleaned up when the agent replies.                                      |
+| P4  | Update cadence ~10s                                                         | Slack rate-limits `chat.update` to ~50/min per channel; 10s stays well within limits while still feeling responsive.                                                |
+| P5  | Threshold of 3+ tool calls before any progress message is posted            | Avoids posting a progress message for quick tasks that complete in a few tool calls.                                                                                |
 
 ## Out of Scope
 

@@ -36,7 +36,7 @@ Discovery commands (`schemas`, `tables`, `columns`) are scoped to a server-side 
 ### 0. Start from a saved question URL
 
 When the user gives you a Metabase question URL like
-`https://insights-metabase.katalon.com/question/7751-daily-log-web-pages-paths`,
+`https://metabase.example.com/question/7751-daily-log-web-pages-paths`,
 fetch the SQL it uses directly instead of guessing from the slug:
 
 ```bash

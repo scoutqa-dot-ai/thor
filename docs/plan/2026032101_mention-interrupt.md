@@ -1,6 +1,6 @@
 # Mention Interrupt — 2026-03-21-01
 
-> **Superseded note (2026-04-24):** the GitHub-specific mention details in this historical plan are outdated. GitHub mention detection now derives identities from `GITHUB_APP_SLUG` (`<slug>` and `<slug>[bot]`), not `GIT_USER_NAME`. Keep this document as historical design context only; use the current GitHub webhook docs/plan for live behavior.
+> **Superseded note:** The GitHub-specific mention details here are historical. GitHub mention detection now derives identities from `GITHUB_APP_SLUG` (`<slug>` and `<slug>[bot]`), not `GIT_USER_NAME`. See the current GitHub webhook plan for live GitHub behavior; the Slack interrupt design below remains accurate.
 
 > Mentions (`@thor`) should interrupt a running opencode session. Non-mention messages should never interrupt — they wait until the session is idle.
 
@@ -14,14 +14,13 @@
 
 ## Interrupt rules
 
-| Source                                          | Interrupt | Delay   |
-| ----------------------------------------------- | --------- | ------- | ----------------------------------------------------------------- |
-| Slack `app_mention`                             | true      | 0s      |
-| Slack `message` (engaged — Thor replied before) | false     | 3s      |
-| ~~Slack `message` (not engaged)~~               | ~~false~~ | ~~60s~~ | **Obsolete** — dropped since `2026041301_slack-drop-unengaged.md` |
-| GitHub with `@GIT_USER_NAME` in body            | true      | 3s      |
-| GitHub without mention                          | false     | 60s     |
-| Cron                                            | false     | 0s      |
+| Source                                          | Interrupt | Delay |
+| ----------------------------------------------- | --------- | ----- |
+| Slack `app_mention`                             | true      | 0s    |
+| Slack `message` (engaged — Thor replied before) | false     | 3s    |
+| GitHub with bot mention in body                 | true      | 3s    |
+| GitHub without mention                          | false     | 60s   |
+| Cron                                            | false     | 0s    |
 
 Default for new sources: `interrupt: false`. The runner treats unset interrupt as false.
 
@@ -39,31 +38,11 @@ Mention enqueued with `interrupt: true`, 0s delay. Queue fires immediately → r
 
 ### S3: Non-mention while session is running (same thread)
 
-> **Obsolete** — see `2026041301_slack-drop-unengaged.md`. Non-mention messages in unengaged threads are now dropped. Engaged threads use 3s delay.
-
-~~Non-mention enqueued with `interrupt: false`, 60s delay. After 60s, queue fires → runner sees busy session → returns `{busy: true}` → ack not called → files stay on disk → retried on next scan. Once session finishes → fires → agent sees the message.~~
-
-### S4: Non-mention, no session running
-
-> **Obsolete** — see `2026041301_slack-drop-unengaged.md`. Non-mention messages in unengaged threads are now dropped.
-
-~~Non-mention enqueued with 60s delay. After 60s, fires → runner creates/resumes session → processes.~~
+Non-mention messages in unengaged threads are dropped. Engaged threads (Thor replied before) use a 3s delay; the message is delivered once the session is idle.
 
 ### S5: Multiple rapid mentions (same thread)
 
 Mentions fire immediately (0s delay). Each mention fires as soon as the per-key lock is free. The runner aborts the in-flight session for each new mention; opencode's abort handling collapses rapid-fire aborts into the terminal state the runner waits on before sending the next prompt. No gateway-side debounce window.
-
-### S6: Non-mention pending, then mention arrives (same thread)
-
-> **Obsolete** — see `2026041301_slack-drop-unengaged.md`. Non-mention messages in unengaged threads are now dropped, so this scenario no longer applies. In engaged threads, non-mentions use 3s delay (same as mentions).
-
-~~Non-mention at T+0 (readyAt=T+60). Mention at T+10 (readyAt=T+13). Batch has interrupt events → readiness based on interrupt-only readyAt = T+13. Both fire together. Mention pulls non-mention forward.~~
-
-### S7: Mention fires, session starts, then non-mention arrives
-
-> **Obsolete** — see `2026041301_slack-drop-unengaged.md`. After a mention creates a session and Thor replies, the thread becomes engaged — subsequent non-mentions use 3s delay instead of 60s.
-
-~~Mention fires at T, session starts. Non-mention at T+5 (readyAt=T+65). After 65s, fires with `interrupt: false` → runner returns `{busy: true}` → retried until session finishes.~~
 
 ### S8: Mention in thread A while session runs for thread B
 

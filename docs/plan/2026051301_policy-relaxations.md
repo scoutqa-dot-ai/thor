@@ -2,7 +2,7 @@
 
 ## Context
 
-Auto-health report (`findings_2.md`) attributed 119 deduped agent failures to "policy-blocked commands". Many are command shapes that are read-only or safety-equivalent to already-allowed shapes — the policy is just stricter than it needs to be. Relaxing those without weakening real safety boundaries should retire most of that bucket.
+An internal health review attributed a large bucket of agent failures to "policy-blocked commands". Many are command shapes that are read-only or safety-equivalent to already-allowed shapes — the policy is just stricter than it needs to be. Relaxing those without weakening real safety boundaries should retire most of that bucket.
 
 ## Scope
 
@@ -48,7 +48,7 @@ Exit criteria: full `pnpm test` passes; `pnpm typecheck` clean.
 ## Out of scope
 
 - Policy changes outside `gh` / `git` (scoutqa, langfuse, ldcli, metabase).
-- Sandbox/Dockerfile changes (covered by the orthogonal findings_2 review thread).
+- Sandbox/Dockerfile changes (covered by a separate review thread).
 - Agent system-prompt injection of workspace layout (separate planned change).
 
 ## Decision log

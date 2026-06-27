@@ -10,24 +10,24 @@ Thor is event-driven: Slack mentions and GitHub webhooks enter via the gateway, 
 - **Immediate** debounce (no batching — each tick is a standalone event)
 - Use cases: PostHog error spike detection (every 6h), daily codebase health digest
 
-This plan adds a `POST /cron` HTTP endpoint to the gateway. Scheduling runs in a lightweight Alpine cron container. The crontab lives on a shared volume that OpenCode can edit at runtime — ~~BusyBox crond re-reads the crontab on every wake cycle, so changes take effect within one minute~~ supercronic watches via inotify for instant reload (D11). No in-process scheduler, no new Node dependencies.
+This plan adds a `POST /cron` HTTP endpoint to the gateway. Scheduling runs in a lightweight Alpine cron container. The crontab lives on a shared volume that OpenCode can edit at runtime; supercronic watches via inotify for instant reload (D11). No in-process scheduler, no new Node dependencies.
 
 ## Decision Log
 
-| #   | Decision                                                     | Rationale                                                                                                                                                                                                                                            |
-| --- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | **External cron + HTTP request to gateway**                  | No in-process scheduler needed. Works with any platform's cron (crontab, Railway, k8s CronJob, systemd timer). Zero new dependencies. Gateway stays a pure event ingress.                                                                            |
-| D2  | **`POST /cron` endpoint on gateway, not directly to runner** | Keeps gateway as the single entry point. Gets EventQueue's per-key serialization for free — overlapping cron ticks for the same job won't race.                                                                                                      |
-| D3  | **Caller provides `prompt` directly in the request body**    | No job registry, no prompt files. The crontab is the single source of truth for what runs and when.                                                                                                                                                  |
-| D4  | **Cron events use `source: "cron"` in EventQueue**           | Follows the existing pattern (slack, github). The queue handler dispatches based on source type.                                                                                                                                                     |
-| D5  | **Immediate dispatch (delayMs: 0)**                          | Per mvp.md spec. Cron events don't batch — each tick fires independently.                                                                                                                                                                            |
-| D6  | **Correlation key: `cron:{md5(prompt)}:{epoch}`**            | md5 of the prompt groups related runs; epoch ensures each invocation gets its own session. Always auto-derived — no override needed.                                                                                                                 |
-| D7  | **No `--slack` flag — prompt instructs the agent**           | The prompt itself tells the agent where to post results (Slack, Jira, etc.) via MCP tools. No special gateway plumbing for output routing.                                                                                                           |
-| D8  | **`CRON_SECRET` required — fail fast if unset**              | `POST /cron` always requires `Authorization: Bearer <CRON_SECRET>`. If the env var is not configured, the endpoint returns 401 immediately. No permissive mode.                                                                                      |
-| D9  | **Crontab on shared volume, not baked into image**           | `docker-volumes/workspace/cron/` is mounted **rw in OpenCode** and **ro in the cron container**. OpenCode can add/edit/remove jobs at runtime. ~~BusyBox crond re-reads the crontab every wake cycle — no reload signal needed.~~ Superseded by D11. |
-| D10 | **`hey-thor` CLI baked into image, not on volume**           | The CLI is stable infrastructure; the crontab is the dynamic part. CLI in image, config on volume.                                                                                                                                                   |
-| D11 | **Switch from BusyBox crond to supercronic**                 | [supercronic](https://github.com/aptible/supercronic) is designed for containers: no spool directory, no root required, watches crontab via inotify for instant reload. Replaces `crond -f` and the poll-based entrypoint.                           |
-| D12 | **Run as non-root (`USER thor`)**                            | supercronic doesn't need root. Dockerfile creates `thor` (UID 1001) and switches to it before entrypoint. Reduces container attack surface.                                                                                                          |
+| #   | Decision                                                     | Rationale                                                                                                                                                                                                                  |
+| --- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | **External cron + HTTP request to gateway**                  | No in-process scheduler needed. Works with any platform's cron (crontab, Railway, k8s CronJob, systemd timer). Zero new dependencies. Gateway stays a pure event ingress.                                                  |
+| D2  | **`POST /cron` endpoint on gateway, not directly to runner** | Keeps gateway as the single entry point. Gets EventQueue's per-key serialization for free — overlapping cron ticks for the same job won't race.                                                                            |
+| D3  | **Caller provides `prompt` directly in the request body**    | No job registry, no prompt files. The crontab is the single source of truth for what runs and when.                                                                                                                        |
+| D4  | **Cron events use `source: "cron"` in EventQueue**           | Follows the existing pattern (slack, github). The queue handler dispatches based on source type.                                                                                                                           |
+| D5  | **Immediate dispatch (delayMs: 0)**                          | Per mvp.md spec. Cron events don't batch — each tick fires independently.                                                                                                                                                  |
+| D6  | **Correlation key: `cron:{md5(prompt)}:{epoch}`**            | md5 of the prompt groups related runs; epoch ensures each invocation gets its own session. Always auto-derived — no override needed.                                                                                       |
+| D7  | **No `--slack` flag — prompt instructs the agent**           | The prompt itself tells the agent where to post results (Slack, Jira, etc.) via MCP tools. No special gateway plumbing for output routing.                                                                                 |
+| D8  | **`CRON_SECRET` required — fail fast if unset**              | `POST /cron` always requires `Authorization: Bearer <CRON_SECRET>`. If the env var is not configured, the endpoint returns 401 immediately. No permissive mode.                                                            |
+| D9  | **Crontab on shared volume, not baked into image**           | The cron config dir is mounted **rw in OpenCode** and **ro in the cron container**, so OpenCode can add/edit/remove jobs at runtime. Reload behavior is per D11 (supercronic inotify).                                     |
+| D10 | **`hey-thor` CLI baked into image, not on volume**           | The CLI is stable infrastructure; the crontab is the dynamic part. CLI in image, config on volume.                                                                                                                         |
+| D11 | **Switch from BusyBox crond to supercronic**                 | [supercronic](https://github.com/aptible/supercronic) is designed for containers: no spool directory, no root required, watches crontab via inotify for instant reload. Replaces `crond -f` and the poll-based entrypoint. |
+| D12 | **Run as non-root (`USER thor`)**                            | supercronic doesn't need root. Dockerfile creates `thor` (UID 1001) and switches to it before entrypoint. Reduces container attack surface.                                                                                |
 
 ## Phases
 
@@ -99,17 +99,14 @@ Steps:
 
 #### Volume layout
 
-```
-docker-volumes/workspace/cron/     ← shared volume
-└── crontab                        ← schedule definitions with inline prompts
-```
+The shared cron volume holds a single `crontab` file — schedule definitions with inline prompts.
 
 Mount permissions:
 
-- **OpenCode**: `/workspace/cron` → **rw** (can add/edit/remove jobs)
-- **Cron container**: `/workspace/cron` → **ro** (only reads crontab)
+- **OpenCode**: cron dir → **rw** (can add/edit/remove jobs)
+- **Cron container**: cron dir → **ro** (only reads crontab)
 
-~~BusyBox crond re-reads the crontab on every wake cycle — no reload needed. OpenCode edits the file, next minute tick picks it up.~~ Superseded by D11 — supercronic watches via inotify.
+supercronic watches the crontab via inotify (D11), so OpenCode edits take effect immediately.
 
 #### `hey-thor` CLI
 
@@ -127,7 +124,7 @@ Behavior:
 
 #### Crontab
 
-`docker-volumes/workspace/cron/crontab` — clean, readable:
+The crontab on the shared cron volume — clean, readable:
 
 ```crontab
 0 */6 * * *  hey-thor "Check PostHog for error rate spikes in the last 6 hours. ... Post findings to #acme-general on Slack."
@@ -136,18 +133,18 @@ Behavior:
 
 #### Container
 
-`docker/cron/Dockerfile` — ~~alpine + curl + jq + crond~~ alpine + curl + jq + supercronic (D11):
+`docker/cron/Dockerfile` — alpine + curl + jq + supercronic (D11):
 
 - Copies `hey-thor` to `/usr/local/bin/` (baked into image)
-- ~~Entrypoint: installs `/workspace/cron/crontab` into crond, then runs `crond -f` (foreground)~~ Entrypoint: `exec supercronic -inotify /workspace/cron/crontab` (D11)
-- ~~Crontab is re-read from the volume on each wake — no image rebuild to change schedule~~ Crontab changes detected instantly via inotify (D11), runs as non-root `thor` user (D12)
+- Entrypoint: `exec supercronic -inotify /workspace/cron/crontab` (D11)
+- Crontab changes detected instantly via inotify (D11); runs as non-root `thor` user (D12)
 
 Steps:
 
 1. Create `docker/cron/hey-thor` shell script
-2. ~~Create `docker/cron/entrypoint.sh` — installs crontab from volume, starts crond~~ Create `docker/cron/entrypoint.sh` — runs supercronic (D11)
+2. Create `docker/cron/entrypoint.sh` — runs supercronic (D11)
 3. Create `docker/cron/Dockerfile`
-4. Seed initial crontab in `docker-volumes/workspace/cron/crontab`
+4. Seed initial crontab on the shared cron volume
 5. Update `packages/gateway/src/index.ts`:
    - Read `CRON_SECRET` from env, pass to `GatewayAppConfig`
 6. Update `docker-compose.yml`:
@@ -182,7 +179,7 @@ Steps:
 
 ## Example Schedules
 
-The crontab at `docker-volumes/workspace/cron/crontab` is the single source of truth. Each line is a standard cron expression followed by a `hey-thor` invocation. Available upstream MCP servers via proxy: **GitHub** (port 3013), **Atlassian** (port 3010), **PostHog** (port 3011), **Slack** (port 3012), **Git** (port 3014).
+The crontab on the shared cron volume is the single source of truth. Each line is a standard cron expression followed by a `hey-thor` invocation. Available upstream MCP servers via proxy: **GitHub** (port 3013), **Atlassian** (port 3010), **PostHog** (port 3011), **Slack** (port 3012), **Git** (port 3014).
 
 ```crontab
 # ── Daily Brief (weekdays 9:15 AM VN time / 2:15 UTC) ──────────────────────
@@ -190,12 +187,6 @@ The crontab at `docker-volumes/workspace/cron/crontab` is the single source of t
 
 # ── Error Spike Monitor (every 6 hours) ─────────────────────────────────────
 0 */6 * * *  hey-thor "Check PostHog for error rate spikes in the last 6 hours. If any endpoint shows >20% increase in error rate, investigate recent GitHub merges in acme/acme-project for likely causes. Post findings with links to the relevant PRs and PostHog error details to #acme-general on Slack."
-
-# ── Stale PR Reminder (weekdays 4 PM VN time / 9:00 UTC) ────────────────────
-0 9 * * 1-5  hey-thor "Find all open PRs in acme/acme-project that have had no review activity in the last 48 hours. For each, mention the PR author and requested reviewers. Sort by age, oldest first. Post to #acme-general on Slack."
-
-# ── Weekly Initiative Health (Monday 9:30 AM VN / 2:30 UTC) ─────────────────
-30 2 * * 1  hey-thor "Generate a weekly initiative health report. For each active Jira initiative in the Acme project: show % complete, issues closed vs remaining this week, and any blockers. Cross-reference with GitHub — flag initiatives where no PRs were merged in the past 7 days. Post to #acme-general on Slack."
 ```
 
 ### Prompt Design Guidelines
