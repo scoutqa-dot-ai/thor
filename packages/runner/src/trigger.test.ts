@@ -1317,16 +1317,16 @@ describe("runner /trigger orchestration", () => {
     mkdirSync(`${memoryDir}/runner-trigger-test`, { recursive: true });
     writeFileSync(`${memoryDir}/README.md`, "global memory text");
     writeFileSync(`${memoryDir}/channels/C123.md`, "channel memory text");
-    writeFileSync(`${memoryDir}/people/son.dao.md`, "person memory text");
+    writeFileSync(`${memoryDir}/people/alice.md`, "person memory text");
     writeFileSync(`${memoryDir}/runner-trigger-test/README.md`, "legacy repo memory text");
     const h = createHarness({
       workspaceConfig: {
         users: [
           {
-            name: "Son Dao",
-            email: "Son.Dao@example.com",
+            name: "Alice Example",
+            email: "alice@example.com",
             slack: "UABCDEF1",
-            github: "son-dao-gh",
+            github: "alice-gh",
           },
         ],
       },
@@ -1396,14 +1396,14 @@ describe("runner /trigger orchestration", () => {
   it("resolves person memory from github login when slack id is absent", async () => {
     mkdirSync(`${memoryDir}/people`, { recursive: true });
     writeFileSync(`${memoryDir}/README.md`, "global memory text");
-    writeFileSync(`${memoryDir}/people/son.dao.md`, "person memory text");
+    writeFileSync(`${memoryDir}/people/alice.md`, "person memory text");
     const h = createHarness({
       workspaceConfig: {
         users: [
           {
-            name: "Son Dao",
-            email: "Son.Dao@example.com",
-            github: "sonkatalon",
+            name: "Alice Example",
+            email: "alice@example.com",
+            github: "alice-gh",
           },
         ],
       },
@@ -1413,12 +1413,12 @@ describe("runner /trigger orchestration", () => {
       await trigger(url, {
         prompt: "first",
         correlationKey: "git:branch:thor:feat/memory-tiers",
-        triggerGithubLogin: "sonkatalon",
+        triggerGithubLogin: "alice-gh",
       });
     });
 
     expect(h.prompts[0]).toContain("person memory text");
-    expect(h.prompts[0]).toContain("github: sonkatalon");
+    expect(h.prompts[0]).toContain("github: alice-gh");
   });
 
   it("intercepts bad idle and sends Continue once before done", async () => {

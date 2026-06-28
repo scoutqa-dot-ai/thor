@@ -1,9 +1,8 @@
 # mitmproxy HTTP Proxy — 2026-04-22-01
 
-> **Note (2026-05-16):** Config examples in this plan show a `"repos": {}` field
-> alongside `mitmproxy` rules. That field has since been removed from
-> `WorkspaceConfigSchema`. The mitmproxy parser ignored it and continues to work
-> on configs that omit it. Examples in this doc are otherwise still accurate.
+> **Note:** Some config examples in this plan show a `"repos": {}` field. That
+> field has since been removed from `WorkspaceConfigSchema`; the mitmproxy parser
+> ignores it and works on configs that omit it.
 
 **Goal**: implement outbound credential injection from scratch as a conventional
 explicit HTTP proxy:
@@ -23,16 +22,6 @@ Primary targets:
 - custom host rules come from `/workspace/config.json`
 - supported clients inside opencode are `curl` and built-in Node `fetch`
 - the legacy `data` container is removed completely
-
-## Workflow
-
-Implementation follows `AGENTS.md`:
-
-1. implement one phase only
-2. self-test against that phase's exit criteria
-3. stop for human review
-4. after approval, create one focused commit for that phase
-5. continue to the next phase
 
 ## Motivation
 
@@ -110,8 +99,6 @@ Covered clients for this plan:
 - `curl`
 - built-in Node `fetch()`
 
-Not covered by this plan:
-
 ### Node support
 
 Use Node 22's native proxy support in the existing `node:22-slim` base image.
@@ -131,19 +118,10 @@ Node-based proxy call.
 
 The proxy image ships with these default injection rules:
 
-- `POST api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue/{key}/attachments` -> `Authorization: ${ATLASSIAN_AUTH}` + `X-Atlassian-Token: no-check` (writable; Jira attachment uploads)
-- `POST {site}.atlassian.net/rest/api/3/issue/{key}/attachments` -> `Authorization: ${ATLASSIAN_AUTH}` + `X-Atlassian-Token: no-check` (writable; Jira attachment uploads)
-- `api.atlassian.com` -> `Authorization: ${ATLASSIAN_AUTH}` (`readonly: true`)
-- `.atlassian.net` -> `Authorization: ${ATLASSIAN_AUTH}` (`readonly: true`)
-- `slack.com/api/chat.postMessage` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
-- `slack.com/api/reactions.add` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
-- `slack.com/api/conversations.replies` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
-- `slack.com/api/conversations.history` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
-- `slack.com/api/files.info` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
-- `slack.com/api/files.getUploadURLExternal` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
-- `slack.com/api/files.completeUploadExternal` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
-- `files.slack.com/upload/v1/...` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
-- `files.slack.com/files-pri/...` -> `Authorization: Bearer ${SLACK_BOT_TOKEN}` (`readonly: true`)
+- Atlassian read: `api.atlassian.com` and `.atlassian.net` -> `Authorization: ${ATLASSIAN_AUTH}` (`readonly: true`)
+- Atlassian write: `POST .../rest/api/3/issue/{key}/attachments` on `api.atlassian.com` and `{site}.atlassian.net` -> `Authorization: ${ATLASSIAN_AUTH}` + `X-Atlassian-Token: no-check` (writable; the only writable Jira exception)
+- Slack Web API methods on `slack.com/api/` (`chat.postMessage`, `reactions.add`, `conversations.replies`, `conversations.history`, `files.info`, `files.getUploadURLExternal`, `files.completeUploadExternal`) -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
+- `files.slack.com/upload/v1/...` (write) and `files.slack.com/files-pri/...` (`readonly: true`) -> `Authorization: Bearer ${SLACK_BOT_TOKEN}`
 
 The proxy image also ships with these default passthrough hosts:
 
@@ -269,33 +247,17 @@ Likely files to create or change:
 
 **Tasks:**
 
-- Install `curl` in the `opencode` image.
-- Install `jq` in the `opencode` image.
-- Install `ripgrep` in the `opencode` image.
-- Add lowercase and uppercase proxy env vars to the `opencode` service.
-- Add a concrete `NO_PROXY` list for in-cluster services.
-- Set `NODE_OPTIONS=--use-env-proxy`.
-- Add `--disable-warning=UNDICI-EHPA` to `NODE_OPTIONS`.
-- Mount the generated CA PEM into `opencode` and wire:
-  - `NODE_EXTRA_CA_CERTS`
-  - `CURL_CA_BUNDLE`
-  - `SSL_CERT_FILE`
+- Install `curl`, `jq`, and `ripgrep` in the `opencode` image.
+- Add lowercase and uppercase proxy env vars plus a concrete `NO_PROXY` list for
+  in-cluster services to the `opencode` service.
+- Set `NODE_OPTIONS=--use-env-proxy --disable-warning=UNDICI-EHPA`.
+- Mount the generated CA PEM into `opencode` and wire `NODE_EXTRA_CA_CERTS`,
+  `CURL_CA_BUNDLE`, and `SSL_CERT_FILE`.
 - Mount `/workspace/config.json` into `opencode` as read-only.
 - Add a `slack-upload` helper in the `opencode` image for one-command Slack
   file uploads.
-- Add baked-in default rules for:
-  - `api.atlassian.com`
-  - `.atlassian.net`
-  - the supported Slack Web API paths on `slack.com`
-  - `files.slack.com/upload/v1/...`
-  - `files.slack.com/files-pri/...`
-- Add baked-in default passthrough for:
-  - `api.media.atlassian.com`
-  - `openai.com`
-  - `.openai.com`
-  - `chatgpt.com`
-  - `.chatgpt.com`
-- Ensure user rules and user passthrough entries override built-ins by ordering.
+- Add the baked-in default inject rules and passthrough hosts listed under
+  Built-in defaults, ordered so user rules and user passthrough entries win.
 - Add tests for:
   - defaults applied when `mitmproxy[]` is empty
   - user override wins
@@ -339,8 +301,7 @@ Likely files to create or change:
 **Exit criteria:**
 
 - README clearly explains `opencode -> mitmproxy -> upstream`
-- docs mention `curl` and built-in Node `fetch()` support explicitly
-- docs make clear that Node support means built-in `fetch()`
+- docs explicitly scope client support to `curl` and built-in Node `fetch()`
 - the Slack skill uses real `slack.com` / `files.slack.com` URLs and contains
   no `mcp slack` examples, with URL-encoded `curl` examples for simple writes
   and `slack-upload` for file uploads
@@ -369,60 +330,35 @@ curl -I https://api.openai.com
 curl http://remote-cli:3004/health
 ```
 
-Expected:
-
-- Atlassian request is proxied and non-403
-- Slack request is proxied and authenticated
-- Node built-in `fetch()` request works through Node's built-in env-proxy
-  support
-- OpenAI request is passed through and not denied
-- `remote-cli` request bypasses the proxy
+Expected: Atlassian proxied and non-403, Slack proxied and authenticated, Node
+`fetch()` works through env-proxy, OpenAI passed through, `remote-cli` bypasses
+the proxy.
 
 ## Decision log
 
-| #   | Decision                                                                               | Rationale                                                                                                                                                                 |
-| --- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | Use `mitmproxy` over Squid or a custom proxy                                           | mitmproxy already gives TLS interception plus a small Python addon surface for header mutation.                                                                           |
-| D2  | Use `mitmdump`, not the interactive UI                                                 | Headless container runtime is the target.                                                                                                                                 |
-| D3  | Keep config in `/workspace/config.json`, secrets in env, interpolate at request time   | Matches existing Thor config patterns and keeps secrets out of the workspace file.                                                                                        |
-| D4  | Hot reload via file `mtime`, not process restart                                       | Rule edits should apply on the next request without bouncing the container.                                                                                               |
-| D5  | Match hosts by `host` or `host_suffix`, not regex                                      | Exact and suffix matching cover the expected cases without making rule syntax hard to reason about.                                                                       |
-| D6  | Fail closed on missing env vars                                                        | Silent unauthenticated fallback is the wrong failure mode.                                                                                                                |
-| D7  | Keep deny-by-default host policy                                                       | Unknown hosts should be rejected unless explicitly injected or passed through.                                                                                            |
-| D8  | Use both lowercase and uppercase proxy env vars                                        | Different HTTP clients do not all consult the same proxy env var spellings.                                                                                               |
-| D9  | Use Node 22 native env-proxy support                                                   | The current `node:22-slim` image already supports built-in `fetch()` proxying via `--use-env-proxy`, which removes an unnecessary dependency and preload file.            |
-| D10 | Bake in Atlassian and Slack defaults                                                   | Those integrations are core Thor dependencies and should work without per-install copy-paste.                                                                             |
-| D11 | User rules come before defaults                                                        | Operators need an escape hatch for host-specific overrides.                                                                                                               |
-| D12 | Keep general communication policy in `build.md`; keep channel skills transport-focused | Future channels such as Telegram should reuse one policy surface while each skill only documents channel-specific APIs and mechanics.                                     |
-| D13 | Generate the CA on the host and mount it into containers                               | Keeps the private key out of image layers and keeps rotation simple.                                                                                                      |
-| D14 | Do not log request or response bodies                                                  | Bodies may contain credentials, prompts, PII, or large payloads.                                                                                                          |
-| D15 | Limit env vars exposed to mitmproxy                                                    | The proxy should only receive the secrets it actually needs for interpolation.                                                                                            |
-| D16 | Pass through OpenAI and ChatGPT domains by default                                     | The OpenCode runtime itself depends on those hosts, so proxy enablement in `opencode` must not break model traffic.                                                       |
-| D17 | Remove the legacy `data` container instead of running both systems in parallel         | Sharing host port `3080` and teaching two URL shapes would create avoidable operator confusion and migration bugs.                                                        |
-| D18 | Install `curl` in `opencode`                                                           | The target operator workflow and smoke tests depend on a simple shell HTTP client being present in the container.                                                         |
-| D19 | Mount `/workspace/config.json` read-only into `opencode`                               | The agent should be able to inspect custom proxy rules without being able to edit deployment config in-place.                                                             |
-| D20 | Explicitly scope Node support to built-in `fetch()` only                               |                                                                                                                                                                           |
-| D21 | Interpolate `${ENV}` in mitmproxy from the proxy container env only                    | Keeps Phase 1 simple: use compose `env_file: .env` + explicit proxy envs, without introducing a second config/secret distribution system.                                 |
-| D22 | Split CA mounts into a private mitmproxy dir and a public-only opencode dir            | Fixes Docker's missing-file bind-mount footgun while keeping the CA private key unreadable from `opencode`.                                                               |
-| D23 | Exit mitmproxy if the host-generated CA is missing                                     | Prevents the proxy from booting with a container-local CA that `opencode` does not trust, which would make HTTPS behavior depend on startup order.                        |
-| D24 | Add a `slack-upload` helper instead of teaching the raw Slack upload sequence inline   | Slack file uploads are a three-step flow that an LLM can easily mangle; a helper keeps the agent-facing workflow to one command.                                          |
-| D25 | Install `ripgrep` in `opencode` explicitly                                             | The agent guidance already prefers `rg` for code search, so the container should provide it directly instead of relying on upstream runtime behavior.                     |
-| D26 | Suppress only `UNDICI-EHPA` instead of all Node warnings                               | `--use-env-proxy` emits an experimental warning on every Node proxy call; `--disable-warning=UNDICI-EHPA` removes the noise without hiding unrelated warnings.            |
-| D27 | Allow `api.media.atlassian.com` as built-in passthrough                                | Jira attachment-content requests can redirect there; the media URL should be reachable without widening Atlassian host access beyond the exact redirect target.           |
-| D28 | Make the built-in Atlassian proxy rules readonly                                       | The baked-in Atlassian path is intended for read access from `opencode`; write operations should continue to go through explicit MCP or user-configured rules.            |
-| D29 | Install `jq` in `opencode` explicitly                                                  | Agent-side JSON inspection is a common shell workflow, and shipping `jq` avoids ad hoc parsing or runtime download attempts.                                              |
-| D30 | Add optional `path_prefix` to mitmproxy inject rules                                   | Some deployments need different injected credentials on the same host; a prefix is enough without introducing regex or a larger rule language.                            |
-| D31 | Narrow built-in Slack proxy rules to the opencode Slack workflow surface               | Allow only the Slack API methods needed over the mitmproxy path; update, delete, and reaction actions stay on the gateway/`slack-mcp` path instead.                       |
-| D32 | Use `mktemp`/`mktemp -d` under `/tmp` for temporary Slack artifacts                    | It is more reliable than fixed temp paths, avoids collisions when multiple agents run in parallel, and still preserves meaningful filenames when needed.                  |
-| D33 | Add optional `path_suffix` to mitmproxy inject rules                                   | Lets a writable rule be scoped to a specific endpoint (e.g. `/attachments`) without widening to all subpaths of a prefix; cheaper than introducing regex.                 |
-| D34 | Carve out Jira `…/attachments` POST as a writable built-in exception                   | Jira attachment upload has no MCP tool upstream; allowing the narrow REST path keeps the rest of the Jira issue surface readonly while unblocking uploads.                |
-| D35 | Inject `X-Atlassian-Token: no-check` on the attachment rules at the proxy              | Jira mandates this XSRF-opt-out header on attachment POSTs; injecting it at the proxy keeps the agent prompt free of per-endpoint header recipes.                         |
-| D36 | Add segment-aware and POST-only guards to built-in Jira attachment rules               | Prefix/suffix matching is useful for custom rules, but the built-in writable Jira exception should stay limited to the documented issue attachment upload endpoint shape. |
-
-## Open questions
-
-- whether any opencode-invoked built-in `fetch()` path bypasses the
-  `NODE_OPTIONS` env-proxy wiring and needs a second wiring point
+| #   | Decision                                                                               | Rationale                                                                                                                                                                                          |
+| --- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | Use `mitmproxy` (`mitmdump`, headless) over Squid or a custom proxy                    | Gives TLS interception plus a small Python addon surface for header mutation, with no interactive UI to run in a container.                                                                        |
+| D2  | Keep config in `/workspace/config.json`, secrets in env, interpolate at request time   | Matches existing Thor config patterns and keeps secrets out of the workspace file.                                                                                                                 |
+| D3  | Hot reload via file `mtime`, not process restart                                       | Rule edits should apply on the next request without bouncing the container.                                                                                                                        |
+| D4  | Match hosts by `host` or `host_suffix`, not regex                                      | Exact and suffix matching cover the expected cases without making rule syntax hard to reason about.                                                                                                |
+| D5  | Fail closed on missing env vars                                                        | Silent unauthenticated fallback is the wrong failure mode.                                                                                                                                         |
+| D6  | Keep deny-by-default host policy                                                       | Unknown hosts should be rejected unless explicitly injected or passed through.                                                                                                                     |
+| D7  | Use both lowercase and uppercase proxy env vars                                        | Different HTTP clients do not all consult the same proxy env var spellings.                                                                                                                        |
+| D8  | Use Node 22 native env-proxy support, scoped to built-in `fetch()` only                | The `node:22-slim` image already supports `fetch()` proxying via `--use-env-proxy`, removing an extra dependency and preload file.                                                                 |
+| D9  | Bake in Atlassian and Slack defaults; user rules and passthrough come first            | Those integrations are core Thor dependencies and should work without per-install copy-paste, while operators keep a host-specific override escape hatch.                                          |
+| D10 | Keep general communication policy in `build.md`; keep channel skills transport-focused | Future channels such as Telegram should reuse one policy surface while each skill only documents channel-specific APIs and mechanics.                                                              |
+| D11 | Generate the CA on the host and mount it into containers; exit if it is missing        | Keeps the private key out of image layers and out of `opencode`, makes rotation simple, and avoids HTTPS behavior depending on container startup order.                                            |
+| D12 | Do not log request or response bodies                                                  | Bodies may contain credentials, prompts, PII, or large payloads.                                                                                                                                   |
+| D13 | Limit env vars exposed to mitmproxy                                                    | The proxy should only receive the secrets it actually needs for interpolation.                                                                                                                     |
+| D14 | Pass through OpenAI and ChatGPT domains by default                                     | The OpenCode runtime itself depends on those hosts, so proxy enablement in `opencode` must not break model traffic.                                                                                |
+| D15 | Remove the legacy `data` container instead of running both systems in parallel         | Sharing host port `3080` and teaching two URL shapes would create avoidable operator confusion and migration bugs.                                                                                 |
+| D16 | Mount `/workspace/config.json` read-only into `opencode`                               | The agent should inspect custom proxy rules without being able to edit deployment config in place.                                                                                                 |
+| D17 | Add a `slack-upload` helper instead of teaching the raw Slack upload sequence inline   | Slack file uploads are a three-step flow an LLM can easily mangle; a helper keeps the agent-facing workflow to one command.                                                                        |
+| D18 | Add optional `path_prefix` and `path_suffix` to inject rules                           | Lets a rule be scoped to a host+prefix or a specific endpoint (e.g. `/attachments`) without introducing regex or a larger rule language.                                                           |
+| D19 | Narrow built-in Slack proxy rules to the opencode Slack workflow surface               | Allow only the Slack API methods needed over the mitmproxy path; update, delete, and reaction actions stay on the gateway/`slack-mcp` path instead.                                                |
+| D20 | Carve out Jira `…/attachments` POST as the one writable built-in exception             | Jira attachment upload has no MCP tool upstream; a segment-aware, POST-only rule (plus injected `X-Atlassian-Token: no-check`) unblocks uploads while the rest of the Jira surface stays readonly. |
+| D21 | Allow `api.media.atlassian.com` as built-in passthrough                                | Jira attachment-content requests can redirect there; the media URL should be reachable without widening Atlassian host access beyond the redirect target.                                          |
 
 ## Not in scope for this plan
 

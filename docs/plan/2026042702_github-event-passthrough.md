@@ -1,5 +1,3 @@
-<!-- /autoplan restore point: /Users/son.dao/.gstack/projects/scoutqa-dot-ai-thor/investigate-workflow-trigger-autoplan-restore-20260427-215127.md -->
-
 # GitHub event pass-through (drop NormalizedGitHubEvent)
 
 **Date**: 2026-04-27

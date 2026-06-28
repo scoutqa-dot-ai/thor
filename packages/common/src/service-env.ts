@@ -94,6 +94,7 @@ export function loadAdminEnv(env: EnvSource = process.env) {
     port: envInt(env, "PORT", 3005),
     configPath,
     auditLogPath: envString(env, "AUDIT_LOG_PATH", ADMIN_AUDIT_LOG_PATH),
+    thorInternalSecret: envString(env, "THOR_INTERNAL_SECRET"),
   };
 }
 

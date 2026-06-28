@@ -87,10 +87,19 @@ thor/
 
 - **Language**: TypeScript (strict mode)
 - **Package manager**: pnpm with workspaces
-- **Runtime**: Node.js 22+
+- **Runtime**: Node.js 24+
 - **Formatting**: Default TypeScript/ESLint conventions. No custom config until needed.
-- **OpenCode version alignment**: When bumping `@opencode-ai/sdk`, also bump the OpenCode server/package version in the Dockerfile in the same change so the client and server stay aligned.
-- **External schema drift**: any upstream whose shape evolves under us — e.g. OpenCode events and MCP tool schemas/policy, and almost certainly other boundaries in this repo (treat these two as examples, not the full list) — should be consumed through **strongly-typed, strict schemas**, not loose or defensive parsing. When a shape drifts, **fail fast and loudly wherever that helps us catch and fix it** — strict parsing that surfaces the unknown/changed shape so we update our schema — rather than investing in tolerant fallback rendering or graceful degradation that hides the drift. While MVP there is no persisted history or deployed state to preserve, so prefer letting drift break visibly and fixing the schema. The one exception is keeping a *live* run alive: where failing would take down a running agent, downgrade to log-and-tolerate **in production only** (e.g. `PolicyDriftError` tolerated when `isProduction`) and keep the dev path strict. When you hit another such boundary, apply this same posture. Known instances to read first: `docs/plan/2026051601_opencode-event-view-schema.md` (OpenCode events) and `packages/remote-cli/src/mcp-handler.ts` (MCP policy).
+- **Version pinning — align every copy in one change**: Several versions are pinned in more than one file and will silently drift if bumped in only one place. When you change any of these, update **all** listed locations in the same commit:
+  - **pnpm**: `package.json` `packageManager` + root `Dockerfile` (`corepack prepare`) + `docker/sandbox/Dockerfile` (`corepack prepare`).
+  - **Node major**: root `Dockerfile` base image (`node:<N>-slim`) + every `.github/workflows/*.yml` `setup-node` `node-version` + the **Runtime** line above.
+  - **OpenCode**: `@opencode-ai/sdk` in `packages/runner/package.json` + the `opencode-ai` server install in the root `Dockerfile` (client and server must match).
+  - **prettier**: the `package.json` devDependency + the global install in the root `Dockerfile`.
+  - **Model IDs**: `docker/opencode/config/opencode.json` + `docker/opencode/config/agents/*.md` + the model whitelist in `README.md`.
+  - **GitHub Action versions**: keep the `uses: …@vN` pins identical across all `.github/workflows/*.yml`.
+
+  Single-source pins (`mcp-grafana`, `codex-lb`, `vouch-proxy`, `opencode-plugin-langfuse`, and the sandbox tool `ARG`s) live in exactly one place — refer to that pin location from docs rather than copying the version number, so there is nothing to drift.
+
+- **External schema drift**: any upstream whose shape evolves under us — e.g. OpenCode events and MCP tool schemas/policy, and almost certainly other boundaries in this repo (treat these two as examples, not the full list) — should be consumed through **strongly-typed, strict schemas**, not loose or defensive parsing. When a shape drifts, **fail fast and loudly wherever that helps us catch and fix it** — strict parsing that surfaces the unknown/changed shape so we update our schema — rather than investing in tolerant fallback rendering or graceful degradation that hides the drift. While MVP there is no persisted history or deployed state to preserve, so prefer letting drift break visibly and fixing the schema. The one exception is keeping a _live_ run alive: where failing would take down a running agent, downgrade to log-and-tolerate **in production only** (e.g. `PolicyDriftError` tolerated when `isProduction`) and keep the dev path strict. When you hit another such boundary, apply this same posture. Known instances to read first: `docs/plan/2026051601_opencode-event-view-schema.md` (OpenCode events) and `packages/remote-cli/src/mcp-handler.ts` (MCP policy).
 - **No frameworks unless justified** — Express for HTTP, raw TypeScript for everything else. Every added dependency should have a reason in the plan.
 
 ## Context for New Sessions

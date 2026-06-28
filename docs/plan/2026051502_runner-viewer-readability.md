@@ -1,14 +1,12 @@
 # Runner Viewer — Readability Pass
 
-**Date**: 2026-05-15
-**Status**: In progress
 **Depends on**: `docs/plan/2026050502_trigger-viewer-event-list.md`, `docs/plan/2026051501_admin-sessions-external-keys.md`
 
 ## Goal
 
 Make `/runner/v/:anchorId/:triggerId` easy to read at a glance.
 
-Today it dumps a flat `<ol>` of "tool / text / step finish" rows, four full UUIDs, a generic "Thor trigger" title, a wall of sanitized JSON, an `<meta refresh=5>` flash loop, and a `$0.0000` cost line that is always zero in this corpus. A 7 MB session file with 92 triggers and 25%-truncated `opencode_event` lines is unreadable in that shape.
+Today it dumps a flat `<ol>` of "tool / text / step finish" rows, four full UUIDs, a generic "Thor trigger" title, a wall of sanitized JSON, an `<meta refresh=5>` flash loop, and a `$0.0000` cost line that is always zero in practice. A large session file with many triggers and many truncated `opencode_event` lines is unreadable in that shape.
 
 After this pass the page shows decoded facts (source link, summary numbers, titled tool rows, real diffs, slack-post bubbles), drops everything admins can read in the JSONL anyway (sanitized diagnostics, warnings, autoplay refresh, cost), and stays static — a small `● live` indicator is the only signal while the trigger is in flight.
 
@@ -22,28 +20,28 @@ In scope:
 
 Out of scope (parking for later plans):
 
-- Sibling-trigger sidebar for multi-trigger sessions (a session file holds up to ~90 triggers; navigation between them is its own feature).
+- Sibling-trigger sidebar for multi-trigger sessions (a session file can hold many triggers; navigation between them is its own feature).
 - SSE / live streaming. Page stays static; admin refreshes manually.
 - Removing the legacy "trigger viewer" event-log plumbing in `@thor/common` — only the rendering layer changes.
 
 ## Data findings driving the design
 
-From surveying ~1,099 JSONL session files in `docker-volumes/workspace/worklog/sessions/`:
+From surveying the persisted JSONL session logs:
 
-| Finding                                                                                                       | UI implication                                           |
-| ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `tool_call` top-level records: **0 occurrences**                                                              | Remove the dead render branch.                           |
-| `~25%` of `opencode_event` records are `{ _truncated: true }`                                                 | Aggregate into one factual count line; no per-event row. |
-| `cost` is always `0` in this corpus                                                                           | Drop the dollar line.                                    |
-| `correlationKey`: 64% `slack:`, 35% `git:`, 1% `cron:`; `promptPreview` is structured JSON for slack & github | Parse it; build a clickable header link.                 |
-| Tool `state.title` is a Claude-generated description (`"Lists test-management Thor worktrees"`)               | Use it as the row label; raw input behind `<details>`.   |
-| `bash` p50 230 chars, max 3,206; multiline is the norm                                                        | Render as a `<pre>`, not inline `<code>`.                |
-| `slack-post-message` bash commands are the agent's outward voice                                              | Render as a chat bubble (`💬 → #channel`).               |
-| `apply_patch` parts carry a real unified diff in `input.patchText`                                            | Render with `+ / -` line coloring.                       |
-| `task` tool launches subagents with a multi-paragraph prompt                                                  | Nested collapsible card.                                 |
-| Same `part.id` is updated up to 4× as text/reasoning streams in                                               | Dedup by `id`; keep last seen state.                     |
-| `session.status: busy` heartbeats and empty `reasoning` parts are pure noise                                  | Filter from the activity list.                           |
-| `trigger_end.status: aborted` carries `reason: user_interrupt                                                 | shutdown`                                                | Show reason on the pill — distinguishes "user stopped" from "stranded". |
+| Finding                                                                                                                 | UI implication                                                          |
+| ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `tool_call` top-level records never occur                                                                               | Remove the dead render branch.                                          |
+| Many `opencode_event` records are `{ _truncated: true }`                                                                | Aggregate into one factual count line; no per-event row.                |
+| `cost` is always `0` in practice                                                                                        | Drop the dollar line.                                                   |
+| `correlationKey` is mostly `slack:`, then `git:`, rarely `cron:`; `promptPreview` is structured JSON for slack & github | Parse it; build a clickable header link.                                |
+| Tool `state.title` is a Claude-generated description                                                                    | Use it as the row label; raw input behind `<details>`.                  |
+| `bash` commands are usually short but can be large; multiline is the norm                                               | Render as a `<pre>`, not inline `<code>`.                               |
+| `slack-post-message` bash commands are the agent's outward voice                                                        | Render as a chat bubble (`💬 → #channel`).                              |
+| `apply_patch` parts carry a real unified diff in `input.patchText`                                                      | Render with `+ / -` line coloring.                                      |
+| `task` tool launches subagents with a multi-paragraph prompt                                                            | Nested collapsible card.                                                |
+| Same `part.id` is updated multiple times as text/reasoning streams in                                                   | Dedup by `id`; keep last seen state.                                    |
+| `session.status: busy` heartbeats and empty `reasoning` parts are pure noise                                            | Filter from the activity list.                                          |
+| `trigger_end.status: aborted` carries `reason: user_interrupt` / `shutdown`                                             | Show reason on the pill — distinguishes "user stopped" from "stranded". |
 
 ## Decisions
 
@@ -132,7 +130,7 @@ Make the activity list informative without expanding.
   - Duplicate `part.id` updates (4× streaming) emit one row.
   - `session.status: busy` and empty `reasoning` are not rendered.
 
-**Exit**: `pnpm --filter @thor/runner test` passes; manual spot check against the largest real session under `docker-volumes/workspace/worklog/sessions/` shows < 1 screen of noise.
+**Exit**: `pnpm --filter @thor/runner test` passes; manual spot check against the largest real session shows < 1 screen of noise.
 
 ### Phase 4 — Step grouping
 
@@ -204,19 +202,18 @@ After all five phases:
 
 ## Decision Log
 
-| Date       | Decision                                              | Notes                                                                             |
-| ---------- | ----------------------------------------------------- | --------------------------------------------------------------------------------- |
-| 2026-05-15 | Drop warnings, diagnostics, auto-refresh, cost line   | Admin-reviewed; "page should show fact".                                          |
-| 2026-05-15 | Reuse `SLACK_TEAM_ID` env (now read by runner too)    | Mirrors admin behavior; no new env.                                               |
-| 2026-05-15 | Static page, no polling; `● live` indicator only      | Admin refreshes manually.                                                         |
-| 2026-05-15 | Remove activity-row cap; always render full           | Admin-reviewed; "no skip".                                                        |
-| 2026-05-15 | Move tokens + model to a totals footer                | Header was busy; tokens belong at end.                                            |
-| 2026-05-15 | Drop redundant slack/github Prompt preview line       | Decoded source line carries it already.                                           |
-| 2026-05-15 | Subagent tokens shown via per-agent footer table      | Single line stays when no subagents.                                              |
-| 2026-05-15 | Main agent model hardcoded `gpt-5.4` with TODO        | Real source needs `message.updated`.                                              |
-| 2026-05-15 | Subagent model read from parent task `metadata.model` | OpenCode tags spawn with child's model.                                           |
-| 2026-05-16 | Diff rows emit real newline separators                | Consecutive `apply_patch` context lines must not visually concatenate in `<pre>`. |
-| 2026-05-16 | No app-level regex redaction in viewer snippets       | Redaction belongs at the LLM/infrastructure boundary; regex redaction is brittle. |
-| 2026-05-31 | Trust persisted OpenCode `step-finish.cost` for viewer cost display; remove token-price estimation and model plumbing | Real cost is now present in normal session logs, so the viewer should use the authoritative persisted field instead of recomputing prices from token counts and inferred model ids. |
-| 2026-05-31 | Keep totals-table handling simple for now; do not add partial-total logic when some token-bearing rows lack persisted cost | Original requester explicitly chose simplicity over extra viewer logic. Revisit only if mixed cost/missing-cost rows become a real operator problem. |
-| 2026-05-31 | Never truncate `step-finish` session-log records      | `step-finish` carries authoritative cost/token accounting used by the viewer; preserving the full event is more important than enforcing the generic per-record cap on this part type. |
+| Decision                                                                                | Notes                                                                                                                        |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Drop warnings, diagnostics, auto-refresh, cost line                                     | Admin-reviewed; the page should show facts only.                                                                             |
+| Reuse `SLACK_TEAM_ID` env (now read by runner too)                                      | Mirrors admin behavior; no new env.                                                                                          |
+| Static page, no polling; `● live` indicator only                                        | Admin refreshes manually.                                                                                                    |
+| Remove activity-row cap; always render full                                             | Admin would rather scroll than miss a row.                                                                                   |
+| Move tokens + model to a totals footer                                                  | Header was busy; tokens belong at end.                                                                                       |
+| Drop redundant slack/github Prompt preview line                                         | Decoded source line carries it already.                                                                                      |
+| Subagent tokens shown via per-agent footer table                                        | Single line stays when no subagents.                                                                                         |
+| Subagent model read from parent task `metadata.model`                                   | OpenCode tags spawn with child's model.                                                                                      |
+| Diff rows emit real newline separators                                                  | Consecutive `apply_patch` context lines must not visually concatenate in `<pre>`.                                            |
+| No app-level regex redaction in viewer snippets                                         | Redaction belongs at the LLM/infrastructure boundary.                                                                        |
+| Trust persisted `step-finish.cost`; drop token-price estimation and model plumbing      | Real cost is now present in session logs, so use the authoritative field instead of recomputing from token counts.           |
+| Keep the totals table simple; no partial-total logic when some rows lack persisted cost | Simplicity preferred; revisit only if mixed cost/missing-cost rows become a real problem.                                    |
+| Never truncate `step-finish` session-log records                                        | They carry the authoritative cost/token accounting the viewer relies on, so they are exempt from the generic per-record cap. |

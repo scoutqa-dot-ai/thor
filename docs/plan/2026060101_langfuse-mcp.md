@@ -3,7 +3,7 @@
 Replace the read-only Langfuse **CLI** integration (`/exec/langfuse` + `langfuse-cli` npm
 global + `langfuse` wrapper) with Langfuse's hosted **remote MCP server**, so Langfuse
 joins `atlassian` / `grafana` / `posthog` in the profile-aware MCP proxy registry and is
-reachable through the existing `mcp` CLI. This supersedes `2026041502_langfuse-cli.md`.
+reachable through the existing `mcp` CLI. This supersedes the earlier Langfuse CLI integration plan.
 
 ## Why
 

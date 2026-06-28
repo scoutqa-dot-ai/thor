@@ -10,13 +10,12 @@ The plugin is loaded **only in CI** today. Production / local dev runs are untra
 
 Set these in `.env` (or your deployment secret store). Compose forwards them onto the `opencode` service only.
 
-| Variable               | Required | Used by              | What it is                                                                                | Where to find it in Langfuse UI                                                                                                                        |
-| ---------------------- | -------- | -------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `LANGFUSE_PUBLIC_KEY`  | Yes      | `opencode`           | Project public key (`pk-lf-...`)                                                          | Project → **Settings → API Keys**                                                                                                                      |
-| `LANGFUSE_SECRET_KEY`  | Yes      | `opencode`           | Project secret key (`sk-lf-...`)                                                          | Project → **Settings → API Keys** (shown once at creation)                                                                                             |
-| `LANGFUSE_BASE_URL`    | Yes      | `opencode` (compose) | Full Langfuse base URL with scheme, e.g. `https://us.cloud.langfuse.com`                  | Region-specific: `https://us.cloud.langfuse.com` (US), `https://cloud.langfuse.com` / `https://eu.cloud.langfuse.com` for EU, or your self-host origin |
-| `LANGFUSE_HOST`        | Yes      | `mitmproxy`          | Bare host only (no scheme), e.g. `us.cloud.langfuse.com` — added to mitmproxy passthrough | Strip the scheme from `LANGFUSE_BASE_URL`                                                                                                              |
-| `LANGFUSE_ENVIRONMENT` | No       | `opencode`           | Logical environment label on every trace; default `development`                           | User-supplied; matched by the UI's **Environment** filter                                                                                              |
+| Variable               | Required | Used by              | What it is                                                               | Where to find it in Langfuse UI                                                                                                                        |
+| ---------------------- | -------- | -------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `LANGFUSE_PUBLIC_KEY`  | Yes      | `opencode`           | Project public key (`pk-lf-...`)                                         | Project → **Settings → API Keys**                                                                                                                      |
+| `LANGFUSE_SECRET_KEY`  | Yes      | `opencode`           | Project secret key (`sk-lf-...`)                                         | Project → **Settings → API Keys** (shown once at creation)                                                                                             |
+| `LANGFUSE_BASE_URL`    | Yes      | `opencode` (compose) | Full Langfuse base URL with scheme, e.g. `https://us.cloud.langfuse.com` | Region-specific: `https://us.cloud.langfuse.com` (US), `https://cloud.langfuse.com` / `https://eu.cloud.langfuse.com` for EU, or your self-host origin |
+| `LANGFUSE_ENVIRONMENT` | No       | `opencode`           | Logical environment label on every trace; default `development`          | User-supplied; matched by the UI's **Environment** filter                                                                                              |
 
 > ⚠️ **Name asymmetry.** The plugin reads **`LANGFUSE_BASEURL`** (no underscore) inside the container. Compose maps `LANGFUSE_BASE_URL` → `LANGFUSE_BASEURL` on the `opencode` service (`docker-compose.yml`). Set the **underscored** form in `.env`.
 
@@ -30,7 +29,7 @@ OpenCode routes all egress through `mitmproxy`, which **denies every host that i
 }
 ```
 
-in `/workspace/config/thor.json`. Use the suffix form `.langfuse.com` to allow all subdomains. Edits hot-reload — no service restart needed. CI generates this file from `LANGFUSE_HOST` at workflow runtime (see `.github/workflows/core-e2e.yml`).
+in `/workspace/config/thor.json` — the bare host is `LANGFUSE_BASE_URL` with the scheme stripped. Use the suffix form `.langfuse.com` to allow all subdomains. Edits hot-reload — no service restart needed. CI derives this host from `LANGFUSE_BASE_URL` at workflow runtime (see `.github/workflows/core-e2e.yml`).
 
 ## 3) OpenCode config
 
@@ -78,7 +77,7 @@ The **Environment** filter defaults to `default` / `production` in many UI views
 2. Update `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` in your secret store (GitHub Actions secrets for CI, `.env` locally).
 3. Revoke the previous key in the Langfuse UI **after** confirming new traces are arriving.
 
-`LANGFUSE_BASE_URL` / `LANGFUSE_HOST` rarely change; if migrating regions or self-hosting, update both together and refresh `thor.json` `mitmproxy_passthrough`.
+`LANGFUSE_BASE_URL` rarely changes; if migrating regions or self-hosting, update it and refresh the matching host in `thor.json` `mitmproxy_passthrough`.
 
 ## 8) Troubleshooting
 

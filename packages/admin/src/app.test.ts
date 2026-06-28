@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Server } from "node:http";
@@ -9,6 +9,11 @@ import { createAdminApp } from "./app.ts";
 const anchor = "00000000-0000-7000-8000-0000000000c1";
 const anchorBad = "00000000-0000-7000-8000-0000000000c2";
 const trigger = "00000000-0000-7000-8000-0000000000d1";
+const SECRET = "test-internal-secret";
+
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  return { "X-Thor-Internal-Secret": SECRET, ...extra };
+}
 
 describe("admin app sessions dashboard", () => {
   const originalWorklogDir = process.env.WORKLOG_DIR;
@@ -23,6 +28,7 @@ describe("admin app sessions dashboard", () => {
     const app = createAdminApp({
       configPath: join(dir, "thor.json"),
       auditLogPath: join(dir, "audit.jsonl"),
+      internalSecret: SECRET,
     });
     await new Promise<void>((resolve) => {
       server = app.listen(0, "127.0.0.1", () => {
@@ -42,13 +48,16 @@ describe("admin app sessions dashboard", () => {
 
   it("renders config nav and preserves catch-all redirect", async () => {
     const config = await fetch(`${baseUrl}/admin/config`, {
-      headers: { "X-Vouch-User": "ops@example.com" },
+      headers: authHeaders({ "X-Vouch-User": "ops@example.com" }),
     });
     const html = await config.text();
     expect(html).toContain('href="/admin/sessions"');
     expect(html).toContain("Signed in: ops@example.com");
 
-    const redirected = await fetch(`${baseUrl}/admin/nope`, { redirect: "manual" });
+    const redirected = await fetch(`${baseUrl}/admin/nope`, {
+      headers: authHeaders(),
+      redirect: "manual",
+    });
     expect(redirected.status).toBe(302);
     expect(redirected.headers.get("location")).toBe("/admin/config");
   });
@@ -61,7 +70,7 @@ describe("admin app sessions dashboard", () => {
     ]);
 
     const page = await fetch(`${baseUrl}/admin/sessions`, {
-      headers: { "X-Vouch-User": "ops@example.com" },
+      headers: authHeaders({ "X-Vouch-User": "ops@example.com" }),
     });
     const html = await page.text();
     expect(html).toContain("<!doctype html>");
@@ -70,7 +79,7 @@ describe("admin app sessions dashboard", () => {
     expect(html).toContain("feature/&lt;unsafe&gt;");
     expect(html).toContain(`/runner/v/${anchor}/${trigger}`);
 
-    const fragment = await fetch(`${baseUrl}/admin/sessions/fragment`);
+    const fragment = await fetch(`${baseUrl}/admin/sessions/fragment`, { headers: authHeaders() });
     const fragHtml = await fragment.text();
     expect(fragHtml).toContain('id="sessions-panel"');
     expect(fragHtml).not.toContain("<!doctype html>");
@@ -102,7 +111,7 @@ describe("admin app sessions dashboard", () => {
     ]);
 
     try {
-      const page = await fetch(`${baseUrl}/admin/sessions`);
+      const page = await fetch(`${baseUrl}/admin/sessions`, { headers: authHeaders() });
       const html = await page.text();
       expect(html).toContain(
         `href="https://app.slack.com/client/T0TESTTEAM/${channel}/thread/${channel}-${ts}"`,
@@ -130,7 +139,7 @@ describe("admin app sessions dashboard", () => {
       { ts: "2026-05-14T12:00:00.000Z", type: "trigger_start", triggerId: trigger },
     ]);
 
-    const page = await fetch(`${baseUrl}/admin/sessions`);
+    const page = await fetch(`${baseUrl}/admin/sessions`, { headers: authHeaders() });
     const html = await page.text();
     expect(html).toContain(`#${channel} ·`);
     expect(html).not.toContain("app.slack.com/client");
@@ -147,11 +156,50 @@ describe("admin app sessions dashboard", () => {
       { ts: "2026-05-14T12:00:00.000Z", type: "trigger_start", triggerId: trigger },
     ]);
 
-    const page = await fetch(`${baseUrl}/admin/sessions`);
+    const page = await fetch(`${baseUrl}/admin/sessions`, { headers: authHeaders() });
     const html = await page.text();
     expect(html).toContain(`/runner/v/${anchor}/${trigger}`);
     expect(html).toContain("unsafe/session: Invalid session id");
     expect(html).toContain("unknown");
+  });
+
+  it("rejects /admin requests without a matching internal secret", async () => {
+    // A direct opencode->admin:3005 hit carries no ingress-injected secret.
+    const noHeader = await fetch(`${baseUrl}/admin/config`);
+    expect(noHeader.status).toBe(401);
+
+    const wrong = await fetch(`${baseUrl}/admin/config`, {
+      headers: { "X-Thor-Internal-Secret": "not-the-secret" },
+    });
+    expect(wrong.status).toBe(401);
+
+    // A spoofed identity header does not substitute for the secret.
+    const post = await fetch(`${baseUrl}/admin/config`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-Vouch-User": "ops@example.com",
+      },
+      body: new URLSearchParams({ config: '{"mitmproxy_passthrough":["evil.example"]}' }),
+    });
+    expect(post.status).toBe(401);
+  });
+
+  it("saves config when the internal secret matches", async () => {
+    const res = await fetch(`${baseUrl}/admin/config`, {
+      method: "POST",
+      redirect: "manual",
+      headers: authHeaders({
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-Vouch-User": "ops@example.com",
+      }),
+      body: new URLSearchParams({ config: '{"mitmproxy_passthrough":["ok.example"]}' }),
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/admin/config");
+
+    const saved = JSON.parse(readFileSync(join(dir, "thor.json"), "utf-8"));
+    expect(saved.mitmproxy_passthrough).toEqual(["ok.example"]);
   });
 });
 

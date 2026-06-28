@@ -214,8 +214,7 @@ global fallback resolves when no `_<P>` vars are set; HTTP integrations are unaf
   upstream-listing check still exercises the stdio spawn path (or document why it is
   skipped in CI when no reachable Grafana exists).
 - Update `.env.example` (note the sidecar removal; global vars now optional when only
-  profile bundles are used), `README.md` integration/architecture sections, and
-  `docs/plan/2026031602_grafana-mcp.md` status to point here.
+  profile bundles are used) and `README.md` integration/architecture sections.
 - Add a convention note (AGENTS.md / README) that bumping the bundled `mcp-grafana`
   version is a deliberate, pinned change — analogous to the OpenCode SDK alignment rule.
 

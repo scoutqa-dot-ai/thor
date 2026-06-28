@@ -6,6 +6,7 @@ import {
   logInfo,
   logWarn,
   listAnchorSessionStates,
+  matchesInternalSecret,
   validateWorkspaceConfig,
   type WorkspaceConfig,
 } from "@thor/common";
@@ -20,10 +21,12 @@ import {
 
 const log = createLogger("admin");
 const STUCK_AFTER_MS = 5 * 60 * 1000;
+const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 
 export interface AdminAppConfig {
   configPath: string;
   auditLogPath: string;
+  internalSecret: string;
 }
 
 export function createAdminApp(cfg: AdminAppConfig): Express {
@@ -33,6 +36,22 @@ export function createAdminApp(cfg: AdminAppConfig): Express {
 
   app.get("/health", (_req, res) => {
     res.json({ ok: true });
+  });
+
+  // Authenticate every /admin/* request. The admin app shares the Docker
+  // network with the untrusted opencode agent, which can reach admin:3005
+  // directly and bypass the ingress Vouch SSO gate. ingress injects this
+  // header only after Vouch + THOR_ADMIN_EMAILS pass, so a direct caller
+  // (no secret) and a forged ingress request (no Vouch cookie) are both
+  // rejected here. See docs/plan/2026062301_admin-config-write-auth.md.
+  app.use("/admin", (req: Request, res: Response, next) => {
+    if (
+      !matchesInternalSecret(cfg.internalSecret, req.header(INTERNAL_SECRET_HEADER) ?? undefined)
+    ) {
+      res.status(401).type("text/plain").send("Unauthorized");
+      return;
+    }
+    next();
   });
 
   app.get("/admin/config", (req: Request, res: Response) => {

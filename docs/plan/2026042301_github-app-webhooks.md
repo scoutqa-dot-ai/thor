@@ -1,16 +1,8 @@
 # GitHub App Webhooks
 
 **Date**: 2026-04-23
-**Status**: Ready to implement
 
-> **Note (2026-05-16):** Config examples in this plan show a `"repos": {...}` block
-> and an `orgs` key. The `repos` block has since been removed from
-> `WorkspaceConfigSchema`, and the org map landed under the name `owners` (not
-> `orgs`). The installation-ID lookup mechanism described here is otherwise current.
-
-> **Post-implementation note (2026-05-13):** pure issue comments are no longer unsupported. Mentioned pure-issue `issue_comment.created` events now route through `github:issue:<localRepo>:<repoFullName>#<issueNumber>`; PR-backed issue comments still use pending branch resolution. The older PR-scoped-only passages, ignore-early examples, and `pure_issue_comment_unsupported` tables below are historical plan text and are superseded by shipped behavior.
-
-> **Post-implementation note (2026-04-26):** the workspace-config block was renamed `orgs` → `owners` in commit `3d050bc3` to match GitHub's `owner` terminology (an installation can belong to a user or an org). References to `orgs.<name>.github_app_installation_id` below now read `owners.<name>.github_app_installation_id` in shipped code.
+> **Current behavior note:** Some details in this plan were refined during implementation. The per-installation map landed under the top-level `owners` key (not `orgs`), matching GitHub's `owner` terminology (an installation can belong to a user or an org), so config paths below read `owners.<name>.github_app_installation_id` in shipped code. Mentioned pure-issue `issue_comment.created` events are supported and route through `github:issue:<localRepo>:<repoFullName>#<issueNumber>`; PR-backed issue comments still use pending branch resolution. PR-scoped-only passages and `pure_issue_comment_unsupported` references below are historical design text superseded by this behavior. The installation-ID lookup mechanism is otherwise current.
 
 ## Goal
 
@@ -98,12 +90,11 @@ One GitHub App across the whole deployment. App-level identity lives in env; per
 | `GITHUB_APP_PRIVATE_KEY_FILE` | PEM file path for JWT signing. Owned by remote-cli only.     | `/secrets/thor-app.pem` |
 | `GITHUB_WEBHOOK_SECRET`       | HMAC secret for webhook verification. Owned by gateway only. | (32+ random bytes)      |
 
-A new top-level `orgs` block in workspace-config holds per-org installation IDs:
+A top-level `owners` block in workspace-config holds per-owner installation IDs:
 
 ```json
 {
-  "repos": { ... },
-  "orgs": {
+  "owners": {
     "scoutqa-dot-ai": {
       "github_app_installation_id": 126669985
     }
@@ -111,7 +102,7 @@ A new top-level `orgs` block in workspace-config holds per-org installation IDs:
 }
 ```
 
-The old `github_app.installations: []` array is removed. Installation IDs are stable — they only change on uninstall/reinstall — so they sit naturally in config. When available in a webhook payload, `installation.id` is used directly without the config lookup.
+Installation IDs are stable — they only change on uninstall/reinstall — so they sit naturally in config. When available in a webhook payload, `installation.id` is used directly without the config lookup.
 
 ### Mention detection
 
@@ -192,7 +183,7 @@ Two paths:
 
 1. Resolves `org` from the repo's origin — already done by `resolveOrgFromRemote()` at `packages/remote-cli/src/github-app-auth.ts:77`.
 2. Reads `installation_id` from `config.orgs[org].github_app_installation_id` (via `loadWorkspaceConfig()`). This is an exact org-key lookup today. Missing org entry → fail with a clear error naming the unconfigured org and the list of configured ones.
-3. Checks the existing disk cache at `/var/lib/remote-cli/github-app/cache/<org>.json` for a fresh token (existing early-refresh logic, 5 min before `expires_at`).
+3. Checks the existing remote-cli disk cache for a fresh token (existing early-refresh logic, 5 min before `expires_at`).
 4. On cache miss: mints a JWT from `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY_FILE` (reuses `generateAppJWT()` at line 179), mints the installation token via `POST /app/installations/{id}/access_tokens` (reuses `mintInstallationToken()` at line 215), writes `{ token, expires_at }` to the cache file.
 5. On 401/403 from token minting (installation uninstalled), unlink the cache file and re-raise with `reason: "installation_gone"`.
 6. Returns the token to the git/gh wrapper via `git-askpass` / `GH_TOKEN`.
@@ -361,10 +352,10 @@ Compact one-liner per event. The runner batches events sharing a correlation key
 
 The following decisions originated in the deleted `2026041503_github-app-auth.md` and are still in force. They cover the `git` / `gh` wrapper auth path that this plan's D6 ("remote-cli owns App private key") delegates to.
 
-| #   | Decision                                                       | Rationale                                                                                                                                                  |
-| --- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A1  | Mint full installation tokens per org, not narrowed per repo   | Preserves a simple cache key and avoids token churn; GitHub still enforces the installation's repo access at the API.                                      |
-| A2  | Reject ambiguous or unsupported target-org resolution          | Silent fallback to the wrong org would be a high-risk auth bug. Wrappers fail loudly when the org cannot be resolved from cwd remote.                      |
+| #   | Decision                                                     | Rationale                                                                                                                             |
+| --- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| A1  | Mint full installation tokens per org, not narrowed per repo | Preserves a simple cache key and avoids token churn; GitHub still enforces the installation's repo access at the API.                 |
+| A2  | Reject ambiguous or unsupported target-org resolution        | Silent fallback to the wrong org would be a high-risk auth bug. Wrappers fail loudly when the org cannot be resolved from cwd remote. |
 
 ### Subsequent reversals
 
@@ -373,7 +364,7 @@ Things the original auth plan called for that have since been removed:
 - **GitHub Enterprise support removed.** The `api_url` installation field, the `GITHUB_API_URL` env var, and the `deriveAllowedGitHosts` / `addGitHostsFromApiUrl` machinery were dropped. Thor only targets `github.com`. The token-mint URL is hardcoded to `https://api.github.com`.
 - **Arg-based org resolution removed.** `resolveOrgFromArgs` (the `-R` / `--repo` parser) was unreachable because `validateGhArgs.hasRepoOverride` denies all four shapes (`-R`, `-Rfoo`, `--repo`, `--repo=foo`) before the auth helper runs. `resolveOrg` now defers entirely to the cwd's git remote.
 - **Host check on `parseOrgFromRemoteUrl` dropped.** It only defended against admin compromise of the clone path, which already implies broader compromise; the check was noise on a trusted admin workflow.
-- **Legacy PAT fallback removed (2026-05-16).** GitHub App installation tokens are the only supported auth path for `git` / `gh`.
+- **Legacy PAT fallback removed.** GitHub App installation tokens are the only supported auth path for `git` / `gh`.
 
 ## Out of Scope
 

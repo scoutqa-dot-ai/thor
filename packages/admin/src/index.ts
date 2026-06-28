@@ -5,7 +5,11 @@ const log = createLogger("admin");
 
 const config = loadAdminEnv();
 
-const app = createAdminApp({ configPath: config.configPath, auditLogPath: config.auditLogPath });
+const app = createAdminApp({
+  configPath: config.configPath,
+  auditLogPath: config.auditLogPath,
+  internalSecret: config.thorInternalSecret,
+});
 
 app.listen(config.port, () => {
   logInfo(log, "admin_started", {
