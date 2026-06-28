@@ -2,6 +2,20 @@
 
 Instructions for AI agents working on this repository.
 
+## Project Stage — read this first
+
+This repo is **greenfield, pre-v1, MVP state**. There are **no production users, no deployment, and no backward-compatibility commitments**. Nothing here is load-bearing for anyone yet. The goal of every change is to lay a **solid foundation for after v1**, not to protect an installed base that does not exist.
+
+Default posture for any feature or fix:
+
+- **Clean over compatible.** Prefer the correct end-state design over an incremental migration that preserves current internals. There is no old behavior to keep working — if a refactor is right, do it in one move and delete the old path. No deprecation shims, no dual code paths, no feature flags "for safety".
+- **Correctness and simplicity first.** Choose the simplest design that is actually correct. Remove special cases instead of accumulating them. Fewer moving parts, fewer producers/owners of a concern, single source of truth.
+- **Practical, not speculative.** Build what the current problem needs. Do not add extensibility, config surface, or abstraction layers for hypothetical future requirements ("YAGNI"). Generalize only when a second concrete case exists.
+- **No migration-safety scaffolding.** Because nothing is deployed, skip work whose only purpose is staying green across a rollout: before/after parity tests, phased "keep it running between steps" sequencing, compatibility adapters. Phases are still useful as review/checkpoint boundaries; the integration/E2E workflow is the gate (see Workflow §3), not equivalence-to-today.
+- **Don't over-engineer.** When a design starts adding layers to hedge risk that only exists for live systems, stop and pick the clean single-path version instead. If you find yourself preserving an awkward boundary "to be safe", that is the signal to simplify.
+
+This posture holds **until this section is explicitly changed**. When v1 ships and real users/deployments exist, revisit these defaults — but do not assume that has happened.
+
 ## Workflow
 
 1. **Plan before code when warranted** — New features or PoCs should start with a plan document in `docs/plan/`. Format: `YYYYMMDDNN_<slug>.md`. The plan contains phases, decision log, exit criteria, and out-of-scope items.
@@ -85,7 +99,7 @@ thor/
 
   Single-source pins (`mcp-grafana`, `codex-lb`, `vouch-proxy`, `opencode-plugin-langfuse`, and the sandbox tool `ARG`s) live in exactly one place — refer to that pin location from docs rather than copying the version number, so there is nothing to drift.
 
-- **OpenCode event schema/viewer drift**: Before changing OpenCode event persistence, projection, parser schemas, unknown-event fallback rendering, or `unrecognized_opencode_event` handling, read `docs/plan/2026051601_opencode-event-view-schema.md`.
+- **External schema drift**: any upstream whose shape evolves under us — e.g. OpenCode events and MCP tool schemas/policy, and almost certainly other boundaries in this repo (treat these two as examples, not the full list) — should be consumed through **strongly-typed, strict schemas**, not loose or defensive parsing. When a shape drifts, **fail fast and loudly wherever that helps us catch and fix it** — strict parsing that surfaces the unknown/changed shape so we update our schema — rather than investing in tolerant fallback rendering or graceful degradation that hides the drift. While MVP there is no persisted history or deployed state to preserve, so prefer letting drift break visibly and fixing the schema. The one exception is keeping a _live_ run alive: where failing would take down a running agent, downgrade to log-and-tolerate **in production only** (e.g. `PolicyDriftError` tolerated when `isProduction`) and keep the dev path strict. When you hit another such boundary, apply this same posture. Known instances to read first: `docs/plan/2026051601_opencode-event-view-schema.md` (OpenCode events) and `packages/remote-cli/src/mcp-handler.ts` (MCP policy).
 - **No frameworks unless justified** — Express for HTTP, raw TypeScript for everything else. Every added dependency should have a reason in the plan.
 
 ## Context for New Sessions

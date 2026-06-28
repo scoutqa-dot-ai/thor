@@ -13,7 +13,7 @@ For trust boundaries, see [`security-model.md`](./security-model.md).
 - A dispatched batch has exactly one working directory. Mixed-directory batches are rejected rather than split.
 - `runner` is the only service that creates, resumes, interrupts, or replaces OpenCode sessions.
 - Accepted runner triggers return quick JSON by default. Gateway does not consume runner progress streams.
-- Runner owns Slack progress updates for the current channel-aware Slack thread key.
+- Runner owns Slack progress updates as an alias-based projection of OpenCode events.
 - `remote-cli` owns tool policy, MCP approval creation, approval-card posting, and outbound alias registration.
 - Agents never write the alias index directly.
 
@@ -128,9 +128,9 @@ Every accepted trigger writes `trigger_start` and then a terminal `trigger_end` 
 
 ## Progress
 
-Runner observes OpenCode events and converts them into Thor progress events. When the current request correlation key is the channel-aware Slack form `slack:thread:<channel>/<threadTs>`, runner sends those progress events to the shared progress engine and its Slack transport.
+Runner observes the process-owned OpenCode event stream and converts matching events into Thor progress events. Progress target resolution is alias-based: runner resolves the event session id to its anchor, looks for a `slack.thread` external key on that anchor, and sends progress to the shared progress engine and Slack transport for that thread.
 
-Progress is intentionally tied to the current trigger key. Runner does not search historical aliases to infer a Slack target for non-Slack triggers. GitHub, cron, and other non-Slack triggers can still resume the same OpenCode session, but they do not create Slack progress messages unless the current trigger itself is a Slack-thread trigger.
+Progress is intentionally tied to existing Slack-thread aliases, not the current trigger key. GitHub, cron, operator-UI, and other non-Slack activity can still update Slack progress when they operate on a session whose anchor already has a `slack.thread` alias. Sessions without a Slack-thread alias do not create Slack progress messages.
 
 Gateway no longer relays or drains runner progress streams.
 

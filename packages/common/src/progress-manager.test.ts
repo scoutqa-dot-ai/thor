@@ -636,7 +636,24 @@ describe("ProgressManager", () => {
     expect(ticksAt60s).toBeLessThanOrEqual(7);
   });
 
-  it("finish with completed status updates then deletes the progress message", async () => {
+  it("orphan eviction past max age deletes the progress message and prunes the registry", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 3);
+    expect(getRegistrySize()).toBe(1);
+
+    // No terminal `done` ever arrives. Advance past the 6h backstop so the
+    // ticker self-evicts; the orphan path must run the same cleanup as done,
+    // or the registry entry and the Slack message leak forever.
+    await vi.advanceTimersByTimeAsync(6 * 60 * 60_000 + 60_000);
+
+    expect(chat(deps).delete).toHaveBeenCalledWith({
+      channel: "C123",
+      ts: "msg.001",
+    });
+    expect(getRegistrySize()).toBe(0);
+  });
+
+  it("finish with completed status deletes the progress message without a transient edit", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);
 
@@ -651,13 +668,8 @@ describe("ProgressManager", () => {
     };
     await handleProgressEvent(progressTarget(deps), doneEvent, transport);
 
-    // Updates message to "Done", then onSessionEnd deletes it
-    expect(chat(deps).update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channel: "C123",
-        ts: "msg.001",
-      }),
-    );
+    // No "Done" edit — cleanup path deletes the message directly
+    expect(chat(deps).update).not.toHaveBeenCalled();
     expect(chat(deps).delete).toHaveBeenCalledWith({
       channel: "C123",
       ts: "msg.001",
@@ -665,7 +677,7 @@ describe("ProgressManager", () => {
     expect(getRegistrySize()).toBe(0);
   });
 
-  it("treats abort errors as completed (updates to Done)", async () => {
+  it("treats abort errors as completed (no error message, deletes message)", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3); // cross threshold, message posted
 
@@ -681,11 +693,9 @@ describe("ProgressManager", () => {
     };
     await handleProgressEvent(progressTarget(deps, ""), abortEvent, transport);
 
-    // Should update to "Done" — not show an error
-    expect(chat(deps).update).toHaveBeenCalledOnce();
-    const updateCall = chat(deps).update.mock.calls[0][0] as { text: string };
-    expect(updateCall.text).toContain("Done");
-    expect(updateCall.text).not.toContain("Failed");
+    // Abort-as-completed: no error shown, message deleted silently
+    expect(chat(deps).update).not.toHaveBeenCalled();
+    expect(chat(deps).delete).toHaveBeenCalledOnce();
   });
 
   it("suppresses abort errors even below threshold (no Slack message at all)", async () => {
@@ -729,12 +739,7 @@ describe("ProgressManager", () => {
 
   it("adds x reaction instead of posting a first-time failure message", async () => {
     const deps = mockSlackDeps();
-    await handleProgressEvent(
-      progressTarget(deps, "1710000000.123"),
-      { type: "start", sessionId: "s1", resumed: false },
-      transport,
-    );
-    await sendTools(deps, 1);
+    await sendTools(deps, 1, "C123", "1710000000.001", "1710000000.123");
 
     const errorEvent: ProgressEvent = {
       type: "done",
@@ -867,13 +872,8 @@ describe("onSessionEnd (via handleProgressEvent done)", () => {
     expect(chat(deps).delete).toHaveBeenCalledWith({ channel: "C123", ts: "msg.001" });
     expect(getRegistrySize()).toBe(0);
 
-    // Second session in same thread
+    // Second session in same thread — session created on first tool event
     chat(deps).postMessage.mockResolvedValueOnce({ ok: true, ts: "msg.002", channel: "C123" });
-    await handleProgressEvent(
-      progressTarget(deps, ""),
-      { type: "start", sessionId: "s2", resumed: false },
-      transport,
-    );
     await sendTools(deps, 3);
     const done2: ProgressEvent = {
       type: "done",
