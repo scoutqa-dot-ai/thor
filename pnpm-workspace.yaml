@@ -1,6 +1,12 @@
 packages:
   - "packages/*"
 
+overrides:
+  # @opentelemetry/otlp-transformer (via @daytonaio/sdk) exact-pins protobufjs
+  # 8.0.1, which carries several advisories; force the 8.x line to the patched
+  # release. Scoped to @8 so the grpc-proto-loader 7.x instance is untouched.
+  "protobufjs@8": "^8.6.0"
+
 # protobufjs ships a postinstall build script that is not needed for our build.
 # pnpm v11 fails the install unless every dependency with a build script is
 # explicitly allowed (true) or denied (false). We deny it, preserving the
