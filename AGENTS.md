@@ -75,7 +75,16 @@ thor/
 - **Package manager**: pnpm with workspaces
 - **Runtime**: Node.js 24+
 - **Formatting**: Default TypeScript/ESLint conventions. No custom config until needed.
-- **OpenCode version alignment**: When bumping `@opencode-ai/sdk`, also bump the OpenCode server/package version in the Dockerfile in the same change so the client and server stay aligned.
+- **Version pinning — align every copy in one change**: Several versions are pinned in more than one file and will silently drift if bumped in only one place. When you change any of these, update **all** listed locations in the same commit:
+  - **pnpm**: `package.json` `packageManager` + root `Dockerfile` (`corepack prepare`) + `docker/sandbox/Dockerfile` (`corepack prepare`).
+  - **Node major**: root `Dockerfile` base image (`node:<N>-slim`) + every `.github/workflows/*.yml` `setup-node` `node-version` + the **Runtime** line above.
+  - **OpenCode**: `@opencode-ai/sdk` in `packages/runner/package.json` + the `opencode-ai` server install in the root `Dockerfile` (client and server must match).
+  - **prettier**: the `package.json` devDependency + the global install in the root `Dockerfile`.
+  - **Model IDs**: `docker/opencode/config/opencode.json` + `docker/opencode/config/agents/*.md` + the model whitelist in `README.md`.
+  - **GitHub Action versions**: keep the `uses: …@vN` pins identical across all `.github/workflows/*.yml`.
+
+  Single-source pins (`mcp-grafana`, `codex-lb`, `vouch-proxy`, `opencode-plugin-langfuse`, and the sandbox tool `ARG`s) live in exactly one place — refer to that pin location from docs rather than copying the version number, so there is nothing to drift.
+
 - **OpenCode event schema/viewer drift**: Before changing OpenCode event persistence, projection, parser schemas, unknown-event fallback rendering, or `unrecognized_opencode_event` handling, read `docs/plan/2026051601_opencode-event-view-schema.md`.
 - **No frameworks unless justified** — Express for HTTP, raw TypeScript for everything else. Every added dependency should have a reason in the plan.
 
