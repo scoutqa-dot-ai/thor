@@ -1,4 +1,4 @@
-FROM alpine:3.23
+FROM alpine:3.24
 
 ENV SUPERCRONIC_VERSION=v0.2.44
 
