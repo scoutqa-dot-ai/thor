@@ -728,12 +728,18 @@ class ProgressSession {
    */
   private async finalizeAudit(text: string): Promise<void> {
     if (this.messageTs) {
-      await this.update(text);
+      // Retain (drop from the cleanup registry) only if the edit actually
+      // landed. If it failed, leave the entry so session-end cleanup deletes
+      // the now-stale "Working…" bubble instead of orphaning it with no way to
+      // retry or remove it.
+      if (await this.update(text)) {
+        retainProgressMessage(this.channel, this.threadTs, this.messageTs);
+      }
     } else {
       await this.post(text);
-    }
-    if (this.messageTs) {
-      retainProgressMessage(this.channel, this.threadTs, this.messageTs);
+      if (this.messageTs) {
+        retainProgressMessage(this.channel, this.threadTs, this.messageTs);
+      }
     }
   }
 
@@ -801,8 +807,10 @@ class ProgressSession {
     }
   }
 
-  private async update(text: string): Promise<void> {
-    if (!this.messageTs) return;
+  /** Returns whether the edit landed, so callers can decide whether to drop
+   * cleanup tracking. Transient failures are logged, not thrown. */
+  private async update(text: string): Promise<boolean> {
+    if (!this.messageTs) return false;
     try {
       const blocks = contextBlocks(text);
       await this.transport.update(
@@ -811,8 +819,10 @@ class ProgressSession {
         text,
         blocks,
       );
+      return true;
     } catch (err) {
       logError(log, "update_error", err instanceof Error ? err.message : String(err));
+      return false;
     }
   }
 }

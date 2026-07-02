@@ -724,6 +724,39 @@ describe("ProgressManager", () => {
     expect(chat(deps).delete).not.toHaveBeenCalled();
   });
 
+  it("deletes the stale progress bubble when the finalizing audit update fails", async () => {
+    const deps = mockSlackDeps();
+
+    // A memory-write audit signal plus a live message (threshold crossed).
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      { type: "memory", action: "write", path: "/workspace/memory/a/notes.md", source: "tool" },
+      transport,
+    );
+    await sendTools(deps, 3);
+    expect(getRegistrySize()).toBe(1);
+
+    // The finalizing edit fails transiently.
+    chat(deps).update.mockRejectedValueOnce(new Error("slack error: ratelimited"));
+
+    const doneEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "completed",
+      response: "",
+      toolCalls: [],
+      durationMs: 1000,
+    };
+    await handleProgressEvent(progressTarget(deps, ""), doneEvent, transport);
+
+    // Update failed → the entry is NOT retained, so session-end cleanup deletes
+    // the now-stale "Working…" bubble rather than orphaning it, and the registry
+    // is drained.
+    expect(chat(deps).delete).toHaveBeenCalledWith({ channel: "C123", ts: "msg.001" });
+    expect(getRegistrySize()).toBe(0);
+  });
+
   it("keeps a recovered-error audit message when a run completes after errors", async () => {
     const deps = mockSlackDeps();
 
