@@ -1,0 +1,27 @@
+packages/common/src/progress-manager.test.ts
+  64642326adce7a84 111,116-125,154-161,683-684,687-688,723,759-762,792,796-903,1055
+docs/plan/2026070201_slack-progress-audit-signals.md
+  64642326adce7a84 46,48-56,78
+packages/common/src/progress-manager.ts
+  64642326adce7a84 113-114,118-127,138-161,165-166,180,182,617-619,624-625,674
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "a5eabb81454a4a663040a7f88741b52f21d082d9",
+  "prompts": {
+    "64642326adce7a84": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14e9d741-b2dc-442f-bc78-3d25d4858b15",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 224,
+      "total_deletions": 61,
+      "accepted_lines": 195,
+      "overriden_lines": 0
+    }
+  }
+}
