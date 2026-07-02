@@ -86,6 +86,89 @@ function shortenMemoryPath(path: string): string {
   return path;
 }
 
+// ---------------------------------------------------------------------------
+// Audit signals — activity worth persisting past session end
+// ---------------------------------------------------------------------------
+//
+// Most progress activity is transient: tool calls, memory reads, and context
+// usage are cleaned up when the session completes so the thread stays quiet. A
+// few signals represent consequential, durable facts about a run that a user
+// may want to review afterwards. When a completed session recorded any of
+// these, its progress message is finalized into an audit summary and retained
+// instead of deleted.
+//
+// Two signals are persisted today:
+//   • memory writes — durable side effects on the memory store
+//   • errors        — every session error seen mid-run, whether the run later
+//                     recovered (completed) or failed (fatal)
+// Deliberately NOT persisted: tool calls, memory reads, delegations, and
+// context usage — all transient runtime state with no lasting consequence.
+//
+// This set is intended to grow. To persist a new signal: add a field here,
+// accumulate it in the matching ProgressSession.on* handler, and add a
+// render*Section for it in renderAuditSummary below.
+interface AuditSignals {
+  /** Distinct memory paths written, in first-write order. */
+  memoryWrites: string[];
+  /** Occurrence count per session-error message seen mid-run. */
+  errors: Map<string, number>;
+}
+
+/** Keep a single audit error line compact. */
+const AUDIT_ERROR_MAX_LEN = 160;
+
+function truncateErrorMessage(message: string): string {
+  const collapsed = message.replace(/\s+/g, " ").trim();
+  return collapsed.length > AUDIT_ERROR_MAX_LEN
+    ? collapsed.slice(0, AUDIT_ERROR_MAX_LEN - 1) + "…"
+    : collapsed;
+}
+
+function renderMemoryWriteSection(writePaths: string[]): string | undefined {
+  if (writePaths.length === 0) return undefined;
+  const shortPaths = [...new Set(writePaths.map(shortenMemoryPath))];
+  const header = `📝 Memory updated — ${shortPaths.length} ${
+    shortPaths.length === 1 ? "file" : "files"
+  } written`;
+  return [header, ...shortPaths.map((path) => `• ${path}`)].join("\n");
+}
+
+function renderErrorSection(
+  errorCounts: Map<string, number>,
+  opts: { failed: boolean; toolCalls: number },
+): string | undefined {
+  if (errorCounts.size === 0) return undefined;
+  const total = [...errorCounts.values()].reduce((sum, count) => sum + count, 0);
+  // On a failed run the errors are the headline; on a completed run they were
+  // recovered from and are a footnote to whatever the run accomplished.
+  const header = opts.failed
+    ? `❌ Failed after ${opts.toolCalls} tool calls`
+    : `⚠️ Recovered from ${total} ${total === 1 ? "error" : "errors"} during the run`;
+  const lines = [...errorCounts].map(([message, count]) => {
+    const text = truncateErrorMessage(message);
+    return `• ${count > 1 ? `${text} x${count}` : text}`;
+  });
+  return [header, ...lines].join("\n");
+}
+
+/**
+ * Render the durable audit summary for a finished session, or undefined when no
+ * audit-worthy signal was recorded (so the message is cleaned up as usual). A
+ * failed run always has at least one error signal, so it always renders.
+ */
+function renderAuditSummary(
+  signals: AuditSignals,
+  opts: { failed: boolean; toolCalls: number },
+): string | undefined {
+  const memory = renderMemoryWriteSection(signals.memoryWrites);
+  const errors = renderErrorSection(signals.errors, opts);
+  // Lead with the failure on a failed run; otherwise lead with what was done.
+  const sections = (opts.failed ? [errors, memory] : [memory, errors]).filter(
+    (section): section is string => section !== undefined,
+  );
+  return sections.length > 0 ? sections.join("\n") : undefined;
+}
+
 function formatMemoryActivities(activities: MemoryActivity[]): string {
   const shortPaths = activities.map((activity) => shortenMemoryPath(activity.path));
   const distinctPaths = [...new Set(shortPaths)];
@@ -210,29 +293,23 @@ export interface ProgressTarget<TTarget = unknown> {
   transportTarget: TTarget;
 }
 
-type ProgressStatus = "in_progress" | "completed" | "error";
-
 interface ProgressEntry {
-  status: ProgressStatus;
   transport: ProgressTransport;
   target: unknown;
 }
 
-/** Map<threadKey, Map<messageTs, ProgressEntry>> */
+/**
+ * Map<threadKey, Map<messageTs, ProgressEntry>> of live progress messages
+ * pending cleanup. Only ever holds transient "working…" messages: any message
+ * finalized into a retained audit (see retainProgressMessage) is dropped from
+ * here at session end, so the registry cannot grow across the process lifetime.
+ */
 const progressMessages = new Map<string, Map<string, ProgressEntry>>();
-
-/** Cap retained error entries per thread. Without this, every failed session
- * leaves a permanent entry and the per-thread map keeps the threadKey alive
- * across the process lifetime. The most recent N errors are sufficient for
- * users to inspect; older ones are forgotten from the registry but stay
- * visible in Slack. */
-const MAX_ERROR_ENTRIES_PER_THREAD = 5;
 
 function registerProgress(
   channel: string,
   threadTs: string,
   messageTs: string,
-  status: ProgressStatus,
   transport: ProgressTransport,
   target: unknown,
 ): void {
@@ -242,39 +319,28 @@ function registerProgress(
     thread = new Map();
     progressMessages.set(key, thread);
   }
-  thread.set(messageTs, { status, transport, target });
+  thread.set(messageTs, { transport, target });
 }
 
-function evictExcessErrors(thread: Map<string, ProgressEntry>): void {
-  const errorTimestamps: string[] = [];
-  for (const [ts, entry] of thread) {
-    if (entry.status === "error") errorTimestamps.push(ts);
-  }
-  while (errorTimestamps.length > MAX_ERROR_ENTRIES_PER_THREAD) {
-    const oldest = errorTimestamps.shift()!;
-    thread.delete(oldest);
-  }
-}
-
-function updateProgressStatus(
-  channel: string,
-  threadTs: string,
-  messageTs: string,
-  status: ProgressStatus,
-): void {
+/**
+ * Drop a message from the cleanup registry without deleting it from Slack.
+ * Used for retained audit messages: cleanup never sees them (so they persist
+ * in the thread) and the registry does not grow across the process lifetime.
+ */
+function retainProgressMessage(channel: string, threadTs: string, messageTs: string): void {
   const key = threadKey(channel, threadTs);
   const thread = progressMessages.get(key);
-  const entry = thread?.get(messageTs);
-  if (entry) {
-    entry.status = status;
-    if (status === "error" && thread) {
-      evictExcessErrors(thread);
-    }
+  if (!thread) return;
+  thread.delete(messageTs);
+  if (thread.size === 0) {
+    progressMessages.delete(key);
   }
 }
 
 /**
- * Delete all non-error progress messages for a thread.
+ * Delete the remaining live progress messages for a thread. Retained audit
+ * messages have already been dropped from the registry, so everything left
+ * here is a transient "working…" message that should disappear on completion.
  * Skips deletion if there is still an active session running.
  */
 async function cleanupProgressMessages(channel: string, threadTs: string): Promise<void> {
@@ -284,7 +350,6 @@ async function cleanupProgressMessages(channel: string, threadTs: string): Promi
   logInfo(log, "cleanup_progress", {
     key,
     progressCount: thread?.size ?? 0,
-    statuses: thread ? [...thread.values()].map((e) => e.status) : [],
     hasActiveSession,
     ts: Date.now(),
   });
@@ -305,8 +370,6 @@ async function cleanupProgressMessages(channel: string, threadTs: string): Promi
   // would leave the message visible in Slack forever with no record to retry
   // from.
   for (const [messageTs, entry] of thread) {
-    if (entry.status === "error") continue;
-
     deletions.push(
       entry.transport
         .delete(entry.target, messageTs)
@@ -327,10 +390,6 @@ async function cleanupProgressMessages(channel: string, threadTs: string): Promi
   }
 
   await Promise.all(deletions);
-
-  // Cap any error entries we left behind so the per-thread map cannot grow
-  // unbounded across the process lifetime.
-  evictExcessErrors(thread);
 
   if (thread.size === 0) {
     progressMessages.delete(key);
@@ -371,6 +430,13 @@ class ProgressSession {
   private lastToolGroups: ToolGroup[] = [];
   /** Recent memory activity from bootstrap/tool file access. */
   private recentMemory: MemoryActivity[] = [];
+  /** Complete, uncapped record of audit-worthy signals for this session (unlike
+   * the display accumulators, which cap and collapse for the live message).
+   * Drives the retained audit summary posted on completion. */
+  private readonly auditSignals: AuditSignals = {
+    memoryWrites: [],
+    errors: new Map(),
+  };
   /** Last 5 groups of consecutive identical delegated agents. */
   private lastDelegateGroups: DelegateGroup[] = [];
   /** Latest context-window usage update from the runner. */
@@ -476,6 +542,10 @@ class ProgressSession {
     if (this.finished) return;
     if (activity.action === "read" && isReadmePath(activity.path)) return;
 
+    if (activity.action === "write" && !this.auditSignals.memoryWrites.includes(activity.path)) {
+      this.auditSignals.memoryWrites.push(activity.path);
+    }
+
     this.recentMemory.push(activity);
     if (this.recentMemory.length > 4) {
       this.recentMemory = this.recentMemory.slice(-4);
@@ -502,6 +572,20 @@ class ProgressSession {
     if (this.thresholdMet) {
       await this.flush();
     }
+  }
+
+  /**
+   * Record a mid-run session error for the audit summary. Purely accumulative —
+   * live failure visibility is handled by the inline "error" tool activity the
+   * listener already emits, so this does not flush.
+   */
+  onSessionError(message: string): void {
+    if (this.finished) return;
+    this.recordError(message);
+  }
+
+  private recordError(message: string): void {
+    this.auditSignals.errors.set(message, (this.auditSignals.errors.get(message) ?? 0) + 1);
   }
 
   async onContext(status: ContextStatus): Promise<void> {
@@ -561,26 +645,58 @@ class ProgressSession {
       errorMsg = undefined;
     }
 
-    // Always post errors so failures are never invisible in Slack.
-    if (!this.thresholdMet && status === "completed") return;
+    const failed = status === "error";
 
-    const elapsed = formatDuration(Date.now() - this.startTime);
+    // A failed run must always list at least the terminal error so failures are
+    // never invisible — defend against a done error that never arrived as a
+    // session_error event. (Add only when empty, so recovered errors aren't
+    // double-counted.)
+    if (failed && this.auditSignals.errors.size === 0) {
+      this.recordError(errorMsg || "session error");
+    }
 
-    if (status === "completed") {
-      // No transient "Done" edit — the cleanup path deletes non-error messages.
+    const audit = renderAuditSummary(this.auditSignals, {
+      failed,
+      toolCalls: this.toolCallCount,
+    });
+
+    // No audit-worthy signal on a completed run: no transient "Done" edit — the
+    // cleanup path deletes the (possibly never-posted) progress message.
+    if (!audit) return;
+
+    if (this.messageTs) {
+      await this.finalizeAudit(audit);
       return;
     }
 
-    const text = `❌ Failed — ${errorMsg || "session error"} after ${this.toolCallCount} tool calls`;
-    if (this.messageTs) {
-      await this.update(text);
-      updateProgressStatus(this.channel, this.threadTs, this.messageTs, "error");
-    } else {
+    // Failed before any progress message was posted: keep it lightweight with a
+    // reaction on the source message instead of a fresh audit bubble.
+    if (failed) {
       await this.transport
         .addReaction(this.progressTarget.transportTarget, this.sourceTs, "x")
         .catch((err: unknown) =>
           logError(log, "reaction_error", err instanceof Error ? err.message : String(err)),
         );
+      return;
+    }
+
+    // Completed with signals below the tool-call threshold: post the audit fresh.
+    await this.finalizeAudit(audit);
+  }
+
+  /**
+   * Replace the live progress message with the permanent audit summary, then
+   * drop it from the cleanup registry so it survives session end. Posts a fresh
+   * message if the threshold was never met.
+   */
+  private async finalizeAudit(text: string): Promise<void> {
+    if (this.messageTs) {
+      await this.update(text);
+    } else {
+      await this.post(text);
+    }
+    if (this.messageTs) {
+      retainProgressMessage(this.channel, this.threadTs, this.messageTs);
     }
   }
 
@@ -639,7 +755,6 @@ class ProgressSession {
         this.channel,
         this.threadTs,
         this.messageTs,
-        "in_progress",
         this.transport,
         this.progressTarget.transportTarget,
       );
@@ -690,6 +805,7 @@ export async function handleProgressEvent(
       ? { action: event.action, path: event.path, source: event.source }
       : {}),
     ...(event.type === "delegate" ? { agent: event.agent } : {}),
+    ...(event.type === "session_error" ? { message: event.message } : {}),
     ...(event.type === "context"
       ? {
           providerID: event.providerID,
@@ -720,6 +836,9 @@ export async function handleProgressEvent(
       break;
     case "delegate":
       await session.onDelegate({ agent: event.agent });
+      break;
+    case "session_error":
+      session.onSessionError(event.message);
       break;
     case "context":
       await session.onContext({

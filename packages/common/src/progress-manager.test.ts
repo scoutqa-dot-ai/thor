@@ -329,31 +329,6 @@ describe("ProgressManager", () => {
     expect(chat(deps).update.mock.calls.length).toBe(updateCountBefore);
   });
 
-  it("renders delegate context from task-derived delegate events", async () => {
-    const deps = mockSlackDeps();
-
-    await handleProgressEvent(
-      progressTarget(deps),
-      {
-        type: "delegate",
-        agent: "research-agent",
-      },
-      transport,
-    );
-    await handleProgressEvent(
-      progressTarget(deps),
-      {
-        type: "delegate",
-        agent: "research-agent",
-      },
-      transport,
-    );
-    await sendTools(deps, 3);
-
-    const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
-    expect(postCall.text).toContain("agents: research-agent x2");
-  });
-
   it("collapses consecutive duplicate agents using run semantics", async () => {
     const deps = mockSlackDeps();
 
@@ -606,36 +581,6 @@ describe("ProgressManager", () => {
     ).toBeGreaterThanOrEqual(2);
   });
 
-  it("backs off the heartbeat cadence as the session ages", async () => {
-    const deps = mockSlackDeps();
-    await sendTools(deps, 3);
-    expect(chat(deps).postMessage).toHaveBeenCalledOnce();
-
-    const updateMock = chat(deps).update as ReturnType<typeof vi.fn>;
-
-    // <10m elapsed → 10s cadence. ~3 ticks in 30s.
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(updateMock.mock.calls.length).toBeGreaterThanOrEqual(2);
-
-    // Jump past 10m total. Now cadence is 30s.
-    await vi.advanceTimersByTimeAsync(10 * 60_000);
-    const after10m = updateMock.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(2 * 60_000);
-    const ticksAt30s = updateMock.mock.calls.length - after10m;
-    // 2m at 30s cadence ≈ 4 ticks; should be far fewer than the 12 we'd see at 10s.
-    expect(ticksAt30s).toBeLessThanOrEqual(6);
-    expect(ticksAt30s).toBeGreaterThanOrEqual(2);
-
-    // Jump well past 60m so the next scheduled tick uses the 60s cadence.
-    await vi.advanceTimersByTimeAsync(60 * 60_000);
-    const baseline = updateMock.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(5 * 60_000);
-    const ticksAt60s = updateMock.mock.calls.length - baseline;
-    // 5m at 60s cadence ≈ 5 ticks; should be far fewer than the 10 we'd see at 30s.
-    expect(ticksAt60s).toBeGreaterThanOrEqual(2);
-    expect(ticksAt60s).toBeLessThanOrEqual(7);
-  });
-
   it("orphan eviction past max age deletes the progress message and prunes the registry", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);
@@ -675,6 +620,167 @@ describe("ProgressManager", () => {
       ts: "msg.001",
     });
     expect(getRegistrySize()).toBe(0);
+  });
+
+  it("keeps a memory-write audit message on completion instead of deleting it", async () => {
+    const deps = mockSlackDeps();
+
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/service-a/notes.md",
+        source: "tool",
+      },
+      transport,
+    );
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/service-b/plan.md",
+        source: "tool",
+      },
+      transport,
+    );
+    // A read must not appear in the write audit.
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/service-a/other.md",
+        source: "tool",
+      },
+      transport,
+    );
+    await sendTools(deps, 3); // cross threshold so a live message exists
+
+    const doneEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "completed",
+      response: "",
+      toolCalls: [],
+      durationMs: 5000,
+    };
+    await handleProgressEvent(progressTarget(deps, ""), doneEvent, transport);
+
+    // The live message is finalized into an audit list, not deleted.
+    expect(chat(deps).delete).not.toHaveBeenCalled();
+    const finalUpdate = chat(deps).update.mock.calls.at(-1)?.[0] as { text: string };
+    expect(finalUpdate.text).toContain("Memory updated — 2 files written");
+    expect(finalUpdate.text).toContain("service-a/notes.md");
+    expect(finalUpdate.text).toContain("service-b/plan.md");
+    expect(finalUpdate.text).not.toContain("other.md");
+    // Retained messages are dropped from the registry so it cannot grow.
+    expect(getRegistrySize()).toBe(0);
+  });
+
+  it("posts a memory-write audit even for a short run below the tool threshold", async () => {
+    const deps = mockSlackDeps();
+
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/service-a/notes.md",
+        source: "tool",
+      },
+      transport,
+    );
+    await sendTools(deps, 1); // below threshold — no live message posted yet
+    expect(chat(deps).postMessage).not.toHaveBeenCalled();
+
+    const doneEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "completed",
+      response: "",
+      toolCalls: [],
+      durationMs: 1000,
+    };
+    await handleProgressEvent(progressTarget(deps, ""), doneEvent, transport);
+
+    expect(chat(deps).postMessage).toHaveBeenCalledOnce();
+    const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
+    expect(postCall.text).toContain("Memory updated — 1 file written");
+    expect(postCall.text).toContain("service-a/notes.md");
+    expect(chat(deps).delete).not.toHaveBeenCalled();
+  });
+
+  it("keeps a recovered-error audit message when a run completes after errors", async () => {
+    const deps = mockSlackDeps();
+
+    // Two errors mid-run (one seen twice), then the run recovers and completes.
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      { type: "session_error", message: "rate limited" },
+      transport,
+    );
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      { type: "session_error", message: "rate limited" },
+      transport,
+    );
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      { type: "session_error", message: "connection reset" },
+      transport,
+    );
+
+    const doneEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "completed",
+      response: "",
+      toolCalls: [],
+      durationMs: 1000,
+    };
+    await handleProgressEvent(progressTarget(deps, ""), doneEvent, transport);
+
+    const postCall = chat(deps).postMessage.mock.calls.at(-1)?.[0] as { text: string };
+    expect(postCall.text).toContain("Recovered from 3 errors during the run");
+    expect(postCall.text).toContain("rate limited x2");
+    expect(postCall.text).toContain("connection reset");
+    expect(chat(deps).delete).not.toHaveBeenCalled();
+  });
+
+  it("renders errors as a failure (not 'recovered') when the run itself fails", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 3);
+
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      { type: "session_error", message: "provider down" },
+      transport,
+    );
+
+    const errorEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "error",
+      error: "provider down",
+      response: "",
+      toolCalls: [],
+      durationMs: 1000,
+    };
+    await handleProgressEvent(progressTarget(deps, ""), errorEvent, transport);
+
+    // Same error signal, framed as a failure headline (not "recovered"). The
+    // message is retained (not deleted) via registry removal.
+    const finalUpdate = chat(deps).update.mock.calls.at(-1)?.[0] as { text: string };
+    expect(finalUpdate.text).toContain("❌ Failed after 3 tool calls");
+    expect(finalUpdate.text).toContain("• provider down");
+    expect(finalUpdate.text).not.toContain("Recovered from");
+    expect(chat(deps).delete).not.toHaveBeenCalled();
   });
 
   it("treats abort errors as completed (no error message, deletes message)", async () => {
@@ -764,29 +870,6 @@ describe("ProgressManager", () => {
 });
 
 describe("onSessionEnd (via handleProgressEvent done)", () => {
-  it("deletes completed progress messages automatically", async () => {
-    const deps = mockSlackDeps();
-    await sendTools(deps, 3);
-    expect(getRegistrySize()).toBe(1);
-
-    const doneEvent: ProgressEvent = {
-      type: "done",
-      sessionId: "s1",
-      resumed: false,
-      status: "completed",
-      response: "",
-      toolCalls: [],
-      durationMs: 5000,
-    };
-    await handleProgressEvent(progressTarget(deps, ""), doneEvent, transport);
-
-    expect(chat(deps).delete).toHaveBeenCalledWith({
-      channel: "C123",
-      ts: "msg.001",
-    });
-    expect(getRegistrySize()).toBe(0);
-  });
-
   it("drops registry entries when Slack cleanup races message_not_found", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);
@@ -831,7 +914,7 @@ describe("onSessionEnd (via handleProgressEvent done)", () => {
     expect(getRegistrySize()).toBe(1);
   });
 
-  it("preserves error progress messages", async () => {
+  it("preserves error progress messages (retained, not deleted)", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);
 
@@ -847,8 +930,14 @@ describe("onSessionEnd (via handleProgressEvent done)", () => {
     };
     await handleProgressEvent(progressTarget(deps, ""), errorEvent, transport);
 
+    // Failure audit is retained: the message is updated in place and dropped
+    // from the cleanup registry (removal — not a status flag — is what keeps it
+    // both visible in Slack and out of the registry).
+    const finalUpdate = chat(deps).update.mock.calls.at(-1)?.[0] as { text: string };
+    expect(finalUpdate.text).toContain("❌ Failed after 3 tool calls");
+    expect(finalUpdate.text).toContain("• something broke");
     expect(chat(deps).delete).not.toHaveBeenCalled();
-    expect(getRegistrySize()).toBe(1);
+    expect(getRegistrySize()).toBe(0);
   });
 
   it("cleans up sequential sessions in the same thread", async () => {

@@ -159,6 +159,16 @@ export class ProgressListener {
           this.transport,
         ),
       );
+      // Record it for the completion audit: if the session recovers and
+      // finishes, this surfaces as a "recovered from N errors" line so a
+      // recovered failure is not invisible on an otherwise-clean success.
+      this.enqueue(progressTarget.key, () =>
+        handleProgressEvent(
+          progressTarget,
+          { type: "session_error", message: errorMsg },
+          this.transport,
+        ),
+      );
     } else if (event.type === "session.idle" && isParent) {
       const pendingError = this.pendingErrors.get(sessionId);
       this.pendingErrors.delete(sessionId);
