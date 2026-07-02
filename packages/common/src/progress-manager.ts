@@ -110,8 +110,19 @@ function shortenMemoryPath(path: string): string {
 interface AuditSignals {
   /** Distinct memory paths written, in first-write order. */
   memoryWrites: string[];
-  /** Occurrence count per session-error message seen mid-run. */
+  /** Occurrence count per classified error label seen mid-run (see
+   * classifyError), in first-seen order. */
   errors: Map<string, number>;
+}
+
+/**
+ * Aborts are intentional interruptions (e.g. a new message superseded the run)
+ * that get re-triggered — treated as completed and never audited as errors.
+ * Single source of truth for both the finish() reclassification and the
+ * session-error accumulator.
+ */
+function isAbortError(message: string): boolean {
+  return /abort/i.test(message);
 }
 
 /** Keep a single audit error line compact. */
@@ -124,13 +135,35 @@ function truncateErrorMessage(message: string): string {
     : collapsed;
 }
 
+/**
+ * Map a raw session-error message to a stable audit label. Known noisy shapes
+ * (high-cardinality provider payloads) collapse to a canonical label so one
+ * incident renders as one counted bullet. Anything unrecognized keeps its raw
+ * message (compacted for length) so novel failures stay visible instead of
+ * hiding behind a generic bucket.
+ *
+ * Patterns are seeded from observed production errors and matched in order
+ * (first match wins). `Aborted` is filtered upstream (see isAbortError), so it
+ * needs no entry here.
+ */
+const KNOWN_ERROR_PATTERNS: Array<{ match: RegExp; label: string }> = [
+  { match: /server_is_overloaded/i, label: "Provider overloaded" },
+  { match: /exceeds context window/i, label: "Context window exceeded" },
+  { match: /image_url/i, label: "Invalid image input" },
+];
+
+function classifyError(message: string): string {
+  for (const { match, label } of KNOWN_ERROR_PATTERNS) {
+    if (match.test(message)) return label;
+  }
+  return truncateErrorMessage(message);
+}
+
 function renderMemoryWriteSection(writePaths: string[]): string | undefined {
   if (writePaths.length === 0) return undefined;
   const shortPaths = [...new Set(writePaths.map(shortenMemoryPath))];
-  const header = `📝 Memory updated — ${shortPaths.length} ${
-    shortPaths.length === 1 ? "file" : "files"
-  } written`;
-  return [header, ...shortPaths.map((path) => `• ${path}`)].join("\n");
+  // The files are listed below, so the header only labels the section.
+  return ["📝 Memory updated", ...shortPaths.map((path) => `• ${path}`)].join("\n");
 }
 
 function renderErrorSection(
@@ -144,10 +177,10 @@ function renderErrorSection(
   const header = opts.failed
     ? `❌ Failed after ${opts.toolCalls} tool calls`
     : `⚠️ Recovered from ${total} ${total === 1 ? "error" : "errors"} during the run`;
-  const lines = [...errorCounts].map(([message, count]) => {
-    const text = truncateErrorMessage(message);
-    return `• ${count > 1 ? `${text} x${count}` : text}`;
-  });
+  // Keys are already classified, display-ready labels (see classifyError).
+  const lines = [...errorCounts].map(
+    ([label, count]) => `• ${count > 1 ? `${label} x${count}` : label}`,
+  );
   return [header, ...lines].join("\n");
 }
 
@@ -581,11 +614,15 @@ class ProgressSession {
    */
   onSessionError(message: string): void {
     if (this.finished) return;
+    // Aborts flow through session.error too; never audit an interrupt as an
+    // error — the run is treated as completed and re-triggered.
+    if (isAbortError(message)) return;
     this.recordError(message);
   }
 
   private recordError(message: string): void {
-    this.auditSignals.errors.set(message, (this.auditSignals.errors.get(message) ?? 0) + 1);
+    const label = classifyError(message);
+    this.auditSignals.errors.set(label, (this.auditSignals.errors.get(label) ?? 0) + 1);
   }
 
   async onContext(status: ContextStatus): Promise<void> {
@@ -634,7 +671,7 @@ class ProgressSession {
 
     // Treat aborts as successful completions — the session was intentionally
     // interrupted (e.g. new message arrived) and will be re-triggered.
-    if (status === "error" && errorMsg && /abort/i.test(errorMsg)) {
+    if (status === "error" && errorMsg && isAbortError(errorMsg)) {
       logInfo(log, "session_abort_as_completed", {
         channel: this.channel,
         threadTs: this.threadTs,

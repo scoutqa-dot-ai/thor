@@ -43,9 +43,17 @@ retain it; otherwise keep deleting as before.
 the `ProgressSession`. `renderAuditSummary(signals, { failed, toolCalls })`
 composes one section per non-empty signal:
 
-- **memory writes** → `📝 Memory updated — N files written` + the paths.
+- **memory writes** → `📝 Memory updated` + the paths.
 - **errors** → `❌ Failed after N tool calls` (failed) or `⚠️ Recovered from N
-errors during the run` (completed), + the messages with counts.
+errors during the run` (completed), + the classified errors with counts.
+
+Error messages are classified before counting (`classifyError`): known noisy
+provider shapes (e.g. `server_is_overloaded` → `Provider overloaded`) collapse
+to a stable label so one incident is one bullet; unrecognized messages keep
+their raw text (compacted for length) and dedupe by exact match, rather than
+collapsing into a generic "unknown" bucket that would hide novel failures. The
+known-pattern catalog is seeded from production data (see thread linked in the
+branch), and `Aborted` never reaches it (filtered by `isAbortError` upstream).
 
 `finish()` is one path for both outcomes:
 
@@ -60,13 +68,14 @@ errors during the run` (completed), + the messages with counts.
 
 ## Decision Log
 
-| #   | Decision                                                               | Why                                                                                            | Instead of                                                                           |
-| --- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| 1   | Persist exactly two signals (memory writes, errors), built to extend   | Smallest correct set with real audit value; avoids speculative surface                         | Persisting delegations/tool counts/context (transient or already recorded elsewhere) |
-| 2   | Treat recovered and fatal errors as one signal, framed by final status | One accumulator and one renderer; a recovered failure is as worth surfacing as a fatal one     | A separate bespoke `❌ Failed —` one-liner path alongside a recovered-errors path    |
-| 3   | Retain by removing from the cleanup registry                           | Message persists in Slack; registry can't grow over process lifetime; removes a special case   | Marking `status="error"` and skipping it in cleanup, plus an eviction cap            |
-| 4   | Add a `session_error` progress event                                   | Listener already sees `session.error` but clears it on recovery; this carries it to the engine | Deriving recovered errors from the inline `tool: "error"` activity                   |
-| 5   | Drop sub-agent delegations as a signal                                 | Run structure, not a durable/consequential fact; low audit value                               | Keeping delegations in the summary                                                   |
+| #   | Decision                                                               | Why                                                                                            | Instead of                                                                                                        |
+| --- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 1   | Persist exactly two signals (memory writes, errors), built to extend   | Smallest correct set with real audit value; avoids speculative surface                         | Persisting delegations/tool counts/context (transient or already recorded elsewhere)                              |
+| 2   | Treat recovered and fatal errors as one signal, framed by final status | One accumulator and one renderer; a recovered failure is as worth surfacing as a fatal one     | A separate bespoke `❌ Failed —` one-liner path alongside a recovered-errors path                                 |
+| 3   | Retain by removing from the cleanup registry                           | Message persists in Slack; registry can't grow over process lifetime; removes a special case   | Marking `status="error"` and skipping it in cleanup, plus an eviction cap                                         |
+| 4   | Add a `session_error` progress event                                   | Listener already sees `session.error` but clears it on recovery; this carries it to the engine | Deriving recovered errors from the inline `tool: "error"` activity                                                |
+| 5   | Drop sub-agent delegations as a signal                                 | Run structure, not a durable/consequential fact; low audit value                               | Keeping delegations in the summary                                                                                |
+| 6   | Classify errors: known → label, unknown → raw message kept             | Collapses high-cardinality provider noise while keeping novel failures visible (audit's point) | Collapsing everything unrecognized into one "unknown error" bucket, hiding new shapes; digit-masking (unreliable) |
 
 ## Supersedes
 
