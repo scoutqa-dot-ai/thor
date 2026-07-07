@@ -138,7 +138,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends unzip \
     && /tmp/aws/install \
     && rm -rf /tmp/aws /tmp/awscliv2.zip \
     && apt-get purge -y unzip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
-COPY --from=grafana/mcp-grafana:0.16.0 /app/mcp-grafana /usr/local/bin/mcp-grafana
+COPY --from=grafana/mcp-grafana:0.17.0 /app/mcp-grafana /usr/local/bin/mcp-grafana
 
 FROM remote-cli-tools AS remote-cli
 COPY --from=remote-cli-build /app /app
