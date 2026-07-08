@@ -125,7 +125,7 @@ RUN bash -c '. "$NVM_DIR/nvm.sh" \
     && nvm install "$NODE_20_VERSION" \
     && nvm alias default "$NODE_22_VERSION" \
     && nvm use default \
-    && corepack enable && corepack prepare pnpm@11.7.0 --activate \
+    && corepack enable && corepack prepare pnpm@11.9.0 --activate \
     && nvm exec 22 node --version | grep -Fx "v$NODE_22_VERSION" >/dev/null \
     && nvm exec 20 node --version | grep -Fx "v$NODE_20_VERSION" >/dev/null \
     && nvm current | grep -Fx "v$NODE_22_VERSION" >/dev/null \
