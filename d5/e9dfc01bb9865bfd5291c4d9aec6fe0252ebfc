@@ -1,0 +1,45 @@
+docs/plan/2026061801_psql-database-access.md
+  646d224f2589626d 21
+docs/plan/2026052701_profile-based-integration-routing.md
+  646d224f2589626d 138
+docs/plan/2026042406_command-policy-consolidation.md
+  646d224f2589626d 31
+docs/plan/2026051301_policy-relaxations.md
+  646d224f2589626d 50
+docker/opencode/config/agents/build.md
+  646d224f2589626d 36
+docs/plan/2026041602_drop-proxy.md
+  646d224f2589626d 40,220
+docs/plan/2026060301_error-pass-through-default.md
+  646d224f2589626d 48
+README.md
+  646d224f2589626d 15
+docs/plan/2026041501_metabase-cli.md
+  646d224f2589626d 4,243
+packages/remote-cli/src/policy.ts
+  646d224f2589626d 172
+packages/remote-cli/src/policy.test.ts
+  646d224f2589626d 6
+docs/plan/2026041703_launchdarkly-cli.md
+  646d224f2589626d 29,157,171,185
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "d5e9dfc01bb9865bfd5291c4d9aec6fe0252ebfc",
+  "prompts": {
+    "646d224f2589626d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "860c27c3-44ec-423a-adbc-c91e036ffa89",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 26,
+      "total_deletions": 222,
+      "accepted_lines": 17,
+      "overriden_lines": 0
+    }
+  }
+}
