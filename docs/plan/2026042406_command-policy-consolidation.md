@@ -28,7 +28,7 @@ The final model is:
 - cross-repo write support
 - branch switching in the current worktree
 - implicit or config-dependent push behavior
-- widening policy for `scoutqa`, `langfuse`, `ldcli`, or `metabase`
+- widening policy for `scoutqa`, `langfuse`, or `ldcli`
 
 ## Final Design
 

@@ -6,7 +6,6 @@ import {
   loadDaytonaEnv,
   loadGatewayEnv,
   loadGitHubAppAuthEnv,
-  loadMetabaseEnv,
   loadRemoteCliAppEnv,
   loadRemoteCliEnv,
   loadRunnerEnv,
@@ -108,27 +107,6 @@ describe("service env", () => {
       apiUrl: "https://app.daytona.io/api",
       snapshot: "daytona-medium",
     });
-  });
-
-  it("loads metabase env with csv schemas and strict database id", () => {
-    const config = loadMetabaseEnv({
-      METABASE_URL: "https://metabase.test",
-      METABASE_API_KEY: "mb-key",
-      METABASE_DATABASE_ID: "42",
-      METABASE_ALLOWED_SCHEMAS: "dm_products, dm_growth,, dw_testops",
-    });
-
-    expect(config.url).toBe("https://metabase.test");
-    expect(config.dbId).toBe(42);
-    expect([...config.schemas]).toEqual(["dm_products", "dm_growth", "dw_testops"]);
-    expect(() =>
-      loadMetabaseEnv({
-        METABASE_URL: "https://metabase.test",
-        METABASE_API_KEY: "mb-key",
-        METABASE_DATABASE_ID: "042dw",
-        METABASE_ALLOWED_SCHEMAS: "dm_products",
-      }),
-    ).toThrow("METABASE_DATABASE_ID must be an integer");
   });
 
   it("strips trailing slashes from RUNNER_URL and OPENCODE_URL", () => {

@@ -3,7 +3,7 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { normalize as normalizePosix } from "node:path/posix";
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   awsCommandRequiresApproval,
   parsePsqlInvocation,
@@ -13,7 +13,6 @@ import {
   validateGitArgs,
   validateGhArgs,
   validateLdcliArgs,
-  validateMetabaseArgs,
 } from "./policy.ts";
 
 beforeEach(() => {
@@ -1728,120 +1727,6 @@ describe("validateLdcliArgs", () => {
 
     it("rejects missing action", () => {
       expect(validateLdcliArgs(["flags"])).not.toBeNull();
-    });
-  });
-});
-
-// ── metabase policy ────────────────────────────────────────────────────────
-
-describe("validateMetabaseArgs", () => {
-  const originalEnv = process.env.METABASE_ALLOWED_SCHEMAS;
-
-  beforeAll(() => {
-    process.env.METABASE_ALLOWED_SCHEMAS = "dm_products,dm_growth,dw_testops";
-  });
-
-  afterAll(() => {
-    if (originalEnv !== undefined) {
-      process.env.METABASE_ALLOWED_SCHEMAS = originalEnv;
-    } else {
-      delete process.env.METABASE_ALLOWED_SCHEMAS;
-    }
-  });
-
-  describe("subcommand validation", () => {
-    it("accepts valid subcommands", () => {
-      expect(validateMetabaseArgs(["schemas"])).toBeNull();
-      expect(validateMetabaseArgs(["tables", "dm_products"])).toBeNull();
-      expect(validateMetabaseArgs(["columns", "dm_products", "fact_feature"])).toBeNull();
-      expect(validateMetabaseArgs(["query", "SELECT 1"])).toBeNull();
-    });
-
-    it("rejects unknown subcommands", () => {
-      expect(validateMetabaseArgs(["drop"])).not.toBeNull();
-      expect(validateMetabaseArgs(["delete"])).not.toBeNull();
-      expect(validateMetabaseArgs(["list"])).not.toBeNull();
-    });
-
-    it("rejects empty args", () => {
-      expect(validateMetabaseArgs([])).not.toBeNull();
-    });
-  });
-
-  describe("schemas", () => {
-    it("rejects extra arguments", () => {
-      expect(validateMetabaseArgs(["schemas", "extra"])).not.toBeNull();
-    });
-  });
-
-  describe("tables", () => {
-    it("requires exactly 1 argument", () => {
-      expect(validateMetabaseArgs(["tables"])).not.toBeNull();
-      expect(validateMetabaseArgs(["tables", "dm_products", "extra"])).not.toBeNull();
-    });
-
-    it("accepts allowed schema", () => {
-      expect(validateMetabaseArgs(["tables", "dm_products"])).toBeNull();
-      expect(validateMetabaseArgs(["tables", "dw_testops"])).toBeNull();
-    });
-
-    it("rejects non-allowed schema", () => {
-      expect(validateMetabaseArgs(["tables", "dw_pii"])).not.toBeNull();
-      expect(validateMetabaseArgs(["tables", "public"])).not.toBeNull();
-    });
-  });
-
-  describe("columns", () => {
-    it("requires exactly 2 arguments", () => {
-      expect(validateMetabaseArgs(["columns"])).not.toBeNull();
-      expect(validateMetabaseArgs(["columns", "dm_products"])).not.toBeNull();
-      expect(validateMetabaseArgs(["columns", "dm_products", "table", "extra"])).not.toBeNull();
-    });
-
-    it("accepts allowed schema", () => {
-      expect(validateMetabaseArgs(["columns", "dm_growth", "dim_account"])).toBeNull();
-    });
-
-    it("rejects non-allowed schema", () => {
-      expect(validateMetabaseArgs(["columns", "dw_pii", "email_pool"])).not.toBeNull();
-    });
-  });
-
-  describe("query", () => {
-    it("requires exactly 1 argument (the SQL string)", () => {
-      expect(validateMetabaseArgs(["query"])).not.toBeNull();
-      expect(validateMetabaseArgs(["query", "SELECT 1", "extra"])).not.toBeNull();
-    });
-
-    it("accepts any SQL string (no keyword blocking)", () => {
-      expect(validateMetabaseArgs(["query", "SELECT 1"])).toBeNull();
-      expect(validateMetabaseArgs(["query", "SELECT * FROM dm_products.fact_feature"])).toBeNull();
-      expect(validateMetabaseArgs(["query", "DROP TABLE foo"])).toBeNull();
-      expect(validateMetabaseArgs(["query", "DELETE FROM bar"])).toBeNull();
-    });
-  });
-
-  describe("question", () => {
-    it("requires exactly 1 argument", () => {
-      expect(validateMetabaseArgs(["question"])).not.toBeNull();
-      expect(validateMetabaseArgs(["question", "7751", "extra"])).not.toBeNull();
-    });
-
-    it("accepts numeric ID", () => {
-      expect(validateMetabaseArgs(["question", "7751"])).toBeNull();
-    });
-
-    it("accepts URL slug form", () => {
-      expect(validateMetabaseArgs(["question", "7751-daily-log-web-pages-paths"])).toBeNull();
-    });
-
-    it("rejects non-numeric ID", () => {
-      expect(validateMetabaseArgs(["question", "abc"])).not.toBeNull();
-      expect(validateMetabaseArgs(["question", "0"])).not.toBeNull();
-      expect(validateMetabaseArgs(["question", "-1"])).not.toBeNull();
-      expect(validateMetabaseArgs(["question", "1e3"])).not.toBeNull();
-      expect(validateMetabaseArgs(["question", "123abc"])).not.toBeNull();
-      expect(validateMetabaseArgs(["question", "42/slug"])).not.toBeNull();
     });
   });
 });

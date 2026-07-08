@@ -158,79 +158,6 @@ function hasOptionValue(args: string[], option: string): boolean {
   return false;
 }
 
-// ── metabase policy ────────────────────────────────────────────────────────
-
-const ALLOWED_METABASE_SUBCOMMANDS: ReadonlySet<string> = new Set([
-  "schemas",
-  "tables",
-  "columns",
-  "query",
-  "question",
-]);
-
-const METABASE_QUESTION_REF_RE = /^[1-9]\d*(?:-[a-z0-9-]+)?$/;
-
-export function validateMetabaseArgs(args: string[]): string | null {
-  if (!Array.isArray(args) || args.length === 0) {
-    return "args must be a non-empty array";
-  }
-
-  const subcommand = args[0];
-  if (!ALLOWED_METABASE_SUBCOMMANDS.has(subcommand)) {
-    return `"metabase ${subcommand}" is not allowed — valid subcommands: schemas, tables, columns, query, question`;
-  }
-
-  const allowedSchemas = getMetabaseAllowedSchemas();
-
-  if (subcommand === "schemas") {
-    if (args.length > 1) return '"metabase schemas" takes no arguments';
-    return null;
-  }
-
-  if (subcommand === "tables") {
-    if (args.length !== 2) return '"metabase tables" requires exactly 1 argument: <schema>';
-    const schema = args[1];
-    if (allowedSchemas.size > 0 && !allowedSchemas.has(schema)) {
-      return `schema "${schema}" is not in the allowed list`;
-    }
-    return null;
-  }
-
-  if (subcommand === "columns") {
-    if (args.length !== 3)
-      return '"metabase columns" requires exactly 2 arguments: <schema> <table>';
-    const schema = args[1];
-    if (allowedSchemas.size > 0 && !allowedSchemas.has(schema)) {
-      return `schema "${schema}" is not in the allowed list`;
-    }
-    return null;
-  }
-
-  if (subcommand === "query") {
-    if (args.length !== 2) return '"metabase query" requires exactly 1 argument: <sql>';
-    return null;
-  }
-
-  if (subcommand === "question") {
-    if (args.length !== 2) return '"metabase question" requires exactly 1 argument: <question-id>';
-    if (!METABASE_QUESTION_REF_RE.test(args[1]))
-      return `"${args[1]}" is not a valid question ID (expected a positive integer or URL slug)`;
-    return null;
-  }
-
-  return null;
-}
-
-function getMetabaseAllowedSchemas(): Set<string> {
-  const raw = process.env.METABASE_ALLOWED_SCHEMAS || "";
-  return new Set(
-    raw
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-  );
-}
-
 // ── psql policy ────────────────────────────────────────────────────────────
 //
 // The agent runs `psql <alias> [options]`, where the lone positional is a
@@ -242,7 +169,7 @@ function getMetabaseAllowedSchemas(): Set<string> {
 // -f/-o/-L file flags run shell commands and read/write files ON the remote-cli
 // container — independent of the database's read-only role. That container holds
 // the GitHub App key and other secrets, so this surface MUST fail closed. We use
-// an ALLOWLIST (like git/gh/ldcli/metabase), not a denylist: only the alias,
+// an ALLOWLIST (like git/gh/ldcli), not a denylist: only the alias,
 // -c "<sql>", and a small set of output-format flags pass; everything else —
 // connection flags, file flags, and any flag we haven't enumerated — is rejected
 // by default. A -c value that is itself a meta-command (starts with "\") is
