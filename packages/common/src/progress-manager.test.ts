@@ -592,6 +592,36 @@ describe("ProgressManager", () => {
     ).toBeGreaterThanOrEqual(2);
   });
 
+  it("backs off the heartbeat cadence as the session ages", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 3);
+    expect(chat(deps).postMessage).toHaveBeenCalledOnce();
+
+    const updateMock = chat(deps).update as ReturnType<typeof vi.fn>;
+
+    // <10m elapsed → 10s cadence. ~3 ticks in 30s.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(updateMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    // Jump past 10m total. Now cadence is 30s.
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    const after10m = updateMock.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    const ticksAt30s = updateMock.mock.calls.length - after10m;
+    // 2m at 30s cadence ≈ 4 ticks; should be far fewer than the 12 we'd see at 10s.
+    expect(ticksAt30s).toBeLessThanOrEqual(6);
+    expect(ticksAt30s).toBeGreaterThanOrEqual(2);
+
+    // Jump well past 60m so the next scheduled tick uses the 60s cadence.
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    const baseline = updateMock.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    const ticksAt60s = updateMock.mock.calls.length - baseline;
+    // 5m at 60s cadence ≈ 5 ticks; should be far fewer than the 10 we'd see at 30s.
+    expect(ticksAt60s).toBeGreaterThanOrEqual(2);
+    expect(ticksAt60s).toBeLessThanOrEqual(7);
+  });
+
   it("orphan eviction past max age deletes the progress message and prunes the registry", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);
