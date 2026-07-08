@@ -27,13 +27,13 @@ The prior sandbox incident exposed an actionable provider failure (`no space lef
 
 ## Decision log
 
-| # | Decision | Rationale | Rejected |
-|---|---|---|---|
-| 1 | Default caught errors on LLM-facing remote-cli endpoints pass through via `errorMessage(err)` | Matches the agreed MVP and maximizes agent diagnosability with minimal code | Keeping broad `Internal server error` masks; building a safe/admin error framework |
-| 2 | No generic redaction helper for this MVP | Slack direction explicitly removed `redactSecrets`; adding it would create a policy layer by another name | Shared `redactSecrets(text)` from the earlier helper proposal |
-| 3 | Sandbox also passes through raw caught messages by default | The concrete failure class needs the Daytona/provider detail and path to be visible to the agent | Curated sandbox categories like `Sandbox storage full`; current generic `Sandbox service error` fallback |
-| 4 | Profile/access-control/routing denials stay explicitly wrapped | These can reveal profile topology or credential routing boundaries and are the only agreed exception | A repo-wide denial taxonomy; raw pass-through of strict profile-resolution details |
-| 5 | Keep helper set to `errorMessage()` plus an optional local MCP denial wrapper | Removes repeated extraction without introducing new architecture | Multiple shared helpers or new error classes |
+| #   | Decision                                                                                      | Rationale                                                                                                 | Rejected                                                                                                 |
+| --- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| 1   | Default caught errors on LLM-facing remote-cli endpoints pass through via `errorMessage(err)` | Matches the agreed MVP and maximizes agent diagnosability with minimal code                               | Keeping broad `Internal server error` masks; building a safe/admin error framework                       |
+| 2   | No generic redaction helper for this MVP                                                      | Slack direction explicitly removed `redactSecrets`; adding it would create a policy layer by another name | Shared `redactSecrets(text)` from the earlier helper proposal                                            |
+| 3   | Sandbox also passes through raw caught messages by default                                    | The concrete failure class needs the Daytona/provider detail and path to be visible to the agent          | Curated sandbox categories like `Sandbox storage full`; current generic `Sandbox service error` fallback |
+| 4   | Profile/access-control/routing denials stay explicitly wrapped                                | These can reveal profile topology or credential routing boundaries and are the only agreed exception      | A repo-wide denial taxonomy; raw pass-through of strict profile-resolution details                       |
+| 5   | Keep helper set to `errorMessage()` plus an optional local MCP denial wrapper                 | Removes repeated extraction without introducing new architecture                                          | Multiple shared helpers or new error classes                                                             |
 
 ## Phases
 
@@ -45,7 +45,7 @@ Add `errorMessage(err: unknown): string` to `packages/common/src/errors.ts`, exp
 
 ### Phase 2 — Remote-cli catch-boundary pass-through
 
-In `packages/remote-cli/src/index.ts`, change LLM-facing catch responses that currently return `stderr: "Internal server error"` to return `stderr: errorMessage(err)` while continuing to log the same raw message and `thorIds(req)`. Cover `/exec/git`, `/exec/gh`, `/exec/scoutqa` pre-header failure, `/exec/slack-post-message`, `/exec/ldcli`, `/exec/mcp`, `/internal/exec`, and `/exec/approval`. Preserve existing 400/401 behavior and endpoints already passing useful messages through, such as metabase.
+In `packages/remote-cli/src/index.ts`, change LLM-facing catch responses that currently return `stderr: "Internal server error"` to return `stderr: errorMessage(err)` while continuing to log the same raw message and `thorIds(req)`. Cover `/exec/git`, `/exec/gh`, `/exec/scoutqa` pre-header failure, `/exec/slack-post-message`, `/exec/ldcli`, `/exec/mcp`, `/internal/exec`, and `/exec/approval`. Preserve existing 400/401 behavior and endpoints already passing useful messages through.
 
 For streaming endpoints with headers already sent, write an NDJSON `stderr` event containing `errorMessage(err)` before the failing `exit` event rather than only emitting an exit code.
 

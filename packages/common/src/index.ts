@@ -60,7 +60,6 @@ export {
   loadRemoteCliGitHubEnv,
   loadRemoteCliInternalEnv,
   loadAdminEnv,
-  loadMetabaseEnv,
   loadGitHubAppAuthEnv,
   loadDaytonaEnv,
 } from "./service-env.ts";

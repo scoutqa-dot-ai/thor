@@ -4,7 +4,7 @@ Replace Thor's current split channel-policy model (Slack private-channel allowli
 
 ## Goal
 
-Let Thor route integrations by Slack channel without duplicating full credential blocks in config. Operators should be able to say “these channels are in profile `qa`” or “these channels are in profile `labs`”, then let runtime env resolution decide whether PostHog, Grafana, Metabase, Langfuse, or future CLI-backed integrations are enabled for that profile. A public channel outside any profile still works against global credentials; a non-public channel outside every profile is rejected.
+Let Thor route integrations by Slack channel without duplicating full credential blocks in config. Operators should be able to say “these channels are in profile `qa`” or “these channels are in profile `labs`”, then let runtime env resolution decide whether PostHog, Grafana, Langfuse, or future CLI-backed integrations are enabled for that profile. A public channel outside any profile still works against global credentials; a non-public channel outside every profile is rejected.
 
 ## Scope
 
@@ -135,7 +135,7 @@ Rules:
 
 - Advertise MCP capabilities through static `build.md` + live `mcp` CLI discovery rather than a runtime-injected, profile-filtered prompt block (see Decision 15). `mcp` (no args) lists upstreams available to the session via the live profile resolver; `--help` surfaces each tool's `classification`. The `tool-instructions.ts` injection path is removed.
 - Update `README.md`, `docs/slack.md`, `docs/examples/thor.json`, and any integration docs that currently imply one global credential set only.
-- Document how future `remote-cli` surfaces (for example Metabase or Langfuse) can opt into the same profile-scoped env resolver without changing the `profiles` config shape.
+- Document how future `remote-cli` surfaces (for example a new CLI-backed integration or Langfuse) can opt into the same profile-scoped env resolver without changing the `profiles` config shape.
 
 **Exit criteria:** documentation, prompt surface, and runtime behavior describe the same model; example config is minimal and valid; MCP affordances live in `build.md` with no runtime injection.
 

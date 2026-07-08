@@ -16,7 +16,7 @@ LaunchDarkly is the source of truth for runtime feature state. Read-only CLI acc
 
 ## Architecture
 
-Follows the existing **remote-cli pattern** (same as `git`, `gh`, `langfuse`, `metabase`, `scoutqa`). The binary, wrapper, endpoint, env-var prefix, and policy function all use the canonical name `ldcli` for consistency:
+Follows the existing **remote-cli pattern** (same as `git`, `gh`, `langfuse`, `scoutqa`). The binary, wrapper, endpoint, env-var prefix, and policy function all use the canonical name `ldcli` for consistency:
 
 ```
 OpenCode agent
@@ -26,7 +26,7 @@ OpenCode agent
         → LaunchDarkly REST API (app.launchdarkly.com)
 ```
 
-- **No MCP server** — LaunchDarkly publishes an official MCP server (`@launchdarkly/mcp-server`), but its primary value is structured tool calls for mutations. Since this plan is strictly read-only, the CLI exec pattern is consistent with `langfuse`/`metabase`/`gh` and avoids a second transport.
+- **No MCP server** — LaunchDarkly publishes an official MCP server (`@launchdarkly/mcp-server`), but its primary value is structured tool calls for mutations. Since this plan is strictly read-only, the CLI exec pattern is consistent with `langfuse`/`scoutqa`/`gh` and avoids a second transport.
 - **Policy enforcement server-side** — remote-cli validates resource/action/flag allowlists before executing.
 - **Credentials scoped to remote-cli container** — `LD_ACCESS_TOKEN` (and optional `LD_BASE_URI`, `LD_PROJECT`, `LD_ENVIRONMENT`) are env vars on the remote-cli service only, never exposed to the agent container.
 - **Strictly read-only** — every `create`/`update`/`delete`/`toggle`/`replace` action is denied. No mutating subcommands, no mutating flags, no filesystem writes. If a future need for mutations appears, it gets a separate plan with approval-flow integration.
@@ -154,7 +154,7 @@ Add `POST /exec/ldcli` to the remote-cli service with a strict read-only policy.
      - `ldcli flags get` returns per-environment state in `environments[<env-key>]`
      - Strictly read-only — `toggle` / `update` / `create` / `delete` are all denied. Surface that limitation up to the human if a mutation is needed.
 
-2. **Add `ldcli` to `docker/opencode/config/agents/build.md` Environment section** — one-line addition to the tools list (next to `gh`, `langfuse`, `metabase`).
+2. **Add `ldcli` to `docker/opencode/config/agents/build.md` Environment section** — one-line addition to the tools list (next to `gh`, `langfuse`, `scoutqa`).
 
 3. **Update `docs/feat/mvp.md`** — add LaunchDarkly to the integration list.
 
@@ -168,7 +168,7 @@ Add `POST /exec/ldcli` to the remote-cli service with a strict read-only policy.
 
 | #   | Decision                                                                                 | Reason                                                                                                                                                                                  |
 | --- | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Remote-CLI pattern, not MCP server                                                       | Consistent with `langfuse`/`metabase`/`gh`. MCP's main value is structured mutation tools; this plan has no mutations.                                                                  |
+| 1   | Remote-CLI pattern, not MCP server                                                       | Consistent with `langfuse`/`scoutqa`/`gh`. MCP's main value is structured mutation tools; this plan has no mutations.                                                                   |
 | 2   | Official `@launchdarkly/ldcli` (not custom REST client)                                  | Maintained by LD, covers every API resource, handles auth + JSON output. Same reasoning as `langfuse-cli`.                                                                              |
 | 3   | Strictly read-only policy                                                                | Mutating LD state has real production blast radius. Land safe read access first; any mutation work gets its own plan with approval-flow integration.                                    |
 | 4   | Use `ldcli` everywhere (wrapper name, endpoint name, env prefix `LD_*`, policy function) | Consistency with the upstream binary and LD's own docs. Reduces translation cost when the agent reads LD docs vs. invokes the wrapper.                                                  |
@@ -182,7 +182,7 @@ Add `POST /exec/ldcli` to the remote-cli service with a strict read-only policy.
 | 11  | Always append `--output json`                                                            | Agent needs machine-readable output, mirrors langfuse `--json` precedent.                                                                                                               |
 | 12  | 1 MB output buffer for the ldcli endpoint                                                | Flag lists in mature projects can run to hundreds of KB; default 256 KB risks silent truncation. Same as langfuse.                                                                      |
 | 13  | Pin `@launchdarkly/ldcli` to `2.2.0`                                                     | Prevent surprise breaking changes from unpinned global install, and use the latest version actually published on npm during implementation.                                             |
-| 14  | Credentials only on remote-cli service                                                   | Same isolation pattern as `GH_TOKEN`, `LANGFUSE_*`, `METABASE_*` — agent container never sees the token.                                                                                |
+| 14  | Credentials only on remote-cli service                                                   | Same isolation pattern as `GH_TOKEN`, `LANGFUSE_*`, `SCOUT_API_KEY` — agent container never sees the token.                                                                             |
 | 15  | Token requires only Reader role                                                          | Strictly read-only policy means a Reader token is sufficient and minimises blast radius if the env leaks.                                                                               |
 
 ## Out of Scope

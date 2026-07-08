@@ -47,7 +47,7 @@ Exit criteria: full `pnpm test` passes; `pnpm typecheck` clean.
 
 ## Out of scope
 
-- Policy changes outside `gh` / `git` (scoutqa, langfuse, ldcli, metabase).
+- Policy changes outside `gh` / `git` (scoutqa, langfuse, ldcli).
 - Sandbox/Dockerfile changes (covered by a separate review thread).
 - Agent system-prompt injection of workspace layout (separate planned change).
 

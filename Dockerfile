@@ -95,7 +95,6 @@ COPY --from=opencode-cli-build /app/packages/opencode-cli/dist/remote-cli.mjs /u
 COPY docker/opencode/bin/git /usr/local/bin/git
 COPY docker/opencode/bin/gh /usr/local/bin/gh
 COPY docker/opencode/bin/scoutqa /usr/local/bin/scoutqa
-COPY docker/opencode/bin/metabase /usr/local/bin/metabase
 COPY docker/opencode/bin/ldcli /usr/local/bin/ldcli
 COPY docker/opencode/bin/aws /usr/local/bin/aws
 COPY docker/opencode/bin/psql /usr/local/bin/psql

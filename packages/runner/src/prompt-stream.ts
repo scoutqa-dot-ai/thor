@@ -54,7 +54,6 @@ const KNOWN_BINS: Record<string, number> = {
   git: 2,
   ldcli: 2,
   mcp: 3,
-  metabase: 2,
   npm: 2,
   npx: 2,
   pnpm: 2,

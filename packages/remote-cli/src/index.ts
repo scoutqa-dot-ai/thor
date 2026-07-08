@@ -35,14 +35,6 @@ import {
   type SlackPostMessageDeps,
 } from "./slack-post-message.ts";
 import {
-  listSchemas,
-  listTables,
-  getColumns,
-  executeQuery,
-  getQuestion,
-  MetabaseError,
-} from "./metabase.ts";
-import {
   createSandbox,
   deleteSandbox,
   execInSandboxStream,
@@ -66,7 +58,6 @@ import {
   validateCwd,
   validateGhArgs,
   validateLdcliArgs,
-  validateMetabaseArgs,
   validateScoutqaArgs,
 } from "./policy.ts";
 import {
@@ -932,63 +923,6 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     } catch (err) {
       logError(log, "exec_psql_error", errorMessage(err), thorIds(req));
       res.status(500).json({ stdout: "", stderr: errorMessage(err), exitCode: 1 });
-    }
-  });
-
-  app.post("/exec/metabase", async (req, res) => {
-    try {
-      const { args } = req.body ?? {};
-
-      const argsError = validateMetabaseArgs(args);
-      if (argsError) {
-        res.status(400).json({ stdout: "", stderr: argsError, exitCode: 1 });
-        return;
-      }
-
-      const subcommand = args[0];
-      logInfo(log, "exec_metabase", {
-        subcommand,
-        ...(subcommand !== "query" && args[1] ? { schema: args[1] } : {}),
-        ...thorIds(req),
-      });
-
-      let result: unknown;
-
-      switch (subcommand) {
-        case "schemas":
-          result = await listSchemas();
-          break;
-        case "tables":
-          result = await listTables(args[1]);
-          break;
-        case "columns":
-          result = await getColumns(args[1], args[2]);
-          break;
-        case "query":
-          result = await executeQuery(args[1]);
-          break;
-        case "question":
-          result = await getQuestion(args[1]);
-          break;
-      }
-
-      res.json({ stdout: JSON.stringify(result, null, 2), stderr: "", exitCode: 0 });
-    } catch (err) {
-      const message = errorMessage(err);
-      const { args } = req.body ?? {};
-      const subcommand = Array.isArray(args) ? args[0] : undefined;
-      if (err instanceof MetabaseError && err.userFailure) {
-        logWarn(log, "exec_metabase_query_failure", {
-          category: "metabase_query_failure",
-          subcommand,
-          error: message,
-          ...thorIds(req),
-        });
-        res.json({ stdout: "", stderr: message, exitCode: 1 });
-        return;
-      }
-      logError(log, "exec_metabase_error", message, { subcommand, ...thorIds(req) });
-      res.status(500).json({ stdout: "", stderr: message, exitCode: 1 });
     }
   });
 

@@ -12,7 +12,7 @@ ingress -> gateway -> runner -> opencode -> codex-lb -> ChatGPT
 
 - `gateway` accepts Slack, GitHub webhook, and cron events, batches them, and forwards them to the runner.
 - `runner` manages OpenCode session continuity and Slack progress updates.
-- `remote-cli` exposes `POST /exec/*` endpoints for git, gh, sandbox, scoutqa, metabase, ldcli, aws, psql, MCP tool calls (Atlassian, Grafana, PostHog, Langfuse), direct Slack approval-card posting, and approval status/resolution.
+- `remote-cli` exposes `POST /exec/*` endpoints for its CLI and MCP integrations (enumerated in the Integrations table below), direct Slack approval-card posting, and approval status/resolution.
 - `codex-lb` is an OpenAI-compatible proxy that fronts ChatGPT for opencode, pooling one or more ChatGPT account credentials so no paid OpenAI API key is needed. Its account/quota dashboard sits behind the same SSO + admin-email gate as `/admin/`.
 
 ## Services
@@ -86,7 +86,6 @@ Runtime integration paths:
 | Langfuse MCP     | `remote-cli /exec/mcp`                             | API key pair          | Read-only LLM observability queries                     |
 | Slack Web API    | `gateway` + `remote-cli` + OpenCode over mitmproxy | Bot token             | Mentions, progress, approval cards, thread reads/writes |
 | LaunchDarkly     | `remote-cli /exec/ldcli`                           | Access token          | Read-only feature flag inspection                       |
-| Metabase         | `remote-cli /exec/metabase`                        | API key               | Read-only warehouse access                              |
 | Postgres (psql)  | `remote-cli /exec/psql`                            | Per-profile DB creds  | Read-only Postgres access by database alias             |
 
 Common usage patterns:
@@ -97,7 +96,7 @@ Common usage patterns:
 
 ## Deployment Configuration
 
-Integration-specific env vars live in each integration's doc. MCP integration credentials (Atlassian, PostHog, Grafana, Langfuse) support `_<PROFILE_NAME>` profile-suffixed overrides; multi-value integrations (Atlassian, Grafana, Langfuse) resolve all-or-nothing per scope — see [`docs/feat/profile.md`](docs/feat/profile.md). The `psql` passthrough's `PSQL_DATABASES` bundle is also profile-suffixed. Metabase uses the unsuffixed global `METABASE_*` values. Cross-cutting vars:
+Integration-specific env vars live in each integration's doc. MCP integration credentials (Atlassian, PostHog, Grafana, Langfuse) support `_<PROFILE_NAME>` profile-suffixed overrides; multi-value integrations (Atlassian, Grafana, Langfuse) resolve all-or-nothing per scope — see [`docs/feat/profile.md`](docs/feat/profile.md). The `psql` passthrough's `PSQL_DATABASES` bundle is also profile-suffixed. Cross-cutting vars:
 
 | Variable                            | Required | Service                                     | Purpose                                                                                                                                                                                                               |
 | ----------------------------------- | -------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -116,10 +115,6 @@ Integration-specific env vars live in each integration's doc. MCP integration cr
 | `LANGFUSE_BASE_URL`                 | No       | `remote-cli`                                | Langfuse MCP base URL; all three `LANGFUSE_*` vars required to enable Langfuse                                                                                                                                        |
 | `LANGFUSE_PUBLIC_KEY`               | No       | `remote-cli`                                | Langfuse MCP public key; required (with secret key + host) to enable Langfuse                                                                                                                                         |
 | `LANGFUSE_SECRET_KEY`               | No       | `remote-cli`                                | Langfuse MCP secret key; required (with public key + host) to enable Langfuse                                                                                                                                         |
-| `METABASE_URL`                      | No       | `remote-cli`                                | Metabase instance URL                                                                                                                                                                                                 |
-| `METABASE_API_KEY`                  | No       | `remote-cli`                                | Metabase API key                                                                                                                                                                                                      |
-| `METABASE_DATABASE_ID`              | No       | `remote-cli`                                | Metabase database ID                                                                                                                                                                                                  |
-| `METABASE_ALLOWED_SCHEMAS`          | No       | `remote-cli`                                | Comma-separated schema allowlist                                                                                                                                                                                      |
 | `SCOUT_API_KEY`                     | No       | `remote-cli`                                | Auth for the `scoutqa` CLI passthrough; the CLI auto-detects it from the environment                                                                                                                                  |
 | `AWS_ACCESS_KEY_ID`                 | No       | `remote-cli`                                | Credential for the `aws` CLI passthrough; omit to use an attached IAM role. Pair with `AWS_SECRET_ACCESS_KEY` (+ `AWS_SESSION_TOKEN`)                                                                                 |
 | `AWS_SECRET_ACCESS_KEY`             | No       | `remote-cli`                                | Secret for the `aws` CLI passthrough; required with `AWS_ACCESS_KEY_ID`                                                                                                                                               |
