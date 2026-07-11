@@ -1,7 +1,7 @@
 # Plan: Metabase CLI -- data warehouse query access for OpenCode
 
 **Date**: 2026-04-15
-**Status**: Reviewed
+**Status**: Dropped (2026-07-08) — implemented, then removed. See Decision #14.
 
 ## Goal
 
@@ -225,21 +225,22 @@ Wire up environment variables and update Docker config.
 
 ## Decision Log
 
-| #   | Decision                                 | Rationale                                                                                                                                                 |
-| --- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Add to remote-cli, not a new service     | Metabase is a simple HTTP API. Same pattern as git/gh. No reason for a separate service.                                                                  |
-| 2   | CLI, not MCP upstream                    | Only 4 operations needed (schemas/tables/columns/query). MCP adds connection lifecycle overhead for no benefit.                                           |
-| 3   | No SQL keyword blocking                  | Read-only DB role is the real boundary. Keyword blocklist is trivially bypassable and gives false confidence. Dropped per review.                         |
-| 4   | Schema allowlist is UX, not security     | `METABASE_ALLOWED_SCHEMAS` filters discovery commands to help the agent navigate. Not enforced on queries. DB role permissions are the security boundary. |
-| 5   | No response truncation                   | OpenCode already truncates tool output. Service returns full Metabase responses.                                                                          |
-| 6   | No timeout override                      | Use Metabase's default timeout.                                                                                                                           |
-| 7   | No `cwd` parameter                       | Unlike git/gh, Metabase queries aren't repo-scoped. Client skips sending cwd, route skips validateCwd.                                                    |
-| 8   | API key auth (not session cookie)        | API keys don't expire like session cookies -- no refresh problem.                                                                                         |
-| 9   | Metabase as bundled skill, not subagent  | Matches the newer Langfuse pattern. `coder`/`thinker` remain the only subagents; domain helpers live under `config/skills/`.                              |
-| 10  | Two-step column lookup                   | Metabase's column metadata API requires table ID, not schema+name. The service resolves the ID from the schema listing.                                   |
-| 11  | Single database per deployment           | `METABASE_DATABASE_ID` env var. No CLI flag to switch.                                                                                                    |
-| 12  | Do not log raw SQL                       | SQL queries may contain PII (emails, account IDs). Log subcommand and schema only.                                                                        |
-| 13  | Read-only DB role is a hard prerequisite | Primary security boundary. Documented in README and env var description.                                                                                  |
+| #   | Decision                                 | Rationale                                                                                                                                                                                                                                                                                       |
+| --- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Add to remote-cli, not a new service     | Metabase is a simple HTTP API. Same pattern as git/gh. No reason for a separate service.                                                                                                                                                                                                        |
+| 2   | CLI, not MCP upstream                    | Only 4 operations needed (schemas/tables/columns/query). MCP adds connection lifecycle overhead for no benefit.                                                                                                                                                                                 |
+| 3   | No SQL keyword blocking                  | Read-only DB role is the real boundary. Keyword blocklist is trivially bypassable and gives false confidence. Dropped per review.                                                                                                                                                               |
+| 4   | Schema allowlist is UX, not security     | `METABASE_ALLOWED_SCHEMAS` filters discovery commands to help the agent navigate. Not enforced on queries. DB role permissions are the security boundary.                                                                                                                                       |
+| 5   | No response truncation                   | OpenCode already truncates tool output. Service returns full Metabase responses.                                                                                                                                                                                                                |
+| 6   | No timeout override                      | Use Metabase's default timeout.                                                                                                                                                                                                                                                                 |
+| 7   | No `cwd` parameter                       | Unlike git/gh, Metabase queries aren't repo-scoped. Client skips sending cwd, route skips validateCwd.                                                                                                                                                                                          |
+| 8   | API key auth (not session cookie)        | API keys don't expire like session cookies -- no refresh problem.                                                                                                                                                                                                                               |
+| 9   | Metabase as bundled skill, not subagent  | Matches the newer Langfuse pattern. `coder`/`thinker` remain the only subagents; domain helpers live under `config/skills/`.                                                                                                                                                                    |
+| 10  | Two-step column lookup                   | Metabase's column metadata API requires table ID, not schema+name. The service resolves the ID from the schema listing.                                                                                                                                                                         |
+| 11  | Single database per deployment           | `METABASE_DATABASE_ID` env var. No CLI flag to switch.                                                                                                                                                                                                                                          |
+| 12  | Do not log raw SQL                       | SQL queries may contain PII (emails, account IDs). Log subcommand and schema only.                                                                                                                                                                                                              |
+| 13  | Read-only DB role is a hard prerequisite | Primary security boundary. Documented in README and env var description.                                                                                                                                                                                                                        |
+| 14  | **Drop Metabase entirely (2026-07-08)**  | No longer needed. Removed the `/exec/metabase` endpoint, `metabase.ts` client, `validateMetabaseArgs` policy, `loadMetabaseEnv`, the CLI wrapper, the bundled skill, all `METABASE_*` env/compose/CI wiring, and the README/`build.md` references. Everything in the phases above was reverted. |
 
 ## Out of Scope
 

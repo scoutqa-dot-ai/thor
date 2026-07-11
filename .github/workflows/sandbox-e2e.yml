@@ -53,10 +53,6 @@ jobs:
       LANGFUSE_PUBLIC_KEY: ${{ vars.LANGFUSE_PUBLIC_KEY }}
       LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
       LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
-      METABASE_URL: http://localhost
-      METABASE_API_KEY: ci-fake
-      METABASE_DATABASE_ID: "1"
-      METABASE_ALLOWED_SCHEMAS: public
       VOUCH_GOOGLE_CLIENT_ID: ci-fake
       VOUCH_GOOGLE_CLIENT_SECRET: ci-fake
       VOUCH_JWT_SECRET: ci-fake

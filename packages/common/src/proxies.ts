@@ -153,10 +153,13 @@ const POSTHOG_ALLOW = [
   "query-stickiness",
   "query-paths",
   "query-lifecycle",
+  // Web analytics (aggregate, no PII)
+  "query-web-overview",
+  "query-web-stats",
+  "web-analytics-weekly-digest",
   // Ad-hoc SQL + schema introspection (replaces the removed generic query-run)
   "execute-sql",
   "read-data-schema",
-  "read-data-warehouse-schema",
   // Error tracking
   "query-error-tracking-issue",
   "query-error-tracking-issue-events",
@@ -269,7 +272,7 @@ export function resolveProxyConfig(
     return {
       upstream: {
         kind: "http",
-        url: "https://mcp.posthog.com/mcp",
+        url: "https://mcp.posthog.com/mcp?mode=tools",
         headers: { Authorization: `Bearer ${apiKey.value}` },
       },
       allow: POSTHOG_ALLOW,

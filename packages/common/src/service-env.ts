@@ -98,15 +98,6 @@ export function loadAdminEnv(env: EnvSource = process.env) {
   };
 }
 
-export function loadMetabaseEnv(env: EnvSource = process.env) {
-  return {
-    url: envBaseUrl(env, "METABASE_URL"),
-    apiKey: envString(env, "METABASE_API_KEY"),
-    dbId: envInt(env, "METABASE_DATABASE_ID"),
-    schemas: new Set(envCsv(env, "METABASE_ALLOWED_SCHEMAS")),
-  };
-}
-
 export function loadGitHubAppAuthEnv(env: EnvSource = process.env) {
   return {
     appId: envString(env, "GITHUB_APP_ID"),

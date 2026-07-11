@@ -35,6 +35,9 @@ describe("proxy registry", () => {
       expect.arrayContaining(["query_prometheus", "list_prometheus_metric_names"]),
     );
     expect(resolveProxyConfig("posthog", undefined, FULL_ENV)?.allow).toContain("query-trends");
+    expect(httpUpstream("posthog", undefined, FULL_ENV).url).toBe(
+      "https://mcp.posthog.com/mcp?mode=tools",
+    );
     expect(resolveProxyConfig("unknown", undefined, FULL_ENV)).toBeUndefined();
   });
 

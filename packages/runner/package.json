@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.17.9",
+    "@opencode-ai/sdk": "^1.17.11",
     "@slack/types": "2.21.1",
     "@slack/web-api": "^7.15.1",
     "@thor/common": "workspace:*",

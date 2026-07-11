@@ -7,7 +7,7 @@
 #     target: gateway
 
 FROM node:24-slim AS base
-RUN corepack enable && corepack prepare pnpm@11.7.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
 RUN groupadd --gid 1001 thor && useradd --uid 1001 --gid thor --create-home thor
 RUN mkdir -p /workspace && chown thor:thor /workspace
 
@@ -82,7 +82,7 @@ CMD ["node", "/app/packages/runner/dist/index.js"]
 
 # --- Install upstream opencode from npm ---
 FROM base AS opencode
-RUN npm install -g opencode-ai@1.17.9 opencode-plugin-langfuse@0.1.8
+RUN npm install -g opencode-ai@1.17.11 opencode-plugin-langfuse@0.1.8
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl jq python3-pip ripgrep \
     && npm install -g prettier@3.8.4 \
@@ -95,7 +95,6 @@ COPY --from=opencode-cli-build /app/packages/opencode-cli/dist/remote-cli.mjs /u
 COPY docker/opencode/bin/git /usr/local/bin/git
 COPY docker/opencode/bin/gh /usr/local/bin/gh
 COPY docker/opencode/bin/scoutqa /usr/local/bin/scoutqa
-COPY docker/opencode/bin/metabase /usr/local/bin/metabase
 COPY docker/opencode/bin/ldcli /usr/local/bin/ldcli
 COPY docker/opencode/bin/aws /usr/local/bin/aws
 COPY docker/opencode/bin/psql /usr/local/bin/psql
@@ -138,7 +137,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends unzip \
     && /tmp/aws/install \
     && rm -rf /tmp/aws /tmp/awscliv2.zip \
     && apt-get purge -y unzip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
-COPY --from=grafana/mcp-grafana:0.16.0 /app/mcp-grafana /usr/local/bin/mcp-grafana
+COPY --from=grafana/mcp-grafana:0.17.0 /app/mcp-grafana /usr/local/bin/mcp-grafana
 
 FROM remote-cli-tools AS remote-cli
 COPY --from=remote-cli-build /app /app
