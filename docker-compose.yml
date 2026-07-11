@@ -127,6 +127,9 @@ services:
     environment:
       <<: *mitmproxy-egress-env
       NODE_OPTIONS: --use-env-proxy --disable-warning=UNDICI-EHPA
+      # The pinned binary embeds the model catalog. models.dev is blocked by
+      # egress policy, so skip the otherwise-failing startup + hourly refresh.
+      OPENCODE_DISABLE_MODELS_FETCH: "true"
       NODE_EXTRA_CA_CERTS: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
       CURL_CA_BUNDLE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
       SSL_CERT_FILE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
