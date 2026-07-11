@@ -272,7 +272,7 @@ export function resolveProxyConfig(
     return {
       upstream: {
         kind: "http",
-        url: "https://mcp.posthog.com/mcp",
+        url: "https://mcp.posthog.com/mcp?mode=tools",
         headers: { Authorization: `Bearer ${apiKey.value}` },
       },
       allow: POSTHOG_ALLOW,
