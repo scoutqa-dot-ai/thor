@@ -132,6 +132,8 @@ Runner observes the process-owned OpenCode event stream and converts matching ev
 
 Progress is intentionally tied to existing Slack-thread aliases, not the current trigger key. GitHub, cron, operator-UI, and other non-Slack activity can still update Slack progress when they operate on a session whose anchor already has a `slack.thread` alias. Sessions without a Slack-thread alias do not create Slack progress messages.
 
+When a run finishes, its live "working…" message is deleted so completed threads stay quiet — unless the run recorded an **audit signal**, in which case the message is finalized into a durable summary and kept. Two signals are persisted today: memory writes (the files written) and errors (every session error seen mid-run, rendered as a recovered footnote on success or a failure headline on error). The set is intended to grow. Retained messages are dropped from the in-memory cleanup registry, so they persist in Slack without the registry growing over the process lifetime. Mechanism and rationale: [`../plan/2026070201_slack-progress-audit-signals.md`](../plan/2026070201_slack-progress-audit-signals.md).
+
 Gateway no longer relays or drains runner progress streams.
 
 ## Approvals

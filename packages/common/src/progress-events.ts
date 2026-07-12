@@ -20,6 +20,16 @@ export const ProgressDelegateSchema = z.object({
   agent: z.string(),
 });
 
+/**
+ * A session-level error observed mid-run. If the session later completes, the
+ * error was recovered from and is surfaced in the completion audit so recovered
+ * failures are not invisible on an otherwise-clean success.
+ */
+export const ProgressSessionErrorSchema = z.object({
+  type: z.literal("session_error"),
+  message: z.string(),
+});
+
 const ProgressContextSchema = z.object({
   type: z.literal("context"),
   providerID: z.string(),
@@ -51,6 +61,7 @@ export const ProgressEventSchema = z.union([
   ProgressToolSchema,
   ProgressMemorySchema,
   ProgressDelegateSchema,
+  ProgressSessionErrorSchema,
   ProgressContextSchema,
   ProgressDoneSchema,
   ProgressHeartbeatSchema,

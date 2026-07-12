@@ -108,16 +108,21 @@ describe("ProgressManager", () => {
     expect(chat(deps).postMessage).not.toHaveBeenCalled();
   });
 
-  it("posts initial message on the 3rd tool call", async () => {
+  it("posts initial message on the 3rd tool call, locking the working-message shape", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);
 
     expect(chat(deps).postMessage).toHaveBeenCalledOnce();
-    expect(chat(deps).postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channel: "C123",
-        thread_ts: "1710000000.001",
-      }),
+    const postCall = chat(deps).postMessage.mock.calls[0][0] as {
+      channel: string;
+      thread_ts: string;
+      text: string;
+    };
+    expect(postCall.channel).toBe("C123");
+    expect(postCall.thread_ts).toBe("1710000000.001");
+    // Full shape: header + single "latest" line when there are no extra sections.
+    expect(postCall.text).toBe(
+      "⏳ Working... 3 tool calls | 0s elapsed | latest: Tool0, Tool1, Tool2",
     );
   });
 
@@ -146,9 +151,15 @@ describe("ProgressManager", () => {
 
     expect(chat(deps).postMessage).toHaveBeenCalledOnce();
     const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
-    expect(postCall.text).toContain("3 tool calls");
-    expect(postCall.text).toContain("memory: README.md");
-    expect(postCall.text).toContain("agents: research-agent");
+    // Full shape with extra sections: header + tools + memory + agents, one per line.
+    expect(postCall.text).toBe(
+      [
+        "⏳ Working... 3 tool calls | 0s elapsed",
+        "• tools: Tool0, Tool1, Tool2",
+        "• memory: README.md",
+        "• agents: research-agent",
+      ].join("\n"),
+    );
   });
 
   it("renders context only at or above 50 percent and removes it on later lower usage", async () => {
@@ -327,31 +338,6 @@ describe("ProgressManager", () => {
     );
 
     expect(chat(deps).update.mock.calls.length).toBe(updateCountBefore);
-  });
-
-  it("renders delegate context from task-derived delegate events", async () => {
-    const deps = mockSlackDeps();
-
-    await handleProgressEvent(
-      progressTarget(deps),
-      {
-        type: "delegate",
-        agent: "research-agent",
-      },
-      transport,
-    );
-    await handleProgressEvent(
-      progressTarget(deps),
-      {
-        type: "delegate",
-        agent: "research-agent",
-      },
-      transport,
-    );
-    await sendTools(deps, 3);
-
-    const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
-    expect(postCall.text).toContain("agents: research-agent x2");
   });
 
   it("collapses consecutive duplicate agents using run semantics", async () => {
@@ -677,6 +663,307 @@ describe("ProgressManager", () => {
     expect(getRegistrySize()).toBe(0);
   });
 
+  it("keeps a memory-write audit message on completion instead of deleting it", async () => {
+    const deps = mockSlackDeps();
+
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/service-a/notes.md",
+        source: "tool",
+      },
+      transport,
+    );
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/service-b/plan.md",
+        source: "tool",
+      },
+      transport,
+    );
+    // A read must not appear in the write audit.
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      {
+        type: "memory",
+        action: "read",
+        path: "/workspace/memory/service-a/other.md",
+        source: "tool",
+      },
+      transport,
+    );
+    await sendTools(deps, 3); // cross threshold so a live message exists
+
+    const doneEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "completed",
+      response: "",
+      toolCalls: [],
+      durationMs: 5000,
+    };
+    await handleProgressEvent(progressTarget(deps, ""), doneEvent, transport);
+
+    // The live message is finalized into an exact audit list (read excluded),
+    // not deleted.
+    expect(chat(deps).delete).not.toHaveBeenCalled();
+    const finalUpdate = chat(deps).update.mock.calls.at(-1)?.[0] as { text: string };
+    expect(finalUpdate.text).toBe(
+      ["📝 Memory updated", "• service-a/notes.md", "• service-b/plan.md"].join("\n"),
+    );
+    // Retained messages are dropped from the registry so it cannot grow.
+    expect(getRegistrySize()).toBe(0);
+  });
+
+  it("posts a memory-write audit even for a short run below the tool threshold", async () => {
+    const deps = mockSlackDeps();
+
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/service-a/notes.md",
+        source: "tool",
+      },
+      transport,
+    );
+    await sendTools(deps, 1); // below threshold — no live message posted yet
+    expect(chat(deps).postMessage).not.toHaveBeenCalled();
+
+    const doneEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "completed",
+      response: "",
+      toolCalls: [],
+      durationMs: 1000,
+    };
+    await handleProgressEvent(progressTarget(deps, ""), doneEvent, transport);
+
+    expect(chat(deps).postMessage).toHaveBeenCalledOnce();
+    const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
+    expect(postCall.text).toBe(["📝 Memory updated", "• service-a/notes.md"].join("\n"));
+    expect(chat(deps).delete).not.toHaveBeenCalled();
+  });
+
+  it("deletes the stale progress bubble when the finalizing audit update fails", async () => {
+    const deps = mockSlackDeps();
+
+    // A memory-write audit signal plus a live message (threshold crossed).
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      { type: "memory", action: "write", path: "/workspace/memory/a/notes.md", source: "tool" },
+      transport,
+    );
+    await sendTools(deps, 3);
+    expect(getRegistrySize()).toBe(1);
+
+    // The finalizing edit fails transiently.
+    chat(deps).update.mockRejectedValueOnce(new Error("slack error: ratelimited"));
+
+    const doneEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "completed",
+      response: "",
+      toolCalls: [],
+      durationMs: 1000,
+    };
+    await handleProgressEvent(progressTarget(deps, ""), doneEvent, transport);
+
+    // Update failed → the entry is NOT retained, so session-end cleanup deletes
+    // the now-stale "Working…" bubble rather than orphaning it, and the registry
+    // is drained.
+    expect(chat(deps).delete).toHaveBeenCalledWith({ channel: "C123", ts: "msg.001" });
+    expect(getRegistrySize()).toBe(0);
+  });
+
+  it("keeps a recovered-error audit message when a run completes after errors", async () => {
+    const deps = mockSlackDeps();
+
+    // Two errors mid-run (one seen twice), then the run recovers and completes.
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      { type: "session_error", message: "rate limited" },
+      transport,
+    );
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      { type: "session_error", message: "rate limited" },
+      transport,
+    );
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      { type: "session_error", message: "connection reset" },
+      transport,
+    );
+
+    const doneEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "completed",
+      response: "",
+      toolCalls: [],
+      durationMs: 1000,
+    };
+    await handleProgressEvent(progressTarget(deps, ""), doneEvent, transport);
+
+    const postCall = chat(deps).postMessage.mock.calls.at(-1)?.[0] as { text: string };
+    expect(postCall.text).toBe(
+      ["⚠️ Recovered from 3 errors during the run", "• rate limited x2", "• connection reset"].join(
+        "\n",
+      ),
+    );
+    expect(chat(deps).delete).not.toHaveBeenCalled();
+  });
+
+  it("renders errors as a failure (not 'recovered') when the run itself fails", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 3);
+
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      { type: "session_error", message: "provider down" },
+      transport,
+    );
+
+    const errorEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "error",
+      error: "provider down",
+      response: "",
+      toolCalls: [],
+      durationMs: 1000,
+    };
+    await handleProgressEvent(progressTarget(deps, ""), errorEvent, transport);
+
+    // Same error signal, framed as a failure headline (not "recovered"). The
+    // message is retained (not deleted) via registry removal.
+    const finalUpdate = chat(deps).update.mock.calls.at(-1)?.[0] as { text: string };
+    expect(finalUpdate.text).toBe(["❌ Failed after 3 tool calls", "• provider down"].join("\n"));
+    expect(chat(deps).delete).not.toHaveBeenCalled();
+  });
+
+  it("collapses known noisy error variants into one labeled bullet", async () => {
+    const deps = mockSlackDeps();
+
+    // Two overload payloads that differ only by an embedded sequence number —
+    // exact-string dedupe would split them; classification collapses them.
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      {
+        type: "session_error",
+        message: '{"type":"error","sequence_number":2,"error":{"type":"server_is_overloaded"}}',
+      },
+      transport,
+    );
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      {
+        type: "session_error",
+        message: '{"type":"error","sequence_number":3,"error":{"type":"server_is_overloaded"}}',
+      },
+      transport,
+    );
+
+    const doneEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "completed",
+      response: "",
+      toolCalls: [],
+      durationMs: 1000,
+    };
+    await handleProgressEvent(progressTarget(deps, ""), doneEvent, transport);
+
+    const postCall = chat(deps).postMessage.mock.calls.at(-1)?.[0] as { text: string };
+    expect(postCall.text).toBe(
+      ["⚠️ Recovered from 2 errors during the run", "• Provider overloaded x2"].join("\n"),
+    );
+  });
+
+  it("keeps unknown errors as their raw message, deduped by exact match", async () => {
+    const deps = mockSlackDeps();
+
+    // Unrecognized shapes are kept verbatim (not bucketed into "unknown"):
+    // identical messages dedupe with a count, distinct ones stay separate.
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      { type: "session_error", message: "widget exploded" },
+      transport,
+    );
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      { type: "session_error", message: "widget exploded" },
+      transport,
+    );
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      { type: "session_error", message: "gizmo failed" },
+      transport,
+    );
+
+    const doneEvent: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "completed",
+      response: "",
+      toolCalls: [],
+      durationMs: 1000,
+    };
+    await handleProgressEvent(progressTarget(deps, ""), doneEvent, transport);
+
+    const postCall = chat(deps).postMessage.mock.calls.at(-1)?.[0] as { text: string };
+    expect(postCall.text).toBe(
+      ["⚠️ Recovered from 3 errors during the run", "• widget exploded x2", "• gizmo failed"].join(
+        "\n",
+      ),
+    );
+  });
+
+  it("does not audit an abort interrupt as a recovered error", async () => {
+    const deps = mockSlackDeps();
+    await sendTools(deps, 3);
+
+    // An interrupt surfaces as a session.error whose message mentions abort,
+    // then the terminal done carries the same abort message.
+    await handleProgressEvent(
+      progressTarget(deps, ""),
+      { type: "session_error", message: "Request was aborted" },
+      transport,
+    );
+    const abortDone: ProgressEvent = {
+      type: "done",
+      sessionId: "s1",
+      resumed: false,
+      status: "error",
+      error: "Request was aborted",
+      response: "",
+      toolCalls: [],
+      durationMs: 200,
+    };
+    await handleProgressEvent(progressTarget(deps, ""), abortDone, transport);
+
+    // Silent abort: no recovered-error summary, message deleted like any abort.
+    expect(chat(deps).update).not.toHaveBeenCalled();
+    expect(chat(deps).delete).toHaveBeenCalledOnce();
+    expect(getRegistrySize()).toBe(0);
+  });
+
   it("treats abort errors as completed (no error message, deletes message)", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3); // cross threshold, message posted
@@ -764,29 +1051,6 @@ describe("ProgressManager", () => {
 });
 
 describe("onSessionEnd (via handleProgressEvent done)", () => {
-  it("deletes completed progress messages automatically", async () => {
-    const deps = mockSlackDeps();
-    await sendTools(deps, 3);
-    expect(getRegistrySize()).toBe(1);
-
-    const doneEvent: ProgressEvent = {
-      type: "done",
-      sessionId: "s1",
-      resumed: false,
-      status: "completed",
-      response: "",
-      toolCalls: [],
-      durationMs: 5000,
-    };
-    await handleProgressEvent(progressTarget(deps, ""), doneEvent, transport);
-
-    expect(chat(deps).delete).toHaveBeenCalledWith({
-      channel: "C123",
-      ts: "msg.001",
-    });
-    expect(getRegistrySize()).toBe(0);
-  });
-
   it("drops registry entries when Slack cleanup races message_not_found", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);
@@ -831,7 +1095,7 @@ describe("onSessionEnd (via handleProgressEvent done)", () => {
     expect(getRegistrySize()).toBe(1);
   });
 
-  it("preserves error progress messages", async () => {
+  it("preserves error progress messages (retained, not deleted)", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);
 
@@ -847,8 +1111,13 @@ describe("onSessionEnd (via handleProgressEvent done)", () => {
     };
     await handleProgressEvent(progressTarget(deps, ""), errorEvent, transport);
 
+    // Failure audit is retained: the message is updated in place and dropped
+    // from the cleanup registry (removal — not a status flag — is what keeps it
+    // both visible in Slack and out of the registry).
+    const finalUpdate = chat(deps).update.mock.calls.at(-1)?.[0] as { text: string };
+    expect(finalUpdate.text).toBe(["❌ Failed after 3 tool calls", "• something broke"].join("\n"));
     expect(chat(deps).delete).not.toHaveBeenCalled();
-    expect(getRegistrySize()).toBe(1);
+    expect(getRegistrySize()).toBe(0);
   });
 
   it("cleans up sequential sessions in the same thread", async () => {
