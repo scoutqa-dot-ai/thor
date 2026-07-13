@@ -1,0 +1,35 @@
+packages/common/package.json
+  5b36f192a595d477 14
+packages/gateway/package.json
+  5b36f192a595d477 23
+packages/remote-cli/package.json
+  5b36f192a595d477 25
+packages/runner/package.json
+  5b36f192a595d477 24
+package.json
+  5b36f192a595d477 27
+packages/opencode-cli/package.json
+  5b36f192a595d477 16-17
+packages/admin/package.json
+  5b36f192a595d477 20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "a87b05ba223ccf262249e132ee8b8453bde7dae9",
+  "prompts": {
+    "5b36f192a595d477": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "454be81f-a3f2-4442-a82d-b12200b5886b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 10,
+      "total_deletions": 10,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    }
+  }
+}
