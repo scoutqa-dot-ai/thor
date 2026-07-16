@@ -154,6 +154,20 @@ sandbox_exec_stdout() {
   " 2>/dev/null
 }
 
+sandbox_exec_stderr() {
+  node -e "
+    const lines = require('fs').readFileSync(0,'utf8').trim().split('\n');
+    let out = '';
+    for (const line of lines) {
+      try {
+        const d = JSON.parse(line);
+        if (d.type === 'stderr' && typeof d.data === 'string') out += d.data;
+      } catch {}
+    }
+    process.stdout.write(out);
+  " 2>/dev/null
+}
+
 sandbox_exec_exit() {
   node -e "
     const lines = require('fs').readFileSync(0,'utf8').trim().split('\n');
@@ -465,12 +479,14 @@ else
     echo "  Testing PHP on-demand package source (ondrej/php)..."
     sbx_php_src_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/sandbox" \
       -H 'Content-Type: application/json' \
-      -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"sudo apt-get update >/dev/null && apt-cache policy php8.3-cli php8.2-cli\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
+      -d "{\"mode\":\"exec\",\"args\":[\"sh\",\"-c\",\"(sudo apt-get update || { sleep 3; sudo apt-get update; } || { sleep 3; sudo apt-get update; }) && apt-cache policy php8.3-cli php8.2-cli\"],\"cwd\":\"$SBX_WORKTREE_DIR\"}" \
       2>/dev/null)
     sbx_php_src_exit=$(echo "$sbx_php_src_raw" | sandbox_exec_exit)
     sbx_php_src_stdout=$(echo "$sbx_php_src_raw" | sandbox_exec_stdout)
+    sbx_php_src_stderr=$(echo "$sbx_php_src_raw" | sandbox_exec_stderr)
     assert '[[ "$sbx_php_src_exit" == "0" ]]' \
-      "PHP on-demand source query succeeded" "exitCode='$sbx_php_src_exit'"
+      "PHP on-demand source query succeeded" \
+      "exitCode='$sbx_php_src_exit' stdout='${sbx_php_src_stdout:0:500}' stderr='${sbx_php_src_stderr:0:1000}'"
     assert '[[ "$sbx_php_src_stdout" == *"php8.3-cli"* && "$sbx_php_src_stdout" == *"php8.2-cli"* ]]' \
       "non-default PHP packages visible from apt" "stdout='${sbx_php_src_stdout:0:500}'"
     assert '[[ "$sbx_php_src_stdout" == *"ondrej/php"* || "$sbx_php_src_stdout" == *"ppa.launchpadcontent.net/ondrej"* ]]' \

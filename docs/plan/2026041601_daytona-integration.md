@@ -220,6 +220,11 @@ sandbox --list                         # list session's sandboxes
 - [ ] Verify auto-sync: edit in worktree, commit, `sandbox pytest -v` picks up changes
 - [ ] Verify auto-stop: idle sandbox is cleaned up by Daytona after 15 min
 
+### 2026-07-16 — PHP apt source verification hardening
+
+- [x] Verify the ondrej/php source exposes PHP 8.3 and 8.2 while building the sandbox image, so a stale or broken cached source fails before snapshot creation.
+- [x] Retry transient `apt-get update` failures in the runtime E2E check and include captured stderr in failure diagnostics.
+
 ## Decision Log
 
 | Date       | Choice                                                                          | Rationale                                                                                                                                                                                                                                                                                                                     |
@@ -252,6 +257,7 @@ sandbox --list                         # list session's sandboxes
 | 2026-04-25 | Keep custom snapshot slim; install extra runtimes on demand                     | Reduces sandbox image build/pull time and maintenance churn while keeping common defaults always available. Add a shared helper script in the sandbox skill folder to make on-demand installs predictable and fast for agents.                                                                                                |
 | 2026-05-12 | OpenCode owns sandbox execution timeouts                                        | Duplicate Thor-side kill timers can interrupt large repo bundle creation or long-running sandbox commands before the harness-level timeout policy applies. Remote-cli should stream/return results and let OpenCode enforce timeout/cancellation unless Thor has a distinct API contract.                                     |
 | 2026-06-04 | Add PHP 8.4 from ondrej/php to the custom sandbox image                         | PHP projects should work without bootstrap cost, while non-default PHP versions remain on demand from the same apt source instead of expanding the preinstall matrix.                                                                                                                                                         |
+| 2026-07-16 | Validate the PHP apt source at image build and expose runtime refresh failures  | The mutable PPA setup can be hidden by Docker cache, and discarded stderr made runtime failures opaque. A build-time package-origin assertion invalidates and verifies the source layer; bounded runtime retries handle transient network failures without hiding persistent errors.                                          |
 
 ## Exit Criteria
 
