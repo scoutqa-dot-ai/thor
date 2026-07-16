@@ -107,6 +107,7 @@ RUN add-apt-repository -y ppa:ondrej/php \
     && php8.4 --version | grep -F "PHP 8.4" >/dev/null \
     && php --version | grep -F "PHP 8.4" >/dev/null \
     && grep -R "ondrej/php" /etc/apt/sources.list.d >/dev/null \
+    && apt-cache policy php8.3-cli php8.2-cli | grep -F "ppa.launchpadcontent.net/ondrej/php" >/dev/null \
     && rm -rf /var/lib/apt/lists/*
 
 # ── nvm + Node versions ────────────────────────────────────────────────────
