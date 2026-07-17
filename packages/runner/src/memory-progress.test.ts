@@ -86,6 +86,103 @@ describe("getMemoryProgressEvents", () => {
     ).toEqual([]);
   });
 
+  it("emits a memory write for apply_patch touching /workspace/memory", () => {
+    const patchText = [
+      "*** Begin Patch",
+      "*** Update File: /workspace/memory/runbooks/trial-dropoff-cohort-analysis.md",
+      "@@",
+      "-old line",
+      "+new line",
+      "*** End Patch",
+    ].join("\n");
+
+    expect(
+      getMemoryProgressEvents({
+        tool: "apply_patch",
+        status: "completed",
+        input: { patchText },
+      }),
+    ).toEqual([
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/runbooks/trial-dropoff-cohort-analysis.md",
+        source: "tool",
+      },
+    ]);
+  });
+
+  it("captures adds, deletes, and renames from an apply_patch diff, ignoring non-memory files", () => {
+    const patchText = [
+      "*** Begin Patch",
+      "*** Add File: /workspace/memory/runbooks/new.md",
+      "+created",
+      "*** Delete File: /workspace/memory/runbooks/old.md",
+      "*** Update File: /workspace/memory/runbooks/moved.md",
+      "*** Move to: /workspace/memory/runbooks/renamed.md",
+      "@@",
+      "-x",
+      "+y",
+      "*** Update File: /workspace/repos/thor/README.md",
+      "@@",
+      "-a",
+      "+b",
+      "*** End Patch",
+    ].join("\n");
+
+    expect(
+      getMemoryProgressEvents({
+        tool: "apply_patch",
+        status: "completed",
+        input: { patchText },
+      }),
+    ).toEqual([
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/runbooks/new.md",
+        source: "tool",
+      },
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/runbooks/old.md",
+        source: "tool",
+      },
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/runbooks/moved.md",
+        source: "tool",
+      },
+      {
+        type: "memory",
+        action: "write",
+        path: "/workspace/memory/runbooks/renamed.md",
+        source: "tool",
+      },
+    ]);
+  });
+
+  it("emits nothing for an apply_patch that never touches /workspace/memory", () => {
+    const patchText = [
+      "*** Begin Patch",
+      "*** Update File: src/example.ts",
+      "@@",
+      "-const oldValue = 1;",
+      "+const newValue = 2;",
+      "*** End Patch",
+    ].join("\n");
+
+    expect(
+      getMemoryProgressEvents({
+        tool: "apply_patch",
+        status: "completed",
+        input: { patchText },
+      }),
+    ).toEqual([]);
+  });
+
   it("keeps file reads under /workspace/memory", () => {
     const fakeStat = () => ({ isDirectory: () => false });
 
