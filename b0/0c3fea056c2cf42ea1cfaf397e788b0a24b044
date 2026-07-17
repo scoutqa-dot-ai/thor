@@ -1,0 +1,25 @@
+packages/runner/src/memory-progress.ts
+  c206d0ff57d556f9 5-7,9,17-36,91-96
+packages/runner/src/memory-progress.test.ts
+  c206d0ff57d556f9 89-185
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "b00c3fea056c2cf42ea1cfaf397e788b0a24b044",
+  "prompts": {
+    "c206d0ff57d556f9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "826e7eb3-752b-4e96-86cd-8fa1082781cd",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 130,
+      "total_deletions": 2,
+      "accepted_lines": 130,
+      "overriden_lines": 0
+    }
+  }
+}
