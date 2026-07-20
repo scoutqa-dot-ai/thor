@@ -428,8 +428,9 @@ async function slackApiForm(
  * no Authorization header; only the first and third calls hit the Web API base.
  * Requires the bot's `files:write` scope. Returns the shared file's permalink.
  *
- * If the file is already shared but the response lacks a permalink, the error
- * result carries the `fileId` so the caller can delete the orphaned upload.
+ * Once `getUploadURLExternal` has allocated a `file_id`, every later error path
+ * carries that `fileId` on the error result so the caller can best-effort
+ * `deleteSlackFileApi` any upload that may have been left behind.
  */
 export async function uploadSlackFileApi(
   request: SlackFileUploadRequest,
@@ -458,10 +459,10 @@ export async function uploadSlackFileApi(
       body: request.content,
     });
     if (!uploadResponse.ok) {
-      return { error: `Slack file upload failed with HTTP ${uploadResponse.status}` };
+      return { error: `Slack file upload failed with HTTP ${uploadResponse.status}`, fileId };
     }
   } catch (err) {
-    return { error: err instanceof Error ? err.message : String(err) };
+    return { error: err instanceof Error ? err.message : String(err), fileId };
   }
 
   const completeForm = new URLSearchParams({
@@ -471,7 +472,7 @@ export async function uploadSlackFileApi(
     ...(request.initialComment ? { initial_comment: request.initialComment } : {}),
   });
   const complete = await slackApiForm("/files.completeUploadExternal", completeForm, deps);
-  if ("error" in complete) return complete;
+  if ("error" in complete) return { ...complete, fileId };
 
   const files = complete.json.files;
   const permalink =

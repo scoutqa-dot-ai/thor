@@ -100,7 +100,8 @@ describe("uploadSlackFileApi", () => {
       { fetch: fetchMock as unknown as typeof fetch, env },
     );
 
-    expect(result).toEqual({ error: "Slack file upload failed with HTTP 500" });
+    // Carries the fileId so the caller can best-effort delete the upload.
+    expect(result).toEqual({ error: "Slack file upload failed with HTTP 500", fileId: "F1" });
     // Stops after getUploadURLExternal + the failed raw POST; never completes.
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain(
@@ -127,8 +128,19 @@ describe("uploadSlackFileApi", () => {
       { fetch: fetchMock as unknown as typeof fetch, env },
     );
 
-    expect(result).toEqual({ error: "connection reset" });
+    expect(result).toEqual({ error: "connection reset", fileId: "F1" });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns the file id when completeUploadExternal errors so the caller can clean up", async () => {
+    const fetchMock = routingFetch({ completeUpload: { ok: false, error: "internal_error" } });
+
+    const result = await uploadSlackFileApi(
+      { channel: "C1", filename: "a.md", title: "Title", content: "hello" },
+      { fetch: fetchMock as unknown as typeof fetch, env },
+    );
+
+    expect(result).toEqual({ error: "Slack API error: internal_error", fileId: "F1" });
   });
 
   it("requires a bot token", async () => {
