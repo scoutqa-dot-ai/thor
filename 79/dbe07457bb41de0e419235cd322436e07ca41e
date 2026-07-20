@@ -1,0 +1,23 @@
+packages/remote-cli/src/cli-approval.test.ts
+  9e84061f5e0c3a2f 154-185
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "79dbe07457bb41de0e419235cd322436e07ca41e",
+  "prompts": {
+    "9e84061f5e0c3a2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fab1c1d5-9f2f-4c2d-8029-4dfe83eb6ad8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 32,
+      "total_deletions": 0,
+      "accepted_lines": 32,
+      "overriden_lines": 0
+    }
+  }
+}
