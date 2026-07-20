@@ -87,7 +87,3 @@ upload failure fails the approval; card failure triggers file cleanup.
 - Uploading files for normal-size approvals or for non-approval Slack messages.
 - Re-linking the file into the card after the gateway overwrites it on resolve
   (the file reply persists in-thread as the record).
-
-```
-
-```
