@@ -1,4 +1,5 @@
 import {
+  ApprovalRequiredEventPayloadSchema,
   buildApprovalSlackMessage,
   createLogger,
   ExecResultSchema,
@@ -9,7 +10,7 @@ import {
   resolveSlackThreadTargetFromTrigger,
   writeToolCallLog,
 } from "@thor/common";
-import type { ApprovalRequiredEventPayload } from "@thor/common";
+import type { ApprovalToolName } from "@thor/common";
 import { ApprovalStore, type ApprovalAction } from "./approval-store.ts";
 import { postSlackMessageApi } from "./slack-post-message.ts";
 
@@ -198,13 +199,14 @@ export function createApprovalService(deps: ApprovalServiceDeps = {}): ApprovalS
 
   async function postSlackApprovalMessage(input: {
     action: ApprovalAction;
+    tool: ApprovalToolName;
     upstreamName: string;
     channel: string;
     threadTs: string;
   }): Promise<{ ts: string } | { error: string }> {
     const slackMessage = buildApprovalSlackMessage({
       actionId: input.action.id,
-      tool: input.action.tool as ApprovalRequiredEventPayload["tool"],
+      tool: input.tool,
       args: input.action.args,
       upstreamName: input.upstreamName,
       threadTs: input.threadTs,
@@ -229,6 +231,23 @@ export function createApprovalService(deps: ApprovalServiceDeps = {}): ApprovalS
 
   async function createPending(input: CreatePendingInput): Promise<ApprovalExecResult> {
     const { storeName, tool, displayName, args, sessionId, callId, targetKey, profile } = input;
+    // The approval-gated tool set is a closed discriminated union. An unknown
+    // tool or invalid args reaching the gate is a fail-closed bug, not a case to
+    // render — reject it loudly before persisting a pending action or posting a
+    // card. Every producer (MCP + CLI executors) funnels through here.
+    const parsed = ApprovalRequiredEventPayloadSchema.safeParse({
+      type: "approval_required",
+      actionId: "_pending",
+      proxyName: storeName,
+      tool,
+      args,
+    });
+    if (!parsed.success) {
+      return fail(
+        `Approval required for "${displayName}": unsupported approval tool "${tool}" (${parsed.error.message})`,
+      );
+    }
+    const approvalTool = parsed.data.tool;
     const store = getStore(storeName);
     const anchorContext = findAnchorContext(sessionId);
     if (!anchorContext.ok) {
@@ -254,6 +273,7 @@ export function createApprovalService(deps: ApprovalServiceDeps = {}): ApprovalS
     );
     const slackPost = await postSlackApprovalMessage({
       action,
+      tool: approvalTool,
       upstreamName: storeName,
       channel: slackTarget.channel,
       threadTs: slackTarget.threadTs,

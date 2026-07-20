@@ -204,10 +204,8 @@ export {
   buildApprovalButtonValue,
   parseApprovalButtonValue,
   resolveSlackThreadTargetFromTrigger,
-  formatApprovalArgs,
   buildApprovalPresentation,
   buildApprovalSlackMessage,
-  buildInlineApprovalBlocks,
   buildApprovalPresentationBlocks,
 } from "./approval-presentation.ts";
 export type {
