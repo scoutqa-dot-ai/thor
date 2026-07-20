@@ -1,0 +1,39 @@
+packages/common/src/approval-presentation.ts
+  bdb46d810c36c1a0 138-149,177-180,184,186,203-213
+packages/gateway/src/approval.test.ts
+  bdb46d810c36c1a0 3,158-175,177-190
+packages/remote-cli/src/slack-file-upload.test.ts
+  bdb46d810c36c1a0 1-112
+packages/remote-cli/src/slack-post-message.ts
+  bdb46d810c36c1a0 42,44-48,385-493
+packages/common/src/index.ts
+  bdb46d810c36c1a0 209-210
+packages/remote-cli/src/approval-service.ts
+  bdb46d810c36c1a0 2,4-7,20-21,215-216,221-222,226-250,255-256,258,260-275
+packages/remote-cli/src/mcp-handler.test.ts
+  bdb46d810c36c1a0 1366-1376,1378-1388,1390-1396,1398-1444,1446-1495
+docs/slack.md
+  bdb46d810c36c1a0 48-49
+docs/plan/2026061601_aws-write-approval.md
+  bdb46d810c36c1a0 35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "1599a69e960153006c876adc726a47d0ee42aa77",
+  "prompts": {
+    "bdb46d810c36c1a0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "258fa577-57ac-41a8-ab8f-93346395383f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 482,
+      "total_deletions": 53,
+      "accepted_lines": 475,
+      "overriden_lines": 6
+    }
+  }
+}
