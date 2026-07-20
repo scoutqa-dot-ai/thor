@@ -1,0 +1,35 @@
+packages/remote-cli/src/cli-approval.ts
+  9e84061f5e0c3a2f 151-152,169-170,176-177
+packages/remote-cli/src/policy-gh.ts
+  9e84061f5e0c3a2f 386-387
+packages/remote-cli/src/policy.test.ts
+  9e84061f5e0c3a2f 1017-1033
+packages/common/src/approval-events.ts
+  9e84061f5e0c3a2f 38-39
+packages/common/src/approval-presentation.test.ts
+  9e84061f5e0c3a2f 21-34
+docker/opencode/config/skills/using-gh/SKILL.md
+  9e84061f5e0c3a2f 40
+packages/common/src/approval-presentation.ts
+  9e84061f5e0c3a2f 329-330
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "ce82b8952e32644e5536f8f04bea532c1a5a90ca",
+  "prompts": {
+    "9e84061f5e0c3a2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fab1c1d5-9f2f-4c2d-8029-4dfe83eb6ad8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 44,
+      "total_deletions": 1,
+      "accepted_lines": 44,
+      "overriden_lines": 0
+    }
+  }
+}
