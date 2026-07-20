@@ -21,15 +21,12 @@ export const CreateConfluencePageApprovalArgsSchema = z
     spaceId: z.string().min(1).optional(),
     spaceKey: z.string().min(1).optional(),
     title: z.string().min(1),
-    content: z.string().min(1).optional(),
-    body: z.unknown().optional(),
+    content: z.string().min(1),
+    body: z.never('"body" is not supported; use markdown "content"').optional(),
   })
   .passthrough()
   .refine((args) => Boolean(args.spaceId || args.spaceKey), {
     message: "spaceId or spaceKey is required",
-  })
-  .refine((args) => args.content !== undefined || args.body !== undefined, {
-    message: "content or body is required",
   });
 
 export const CreateFeatureFlagApprovalArgsSchema = z

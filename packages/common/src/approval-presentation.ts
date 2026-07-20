@@ -304,7 +304,9 @@ function buildAddJiraCommentPresentation(args: Record<string, unknown>): Approva
   };
 }
 
-function buildCreateConfluencePagePresentation(args: Record<string, unknown>): ApprovalPresentation {
+function buildCreateConfluencePagePresentation(
+  args: Record<string, unknown>,
+): ApprovalPresentation {
   const parsed = CreateConfluencePageApprovalArgsSchema.parse(args);
   const parentId = "parentId" in parsed ? parsed.parentId : undefined;
   return {
@@ -313,20 +315,9 @@ function buildCreateConfluencePagePresentation(args: Record<string, unknown>): A
       bullet("Space", parsed.spaceKey ?? parsed.spaceId),
       bullet("Title", parsed.title),
       bullet("Parent", parentId),
-      section("Content preview", confluenceContentPreview(parsed)),
+      section("Content preview", parsed.content),
     ]),
   };
-}
-
-function confluenceContentPreview(args: Record<string, unknown>): unknown {
-  if (typeof args.content === "string") return args.content;
-  const body = args.body;
-  if (typeof body === "string") return body;
-  if (body && typeof body === "object" && !Array.isArray(body)) {
-    const value = (body as Record<string, unknown>).value;
-    if (typeof value === "string") return value;
-  }
-  return body;
 }
 
 function buildCreateFeatureFlagPresentation(args: Record<string, unknown>): ApprovalPresentation {

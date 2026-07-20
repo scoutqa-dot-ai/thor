@@ -1449,6 +1449,42 @@ describe("remote-cli MCP endpoints", () => {
     expect(JSON.parse(listBody.stdout)).toEqual({ approvals: [] });
   });
 
+  it("rejects Confluence page creation when a body payload accompanies markdown content", async () => {
+    appendActiveTrigger();
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createConfluencePage",
+          JSON.stringify({
+            spaceId: "CST",
+            title: "Conflicting page",
+            content: "Reviewed markdown",
+            body: { representation: "storage", value: "<p>Unreviewed storage content</p>" },
+          }),
+        ],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(pending.status).toBe(200);
+    expect(pendingBody).toMatchObject({ stdout: "", exitCode: 1 });
+    expect(pendingBody.stderr).toContain('Invalid approval arguments for "createConfluencePage"');
+    expect(pendingBody.stderr).toContain("is not supported; use markdown");
+    expect(toolCalls).toEqual([]);
+
+    const list = await postJson("/exec/approval", { args: ["list"] });
+    const listBody = (await list.json()) as { stdout: string };
+    expect(JSON.parse(listBody.stdout)).toEqual({ approvals: [] });
+  });
+
   it("posts approval cards to the trigger Slack thread when the anchor has other Slack aliases", async () => {
     appendActiveTrigger();
     appendAlias({
