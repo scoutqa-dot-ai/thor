@@ -383,6 +383,8 @@ function validateGhIssueCreateArgs(args: string[]): string | null {
     { name: "body-file", kind: "value", aliases: ["--body-file"] },
     { name: "label", kind: "value", aliases: ["-l", "--label"] },
     { name: "assignee", kind: "value", aliases: ["-a", "--assignee"] },
+    { name: "milestone", kind: "value", aliases: ["-m", "--milestone"] },
+    { name: "parent", kind: "value", aliases: ["--parent"] },
   ]);
   if (!parsed || parsed.positionals.length > 0) {
     return denyMessage("gh issue create");
