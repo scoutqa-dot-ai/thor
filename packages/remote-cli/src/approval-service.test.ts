@@ -17,7 +17,7 @@ describe("createApprovalService — fail-hard gate", () => {
     });
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain('unsupported approval tool "totallyUnknownTool"');
+    expect(result.stderr).toContain('invalid approval payload for tool "totallyUnknownTool"');
   });
 
   it("rejects a known tool with invalid args", async () => {
@@ -33,6 +33,6 @@ describe("createApprovalService — fail-hard gate", () => {
     });
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("unsupported approval tool");
+    expect(result.stderr).toContain('invalid approval payload for tool "createJiraIssue"');
   });
 });

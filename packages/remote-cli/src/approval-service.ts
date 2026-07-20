@@ -290,7 +290,7 @@ export function createApprovalService(deps: ApprovalServiceDeps = {}): ApprovalS
     });
     if (!parsed.success) {
       return fail(
-        `Approval required for "${displayName}": unsupported approval tool "${tool}" (${parsed.error.message})`,
+        `Approval required for "${displayName}": invalid approval payload for tool "${tool}" (${parsed.error.message})`,
       );
     }
     const approvalTool = parsed.data.tool;
