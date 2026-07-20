@@ -1385,6 +1385,9 @@ describe("remote-cli MCP endpoints", () => {
     });
     expect(toolCalls).toEqual([]);
 
+    const thorFooter = formatThorContextFooter(
+      `https://thor.example.com/runner/v/${activeAnchorId}/${activeTriggerId}`,
+    );
     const resolved = await postJson(
       "/exec/approval",
       { args: ["resolve", approvalOutput.actionId, "approved", "U123"] },
@@ -1401,9 +1404,49 @@ describe("remote-cli MCP endpoints", () => {
     expect(toolCalls).toEqual([
       {
         name: "createConfluencePage",
-        arguments: { ...cleanArgs, cloudId: configuredCloudId },
+        arguments: {
+          ...cleanArgs,
+          cloudId: configuredCloudId,
+          content: `Monitoring summary\n\nAll checks passed.\n${thorFooter}`,
+        },
       },
     ]);
+  });
+
+  it("rejects Confluence page creation with unsupported content formats before approval", async () => {
+    appendActiveTrigger();
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "atlassian",
+          "createConfluencePage",
+          JSON.stringify({
+            spaceId: "CST",
+            title: "HTML page",
+            content: "<p>unsafe</p>",
+            contentFormat: "storage",
+          }),
+        ],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(pending.status).toBe(200);
+    expect(pendingBody).toMatchObject({ stdout: "", exitCode: 1 });
+    expect(pendingBody.stderr).toContain('"createConfluencePage" is not allowed.');
+    expect(pendingBody.stderr).toContain('contentFormat "storage" is not supported');
+    expect(toolCalls).toEqual([]);
+
+    const list = await postJson("/exec/approval", { args: ["list"] });
+    const listBody = (await list.json()) as { stdout: string };
+    expect(JSON.parse(listBody.stdout)).toEqual({ approvals: [] });
   });
 
   it("posts approval cards to the trigger Slack thread when the anchor has other Slack aliases", async () => {

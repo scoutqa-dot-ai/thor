@@ -110,6 +110,7 @@ export type ApprovalRequiredEventPayload = z.infer<typeof ApprovalRequiredEventP
 const APPROVAL_TOOLS_REQUIRING_DISCLAIMER = [
   "createJiraIssue",
   "addCommentToJiraIssue",
+  "createConfluencePage",
   "create-feature-flag",
 ] as const satisfies readonly ApprovalToolName[];
 
@@ -122,13 +123,29 @@ export function validateDisclaimerCompatibleArgs(
   args: Record<string, unknown>,
 ): string | undefined {
   if (!approvalToolRequiresDisclaimer(tool)) return undefined;
-  const contentFormat = args.contentFormat;
-  if (contentFormat === undefined || contentFormat === "markdown") return undefined;
-  const formatted =
-    typeof contentFormat === "string" ? `"${contentFormat}"` : JSON.stringify(contentFormat);
+  const contentFormatError = validateMarkdownFormat(tool, "contentFormat", args.contentFormat);
+  if (contentFormatError) return contentFormatError;
+
+  if (tool === "createConfluencePage") {
+    const representationError = validateMarkdownFormat(tool, "representation", args.representation);
+    if (representationError) return representationError;
+    if (typeof args.content !== "string") {
+      return [
+        `"${tool}" is not allowed.`,
+        `Reason: createConfluencePage requires markdown content in the "content" field.`,
+      ].join("\n");
+    }
+  }
+
+  return undefined;
+}
+
+function validateMarkdownFormat(tool: string, field: string, value: unknown): string | undefined {
+  if (value === undefined || value === "markdown") return undefined;
+  const formatted = typeof value === "string" ? `"${value}"` : JSON.stringify(value);
   return [
     `"${tool}" is not allowed.`,
-    `Reason: contentFormat ${formatted} is not supported — only "markdown" is permitted.`,
+    `Reason: ${field} ${formatted} is not supported — only "markdown" is permitted.`,
   ].join("\n");
 }
 
@@ -159,6 +176,10 @@ export function injectApprovalDisclaimer(
         commentBody: `${parsed.data.args.commentBody}\n${footer}`,
       };
     case "createConfluencePage":
+      return {
+        ...parsed.data.args,
+        content: `${parsed.data.args.content}\n${footer}`,
+      };
     case "ghIssueCreate":
     case "awsExec":
       return parsed.data.args;

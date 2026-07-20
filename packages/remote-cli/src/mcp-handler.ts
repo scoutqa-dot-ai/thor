@@ -63,6 +63,8 @@ function profileDenialMessage(err: unknown): string {
 
 function buildUpstreamArgs(action: ApprovalAction): Record<string, unknown> {
   if (!approvalToolRequiresDisclaimer(action.tool)) return action.args;
+  const formatError = validateDisclaimerCompatibleArgs(action.tool, action.args);
+  if (formatError) throw new Error(formatError);
   const trigger = action.origin?.trigger;
   if (!trigger) {
     throw new Error(
