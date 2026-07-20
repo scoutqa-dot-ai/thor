@@ -1493,6 +1493,30 @@ describe("remote-cli MCP endpoints", () => {
     expect(form.get("file")).toBe("F1");
   });
 
+  it("deletes the uploaded file when the completed upload has no permalink", async () => {
+    appendActiveTrigger();
+    // The file is shared but the response omits the permalink; the approval
+    // fails and the already-shared file must not be left orphaned.
+    routeApprovalUpload({ complete: { ok: true, files: [{ id: "F1" }] } });
+
+    const pending = await postJson(
+      "/exec/mcp",
+      { args: oversizeCreateJiraArgs("x".repeat(4000)) },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { exitCode: number; stderr: string };
+    expect(pendingBody.exitCode).toBe(1);
+    expect(pendingBody.stderr).toContain("full-content upload failed");
+
+    const deleteCall = slackFetch.mock.calls.find((c) => String(c[0]).endsWith("/files.delete"));
+    expect(deleteCall).toBeDefined();
+    expect(new URLSearchParams(String(deleteCall?.[1]?.body)).get("file")).toBe("F1");
+    // No card is posted when the upload cannot be linked.
+    expect(slackFetch.mock.calls.map((c) => String(c[0]))).not.toContain(
+      "https://slack.test/api/chat.postMessage",
+    );
+  });
+
   it("falls back to the newest Slack trigger when the latest trigger is GitHub", async () => {
     appendActiveTrigger({ ts: "2026-05-21T00:00:01.000Z" });
     appendSessionEvent("parent-session", {

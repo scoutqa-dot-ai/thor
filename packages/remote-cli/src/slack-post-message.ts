@@ -427,11 +427,14 @@ async function slackApiForm(
  * returned `upload_url` is pre-signed, so step 2 uses it verbatim and carries
  * no Authorization header; only the first and third calls hit the Web API base.
  * Requires the bot's `files:write` scope. Returns the shared file's permalink.
+ *
+ * If the file is already shared but the response lacks a permalink, the error
+ * result carries the `fileId` so the caller can delete the orphaned upload.
  */
 export async function uploadSlackFileApi(
   request: SlackFileUploadRequest,
   deps: Pick<SlackPostMessageDeps, "fetch" | "env"> = {},
-): Promise<{ fileId: string; permalink: string } | { error: string }> {
+): Promise<{ fileId: string; permalink: string } | { error: string; fileId?: string }> {
   if (!deps.env?.SLACK_BOT_TOKEN) return { error: "SLACK_BOT_TOKEN is not set" };
   const fetchImpl = deps.fetch ?? fetch;
 
@@ -476,7 +479,9 @@ export async function uploadSlackFileApi(
       ? (files[0] as { permalink?: unknown }).permalink
       : undefined;
   if (typeof permalink !== "string" || permalink.length === 0) {
-    return { error: "Slack files.completeUploadExternal response missing permalink" };
+    // The file is already shared at this point; hand the id back so the caller
+    // can delete the orphan rather than leaving it in the thread.
+    return { error: "Slack files.completeUploadExternal response missing permalink", fileId };
   }
   return { fileId, permalink };
 }

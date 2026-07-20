@@ -243,7 +243,21 @@ export function createApprovalService(deps: ApprovalServiceDeps = {}): ApprovalS
         },
         slackDeps,
       );
-      if ("error" in upload) return { error: `full-content upload failed: ${upload.error}` };
+      if ("error" in upload) {
+        // The file may already be shared (e.g. permalink missing from the
+        // response); delete it so a failed approval leaves no orphan behind.
+        if (upload.fileId) {
+          const cleanup = await deleteSlackFileApi(upload.fileId, slackDeps);
+          if ("error" in cleanup) {
+            logWarn(log, "approval_file_cleanup_failed", {
+              actionId: input.action.id,
+              fileId: upload.fileId,
+              error: cleanup.error,
+            });
+          }
+        }
+        return { error: `full-content upload failed: ${upload.error}` };
+      }
       fileUrl = upload.permalink;
       uploadedFileId = upload.fileId;
     }
