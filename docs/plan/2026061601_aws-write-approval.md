@@ -32,7 +32,7 @@ Gate mutating AWS CLI commands behind the existing Slack-button human-approval p
 
 ## Known limitations
 
-- Slack approval cards cap section text at Slack's message limit, so very long AWS argv payloads are intentionally truncated in the approval card. The stored approval action still executes the full reviewed argv. Operators should reject and ask for a smaller command or external review artifact when the visible card does not contain enough context to evaluate the command safely.
+- ~~Slack approval cards cap section text at Slack's message limit, so very long AWS argv payloads are intentionally truncated in the approval card.~~ Resolved by `docs/plan/2026072001_approval-oversize-file-upload.md`: oversize approval content is now uploaded as a Markdown file in the thread and linked from the card, so the reviewer always has the full reviewed argv.
 
 ## Exit criteria
 

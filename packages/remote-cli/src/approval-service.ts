@@ -1,6 +1,10 @@
 import {
+  approvalPresentationIsOversize,
   ApprovalRequiredEventPayloadSchema,
-  buildApprovalSlackMessage,
+  buildApprovalButtonValue,
+  buildApprovalFileMarkdown,
+  buildApprovalPresentation,
+  buildApprovalPresentationBlocks,
   createLogger,
   ExecResultSchema,
   findAnchorContext,
@@ -12,7 +16,11 @@ import {
 } from "@thor/common";
 import type { ApprovalToolName } from "@thor/common";
 import { ApprovalStore, type ApprovalAction } from "./approval-store.ts";
-import { postSlackMessageApi } from "./slack-post-message.ts";
+import {
+  deleteSlackFileApi,
+  postSlackMessageApi,
+  uploadSlackFileApi,
+} from "./slack-post-message.ts";
 
 const log = createLogger("approval");
 const DEFAULT_APPROVALS_DIR = "/workspace/data/approvals";
@@ -204,29 +212,67 @@ export function createApprovalService(deps: ApprovalServiceDeps = {}): ApprovalS
     channel: string;
     threadTs: string;
   }): Promise<{ ts: string } | { error: string }> {
-    const slackMessage = buildApprovalSlackMessage({
+    const presentation = buildApprovalPresentation(input.tool, input.action.args);
+    const buttonValue = buildApprovalButtonValue({
       actionId: input.action.id,
-      tool: input.tool,
-      args: input.action.args,
       upstreamName: input.upstreamName,
       threadTs: input.threadTs,
     });
+    const slackDeps = {
+      fetch: fetchImpl,
+      env: {
+        SLACK_BOT_TOKEN: slackConfig?.botToken,
+        SLACK_API_BASE_URL: slackConfig?.apiBaseUrl,
+      },
+    };
+
+    // Content that overflows the card is uploaded as a Markdown file in the
+    // thread and linked from the card. The file carries the exact content the
+    // reviewer must see, so it is required: a failed upload fails the approval
+    // rather than silently posting a truncated card.
+    let fileUrl: string | undefined;
+    let uploadedFileId: string | undefined;
+    if (approvalPresentationIsOversize(presentation)) {
+      const upload = await uploadSlackFileApi(
+        {
+          channel: input.channel,
+          threadTs: input.threadTs,
+          filename: `approval-${input.tool}-${input.action.id}.md`,
+          title: presentation.title,
+          content: buildApprovalFileMarkdown(presentation),
+        },
+        slackDeps,
+      );
+      if ("error" in upload) return { error: `full-content upload failed: ${upload.error}` };
+      fileUrl = upload.permalink;
+      uploadedFileId = upload.fileId;
+    }
+
     const result = await postSlackMessageApi(
       {
         channel: input.channel,
         threadTs: input.threadTs,
-        text: slackMessage.text,
-        blocks: slackMessage.blocks,
+        text: presentation.title,
+        blocks: buildApprovalPresentationBlocks(presentation, buttonValue, fileUrl),
       },
-      {
-        fetch: fetchImpl,
-        env: {
-          SLACK_BOT_TOKEN: slackConfig?.botToken,
-          SLACK_API_BASE_URL: slackConfig?.apiBaseUrl,
-        },
-      },
+      slackDeps,
     );
-    return "error" in result ? result : { ts: result.ts };
+    if ("error" in result) {
+      // The card is the load-bearing message; if it fails, clean up the file we
+      // uploaded first so the thread is not left with an orphaned attachment.
+      if (uploadedFileId) {
+        const cleanup = await deleteSlackFileApi(uploadedFileId, slackDeps);
+        if ("error" in cleanup) {
+          logWarn(log, "approval_file_cleanup_failed", {
+            actionId: input.action.id,
+            fileId: uploadedFileId,
+            error: cleanup.error,
+          });
+        }
+      }
+      return result;
+    }
+    return { ts: result.ts };
   }
 
   async function createPending(input: CreatePendingInput): Promise<ApprovalExecResult> {

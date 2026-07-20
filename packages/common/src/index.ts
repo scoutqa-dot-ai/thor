@@ -205,13 +205,13 @@ export {
   parseApprovalButtonValue,
   resolveSlackThreadTargetFromTrigger,
   buildApprovalPresentation,
-  buildApprovalSlackMessage,
   buildApprovalPresentationBlocks,
+  approvalPresentationIsOversize,
+  buildApprovalFileMarkdown,
 } from "./approval-presentation.ts";
 export type {
   SlackBlock,
   SlackThreadTarget,
   ApprovalButtonRoute,
   ApprovalPresentation,
-  ApprovalSlackMessage,
 } from "./approval-presentation.ts";

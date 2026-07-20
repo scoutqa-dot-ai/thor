@@ -39,9 +39,13 @@ export interface SlackPostApiRequest {
   blocks?: unknown;
 }
 
-function slackPostMessageUrl(apiBaseUrl?: string): string {
+function slackApiUrl(path: string, apiBaseUrl?: string): string {
   const base = (apiBaseUrl && apiBaseUrl.trim()) || DEFAULT_SLACK_API_BASE_URL;
-  return `${base.replace(/\/$/, "")}${SLACK_POST_MESSAGE_PATH}`;
+  return `${base.replace(/\/$/, "")}${path}`;
+}
+
+function slackPostMessageUrl(apiBaseUrl?: string): string {
+  return slackApiUrl(SLACK_POST_MESSAGE_PATH, apiBaseUrl);
 }
 
 export interface SlackPostMessageRequest {
@@ -377,4 +381,113 @@ export async function postSlackMessageApi(
         ? responseChannel
         : request.channel,
   };
+}
+
+export interface SlackFileUploadRequest {
+  channel: string;
+  threadTs?: string;
+  filename: string;
+  title: string;
+  content: string;
+  initialComment?: string;
+}
+
+async function slackApiForm(
+  path: string,
+  form: URLSearchParams,
+  deps: Pick<SlackPostMessageDeps, "fetch" | "env">,
+): Promise<{ ok: true; json: Record<string, unknown> } | { error: string }> {
+  const fetchImpl = deps.fetch ?? fetch;
+  try {
+    const response = await fetchImpl(slackApiUrl(path, deps.env?.SLACK_API_BASE_URL), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${deps.env?.SLACK_BOT_TOKEN}`,
+        "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+      },
+      body: form.toString(),
+    });
+    const json = (await response.json()) as unknown;
+    if (!json || typeof json !== "object" || (json as { ok?: unknown }).ok !== true) {
+      const error =
+        json && typeof json === "object" && typeof (json as { error?: unknown }).error === "string"
+          ? (json as { error: string }).error
+          : "unknown_error";
+      return { error: `Slack API error: ${error}` };
+    }
+    return { ok: true, json: json as Record<string, unknown> };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Upload a file to Slack and share it into a channel/thread via the external
+ * upload flow (getUploadURLExternal → raw POST → completeUploadExternal). The
+ * returned `upload_url` is pre-signed, so step 2 uses it verbatim and carries
+ * no Authorization header; only the first and third calls hit the Web API base.
+ * Requires the bot's `files:write` scope. Returns the shared file's permalink.
+ */
+export async function uploadSlackFileApi(
+  request: SlackFileUploadRequest,
+  deps: Pick<SlackPostMessageDeps, "fetch" | "env"> = {},
+): Promise<{ fileId: string; permalink: string } | { error: string }> {
+  if (!deps.env?.SLACK_BOT_TOKEN) return { error: "SLACK_BOT_TOKEN is not set" };
+  const fetchImpl = deps.fetch ?? fetch;
+
+  const length = Buffer.byteLength(request.content, "utf8");
+  const getUrl = await slackApiForm(
+    "/files.getUploadURLExternal",
+    new URLSearchParams({ filename: request.filename, length: String(length) }),
+    deps,
+  );
+  if ("error" in getUrl) return getUrl;
+  const uploadUrl = getUrl.json.upload_url;
+  const fileId = getUrl.json.file_id;
+  if (typeof uploadUrl !== "string" || typeof fileId !== "string") {
+    return { error: "Slack files.getUploadURLExternal response missing upload_url or file_id" };
+  }
+
+  try {
+    const uploadResponse = await fetchImpl(uploadUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: request.content,
+    });
+    if (!uploadResponse.ok) {
+      return { error: `Slack file upload failed with HTTP ${uploadResponse.status}` };
+    }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+
+  const completeForm = new URLSearchParams({
+    files: JSON.stringify([{ id: fileId, title: request.title }]),
+    channel_id: request.channel,
+    ...(request.threadTs ? { thread_ts: request.threadTs } : {}),
+    ...(request.initialComment ? { initial_comment: request.initialComment } : {}),
+  });
+  const complete = await slackApiForm("/files.completeUploadExternal", completeForm, deps);
+  if ("error" in complete) return complete;
+
+  const files = complete.json.files;
+  const permalink =
+    Array.isArray(files) && files[0] && typeof files[0] === "object"
+      ? (files[0] as { permalink?: unknown }).permalink
+      : undefined;
+  if (typeof permalink !== "string" || permalink.length === 0) {
+    return { error: "Slack files.completeUploadExternal response missing permalink" };
+  }
+  return { fileId, permalink };
+}
+
+/** Best-effort delete of a previously uploaded file (used to clean up an orphan). */
+export async function deleteSlackFileApi(
+  fileId: string,
+  deps: Pick<SlackPostMessageDeps, "fetch" | "env"> = {},
+): Promise<{ ok: true } | { error: string }> {
+  if (!deps.env?.SLACK_BOT_TOKEN) return { error: "SLACK_BOT_TOKEN is not set" };
+  const result = await slackApiForm("/files.delete", new URLSearchParams({ file: fileId }), deps);
+  if ("error" in result) return result;
+  return { ok: true };
 }

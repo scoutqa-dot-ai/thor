@@ -38,11 +38,6 @@ export interface ApprovalPresentation {
   markdown: string;
 }
 
-export interface ApprovalSlackMessage {
-  text: string;
-  blocks: SlackBlock[];
-}
-
 export interface SlackThreadTarget {
   channel: string;
   threadTs: string;
@@ -140,23 +135,18 @@ export function buildApprovalPresentation(
   }
 }
 
-export function buildApprovalSlackMessage(input: {
-  actionId: string;
-  tool: ApprovalToolName;
-  args: Record<string, unknown>;
-  upstreamName?: string;
-  threadTs: string;
-}): ApprovalSlackMessage {
-  const buttonValue = buildApprovalButtonValue({
-    actionId: input.actionId,
-    upstreamName: input.upstreamName,
-    threadTs: input.threadTs,
-  });
-  const presentation = buildApprovalPresentation(input.tool, input.args);
-  return {
-    text: presentation.title,
-    blocks: buildApprovalPresentationBlocks(presentation, buttonValue),
-  };
+/**
+ * Whether the presentation body exceeds Slack's section limit and must be
+ * uploaded as a file rather than truncated into the card. Title overflow is not
+ * considered — titles are short by construction; the body carries the content.
+ */
+export function approvalPresentationIsOversize(presentation: ApprovalPresentation): boolean {
+  return presentation.markdown.length > SLACK_SECTION_TEXT_LIMIT;
+}
+
+/** Full, untruncated Markdown for the uploaded approval file. */
+export function buildApprovalFileMarkdown(presentation: ApprovalPresentation): string {
+  return `# ${presentation.title}\n\n${presentation.markdown}\n`;
 }
 
 function buildActionBlocks(buttonValue: string): SlackBlock[] {
@@ -184,11 +174,16 @@ function buildActionBlocks(buttonValue: string): SlackBlock[] {
   ];
 }
 
+/**
+ * When `fileUrl` is set, the body was uploaded as a file (oversize): the card
+ * shows a truncated preview and links the full content below it.
+ */
 export function buildApprovalPresentationBlocks(
   presentation: ApprovalPresentation,
   buttonValue: string,
+  fileUrl?: string,
 ): SlackBlock[] {
-  return [
+  const blocks: SlackBlock[] = [
     {
       type: "section",
       text: {
@@ -204,8 +199,18 @@ export function buildApprovalPresentationBlocks(
         text: trimForSlack(presentation.markdown, SLACK_SECTION_TEXT_LIMIT),
       },
     },
-    ...buildActionBlocks(buttonValue),
   ];
+  if (fileUrl) {
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `:paperclip: <${fileUrl}|View the full content>`,
+      },
+    });
+  }
+  blocks.push(...buildActionBlocks(buttonValue));
+  return blocks;
 }
 
 function buildCreateJiraIssuePresentation(args: Record<string, unknown>): ApprovalPresentation {

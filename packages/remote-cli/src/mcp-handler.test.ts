@@ -1363,6 +1363,136 @@ describe("remote-cli MCP endpoints", () => {
     });
   });
 
+  // Route the external file-upload flow (getUploadURLExternal → pre-signed POST
+  // → completeUploadExternal) plus chat.postMessage / files.delete for oversize
+  // approval tests.
+  function routeApprovalUpload(overrides: { postMessage?: unknown; complete?: unknown } = {}) {
+    slackFetch.mockImplementation((async (input: string | URL) => {
+      const url = String(input);
+      if (url.endsWith("/files.getUploadURLExternal")) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            upload_url: "https://files.slack.test/upload/abc",
+            file_id: "F1",
+          }),
+        );
+      }
+      if (url === "https://files.slack.test/upload/abc") {
+        return new Response("", { status: 200 });
+      }
+      if (url.endsWith("/files.completeUploadExternal")) {
+        return new Response(
+          JSON.stringify(
+            overrides.complete ?? {
+              ok: true,
+              files: [{ id: "F1", permalink: "https://slack.test/files/F1" }],
+            },
+          ),
+        );
+      }
+      if (url.endsWith("/chat.postMessage")) {
+        return new Response(
+          JSON.stringify(
+            overrides.postMessage ?? { ok: true, channel: "C123", ts: "1710000000.100" },
+          ),
+        );
+      }
+      if (url.endsWith("/files.delete")) {
+        return new Response(JSON.stringify({ ok: true }));
+      }
+      throw new Error(`unexpected slack url: ${url}`);
+    }) as unknown as typeof fetch);
+  }
+
+  const oversizeCreateJiraArgs = (description: string) => [
+    "atlassian",
+    "createJiraIssue",
+    JSON.stringify({
+      cloudId: "cloud-1",
+      projectKey: "THOR",
+      issueTypeName: "Task",
+      summary: "Fix it",
+      description,
+    }),
+  ];
+
+  it("uploads oversize approval content as a file and links it from the card", async () => {
+    appendActiveTrigger();
+    routeApprovalUpload();
+    const bigDescription = "x".repeat(4000);
+
+    const pending = await postJson(
+      "/exec/mcp",
+      { args: oversizeCreateJiraArgs(bigDescription) },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { exitCode: number };
+    expect(pendingBody.exitCode).toBe(0);
+
+    const urls = slackFetch.mock.calls.map((c) => String(c[0]));
+    expect(urls).toContain("https://slack.test/api/files.getUploadURLExternal");
+    expect(urls).toContain("https://files.slack.test/upload/abc");
+    expect(urls).toContain("https://slack.test/api/files.completeUploadExternal");
+
+    // The uploaded file carries the full, untruncated description.
+    const uploadCall = slackFetch.mock.calls.find(
+      (c) => String(c[0]) === "https://files.slack.test/upload/abc",
+    );
+    expect(String(uploadCall?.[1]?.body)).toContain(bigDescription);
+
+    // The card is posted last and links the shared file permalink.
+    const postCall = slackFetch.mock.calls.find((c) => String(c[0]).endsWith("/chat.postMessage"));
+    const payload = JSON.parse(String(postCall?.[1]?.body)) as {
+      blocks: Array<{ text?: { text?: string } }>;
+    };
+    const linkBlock = payload.blocks.find((b) => b.text?.text?.includes("View the full content"));
+    expect(linkBlock?.text?.text).toContain("https://slack.test/files/F1");
+  });
+
+  it("fails the approval and posts no card when oversize-content upload fails", async () => {
+    appendActiveTrigger();
+    slackFetch.mockImplementation((async (input: string | URL) => {
+      const url = String(input);
+      if (url.endsWith("/files.getUploadURLExternal")) {
+        return new Response(JSON.stringify({ ok: false, error: "missing_scope" }));
+      }
+      throw new Error(`unexpected slack url after failed upload: ${url}`);
+    }) as unknown as typeof fetch);
+
+    const pending = await postJson(
+      "/exec/mcp",
+      { args: oversizeCreateJiraArgs("x".repeat(4000)) },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { exitCode: number; stderr: string };
+
+    expect(pendingBody.exitCode).toBe(1);
+    expect(pendingBody.stderr).toContain("full-content upload failed");
+    expect(pendingBody.stderr).toContain("missing_scope");
+    expect(slackFetch.mock.calls.map((c) => String(c[0]))).not.toContain(
+      "https://slack.test/api/chat.postMessage",
+    );
+  });
+
+  it("deletes the uploaded file when the approval card fails to post", async () => {
+    appendActiveTrigger();
+    routeApprovalUpload({ postMessage: { ok: false, error: "channel_not_found" } });
+
+    const pending = await postJson(
+      "/exec/mcp",
+      { args: oversizeCreateJiraArgs("x".repeat(4000)) },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { exitCode: number };
+    expect(pendingBody.exitCode).toBe(1);
+
+    const deleteCall = slackFetch.mock.calls.find((c) => String(c[0]).endsWith("/files.delete"));
+    expect(deleteCall).toBeDefined();
+    const form = new URLSearchParams(String(deleteCall?.[1]?.body));
+    expect(form.get("file")).toBe("F1");
+  });
+
   it("falls back to the newest Slack trigger when the latest trigger is GitHub", async () => {
     appendActiveTrigger({ ts: "2026-05-21T00:00:01.000Z" });
     appendSessionEvent("parent-session", {
