@@ -392,6 +392,8 @@ function validateGhIssueCreateArgs(args: string[]): string | null {
 
   const titles = valueFlagValues(parsed, "title");
   const bodies = valueFlagValues(parsed, "body-file");
+  const milestones = valueFlagValues(parsed, "milestone");
+  const parents = valueFlagValues(parsed, "parent");
   if (titles.length > 1) {
     return denyMessage("gh issue create", {
       reason: "multiple --title values are ambiguous.",
@@ -402,6 +404,21 @@ function validateGhIssueCreateArgs(args: string[]): string | null {
     return denyMessage("gh issue create", {
       reason: "multiple --body-file values are ambiguous for disclaimer injection.",
       instead: "provide exactly one --body-file - value",
+    });
+  }
+  // --milestone and --parent are single-value flags (gh keeps the last one), so
+  // a repeated flag would silently place the issue somewhere other than the
+  // value the approval card shows. Deny the ambiguity outright.
+  if (milestones.length > 1) {
+    return denyMessage("gh issue create", {
+      reason: "multiple --milestone values are ambiguous.",
+      instead: "provide at most one --milestone value",
+    });
+  }
+  if (parents.length > 1) {
+    return denyMessage("gh issue create", {
+      reason: "multiple --parent values are ambiguous.",
+      instead: "provide at most one --parent value",
     });
   }
   if (titles.length !== 1) {
