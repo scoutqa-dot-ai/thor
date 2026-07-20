@@ -157,7 +157,14 @@ export function injectApprovalDisclaimer(
     tool,
     args,
   });
-  if (!parsed.success) return args;
+  if (!parsed.success) {
+    // Fail closed: a disclaimer-required tool must never execute upstream without the
+    // Thor footer. If the stored args no longer parse, surface it loudly instead of
+    // silently returning args unchanged (which would skip disclaimer injection).
+    throw new Error(
+      `Cannot inject approval disclaimer for "${tool}": arguments failed validation — ${parsed.error.message}`,
+    );
+  }
   switch (parsed.data.tool) {
     case "createJiraIssue":
     case "create-feature-flag":
