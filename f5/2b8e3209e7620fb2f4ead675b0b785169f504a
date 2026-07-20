@@ -1,0 +1,25 @@
+packages/remote-cli/src/approval-service.ts
+  175d7db9e993a7af 293
+packages/remote-cli/src/approval-service.test.ts
+  175d7db9e993a7af 20,36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "f52b8e3209e7620fb2f4ead675b0b785169f504a",
+  "prompts": {
+    "175d7db9e993a7af": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02808858-f8f4-4f73-aa9f-c35a4ae23ddf",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 3,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
