@@ -1,0 +1,31 @@
+packages/gateway/src/approval.test.ts
+  bdb46d810c36c1a0 69-70,75-76,81-82
+docs/plan/2026072001_approval-oversize-file-upload.md
+  bdb46d810c36c1a0 1-30,32,39-42,44-89,93
+packages/common/src/approval-presentation.ts
+  bdb46d810c36c1a0 114-120,136-138,157-158
+packages/remote-cli/src/approval-service.ts
+  bdb46d810c36c1a0 2,13,202,234-250,276
+packages/remote-cli/src/approval-service.test.ts
+  bdb46d810c36c1a0 1-38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "13ebc3efbe3c149c187c9aacad7bf15c911ec654",
+  "prompts": {
+    "bdb46d810c36c1a0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "258fa577-57ac-41a8-ab8f-93346395383f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 180,
+      "total_deletions": 209,
+      "accepted_lines": 159,
+      "overriden_lines": 3
+    }
+  }
+}
