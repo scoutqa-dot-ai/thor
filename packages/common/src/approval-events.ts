@@ -16,6 +16,22 @@ export const AddCommentToJiraIssueApprovalArgsSchema = z
   })
   .passthrough();
 
+export const CreateConfluencePageApprovalArgsSchema = z
+  .object({
+    spaceId: z.string().min(1).optional(),
+    spaceKey: z.string().min(1).optional(),
+    title: z.string().min(1),
+    content: z.string().min(1).optional(),
+    body: z.unknown().optional(),
+  })
+  .passthrough()
+  .refine((args) => Boolean(args.spaceId || args.spaceKey), {
+    message: "spaceId or spaceKey is required",
+  })
+  .refine((args) => args.content !== undefined || args.body !== undefined, {
+    message: "content or body is required",
+  });
+
 export const CreateFeatureFlagApprovalArgsSchema = z
   .object({
     key: z.string().min(1),
@@ -48,6 +64,7 @@ export const AwsExecApprovalArgsSchema = z
 export const ApprovalArgsSchema = z.union([
   CreateJiraIssueApprovalArgsSchema,
   AddCommentToJiraIssueApprovalArgsSchema,
+  CreateConfluencePageApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
   GhIssueCreateApprovalArgsSchema,
   AwsExecApprovalArgsSchema,
@@ -67,6 +84,10 @@ export const ApprovalRequiredEventPayloadSchema = z.discriminatedUnion("tool", [
   ApprovalRequiredEventBaseSchema.extend({
     tool: z.literal("addCommentToJiraIssue"),
     args: AddCommentToJiraIssueApprovalArgsSchema,
+  }),
+  ApprovalRequiredEventBaseSchema.extend({
+    tool: z.literal("createConfluencePage"),
+    args: CreateConfluencePageApprovalArgsSchema,
   }),
   ApprovalRequiredEventBaseSchema.extend({
     tool: z.literal("create-feature-flag"),
@@ -137,6 +158,7 @@ export function injectApprovalDisclaimer(
         ...parsed.data.args,
         commentBody: `${parsed.data.args.commentBody}\n${footer}`,
       };
+    case "createConfluencePage":
     case "ghIssueCreate":
     case "awsExec":
       return parsed.data.args;

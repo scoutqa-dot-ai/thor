@@ -50,6 +50,21 @@ const tools: Tool[] = [
     },
   },
   {
+    name: "createConfluencePage",
+    description: "Create a Confluence page",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cloudId: { type: "string" },
+        spaceId: { type: "string" },
+        title: { type: "string" },
+        content: { type: "string" },
+      },
+      required: ["cloudId", "spaceId", "title", "content"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "lookupJiraAccountId",
     description: "Resolve a Jira account id",
     inputSchema: {
@@ -245,6 +260,11 @@ describe("remote-cli MCP endpoints", () => {
                     content: [{ type: "text", text: "linked" }],
                   };
                 }
+                if (name === "createConfluencePage") {
+                  return {
+                    content: [{ type: "text", text: "page created" }],
+                  };
+                }
                 if (name === "lookupJiraAccountId") {
                   jiraLookups.push(args);
                   if (jiraLookupFailure) throw jiraLookupFailure;
@@ -347,6 +367,7 @@ describe("remote-cli MCP endpoints", () => {
       "getJiraIssue",
       "createJiraIssue",
       "createIssueLink",
+      "createConfluencePage",
     ]);
 
     const toolHelp = await postJson(
@@ -429,7 +450,7 @@ describe("remote-cli MCP endpoints", () => {
     expect(healthBody.mcp.configured).toBe(3);
     expect(healthBody.mcp.connected).toBe(1);
     expect(healthBody.mcp.connectedTargets).toBe(1);
-    expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 5 });
+    expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 6 });
   });
 
   it("fails live MCP calls when profile config cannot be loaded", async () => {
@@ -1321,6 +1342,68 @@ describe("remote-cli MCP endpoints", () => {
       { name: "createIssueLink", arguments: { ...cleanArgs, cloudId: configuredCloudId } },
     ]);
     expect(slackFetch).not.toHaveBeenCalled();
+  });
+
+  it("queues Confluence page creation for approval and executes upstream only after approval", async () => {
+    appendActiveTrigger();
+    const cleanArgs = {
+      spaceId: "CST",
+      title: "Maybank monitoring update",
+      content: "Monitoring summary\n\nAll checks passed.",
+      parentId: "123456",
+    };
+
+    const listedTools = await postJson(
+      "/exec/mcp",
+      { args: ["atlassian"] },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const listedToolsBody = (await listedTools.json()) as { stdout: string };
+    expect(listedToolsBody.stdout.trim().split("\n")).toContain("createConfluencePage");
+
+    const pending = await postJson(
+      "/exec/mcp",
+      { args: ["atlassian", "createConfluencePage", JSON.stringify(cleanArgs)] },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { stdout: string; exitCode: number };
+    const approvalOutput = JSON.parse(pendingBody.stdout) as {
+      type: string;
+      actionId: string;
+      proxyName: string;
+      tool: string;
+      args: Record<string, unknown>;
+    };
+
+    expect(pending.status).toBe(200);
+    expect(pendingBody.exitCode).toBe(0);
+    expect(approvalOutput).toMatchObject({
+      type: "approval_required",
+      proxyName: "atlassian",
+      tool: "createConfluencePage",
+      args: cleanArgs,
+    });
+    expect(toolCalls).toEqual([]);
+
+    const resolved = await postJson(
+      "/exec/approval",
+      { args: ["resolve", approvalOutput.actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    const resolvedBody = (await resolved.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+
+    expect(resolved.status).toBe(200);
+    expect(resolvedBody).toMatchObject({ stdout: "page created", stderr: "", exitCode: 0 });
+    expect(toolCalls).toEqual([
+      {
+        name: "createConfluencePage",
+        arguments: { ...cleanArgs, cloudId: configuredCloudId },
+      },
+    ]);
   });
 
   it("posts approval cards to the trigger Slack thread when the anchor has other Slack aliases", async () => {
