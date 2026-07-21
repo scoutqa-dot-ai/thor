@@ -1,0 +1,23 @@
+Dockerfile
+  96a94e01c0f24222 85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "eafda25a1a18d7c95794b3e8dea67b0e5c06f894",
+  "prompts": {
+    "96a94e01c0f24222": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88031d2e-beed-4355-a4db-8b15addfdc7e",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
