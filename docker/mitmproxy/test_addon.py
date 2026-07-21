@@ -349,7 +349,9 @@ def test_builtin_slack_file_download_rule_is_readonly(tmp_path, monkeypatch) -> 
     assert "readonly rule blocked" in _response_text(flow.response)
 
 
-def test_builtin_slack_file_upload_rule_allows_post(tmp_path, monkeypatch) -> None:
+def test_builtin_slack_file_upload_path_is_denied(tmp_path, monkeypatch) -> None:
+    # Uploads run server-side in remote-cli (slack-post-message --file); the
+    # sandbox no longer uploads directly, so the raw upload path is denied.
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
 
     config = tmp_path / "config.json"
@@ -365,8 +367,12 @@ def test_builtin_slack_file_upload_rule_allows_post(tmp_path, monkeypatch) -> No
     )
     addon.request(flow)
 
-    assert flow.response is None
-    assert flow.request.headers["Authorization"] == "Bearer xoxb-test"
+    assert flow.response is not None
+    assert _status_code(flow.response) == 403
+    assert (
+        _response_text(flow.response)
+        == "thor proxy denied host/path: files.slack.com/upload/v1/abc123"
+    )
 
 
 def test_inject_rule_sets_headers(tmp_path) -> None:

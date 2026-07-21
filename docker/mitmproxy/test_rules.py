@@ -100,11 +100,13 @@ def test_builtins_apply_when_user_rules_empty() -> None:
     slack_file_info = ruleset.classify("slack.com", "/api/files.info")
     assert slack_file_info.action == "inject"
 
+    # Uploads run server-side in remote-cli now; the sandbox external-upload
+    # endpoints are no longer injected.
     slack_upload_url = ruleset.classify("slack.com", "/api/files.getUploadURLExternal")
-    assert slack_upload_url.action == "inject"
+    assert slack_upload_url.action == "deny"
 
     slack_upload_complete = ruleset.classify("slack.com", "/api/files.completeUploadExternal")
-    assert slack_upload_complete.action == "inject"
+    assert slack_upload_complete.action == "deny"
 
     slack_update = ruleset.classify("slack.com", "/api/chat.update")
     assert slack_update.action == "deny"
@@ -121,9 +123,7 @@ def test_builtins_apply_when_user_rules_empty() -> None:
     assert atlassian_site.rule.readonly is True
 
     slack_upload = ruleset.classify("files.slack.com", "/upload/v1/abc123")
-    assert slack_upload.action == "inject"
-    assert slack_upload.rule is not None
-    assert slack_upload.rule.readonly is False
+    assert slack_upload.action == "deny"
 
     slack_file = ruleset.classify("files.slack.com", "/files-pri/T1-F1/download/report.txt")
     assert slack_file.action == "inject"
