@@ -148,6 +148,8 @@ function parseGhIssueDisplay(args: string[]): {
   bodyPreview?: string;
   labels?: string[];
   assignees?: string[];
+  milestone?: string;
+  parent?: string;
 } {
   const values = (names: string[]) => {
     const found: string[] = [];
@@ -164,11 +166,15 @@ function parseGhIssueDisplay(args: string[]): {
   const body = values(["--body", "-b"])[0];
   const labels = values(["--label", "-l"]).flatMap((v) => v.split(",").filter(Boolean));
   const assignees = values(["--assignee", "-a"]).flatMap((v) => v.split(",").filter(Boolean));
+  const milestone = values(["--milestone", "-m"])[0];
+  const parent = values(["--parent"])[0];
   return {
     ...(title ? { title } : {}),
     ...(body ? { bodyPreview: body.length > 700 ? `${body.slice(0, 700)}…` : body } : {}),
     ...(labels.length > 0 ? { labels } : {}),
     ...(assignees.length > 0 ? { assignees } : {}),
+    ...(milestone ? { milestone } : {}),
+    ...(parent ? { parent } : {}),
   };
 }
 

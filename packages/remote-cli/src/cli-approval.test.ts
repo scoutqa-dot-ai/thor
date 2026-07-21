@@ -151,6 +151,38 @@ describe("cli-approval framework", () => {
       expect(def.displayName).toBe("gh issue create");
     });
 
+    it("derives the approval-card display fields from the gh issue create argv", () => {
+      const def = getCliApprovalDefinition("gh");
+      const built = def.buildRequestArgs({
+        cwd: "/workspace/repos/thor",
+        args: [
+          "issue",
+          "create",
+          "--title",
+          "Bug",
+          "--body-file",
+          "-",
+          "--label",
+          "bug,triage",
+          "--assignee",
+          "alice",
+          "--milestone",
+          "v1",
+          "--parent",
+          "123",
+        ],
+        stdin: "body text",
+      });
+      expect(built).toMatchObject({
+        title: "Bug",
+        labels: ["bug", "triage"],
+        assignees: ["alice"],
+        milestone: "v1",
+        parent: "123",
+        bodyPreview: "body text",
+      });
+    });
+
     it("resolves the registered aws definition and runs the reviewed command with the pager disabled", () => {
       const def = getCliApprovalDefinition("aws");
       expect(def.tool).toBe("awsExec");
