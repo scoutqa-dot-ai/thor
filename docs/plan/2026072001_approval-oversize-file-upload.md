@@ -39,15 +39,15 @@ only existed to handle the impossible case.
 
 ## File-level impact
 
-| Path                                                | Change                                                                                                                                                                                                    |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/common/src/approval-presentation.ts`      | Exhaustive `assertNever` switch; `buildApprovalPresentation` returns non-optional; delete generic renderer + trimming; `buildApprovalSlackMessage` surfaces full Markdown when the card body is truncated |
-| `packages/common/src/index.ts`                      | Drop `formatApprovalArgs` / `buildInlineApprovalBlocks` exports                                                                                                                                           |
-| `packages/remote-cli/src/approval-service.ts`       | Runtime `ApprovalRequiredEventPayloadSchema` parse in `createPending` (fail hard); remove the `as` cast; upload-first + link + orphan cleanup in `postSlackApprovalMessage`                               |
-| `packages/remote-cli/src/slack-post-message.ts`     | Add `uploadSlackFileApi` (3-call `getUploadURLExternal` → raw POST → `completeUploadExternal`), sharing `fetch`/`env` deps with `postSlackMessageApi`                                                     |
-| `packages/gateway/src/approval.test.ts`             | Remove generic-renderer + raw-JSON-fallback tests; keep presentation + routing tests                                                                                                                      |
-| `packages/common/src/approval-presentation.test.ts` | Oversize → attachment payload emitted with full Markdown; normal → no attachment                                                                                                                          |
-| `docs/slack.md`                                     | Note approvals upload oversize content via `files:write`                                                                                                                                                  |
+| Path                                                | Change                                                                                                                                                                                                                                                        |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/common/src/approval-presentation.ts`      | Exhaustive `assertNever` switch; `buildApprovalPresentation` returns non-optional; delete generic renderer + trimming; add `approvalPresentationIsOversize` + `buildApprovalFileMarkdown`, and an optional file-link arg on `buildApprovalPresentationBlocks` |
+| `packages/common/src/index.ts`                      | Drop `formatApprovalArgs` / `buildInlineApprovalBlocks` exports                                                                                                                                                                                               |
+| `packages/remote-cli/src/approval-service.ts`       | Runtime `ApprovalRequiredEventPayloadSchema` parse in `createPending` (fail hard); remove the `as` cast; upload-first + link + orphan cleanup in `postSlackApprovalMessage`                                                                                   |
+| `packages/remote-cli/src/slack-post-message.ts`     | Add `uploadSlackFileApi` (3-call `getUploadURLExternal` → raw POST → `completeUploadExternal`), sharing `fetch`/`env` deps with `postSlackMessageApi`                                                                                                         |
+| `packages/gateway/src/approval.test.ts`             | Remove generic-renderer + raw-JSON-fallback tests; keep presentation + routing tests                                                                                                                                                                          |
+| `packages/common/src/approval-presentation.test.ts` | Oversize → attachment payload emitted with full Markdown; normal → no attachment                                                                                                                                                                              |
+| `docs/slack.md`                                     | Note approvals upload oversize content via `files:write`                                                                                                                                                                                                      |
 
 ## Phases
 
@@ -59,11 +59,12 @@ Phase 2). Tests: gate rejects unknown tool and invalid args; presentations
 render for all known tools; exhaustiveness throws for a force-cast unknown.
 
 **Phase 2 — Oversize content → Slack file + link.** Add `uploadSlackFileApi`;
-`buildApprovalSlackMessage` returns the full Markdown alongside the truncated
-card when oversize; `postSlackApprovalMessage` uploads first (fail fast), posts
-the card linking the file permalink, and cleans up the file if the card post
-fails. Docs. Tests: oversize → file uploaded (full Markdown) + card links it;
-upload failure fails the approval; card failure triggers file cleanup.
+when `approvalPresentationIsOversize`, `postSlackApprovalMessage` uploads
+`buildApprovalFileMarkdown(presentation)` first (fail fast), then posts the card
+via `buildApprovalPresentationBlocks(presentation, buttonValue, fileUrl)` linking
+the file permalink, and cleans up the file if the card post fails. Docs. Tests:
+oversize → file uploaded (full Markdown) + card links it; upload failure fails
+the approval; card failure triggers file cleanup.
 
 ## Exit criteria
 
