@@ -60,7 +60,6 @@ const KNOWN_BINS: Record<string, number> = {
   pnpx: 2,
   sandbox: 2,
   scoutqa: 2,
-  "slack-upload": 1,
   curl: 1,
   jq: 1,
   node: 1,
