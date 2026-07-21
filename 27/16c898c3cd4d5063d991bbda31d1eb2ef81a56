@@ -1,0 +1,27 @@
+packages/remote-cli/src/slack-post-message.ts
+  175d7db9e993a7af 13,21-22,63,70,72,80,82,85-95,97-98,101-105,110,113-114,174,207-214,224,277,320-368,461
+packages/remote-cli/src/slack-post-message.test.ts
+  175d7db9e993a7af 340-433
+docker/opencode/bin/slack-post-message
+  175d7db9e993a7af 7,14-16,22,31-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "2716c898c3cd4d5063d991bbda31d1eb2ef81a56",
+  "prompts": {
+    "175d7db9e993a7af": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02808858-f8f4-4f73-aa9f-c35a4ae23ddf",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 193,
+      "total_deletions": 22,
+      "accepted_lines": 192,
+      "overriden_lines": 0
+    }
+  }
+}
