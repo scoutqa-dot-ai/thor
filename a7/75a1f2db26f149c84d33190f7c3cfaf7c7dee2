@@ -1,0 +1,25 @@
+docker/opencode/config/skills/slack/SKILL.md
+  175d7db9e993a7af 28-30,58-59,158-163,166,175-176,202-204
+scripts/test-e2e.sh
+  175d7db9e993a7af 1073,1075,1077-1080,1086,1092-1112,1114,1116-1128,1136,1141,1145,1156-1166,1173
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "a775a1f2db26f149c84d33190f7c3cfaf7c7dee2",
+  "prompts": {
+    "175d7db9e993a7af": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02808858-f8f4-4f73-aa9f-c35a4ae23ddf",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 79,
+      "total_deletions": 47,
+      "accepted_lines": 76,
+      "overriden_lines": 0
+    }
+  }
+}
