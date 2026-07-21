@@ -446,6 +446,51 @@ describe("remote-cli slack-post-message endpoint", () => {
     );
   });
 
+  it("deletes already-shared attachments when a later attachment fails", async () => {
+    writeFileSync(join(testCwd, "a.txt"), "alpha", "utf8");
+    writeFileSync(join(testCwd, "b.txt"), "beta", "utf8");
+    let getCount = 0;
+    const deleted: string[] = [];
+    fetchMock.mockImplementation((async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/files.getUploadURLExternal")) {
+        getCount += 1;
+        return jsonResponse({
+          ok: true,
+          upload_url: "https://files.slack.test/upload/abc",
+          file_id: getCount === 1 ? "F1" : "F2",
+        });
+      }
+      if (url === "https://files.slack.test/upload/abc") return new Response("", { status: 200 });
+      if (url.endsWith("/files.completeUploadExternal")) {
+        // The second file's id is allocated and its raw upload succeeds, then
+        // completion fails — so uploadSlackFileApi surfaces F2 for cleanup.
+        if (String(init?.body).includes("F2")) {
+          return jsonResponse({ ok: false, error: "upload_failed" });
+        }
+        return jsonResponse({ ok: true, files: [{ id: "F1", permalink: "https://slk/F1" }] });
+      }
+      if (url.endsWith("/files.delete")) {
+        deleted.push(new URLSearchParams(String(init?.body)).get("file") ?? "");
+        return jsonResponse({ ok: true });
+      }
+      throw new Error(`unexpected url: ${url}`);
+    }) as unknown as typeof fetch);
+
+    const response = await postSlack(
+      { args: ["--channel", "C123", "--file", "a.txt", "--file", "b.txt"], stdin: "here" },
+      { "x-thor-session-id": "session-1" },
+    );
+    const body = (await response.json()) as { stderr: string };
+    expect(response.status).toBe(400);
+    expect(body.stderr).toContain("failed to upload File 2 (b.txt)");
+    // The already-shared first file and the failing second file's allocated id
+    // are both cleaned up, and no message is posted.
+    expect(deleted.sort()).toEqual(["F1", "F2"]);
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain(
+      "https://slack.com/api/chat.postMessage",
+    );
+  });
+
   it("returns Slack ok:false without alias registration", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ ok: false, error: "channel_not_found" }));
 

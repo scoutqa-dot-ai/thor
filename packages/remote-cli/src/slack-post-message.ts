@@ -348,6 +348,11 @@ export async function handleSlackPostMessage(
     }
   }
 
+  // Track every file that reaches Slack so a mid-loop failure doesn't leave
+  // earlier attachments (or the failing one's own allocated file) orphaned in
+  // the thread. uploadSlackFileApi surfaces a `fileId` even on failure once the
+  // file is allocated, so the failing attachment is cleaned up too.
+  const uploadedFileIds: string[] = [];
   for (const [index, attachment] of attachments.entries()) {
     const label = `File ${index + 1}`;
     const upload = await uploadSlackFileApi(
@@ -362,8 +367,13 @@ export async function handleSlackPostMessage(
       { fetch: deps.fetch, env: deps.env },
     );
     if ("error" in upload) {
+      const orphans = upload.fileId ? [...uploadedFileIds, upload.fileId] : uploadedFileIds;
+      for (const fileId of orphans) {
+        await deleteSlackFileApi(fileId, { fetch: deps.fetch, env: deps.env });
+      }
       return result(`failed to upload ${label} (${attachment.title}): ${upload.error}\n`);
     }
+    uploadedFileIds.push(upload.fileId);
   }
 
   const slackResponse = await postSlackMessageApi(
