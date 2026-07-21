@@ -1,0 +1,27 @@
+docker/mitmproxy/rules.py
+  175d7db9e993a7af 153-156
+docker/mitmproxy/test_rules.py
+  175d7db9e993a7af 103-104,106,109,126
+docker/mitmproxy/test_addon.py
+  175d7db9e993a7af 352-354,370-375
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "ee7d490fa721bd9f72529c1ba62ada87932f016b",
+  "prompts": {
+    "175d7db9e993a7af": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02808858-f8f4-4f73-aa9f-c35a4ae23ddf",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 18,
+      "total_deletions": 23,
+      "accepted_lines": 18,
+      "overriden_lines": 0
+    }
+  }
+}
