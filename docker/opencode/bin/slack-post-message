@@ -4,18 +4,22 @@ set -eu
 usage() {
   cat <<'EOF'
 Usage:
-  slack-post-message --channel <id> [--thread-ts <ts>] [--blocks-file <path>]
+  slack-post-message --channel <id> [--thread-ts <ts>] [--blocks-file <path>] [--file <path>]...
 
 Post a Slack message through Thor's controlled remote-cli path.
 Message input is stdin-only; positional text, --text, and --json are not supported.
 Always pass --channel because Thor aliases store Slack thread timestamps, not channel IDs.
 Stdin uses Slack mrkdwn: `*bold*`, `_italic_`, bullets, and code spans/fences.
 For table or block output, pass --blocks-file.
+Pass --file (repeatable) to attach files; each is uploaded into the thread as
+"File 1", "File 2", ... before the message is posted. Paths must be under /tmp
+or /workspace.
 
 Options:
   --channel <id>     Required Slack channel ID (C...)
   --thread-ts <ts>   Reply in an existing thread timestamp
   --blocks-file <p>  Optional JSON file with a top-level Slack blocks array
+  --file <path>      Attach a file (repeatable); uploaded before the message
   -h, --help         Show this help
 
 Examples:
@@ -23,6 +27,9 @@ Examples:
 
   echo 'Deployment looks healthy.' | \
     slack-post-message --channel C123 --blocks-file /tmp/blocks.json
+
+  echo 'Attached the screenshots.' | \
+    slack-post-message --channel C123 --file /tmp/before.png --file /tmp/after.png
 
   slack-post-message --channel C123 --thread-ts 1710000000.001 <<'MESSAGE'
   Root cause is a missing env var in the worker deploy.

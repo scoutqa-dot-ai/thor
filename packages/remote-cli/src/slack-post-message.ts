@@ -10,7 +10,7 @@ import {
 } from "@thor/common";
 import MarkdownIt from "markdown-it";
 import { readFileSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 
 const markdownParser = new MarkdownIt("commonmark");
 
@@ -18,7 +18,8 @@ const DEFAULT_SLACK_API_BASE_URL = "https://slack.com/api";
 const SLACK_POST_MESSAGE_PATH = "/chat.postMessage";
 const MAX_MRKDWN_BYTES = 40 * 1024;
 const MAX_BLOCKS_FILE_BYTES = 128 * 1024;
-const BLOCKS_FILE_ALLOWED_ROOTS = ["/tmp", "/workspace"] as const;
+const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+const FILE_ALLOWED_ROOTS = ["/tmp", "/workspace"] as const;
 const MARKDOWN_TABLE_SEPARATOR_LINE = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/;
 const COMMONMARK_DOUBLE_STAR = /\*\*/;
 const LITERAL_BACKSLASH_N = /\\n/;
@@ -59,15 +60,16 @@ interface ParsedArgs {
   channel: string;
   threadTs?: string;
   blocksFile?: string;
+  files: string[];
 }
 
 function result(stderr: string, exitCode = 1): ExecResult {
   return { stdout: "", stderr, exitCode };
 }
 
-function allowedBlocksFileRoots(): string[] {
+function allowedFileRoots(): string[] {
   const roots = new Set<string>();
-  for (const root of BLOCKS_FILE_ALLOWED_ROOTS) {
+  for (const root of FILE_ALLOWED_ROOTS) {
     roots.add(resolve(root));
     const realRoot = realpathOrNull(root);
     if (realRoot) roots.add(realRoot);
@@ -75,32 +77,41 @@ function allowedBlocksFileRoots(): string[] {
   return [...roots];
 }
 
-function isAllowedBlocksFilePath(path: string): boolean {
+function isAllowedFilePath(path: string): boolean {
   const normalized = resolve(path);
-  return allowedBlocksFileRoots().some((root) => isPathWithin(root, normalized));
+  return allowedFileRoots().some((root) => isPathWithin(root, normalized));
 }
 
-function resolveBlocksFilePath(blocksFile: string, cwd?: string): string | { error: string } {
-  if (!cwd && !blocksFile.startsWith("/")) {
-    return { error: "cwd is required when using relative --blocks-file paths" };
+/**
+ * Resolve a user-supplied path (from `--blocks-file` or `--file`) to a real path
+ * confined to /tmp or /workspace — the volumes the sandbox and remote-cli share.
+ * `flag` names the originating option for error messages. Rejects absolute
+ * escapes, `..` traversal, and symlinks that resolve outside the allowed roots,
+ * so the agent cannot make remote-cli read arbitrary files off its own disk.
+ */
+function resolveAllowedFilePath(
+  rawPath: string,
+  cwd: string | undefined,
+  flag: string,
+): string | { error: string } {
+  if (!cwd && !rawPath.startsWith("/")) {
+    return { error: `cwd is required when using relative ${flag} paths` };
   }
 
-  const candidatePath = blocksFile.startsWith("/")
-    ? resolve(blocksFile)
-    : resolve(resolve("/", cwd ?? "/"), blocksFile);
-  if (!isAllowedBlocksFilePath(candidatePath)) {
-    return { error: "--blocks-file must be under /tmp or /workspace" };
+  const candidatePath = rawPath.startsWith("/")
+    ? resolve(rawPath)
+    : resolve(resolve("/", cwd ?? "/"), rawPath);
+  if (!isAllowedFilePath(candidatePath)) {
+    return { error: `${flag} must be under /tmp or /workspace` };
   }
 
   const realPath = realpathOrNull(candidatePath);
   if (!realPath) {
-    return {
-      error: `failed to read --blocks-file ${blocksFile}: path does not exist`,
-    };
+    return { error: `failed to read ${flag} ${rawPath}: path does not exist` };
   }
 
-  if (!isAllowedBlocksFilePath(realPath)) {
-    return { error: "--blocks-file must be under /tmp or /workspace" };
+  if (!isAllowedFilePath(realPath)) {
+    return { error: `${flag} must be under /tmp or /workspace` };
   }
 
   return realPath;
@@ -160,6 +171,7 @@ export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: 
   let channel: string | undefined;
   let threadTs: string | undefined;
   let blocksFile: string | undefined;
+  const files: string[] = [];
 
   const requireValue = (flag: string, value: string | undefined): string | { error: string } => {
     if (value === undefined || value.length === 0) return { error: `${flag} requires a value` };
@@ -192,6 +204,14 @@ export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: 
       const value = requireValue("--blocks-file", arg.slice("--blocks-file=".length));
       if (typeof value !== "string") return value;
       blocksFile = value;
+    } else if (arg === "--file") {
+      const value = requireValue("--file", args[++i]);
+      if (typeof value !== "string") return value;
+      files.push(value);
+    } else if (arg.startsWith("--file=")) {
+      const value = requireValue("--file", arg.slice("--file=".length));
+      if (typeof value !== "string") return value;
+      files.push(value);
     } else {
       return { error: `unsupported argument: ${arg}` };
     }
@@ -201,6 +221,7 @@ export function parseSlackPostMessageArgs(args: unknown): ParsedArgs | { error: 
 
   return {
     channel,
+    files,
     ...(threadTs ? { threadTs } : {}),
     ...(blocksFile ? { blocksFile } : {}),
   };
@@ -253,7 +274,7 @@ export async function handleSlackPostMessage(
     ...(parsed.threadTs ? { thread_ts: parsed.threadTs } : {}),
   };
   if (parsed.blocksFile) {
-    const blocksPath = resolveBlocksFilePath(parsed.blocksFile, request.cwd);
+    const blocksPath = resolveAllowedFilePath(parsed.blocksFile, request.cwd, "--blocks-file");
     if (typeof blocksPath !== "string") return result(`${blocksPath.error}\n`);
 
     let blocksStat;
@@ -294,6 +315,55 @@ export async function handleSlackPostMessage(
       return result("--blocks-file must contain a top-level JSON array\n");
     }
     payload.blocks = blocks;
+  }
+
+  // Attachments are uploaded into the thread first — one file per message,
+  // labeled "File N" — so they precede the actual message being posted. Every
+  // path is validated and read before any upload, so a bad path fails the whole
+  // command without leaving earlier files half-posted in the thread.
+  const attachments: { title: string; content: Buffer }[] = [];
+  for (const rawPath of parsed.files) {
+    const filePath = resolveAllowedFilePath(rawPath, request.cwd, "--file");
+    if (typeof filePath !== "string") return result(`${filePath.error}\n`);
+
+    let fileStat;
+    try {
+      fileStat = statSync(filePath);
+    } catch (err) {
+      return result(
+        `failed to read --file ${rawPath}: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
+    if (!fileStat.isFile()) return result(`--file ${rawPath} must be a regular file\n`);
+    if (fileStat.size > MAX_ATTACHMENT_BYTES) {
+      return result(`--file ${rawPath} exceeds ${MAX_ATTACHMENT_BYTES} bytes\n`);
+    }
+
+    try {
+      attachments.push({ title: basename(filePath), content: readFileSync(filePath) });
+    } catch (err) {
+      return result(
+        `failed to read --file ${rawPath}: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
+  }
+
+  for (const [index, attachment] of attachments.entries()) {
+    const label = `File ${index + 1}`;
+    const upload = await uploadSlackFileApi(
+      {
+        channel: parsed.channel,
+        ...(parsed.threadTs ? { threadTs: parsed.threadTs } : {}),
+        filename: attachment.title,
+        title: attachment.title,
+        content: attachment.content,
+        initialComment: label,
+      },
+      { fetch: deps.fetch, env: deps.env },
+    );
+    if ("error" in upload) {
+      return result(`failed to upload ${label} (${attachment.title}): ${upload.error}\n`);
+    }
   }
 
   const slackResponse = await postSlackMessageApi(
@@ -388,7 +458,7 @@ export interface SlackFileUploadRequest {
   threadTs?: string;
   filename: string;
   title: string;
-  content: string;
+  content: string | Buffer;
   initialComment?: string;
 }
 

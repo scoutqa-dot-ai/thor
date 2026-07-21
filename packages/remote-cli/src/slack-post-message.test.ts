@@ -337,6 +337,115 @@ describe("remote-cli slack-post-message endpoint", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("uploads --file attachments as File N into the thread before posting the message", async () => {
+    writeFileSync(join(testCwd, "a.txt"), "alpha", "utf8");
+    writeFileSync(join(testCwd, "b.txt"), "beta", "utf8");
+    fetchMock.mockImplementation((async (url: string) => {
+      if (url.endsWith("/files.getUploadURLExternal")) {
+        return jsonResponse({
+          ok: true,
+          upload_url: "https://files.slack.test/upload/abc",
+          file_id: "F1",
+        });
+      }
+      if (url === "https://files.slack.test/upload/abc") return new Response("", { status: 200 });
+      if (url.endsWith("/files.completeUploadExternal")) {
+        return jsonResponse({ ok: true, files: [{ id: "F1", permalink: "https://slk/F1" }] });
+      }
+      if (url.endsWith("/chat.postMessage")) {
+        return jsonResponse({ ok: true, channel: "C123", ts: "1777940309.867569" });
+      }
+      throw new Error(`unexpected url: ${url}`);
+    }) as unknown as typeof fetch);
+
+    const response = await postSlack(
+      {
+        args: [
+          "--channel",
+          "C123",
+          "--thread-ts",
+          "1777940300.000000",
+          "--file",
+          "a.txt",
+          "--file",
+          "b.txt",
+        ],
+        stdin: "here are the files",
+      },
+      { "x-thor-session-id": "session-1" },
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()) as unknown).toEqual({
+      stdout: '{"ok":true}\n',
+      stderr: "",
+      exitCode: 0,
+    });
+
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+    // Both files fully upload (3 calls each) before the single postMessage.
+    expect(urls[urls.length - 1]).toBe("https://slack.com/api/chat.postMessage");
+    expect(urls.filter((u) => u.endsWith("/chat.postMessage"))).toHaveLength(1);
+
+    // The two completeUploadExternal calls carry the sequential labels and the
+    // requested thread; the raw uploads carry each file's exact bytes.
+    const completes = fetchMock.mock.calls.filter((c) =>
+      String(c[0]).endsWith("/files.completeUploadExternal"),
+    );
+    const labels = completes.map((c) =>
+      new URLSearchParams(String((c[1] as RequestInit).body)).get("initial_comment"),
+    );
+    expect(labels).toEqual(["File 1", "File 2"]);
+    for (const c of completes) {
+      expect(new URLSearchParams(String((c[1] as RequestInit).body)).get("thread_ts")).toBe(
+        "1777940300.000000",
+      );
+    }
+    const rawBodies = fetchMock.mock.calls
+      .filter((c) => String(c[0]) === "https://files.slack.test/upload/abc")
+      .map((c) => String((c[1] as RequestInit).body));
+    expect(rawBodies).toEqual(["alpha", "beta"]);
+  });
+
+  it("rejects --file paths outside the allowed roots and never uploads or posts", async () => {
+    writeFileSync(join(testCwd, "ok.txt"), "hi", "utf8");
+    await expectFailure(
+      { args: ["--channel", "C123", "--file", "/etc/passwd"], stdin: "hi" },
+      "--file must be under /tmp or /workspace",
+    );
+    await expectFailure(
+      { args: ["--channel", "C123", "--file", "../../../etc/passwd"], stdin: "hi" },
+      "--file must be under /tmp or /workspace",
+    );
+    await expectFailure(
+      { args: ["--channel", "C123", "--file", "missing.txt"], stdin: "hi" },
+      "failed to read --file missing.txt: path does not exist",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fails the command and posts no message when an attachment upload fails", async () => {
+    writeFileSync(join(testCwd, "a.txt"), "alpha", "utf8");
+    fetchMock.mockImplementation((async (url: string) => {
+      if (url.endsWith("/files.getUploadURLExternal")) {
+        return jsonResponse({ ok: false, error: "missing_scope" });
+      }
+      throw new Error(`unexpected url after failed upload: ${url}`);
+    }) as unknown as typeof fetch);
+
+    const response = await postSlack(
+      { args: ["--channel", "C123", "--file", "a.txt"], stdin: "here" },
+      { "x-thor-session-id": "session-1" },
+    );
+    const body = (await response.json()) as { stderr: string };
+    expect(response.status).toBe(400);
+    expect(body.stderr).toContain(
+      "failed to upload File 1 (a.txt): Slack API error: missing_scope",
+    );
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain(
+      "https://slack.com/api/chat.postMessage",
+    );
+  });
+
   it("returns Slack ok:false without alias registration", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ ok: false, error: "channel_not_found" }));
 
