@@ -174,16 +174,11 @@ function buildActionBlocks(buttonValue: string): SlackBlock[] {
   ];
 }
 
-/**
- * When `fileUrl` is set, the body was uploaded as a file (oversize): the card
- * shows a truncated preview and links the full content below it.
- */
 export function buildApprovalPresentationBlocks(
   presentation: ApprovalPresentation,
   buttonValue: string,
-  fileUrl?: string,
 ): SlackBlock[] {
-  const blocks: SlackBlock[] = [
+  return [
     {
       type: "section",
       text: {
@@ -199,18 +194,8 @@ export function buildApprovalPresentationBlocks(
         text: trimForSlack(presentation.markdown, SLACK_SECTION_TEXT_LIMIT),
       },
     },
+    ...buildActionBlocks(buttonValue),
   ];
-  if (fileUrl) {
-    blocks.push({
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `:paperclip: <${fileUrl}|View the full content>`,
-      },
-    });
-  }
-  blocks.push(...buildActionBlocks(buttonValue));
-  return blocks;
 }
 
 function buildCreateJiraIssuePresentation(args: Record<string, unknown>): ApprovalPresentation {

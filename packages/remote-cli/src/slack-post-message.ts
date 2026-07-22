@@ -317,12 +317,10 @@ export async function handleSlackPostMessage(
     payload.blocks = blocks;
   }
 
-  // Attachments are uploaded into the thread first — one file per message,
-  // labeled "File N" — so they precede the actual message being posted. Every
-  // path is validated and read before any upload, so a bad path fails the whole
-  // command without leaving earlier files half-posted in the thread.
-  const attachments: { title: string; content: Buffer }[] = [];
-  for (const rawPath of parsed.files) {
+  // Attachments are uploaded into the thread first, each with the stdin message
+  // as its comment so it remains useful even if a later upload or message post
+  // fails. Successfully shared files are intentionally left in the thread.
+  for (const [index, rawPath] of parsed.files.entries()) {
     const filePath = resolveAllowedFilePath(rawPath, request.cwd, "--file");
     if (typeof filePath !== "string") return result(`${filePath.error}\n`);
 
@@ -339,41 +337,29 @@ export async function handleSlackPostMessage(
       return result(`--file ${rawPath} exceeds ${MAX_ATTACHMENT_BYTES} bytes\n`);
     }
 
+    let content: Buffer;
     try {
-      attachments.push({ title: basename(filePath), content: readFileSync(filePath) });
+      content = readFileSync(filePath);
     } catch (err) {
       return result(
         `failed to read --file ${rawPath}: ${err instanceof Error ? err.message : String(err)}\n`,
       );
     }
-  }
-
-  // Track every file that reaches Slack so a mid-loop failure doesn't leave
-  // earlier attachments (or the failing one's own allocated file) orphaned in
-  // the thread. uploadSlackFileApi surfaces a `fileId` even on failure once the
-  // file is allocated, so the failing attachment is cleaned up too.
-  const uploadedFileIds: string[] = [];
-  for (const [index, attachment] of attachments.entries()) {
     const label = `File ${index + 1}`;
     const upload = await uploadSlackFileApi(
       {
         channel: parsed.channel,
         ...(parsed.threadTs ? { threadTs: parsed.threadTs } : {}),
-        filename: attachment.title,
-        title: attachment.title,
-        content: attachment.content,
-        initialComment: label,
+        filename: basename(filePath),
+        title: basename(filePath),
+        content,
+        initialComment: text,
       },
       { fetch: deps.fetch, env: deps.env },
     );
     if ("error" in upload) {
-      const orphans = upload.fileId ? [...uploadedFileIds, upload.fileId] : uploadedFileIds;
-      for (const fileId of orphans) {
-        await deleteSlackFileApi(fileId, { fetch: deps.fetch, env: deps.env });
-      }
-      return result(`failed to upload ${label} (${attachment.title}): ${upload.error}\n`);
+      return result(`failed to upload ${label} (${basename(filePath)}): ${upload.error}\n`);
     }
-    uploadedFileIds.push(upload.fileId);
   }
 
   const slackResponse = await postSlackMessageApi(
@@ -463,15 +449,6 @@ export async function postSlackMessageApi(
   };
 }
 
-export interface SlackFileUploadRequest {
-  channel: string;
-  threadTs?: string;
-  filename: string;
-  title: string;
-  content: string | Buffer;
-  initialComment?: string;
-}
-
 async function slackApiForm(
   path: string,
   form: URLSearchParams,
@@ -506,16 +483,21 @@ async function slackApiForm(
  * upload flow (getUploadURLExternal → raw POST → completeUploadExternal). The
  * returned `upload_url` is pre-signed, so step 2 uses it verbatim and carries
  * no Authorization header; only the first and third calls hit the Web API base.
- * Requires the bot's `files:write` scope. Returns the shared file's permalink.
- *
- * Once `getUploadURLExternal` has allocated a `file_id`, every later error path
- * carries that `fileId` on the error result so the caller can best-effort
- * `deleteSlackFileApi` any upload that may have been left behind.
+ * Requires the bot's `files:write` scope. A successful completion is enough;
+ * callers intentionally leave uploaded files in Slack and do not need a file
+ * URL or file id.
  */
 export async function uploadSlackFileApi(
-  request: SlackFileUploadRequest,
+  request: {
+    channel: string;
+    threadTs?: string;
+    filename: string;
+    title: string;
+    content: string | Buffer;
+    initialComment?: string;
+  },
   deps: Pick<SlackPostMessageDeps, "fetch" | "env"> = {},
-): Promise<{ fileId: string; permalink: string } | { error: string; fileId?: string }> {
+): Promise<{ ok: true } | { error: string }> {
   if (!deps.env?.SLACK_BOT_TOKEN) return { error: "SLACK_BOT_TOKEN is not set" };
   const fetchImpl = deps.fetch ?? fetch;
 
@@ -539,10 +521,10 @@ export async function uploadSlackFileApi(
       body: request.content,
     });
     if (!uploadResponse.ok) {
-      return { error: `Slack file upload failed with HTTP ${uploadResponse.status}`, fileId };
+      return { error: `Slack file upload failed with HTTP ${uploadResponse.status}` };
     }
   } catch (err) {
-    return { error: err instanceof Error ? err.message : String(err), fileId };
+    return { error: err instanceof Error ? err.message : String(err) };
   }
 
   const completeForm = new URLSearchParams({
@@ -552,28 +534,6 @@ export async function uploadSlackFileApi(
     ...(request.initialComment ? { initial_comment: request.initialComment } : {}),
   });
   const complete = await slackApiForm("/files.completeUploadExternal", completeForm, deps);
-  if ("error" in complete) return { ...complete, fileId };
-
-  const files = complete.json.files;
-  const permalink =
-    Array.isArray(files) && files[0] && typeof files[0] === "object"
-      ? (files[0] as { permalink?: unknown }).permalink
-      : undefined;
-  if (typeof permalink !== "string" || permalink.length === 0) {
-    // The file is already shared at this point; hand the id back so the caller
-    // can delete the orphan rather than leaving it in the thread.
-    return { error: "Slack files.completeUploadExternal response missing permalink", fileId };
-  }
-  return { fileId, permalink };
-}
-
-/** Best-effort delete of a previously uploaded file (used to clean up an orphan). */
-export async function deleteSlackFileApi(
-  fileId: string,
-  deps: Pick<SlackPostMessageDeps, "fetch" | "env"> = {},
-): Promise<{ ok: true } | { error: string }> {
-  if (!deps.env?.SLACK_BOT_TOKEN) return { error: "SLACK_BOT_TOKEN is not set" };
-  const result = await slackApiForm("/files.delete", new URLSearchParams({ file: fileId }), deps);
-  if ("error" in result) return result;
+  if ("error" in complete) return complete;
   return { ok: true };
 }

@@ -16,11 +16,7 @@ import {
 } from "@thor/common";
 import type { ApprovalToolName } from "@thor/common";
 import { ApprovalStore, type ApprovalAction } from "./approval-store.ts";
-import {
-  deleteSlackFileApi,
-  postSlackMessageApi,
-  uploadSlackFileApi,
-} from "./slack-post-message.ts";
+import { postSlackMessageApi, uploadSlackFileApi } from "./slack-post-message.ts";
 
 const log = createLogger("approval");
 const DEFAULT_APPROVALS_DIR = "/workspace/data/approvals";
@@ -226,12 +222,10 @@ export function createApprovalService(deps: ApprovalServiceDeps = {}): ApprovalS
       },
     };
 
-    // Content that overflows the card is uploaded as a Markdown file in the
-    // thread and linked from the card. The file carries the exact content the
-    // reviewer must see, so it is required: a failed upload fails the approval
-    // rather than silently posting a truncated card.
-    let fileUrl: string | undefined;
-    let uploadedFileId: string | undefined;
+    // Content that overflows the card is uploaded as a self-describing Markdown
+    // file in the thread. The file carries the exact content the reviewer must
+    // see, so it is required: a failed upload fails the approval rather than
+    // silently posting a truncated card.
     if (approvalPresentationIsOversize(presentation)) {
       const upload = await uploadSlackFileApi(
         {
@@ -240,26 +234,13 @@ export function createApprovalService(deps: ApprovalServiceDeps = {}): ApprovalS
           filename: `approval-${input.tool}-${input.action.id}.md`,
           title: presentation.title,
           content: buildApprovalFileMarkdown(presentation),
+          initialComment: `Full approval content for *${presentation.title}* (approval \`${input.action.id}\`).`,
         },
         slackDeps,
       );
       if ("error" in upload) {
-        // The file may already be shared (e.g. permalink missing from the
-        // response); delete it so a failed approval leaves no orphan behind.
-        if (upload.fileId) {
-          const cleanup = await deleteSlackFileApi(upload.fileId, slackDeps);
-          if ("error" in cleanup) {
-            logWarn(log, "approval_file_cleanup_failed", {
-              actionId: input.action.id,
-              fileId: upload.fileId,
-              error: cleanup.error,
-            });
-          }
-        }
         return { error: `full-content upload failed: ${upload.error}` };
       }
-      fileUrl = upload.permalink;
-      uploadedFileId = upload.fileId;
     }
 
     const result = await postSlackMessageApi(
@@ -267,25 +248,11 @@ export function createApprovalService(deps: ApprovalServiceDeps = {}): ApprovalS
         channel: input.channel,
         threadTs: input.threadTs,
         text: presentation.title,
-        blocks: buildApprovalPresentationBlocks(presentation, buttonValue, fileUrl),
+        blocks: buildApprovalPresentationBlocks(presentation, buttonValue),
       },
       slackDeps,
     );
-    if ("error" in result) {
-      // The card is the load-bearing message; if it fails, clean up the file we
-      // uploaded first so the thread is not left with an orphaned attachment.
-      if (uploadedFileId) {
-        const cleanup = await deleteSlackFileApi(uploadedFileId, slackDeps);
-        if ("error" in cleanup) {
-          logWarn(log, "approval_file_cleanup_failed", {
-            actionId: input.action.id,
-            fileId: uploadedFileId,
-            error: cleanup.error,
-          });
-        }
-      }
-      return result;
-    }
+    if ("error" in result) return result;
     return { ts: result.ts };
   }
 

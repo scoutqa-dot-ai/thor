@@ -155,36 +155,10 @@ describe("approval presentation", () => {
   });
 });
 
-describe("approval oversize detection and file link", () => {
+describe("approval oversize detection", () => {
   it("flags a presentation as oversize only when its body exceeds the section limit", () => {
     expect(approvalPresentationIsOversize({ title: "t", markdown: "short" })).toBe(false);
     expect(approvalPresentationIsOversize({ title: "t", markdown: "x".repeat(3001) })).toBe(true);
-  });
-
-  it("appends a file link block below the truncated body when a fileUrl is given", () => {
-    const blocks = buildApprovalPresentationBlocks(
-      { title: "Create feature flag: beta", markdown: "x".repeat(4000) },
-      "v3:act-1:posthog:1710000000.001",
-      "https://slack.example/files/F1",
-    );
-
-    const linkBlock = blocks.find(
-      (b): b is { type: "section"; text: { type: "mrkdwn"; text: string } } =>
-        b.type === "section" && b.text.text.includes("View the full content"),
-    );
-    expect(linkBlock?.text.text).toBe(
-      ":paperclip: <https://slack.example/files/F1|View the full content>",
-    );
-  });
-
-  it("omits the file link block when no fileUrl is given", () => {
-    const blocks = buildApprovalPresentationBlocks(
-      { title: "Create feature flag: beta", markdown: "*Key:* beta" },
-      "v3:act-1:posthog:1710000000.001",
-    );
-    expect(
-      blocks.some((b) => b.type === "section" && b.text.text.includes("View the full content")),
-    ).toBe(false);
   });
 });
 

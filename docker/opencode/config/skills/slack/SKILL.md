@@ -156,11 +156,12 @@ curl -sS -X POST https://slack.com/api/reactions.add \
 ### 6. Upload a file
 
 Attach files by passing `--file <path>` to `slack-post-message` (repeatable).
-Each file is uploaded into the thread as its own message labeled "File 1",
-"File 2", … before your message is posted. Paths must be under `/tmp` or
-`/workspace`. Generate the file in a unique temp path first unless the user
-explicitly asks to keep it; if the filename matters, use a unique temp directory
-and a named file inside it.
+Each file is uploaded into the thread with the command's stdin message as its
+comment before the standalone message is posted, so the attachment keeps its
+context if a later operation fails. Paths must be under `/tmp` or `/workspace`.
+Generate the file in a unique temp path first unless the user explicitly asks to
+keep it; if the filename matters, use a unique temp directory and a named file
+inside it.
 
 ```bash
 UPLOAD_DIR="$(mktemp -d /tmp/slack-report.XXXXXX)"
@@ -200,8 +201,8 @@ Common failures to report as-is:
 - Do not use shared temp paths. Default to `mktemp` under `/tmp`; use
   `mktemp -d` when you need a stable filename inside a unique temp directory.
 - Uploads go through `slack-post-message --file`; each file is uploaded into the
-  thread before your message. Do not call Slack's external-upload endpoints
-  directly.
+  thread with your stdin message as its comment before the standalone message.
+  Do not call Slack's external-upload endpoints directly.
 - `/tmp` is the default location for temporary Slack artifacts. Treat
   `/workspace/worktrees` as persistent storage and use it only when
   persistence is explicitly requested.

@@ -1155,7 +1155,7 @@ if [[ "$seed_ok" == "true" && -n "$seed_ts" && -n "$upload_session_id" ]]; then
   assert '[[ -n "$upload_file_id" ]]' "Slack thread shows uploaded file reply" "replies: ${replies:0:1000}"
   assert '[[ "$upload_file_title" == "$slack_upload_filename" ]]' "uploaded file keeps the file basename as title" "reply: ${upload_reply_json:0:300}"
   upload_file_comment=$(json_field "$upload_reply_json" "text")
-  assert '[[ "$upload_file_comment" == *"File 1"* ]]' "attachment is labeled File 1" "reply: ${upload_reply_json:0:300}"
+  assert '[[ "$upload_file_comment" == *"$slack_upload_message"* ]]' "attachment carries the standalone message as context" "reply: ${upload_reply_json:0:300}"
 
   # The actual message posts as its own reply after the attachment.
   message_reply_present=$(echo "$replies" | EXPECT_MSG="$slack_upload_message" node -e "

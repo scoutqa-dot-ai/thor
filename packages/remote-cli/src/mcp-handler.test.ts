@@ -1364,9 +1364,8 @@ describe("remote-cli MCP endpoints", () => {
   });
 
   // Route the external file-upload flow (getUploadURLExternal → pre-signed POST
-  // → completeUploadExternal) plus chat.postMessage / files.delete for oversize
-  // approval tests.
-  function routeApprovalUpload(overrides: { postMessage?: unknown; complete?: unknown } = {}) {
+  // → completeUploadExternal) plus chat.postMessage for oversize approval tests.
+  function routeApprovalUpload(overrides: { postMessage?: unknown } = {}) {
     slackFetch.mockImplementation((async (input: string | URL) => {
       const url = String(input);
       if (url.endsWith("/files.getUploadURLExternal")) {
@@ -1382,14 +1381,7 @@ describe("remote-cli MCP endpoints", () => {
         return new Response("", { status: 200 });
       }
       if (url.endsWith("/files.completeUploadExternal")) {
-        return new Response(
-          JSON.stringify(
-            overrides.complete ?? {
-              ok: true,
-              files: [{ id: "F1", permalink: "https://slack.test/files/F1" }],
-            },
-          ),
-        );
+        return new Response(JSON.stringify({ ok: true }));
       }
       if (url.endsWith("/chat.postMessage")) {
         return new Response(
@@ -1397,9 +1389,6 @@ describe("remote-cli MCP endpoints", () => {
             overrides.postMessage ?? { ok: true, channel: "C123", ts: "1710000000.100" },
           ),
         );
-      }
-      if (url.endsWith("/files.delete")) {
-        return new Response(JSON.stringify({ ok: true }));
       }
       throw new Error(`unexpected slack url: ${url}`);
     }) as unknown as typeof fetch);
@@ -1417,7 +1406,7 @@ describe("remote-cli MCP endpoints", () => {
     }),
   ];
 
-  it("uploads oversize approval content as a file and links it from the card", async () => {
+  it("uploads oversize approval content with a self-contained file comment", async () => {
     appendActiveTrigger();
     routeApprovalUpload();
     const bigDescription = "x".repeat(4000);
@@ -1441,13 +1430,21 @@ describe("remote-cli MCP endpoints", () => {
     );
     expect(String(uploadCall?.[1]?.body)).toContain(bigDescription);
 
-    // The card is posted last and links the shared file permalink.
+    // The file reply explains what the attachment contains without relying on
+    // the card or a permalink.
+    const completeCall = slackFetch.mock.calls.find((c) =>
+      String(c[0]).endsWith("/files.completeUploadExternal"),
+    );
+    const completeForm = new URLSearchParams(String(completeCall?.[1]?.body));
+    expect(completeForm.get("initial_comment")).toContain("Full approval content for");
+    expect(completeForm.get("initial_comment")).toContain("Create Jira issue: Fix it");
+
+    // The card is posted last and contains no file URL dependency.
     const postCall = slackFetch.mock.calls.find((c) => String(c[0]).endsWith("/chat.postMessage"));
     const payload = JSON.parse(String(postCall?.[1]?.body)) as {
       blocks: Array<{ text?: { text?: string } }>;
     };
-    const linkBlock = payload.blocks.find((b) => b.text?.text?.includes("View the full content"));
-    expect(linkBlock?.text?.text).toContain("https://slack.test/files/F1");
+    expect(payload.blocks.some((b) => b.text?.text?.includes("View the full content"))).toBe(false);
   });
 
   it("fails the approval and posts no card when oversize-content upload fails", async () => {
@@ -1475,7 +1472,7 @@ describe("remote-cli MCP endpoints", () => {
     );
   });
 
-  it("deletes the uploaded file when the approval card fails to post", async () => {
+  it("keeps the uploaded file when the approval card fails to post", async () => {
     appendActiveTrigger();
     routeApprovalUpload({ postMessage: { ok: false, error: "channel_not_found" } });
 
@@ -1487,33 +1484,8 @@ describe("remote-cli MCP endpoints", () => {
     const pendingBody = (await pending.json()) as { exitCode: number };
     expect(pendingBody.exitCode).toBe(1);
 
-    const deleteCall = slackFetch.mock.calls.find((c) => String(c[0]).endsWith("/files.delete"));
-    expect(deleteCall).toBeDefined();
-    const form = new URLSearchParams(String(deleteCall?.[1]?.body));
-    expect(form.get("file")).toBe("F1");
-  });
-
-  it("deletes the uploaded file when the completed upload has no permalink", async () => {
-    appendActiveTrigger();
-    // The file is shared but the response omits the permalink; the approval
-    // fails and the already-shared file must not be left orphaned.
-    routeApprovalUpload({ complete: { ok: true, files: [{ id: "F1" }] } });
-
-    const pending = await postJson(
-      "/exec/mcp",
-      { args: oversizeCreateJiraArgs("x".repeat(4000)) },
-      { "x-thor-session-id": "parent-session" },
-    );
-    const pendingBody = (await pending.json()) as { exitCode: number; stderr: string };
-    expect(pendingBody.exitCode).toBe(1);
-    expect(pendingBody.stderr).toContain("full-content upload failed");
-
-    const deleteCall = slackFetch.mock.calls.find((c) => String(c[0]).endsWith("/files.delete"));
-    expect(deleteCall).toBeDefined();
-    expect(new URLSearchParams(String(deleteCall?.[1]?.body)).get("file")).toBe("F1");
-    // No card is posted when the upload cannot be linked.
     expect(slackFetch.mock.calls.map((c) => String(c[0]))).not.toContain(
-      "https://slack.test/api/chat.postMessage",
+      "https://slack.test/api/files.delete",
     );
   });
 

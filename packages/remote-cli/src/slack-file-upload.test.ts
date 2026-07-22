@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { deleteSlackFileApi, uploadSlackFileApi } from "./slack-post-message.ts";
+import { uploadSlackFileApi } from "./slack-post-message.ts";
 
 const env = { SLACK_BOT_TOKEN: "xoxb-test", SLACK_API_BASE_URL: "https://slack.test/api" };
 
@@ -20,24 +20,14 @@ function routingFetch(overrides: Record<string, unknown> = {}) {
       return new Response("", { status: (overrides.uploadStatus as number) ?? 200 });
     }
     if (url === "https://slack.test/api/files.completeUploadExternal") {
-      return new Response(
-        JSON.stringify(
-          overrides.completeUpload ?? {
-            ok: true,
-            files: [{ id: "F1", permalink: "https://slack.test/files/F1" }],
-          },
-        ),
-      );
-    }
-    if (url === "https://slack.test/api/files.delete") {
-      return new Response(JSON.stringify(overrides.delete ?? { ok: true }));
+      return new Response(JSON.stringify(overrides.completeUpload ?? { ok: true }));
     }
     throw new Error(`unexpected url: ${url}`);
   });
 }
 
 describe("uploadSlackFileApi", () => {
-  it("runs the 3-call external upload flow and returns the shared permalink", async () => {
+  it("runs the 3-call external upload flow without requiring file metadata", async () => {
     const fetchMock = routingFetch();
 
     const result = await uploadSlackFileApi(
@@ -45,7 +35,7 @@ describe("uploadSlackFileApi", () => {
       { fetch: fetchMock as unknown as typeof fetch, env },
     );
 
-    expect(result).toEqual({ fileId: "F1", permalink: "https://slack.test/files/F1" });
+    expect(result).toEqual({ ok: true });
     expect(fetchMock).toHaveBeenCalledTimes(3);
 
     const getForm = new URLSearchParams(String(fetchMock.mock.calls[0]?.[1]?.body));
@@ -78,20 +68,6 @@ describe("uploadSlackFileApi", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("errors when the completed upload has no permalink but returns the file id for cleanup", async () => {
-    const fetchMock = routingFetch({ completeUpload: { ok: true, files: [{ id: "F1" }] } });
-
-    const result = await uploadSlackFileApi(
-      { channel: "C1", filename: "a.md", title: "Title", content: "hello" },
-      { fetch: fetchMock as unknown as typeof fetch, env },
-    );
-
-    expect(result).toEqual({
-      error: "Slack files.completeUploadExternal response missing permalink",
-      fileId: "F1",
-    });
-  });
-
   it("fails fast when the raw upload returns a non-2xx status and skips completion", async () => {
     const fetchMock = routingFetch({ uploadStatus: 500 });
 
@@ -100,8 +76,7 @@ describe("uploadSlackFileApi", () => {
       { fetch: fetchMock as unknown as typeof fetch, env },
     );
 
-    // Carries the fileId so the caller can best-effort delete the upload.
-    expect(result).toEqual({ error: "Slack file upload failed with HTTP 500", fileId: "F1" });
+    expect(result).toEqual({ error: "Slack file upload failed with HTTP 500" });
     // Stops after getUploadURLExternal + the failed raw POST; never completes.
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain(
@@ -128,11 +103,11 @@ describe("uploadSlackFileApi", () => {
       { fetch: fetchMock as unknown as typeof fetch, env },
     );
 
-    expect(result).toEqual({ error: "connection reset", fileId: "F1" });
+    expect(result).toEqual({ error: "connection reset" });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("returns the file id when completeUploadExternal errors so the caller can clean up", async () => {
+  it("surfaces a completeUploadExternal error", async () => {
     const fetchMock = routingFetch({ completeUpload: { ok: false, error: "internal_error" } });
 
     const result = await uploadSlackFileApi(
@@ -140,7 +115,7 @@ describe("uploadSlackFileApi", () => {
       { fetch: fetchMock as unknown as typeof fetch, env },
     );
 
-    expect(result).toEqual({ error: "Slack API error: internal_error", fileId: "F1" });
+    expect(result).toEqual({ error: "Slack API error: internal_error" });
   });
 
   it("requires a bot token", async () => {
@@ -149,32 +124,5 @@ describe("uploadSlackFileApi", () => {
       { env: {} },
     );
     expect(result).toEqual({ error: "SLACK_BOT_TOKEN is not set" });
-  });
-});
-
-describe("deleteSlackFileApi", () => {
-  it("deletes by file id", async () => {
-    const fetchMock = routingFetch();
-    const result = await deleteSlackFileApi("F1", {
-      fetch: fetchMock as unknown as typeof fetch,
-      env,
-    });
-    expect(result).toEqual({ ok: true });
-    const form = new URLSearchParams(String(fetchMock.mock.calls[0]?.[1]?.body));
-    expect(form.get("file")).toBe("F1");
-  });
-
-  it("requires a bot token", async () => {
-    const result = await deleteSlackFileApi("F1", { env: {} });
-    expect(result).toEqual({ error: "SLACK_BOT_TOKEN is not set" });
-  });
-
-  it("surfaces a Slack API error from files.delete", async () => {
-    const fetchMock = routingFetch({ delete: { ok: false, error: "file_not_found" } });
-    const result = await deleteSlackFileApi("F1", {
-      fetch: fetchMock as unknown as typeof fetch,
-      env,
-    });
-    expect(result).toEqual({ error: "Slack API error: file_not_found" });
   });
 });
