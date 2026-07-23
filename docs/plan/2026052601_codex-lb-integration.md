@@ -2,7 +2,7 @@
 
 Ship `ghcr.io/soju06/codex-lb` as the OpenAI-compatible upstream for opencode, fronted behind Thor's ingress auth gate.
 
-**Addendum (2026-07-23):** The primary build agent now uses `openai/gpt-5.6-terra`; coder and thinker use `openai/gpt-5.6-sol`. The coupled OpenCode server/SDK pin moves to 1.18.4 because its embedded models.dev snapshot contains both models. codex-lb moves to 1.21, whose bundled fallback catalog contains upstream-verified GPT-5.6 metadata. An explicit `opencode models --refresh` against 1.17.16 also exposed the models, but Thor keeps runtime refreshes disabled and uses the bundled catalogs so startup remains offline and reproducible. Title generation stays on `openai/gpt-5.4-mini`.
+**Addendum (2026-07-23):** The primary build agent now uses `openai/gpt-5.6-terra`; coder and thinker use `openai/gpt-5.6-sol`. The thinker sets `reasoningEffort: xhigh` using the camelCase provider-option key OpenCode's OpenAI SDK consumes; the snake_case `reasoning_effort` key is accepted as generic config but ignored on the wire. The coupled OpenCode server/SDK pin moves to 1.18.4 because its embedded models.dev snapshot contains both models. codex-lb moves to 1.21, whose bundled fallback catalog contains upstream-verified GPT-5.6 metadata. An explicit `opencode models --refresh` against 1.17.16 also exposed the models, but Thor keeps runtime refreshes disabled and uses the bundled catalogs so startup remains offline and reproducible. Title generation stays on `openai/gpt-5.4-mini`.
 
 ## Goal
 
