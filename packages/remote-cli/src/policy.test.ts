@@ -1014,6 +1014,23 @@ describe("validateGhArgs", () => {
           "alice",
         ]),
       ).toBeNull();
+      expect(
+        validateGhArgs([
+          "issue",
+          "create",
+          "--title",
+          "Bug",
+          "--body-file",
+          "-",
+          "--milestone",
+          "v1",
+          "--parent",
+          "123",
+        ]),
+      ).toBeNull();
+      expect(
+        validateGhArgs(["issue", "create", "--title", "Bug", "--body-file", "-", "-m", "v1"]),
+      ).toBeNull();
     });
 
     it("allows append-only pr and issue comments", () => {
@@ -1341,6 +1358,14 @@ describe("validateGhArgs", () => {
           "multiple --body-file values are ambiguous for disclaimer injection",
           "provide exactly one --body-file - value",
         ],
+      );
+      expectGhDeniedWith(
+        ["issue", "create", "--title", "x", "--body-file", "-", "-m", "v1", "--milestone", "v2"],
+        ["multiple --milestone values are ambiguous", "provide at most one --milestone value"],
+      );
+      expectGhDeniedWith(
+        ["issue", "create", "--title", "x", "--body-file", "-", "--parent", "1", "--parent", "2"],
+        ["multiple --parent values are ambiguous", "provide at most one --parent value"],
       );
     });
 

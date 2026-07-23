@@ -18,6 +18,20 @@ describe("buildApprovalPresentation — gh issue create", () => {
     expect(presentation!.markdown).not.toContain("*Command:*");
     expect(presentation!.markdown).not.toContain("gh issue create");
   });
+
+  it("surfaces milestone and parent so the approver sees the created issue's placement", () => {
+    const presentation = buildApprovalPresentation("ghIssueCreate", {
+      cwd: "/workspace/repos/thor",
+      args: ["issue", "create", "--title", "foo", "--body-file", "-", "-m", "v1", "--parent", "12"],
+      title: "foo",
+      milestone: "v1",
+      parent: "12",
+    });
+
+    expect(presentation).toBeDefined();
+    expect(presentation!.markdown).toContain("*Milestone:* v1");
+    expect(presentation!.markdown).toContain("*Parent:* 12");
+  });
 });
 
 describe("buildApprovalPresentation — confluence page create", () => {

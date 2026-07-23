@@ -65,12 +65,6 @@ class ThorMitmAddon:
         decision = self._store.get().classify(host, path, method=request.method)
 
         if decision.action == "deny":
-            if host == "slack.com" and path == "/api/chat.postMessage":
-                flow.response = _response(
-                    403,
-                    "thor proxy denied slack.com/api/chat.postMessage; use slack-post-message instead",
-                )
-                return
             flow.response = _response(403, f"thor proxy denied host/path: {host}{path}")
             return
 
@@ -82,6 +76,12 @@ class ThorMitmAddon:
             return
 
         if decision.rule.readonly and not is_readonly_method(request.method):
+            if host == "slack.com" and path == "/api/chat.postMessage":
+                flow.response = _response(
+                    403,
+                    "thor proxy denied slack.com/api/chat.postMessage; use slack-post-message instead",
+                )
+                return
             flow.response = _response(
                 403,
                 f"thor proxy readonly rule blocked method {request.method} for host: {host}",

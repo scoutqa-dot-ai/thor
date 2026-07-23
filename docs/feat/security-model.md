@@ -39,8 +39,8 @@ Built-in defaults are intentionally narrow:
 - Atlassian: injected auth for `api.atlassian.com` and `*.atlassian.net`, read-only by default. Jira attachment uploads (`POST .../rest/api/3/issue/{key}/attachments` on `*.atlassian.net`, and `POST .../ex/jira/{cloudId}/rest/api/3/issue/{key}/attachments` on `api.atlassian.com`) are allowed as a POST-only narrow write exception.
 - Atlassian direct HTTP egress uses the global `ATLASSIAN_AUTH` value. Profile-suffixed Atlassian auth is limited to MCP routing until mitmproxy gains profile awareness.
 - Atlassian media redirects: `api.media.atlassian.com` passthrough.
-- Slack API: injected auth only for thread/history reads, `reactions.add`, `files.info`, and the upload setup/complete endpoints on `slack.com/api/...`; message writes must use `slack-post-message`.
-- Slack files: read-only downloads on `files.slack.com/files-pri/...` and upload flow support on `files.slack.com/upload/v1/...`.
+- Slack API: injected auth only for read requests on `slack.com`; writes do not receive injected credentials, and message writes must use `slack-post-message`.
+- Slack files: injected auth only for read requests on `files.slack.com`; uploads run server-side through `slack-post-message`.
 - OpenAI and ChatGPT domains: passthrough only (no injected credentials). In practice only `codex-lb` reaches these upstreams; opencode talks to `codex-lb` over the docker network instead of holding ChatGPT credentials itself.
 
 The shared upstream registry and allow/approve policy are checked into [`packages/common/src/proxies.ts`](../../packages/common/src/proxies.ts).

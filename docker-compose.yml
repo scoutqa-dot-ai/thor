@@ -83,7 +83,7 @@ services:
       retries: 10
 
   codex-lb:
-    image: ghcr.io/soju06/codex-lb:1.19
+    image: ghcr.io/soju06/codex-lb:1.21
     restart: unless-stopped
     ports:
       - "127.0.0.1:2455:2455"
@@ -101,8 +101,8 @@ services:
       CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_ENABLED: "false"
       # The model-registry scheduler's version lookup hits GitHub/npm, which our
       # egress proxy blocks, logging a traceback every refresh. Disabling it
-      # silences that and empties codex-lb's /v1/models — safe because opencode
-      # sources its models from its bundled models.dev snapshot, not this proxy.
+      # silences that; codex-lb falls back to its bundled model catalog, while
+      # opencode sources models from its own bundled models.dev snapshot.
       # Caveat + source-level verification: docs/plan/2026052601_codex-lb-integration.md
       CODEX_LB_MODEL_REGISTRY_ENABLED: "false"
       SSL_CERT_FILE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem

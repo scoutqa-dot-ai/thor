@@ -25,9 +25,9 @@ Talk to Slack through real upstream URLs:
 
 Authentication is injected automatically, do not pass `Authorization` header.
 
-The default tool for Slack reads is `curl`. For message writes, use `slack-post-message`.
-For file uploads, prefer `slack-upload` over manually calling Slack's
-multi-step upload endpoints.
+The default tool for Slack reads is `curl`. For message writes and file uploads,
+use `slack-post-message` (pass `--file <path>` to attach files); do not call
+Slack's message-post or multi-step upload endpoints directly.
 
 ## Temporary files
 
@@ -53,11 +53,10 @@ Do not use fixed paths like `/tmp/report.txt` or relative paths like
 
 ## Allowed Slack endpoints
 
-The proxy supports the read/post/upload/react endpoints used by the workflows
-below (`conversations.replies`, `conversations.history`, `files.info`,
-`reactions.add`, the message-post and external-upload paths, and supported
-`files.slack.com` file URLs). Other Slack methods — including update/delete
-and reaction update/remove — return a proxy denial.
+The proxy supports authenticated read requests on `slack.com` and
+`files.slack.com`, including the workflows below. Message posting and file
+uploads go through `slack-post-message`, not the proxy. Non-read requests —
+including reaction changes and message update/delete — return a proxy denial.
 
 ## Core workflow
 
@@ -140,28 +139,20 @@ The suite still has 0 test cases, so create_manual_ai_session had nothing to run
 EOF
 ```
 
-### 5. Add a reaction when requested
+### 5. Upload a file
 
-Use `reactions.add` only when the user explicitly asks for an emoji reaction or
-when a workflow instruction calls for one, such as marking a Slack message done.
-
-```bash
-curl -sS -X POST https://slack.com/api/reactions.add \
-  -H 'content-type: application/x-www-form-urlencoded' \
-  --data-urlencode 'channel=C123' \
-  --data-urlencode 'timestamp=1710000000.001' \
-  --data-urlencode 'name=done'
-```
-
-### 6. Upload a file
-
-Use the helper instead of re-creating Slack's external upload flow inline.
-Generate the file in a unique temp path first unless the user explicitly asks
-to keep it. If the filename matters, use a unique temp directory and a named
-file inside it.
+Attach files by passing `--file <path>` to `slack-post-message` (repeatable).
+Each file is uploaded into the thread with the command's stdin message as its
+comment before the standalone message is posted, so the attachment keeps its
+context if a later operation fails. Paths must be under `/tmp` or one of the
+shared workspace roots the agent can access: `/workspace/memory`,
+`/workspace/config`, `/workspace/repos`, `/workspace/worklog`, `/workspace/cron`,
+`/workspace/runs`, or `/workspace/worktrees`. Generate the file in a unique temp
+path first unless the user explicitly asks to keep it; if the filename matters,
+use a unique temp directory and a named file inside it.
 
 ```bash
-UPLOAD_DIR="$(mktemp -d /tmp/slack-upload.XXXXXX)"
+UPLOAD_DIR="$(mktemp -d /tmp/slack-report.XXXXXX)"
 REPORT_FILE="$UPLOAD_DIR/report.txt"
 
 cat <<'EOF' >"$REPORT_FILE"
@@ -170,10 +161,8 @@ Summary:
 - backlog drain is complete
 EOF
 
-slack-upload "$REPORT_FILE" \
-  --channel C123 \
-  --thread-ts 1710000000.001 \
-  --comment 'Attached the report.'
+echo 'Attached the report.' | \
+  slack-post-message --channel C123 --thread-ts 1710000000.001 --file "$REPORT_FILE"
 ```
 
 ## Response handling
@@ -199,9 +188,9 @@ Common failures to report as-is:
 - Do not use literal `\n` inside single-quoted `text=...` arguments.
 - Do not use shared temp paths. Default to `mktemp` under `/tmp`; use
   `mktemp -d` when you need a stable filename inside a unique temp directory.
-- Use `slack-upload` for uploads; it wraps `files.getUploadURLExternal`,
-  the raw `files.slack.com/upload/v1/...` upload, and
-  `files.completeUploadExternal`.
+- Uploads go through `slack-post-message --file`; each file is uploaded into the
+  thread with your stdin message as its comment before the standalone message.
+  Do not call Slack's external-upload endpoints directly.
 - `/tmp` is the default location for temporary Slack artifacts. Treat
   `/workspace/worktrees` as persistent storage and use it only when
   persistence is explicitly requested.

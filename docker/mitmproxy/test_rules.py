@@ -80,55 +80,22 @@ def test_builtins_apply_when_user_rules_empty() -> None:
     assert atlassian.rule.headers["Authorization"] == "${ATLASSIAN_AUTH}"
     assert atlassian.rule.readonly is True
 
-    slack_post = ruleset.classify("slack.com", "/api/chat.postMessage")
-    assert slack_post.action == "deny"
-
-    slack_reaction = ruleset.classify("slack.com", "/api/reactions.add")
-    assert slack_reaction.action == "inject"
-    assert slack_reaction.rule is not None
-    assert slack_reaction.rule.headers["Authorization"] == "Bearer ${SLACK_BOT_TOKEN}"
-
-    slack_reaction_remove = ruleset.classify("slack.com", "/api/reactions.remove")
-    assert slack_reaction_remove.action == "deny"
-
-    slack_history = ruleset.classify("slack.com", "/api/conversations.history")
-    assert slack_history.action == "inject"
-
-    slack_replies = ruleset.classify("slack.com", "/api/conversations.replies")
-    assert slack_replies.action == "inject"
-
-    slack_file_info = ruleset.classify("slack.com", "/api/files.info")
-    assert slack_file_info.action == "inject"
-
-    slack_upload_url = ruleset.classify("slack.com", "/api/files.getUploadURLExternal")
-    assert slack_upload_url.action == "inject"
-
-    slack_upload_complete = ruleset.classify("slack.com", "/api/files.completeUploadExternal")
-    assert slack_upload_complete.action == "inject"
-
-    slack_update = ruleset.classify("slack.com", "/api/chat.update")
-    assert slack_update.action == "deny"
-
-    slack_delete = ruleset.classify("slack.com", "/api/chat.delete")
-    assert slack_delete.action == "deny"
-
-    slack_unknown = ruleset.classify("slack.com", "/api/users.list")
-    assert slack_unknown.action == "deny"
+    slack_api = ruleset.classify("slack.com", "/api/conversations.replies")
+    assert slack_api.action == "inject"
+    assert slack_api.rule is not None
+    assert slack_api.rule.readonly is True
+    assert slack_api.rule.headers["Authorization"] == "Bearer ${SLACK_BOT_TOKEN}"
 
     atlassian_site = ruleset.classify("foo.atlassian.net")
     assert atlassian_site.action == "inject"
     assert atlassian_site.rule is not None
     assert atlassian_site.rule.readonly is True
 
-    slack_upload = ruleset.classify("files.slack.com", "/upload/v1/abc123")
-    assert slack_upload.action == "inject"
-    assert slack_upload.rule is not None
-    assert slack_upload.rule.readonly is False
-
     slack_file = ruleset.classify("files.slack.com", "/files-pri/T1-F1/download/report.txt")
     assert slack_file.action == "inject"
     assert slack_file.rule is not None
     assert slack_file.rule.readonly is True
+    assert slack_file.rule.headers["Authorization"] == "Bearer ${SLACK_BOT_TOKEN}"
 
     jira_attach_site = ruleset.classify(
         "foo.atlassian.net", "/rest/api/3/issue/ABC-1/attachments", method="POST"
