@@ -414,7 +414,6 @@ describe("remote-cli slack-post-message endpoint", () => {
   });
 
   it("rejects --file paths outside the allowed roots and never uploads or posts", async () => {
-    writeFileSync(join(testCwd, "ok.txt"), "hi", "utf8");
     await expectFailure(
       { args: ["--channel", "C123", "--file", "/etc/passwd"], stdin: "hi" },
       "--file must be under one of:",
@@ -454,6 +453,38 @@ describe("remote-cli slack-post-message endpoint", () => {
     expect(response.status).toBe(400);
     expect(body.stderr).toContain(
       "failed to upload File 1 (a.txt): Slack API error: missing_scope",
+    );
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain(
+      "https://slack.com/api/chat.postMessage",
+    );
+  });
+
+  it("fails fast when Slack rejects the raw file upload", async () => {
+    writeFileSync(join(testCwd, "a.txt"), "alpha", "utf8");
+    fetchMock.mockImplementation((async (url: string) => {
+      if (url.endsWith("/files.getUploadURLExternal")) {
+        return jsonResponse({
+          ok: true,
+          upload_url: "https://files.slack.test/upload/abc",
+          file_id: "F1",
+        });
+      }
+      if (url === "https://files.slack.test/upload/abc") {
+        return new Response("", { status: 500 });
+      }
+      throw new Error(`unexpected url after failed raw upload: ${url}`);
+    }) as unknown as typeof fetch);
+
+    const response = await postSlack(
+      { args: ["--channel", "C123", "--file", "a.txt"], stdin: "here" },
+      { "x-thor-session-id": "session-1" },
+    );
+    const body = (await response.json()) as { stderr: string };
+
+    expect(response.status).toBe(400);
+    expect(body.stderr).toContain("Slack file upload failed with HTTP 500");
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain(
+      "https://slack.com/api/files.completeUploadExternal",
     );
     expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain(
       "https://slack.com/api/chat.postMessage",
