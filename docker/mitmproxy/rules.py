@@ -133,31 +133,11 @@ BUILTIN_RULES = [
     InjectRule(
         host="slack.com",
         headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
-        path_prefix="/api/reactions.add",
+        readonly=True,
     ),
-    InjectRule(
-        host="slack.com",
-        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
-        path_prefix="/api/conversations.replies",
-    ),
-    InjectRule(
-        host="slack.com",
-        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
-        path_prefix="/api/conversations.history",
-    ),
-    InjectRule(
-        host="slack.com",
-        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
-        path_prefix="/api/files.info",
-    ),
-    # File uploads run server-side in remote-cli (slack-post-message --file), so
-    # the sandbox no longer calls Slack's external-upload endpoints directly and
-    # they are intentionally not injected here. Only the read-only file download
-    # path stays open for the agent.
     InjectRule(
         host="files.slack.com",
         headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
-        path_prefix="/files-pri/",
         readonly=True,
     ),
 ]

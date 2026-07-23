@@ -53,11 +53,10 @@ Do not use fixed paths like `/tmp/report.txt` or relative paths like
 
 ## Allowed Slack endpoints
 
-The proxy supports the read/react endpoints used by the workflows below
-(`conversations.replies`, `conversations.history`, `files.info`, `reactions.add`,
-and supported `files.slack.com/files-pri/...` download URLs). Message posting and
-file uploads go through `slack-post-message`, not the proxy. Other Slack methods
-— including update/delete and reaction update/remove — return a proxy denial.
+The proxy supports authenticated read requests on `slack.com` and
+`files.slack.com`, including the workflows below. Message posting and file
+uploads go through `slack-post-message`, not the proxy. Non-read requests —
+including reaction changes and message update/delete — return a proxy denial.
 
 ## Core workflow
 
@@ -140,20 +139,7 @@ The suite still has 0 test cases, so create_manual_ai_session had nothing to run
 EOF
 ```
 
-### 5. Add a reaction when requested
-
-Use `reactions.add` only when the user explicitly asks for an emoji reaction or
-when a workflow instruction calls for one, such as marking a Slack message done.
-
-```bash
-curl -sS -X POST https://slack.com/api/reactions.add \
-  -H 'content-type: application/x-www-form-urlencoded' \
-  --data-urlencode 'channel=C123' \
-  --data-urlencode 'timestamp=1710000000.001' \
-  --data-urlencode 'name=done'
-```
-
-### 6. Upload a file
+### 5. Upload a file
 
 Attach files by passing `--file <path>` to `slack-post-message` (repeatable).
 Each file is uploaded into the thread with the command's stdin message as its
