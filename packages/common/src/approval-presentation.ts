@@ -244,6 +244,8 @@ function buildGhIssueCreatePresentation(args: Record<string, unknown>): Approval
       bullet("Title", parsed.title),
       bullet("Labels", parsed.labels?.join(", ")),
       bullet("Assignees", parsed.assignees?.join(", ")),
+      bullet("Milestone", parsed.milestone),
+      bullet("Parent", parsed.parent),
       section("Body preview", parsed.bodyPreview),
     ]),
   };

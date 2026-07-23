@@ -35,6 +35,8 @@ export const GhIssueCreateApprovalArgsSchema = z
     bodyPreview: z.string().optional(),
     labels: z.array(z.string()).optional(),
     assignees: z.array(z.string()).optional(),
+    milestone: z.string().optional(),
+    parent: z.string().optional(),
   })
   .passthrough();
 

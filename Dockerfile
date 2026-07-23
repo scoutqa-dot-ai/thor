@@ -82,7 +82,7 @@ CMD ["node", "/app/packages/runner/dist/index.js"]
 
 # --- Install upstream opencode from npm ---
 FROM base AS opencode
-RUN npm install -g opencode-ai@1.17.13 opencode-plugin-langfuse@0.1.8
+RUN npm install -g opencode-ai@1.18.4 opencode-plugin-langfuse@0.1.8
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl jq python3-pip ripgrep \
     && npm install -g prettier@3.8.4 \
@@ -136,7 +136,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends unzip \
     && /tmp/aws/install \
     && rm -rf /tmp/aws /tmp/awscliv2.zip \
     && apt-get purge -y unzip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
-COPY --from=grafana/mcp-grafana:0.17.0 /app/mcp-grafana /usr/local/bin/mcp-grafana
+COPY --from=grafana/mcp-grafana:0.17.1 /app/mcp-grafana /usr/local/bin/mcp-grafana
 
 FROM remote-cli-tools AS remote-cli
 COPY --from=remote-cli-build /app /app
