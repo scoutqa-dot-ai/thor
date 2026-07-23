@@ -87,7 +87,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Bring up compose stack for e2e
+      - name: Prepare compose stack for e2e
         run: |
           set -euo pipefail
 
@@ -196,7 +196,35 @@ jobs:
             .services.opencode.environment.LANGFUSE_BASEURL = "${LANGFUSE_BASE_URL:-}"
           ' docker-compose.yml
 
-          docker compose up --build --wait -d
+      - name: Warm Grafana MCP
+        run: |
+          set -euo pipefail
+          if [[ -z "${GRAFANA_URL:-}" || -z "${GRAFANA_SERVICE_ACCOUNT_TOKEN:-}" || -z "${GRAFANA_ORG_ID:-}" ]]; then
+            echo "Grafana warm-up skipped: Grafana credentials are not configured."
+            exit 0
+          fi
+
+          grafana_url="${GRAFANA_URL%/}"
+          curl_args=(
+            --fail --silent --show-error
+            --connect-timeout 5 --max-time 20
+            --retry 6 --retry-all-errors --retry-delay 5 --retry-max-time 90
+            --header "Authorization: Bearer $GRAFANA_SERVICE_ACCOUNT_TOKEN"
+            --header "X-Grafana-Org-Id: $GRAFANA_ORG_ID"
+          )
+          datasources="$(curl "${curl_args[@]}" "$grafana_url/api/datasources")"
+          tempo_uid="$(
+            jq -er \
+              'map(select(.type == "tempo")) | first | .uid // error("no Tempo datasource found")' \
+              <<< "$datasources"
+          )"
+          curl "${curl_args[@]}" \
+            "$grafana_url/api/datasources/proxy/uid/$tempo_uid/api/echo" \
+            > /dev/null
+          echo "Grafana Tempo datasource is warm."
+
+      - name: Bring up compose stack for e2e
+        run: docker compose up --build --wait -d
 
       - name: Run e2e test
         env:
@@ -220,8 +248,8 @@ jobs:
           set -euo pipefail
           # warmUp() logs a "policy_drift" event when our allow/approve lists name
           # tools an upstream no longer exposes. Prod tolerates it (never fails
-          # boot), so catch it here. The e2e run above lets warmup settle, and all
-          # upstreams use real creds in CI, so any drift is a real bug.
+          # boot), so catch it here. Grafana's Tempo query frontend has already
+          # passed its readiness preflight, so any drift is a real bug.
           logs="$(docker compose logs --no-color remote-cli 2>/dev/null || true)"
           if printf '%s\n' "$logs" | grep -q '"event":"policy_drift"'; then
             echo "::error::MCP policy drift: allow/approve lists reference tools the upstream no longer exposes. Reconcile packages/common/src/proxies.ts against the upstream tool inventory."
