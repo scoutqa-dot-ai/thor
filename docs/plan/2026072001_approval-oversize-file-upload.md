@@ -36,6 +36,7 @@ only existed to handle the impossible case.
 | 5   | Upload-first, **fail fast**: when content is oversize the file is required; a failed upload fails the approval                                                                             | The card without the full content is the exact problem we are fixing; silently degrading would reintroduce it. A missing `files:write` scope becomes a clear hard failure, which is correct fail-closed.   | Best-effort upload that falls back to a truncated card (silently drops the content the reviewer must see)       |
 | 6   | Post the file first with a meaningful comment, never request its URL, and never delete an uploaded file                                                                                    | The file reply is useful by itself if a later upload or card post fails. Accepting Slack's `ok: true` completion response and retaining successful uploads removes permalink parsing and cleanup branches. | Linking the file from the card; compensating `files.delete`; card-first then `chat.update`                      |
 | 7   | Server-side upload in remote-cli sends `SLACK_BOT_TOKEN` directly, reusing the proven 3-call external-upload shape                                                                         | `remote-cli` holds the token and calls Slack directly (like `postSlackMessageApi`); `docker/opencode/bin/slack-upload` already proves the 3-call flow. `files:write` is already in the app manifest.       | Routing through mitmproxy injection (that path is for the in-container agent tool, not the remote-cli service)  |
+| 8   | File-backed Slack inputs allow `/tmp` plus only the exact `/workspace/*` roots mounted into both OpenCode and remote-cli                                                                   | remote-cli mounts all of `/workspace`, including server-only approval data. Allowing the workspace root would let an agent ask the credential-holding service to upload files it cannot otherwise read.    | Allowing all of `/workspace`; maintaining separate path policies for `--file` and `--blocks-file`               |
 
 ## File-level impact
 
@@ -81,6 +82,9 @@ failure retains the file.
 - A failed upload of oversize content fails the approval (no truncated-card
   fallback); any file that reaches Slack remains useful in the thread even when
   a later operation fails.
+- `slack-post-message` rejects file and blocks paths under server-only workspace
+  directories such as `/workspace/data`, while accepting `/tmp` and the explicit
+  workspace roots shared with the agent container.
 - `@thor/common`, `@thor/remote-cli`, `@thor/gateway` typecheck; targeted suites
   green.
 

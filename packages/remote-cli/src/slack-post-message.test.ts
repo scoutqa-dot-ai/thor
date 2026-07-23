@@ -324,15 +324,22 @@ describe("remote-cli slack-post-message endpoint", () => {
     symlinkSync("/etc/passwd", escapedLink);
     await expectFailure(
       { args: ["--channel", "C123", "--blocks-file", "/etc/passwd"], stdin: "hi" },
-      "--blocks-file must be under /tmp or /workspace",
+      "--blocks-file must be under one of:",
     );
     await expectFailure(
       { args: ["--channel", "C123", "--blocks-file", "../../../etc/passwd"], stdin: "hi" },
-      "--blocks-file must be under /tmp or /workspace",
+      "--blocks-file must be under one of:",
     );
     await expectFailure(
       { args: ["--channel", "C123", "--blocks-file", escapedLink], stdin: "hi" },
-      "--blocks-file must be under /tmp or /workspace",
+      "--blocks-file must be under one of:",
+    );
+    await expectFailure(
+      {
+        args: ["--channel", "C123", "--blocks-file", "/workspace/data/approvals/private.json"],
+        stdin: "hi",
+      },
+      "--blocks-file must be under one of:",
     );
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -410,11 +417,18 @@ describe("remote-cli slack-post-message endpoint", () => {
     writeFileSync(join(testCwd, "ok.txt"), "hi", "utf8");
     await expectFailure(
       { args: ["--channel", "C123", "--file", "/etc/passwd"], stdin: "hi" },
-      "--file must be under /tmp or /workspace",
+      "--file must be under one of:",
     );
     await expectFailure(
       { args: ["--channel", "C123", "--file", "../../../etc/passwd"], stdin: "hi" },
-      "--file must be under /tmp or /workspace",
+      "--file must be under one of:",
+    );
+    await expectFailure(
+      {
+        args: ["--channel", "C123", "--file", "/workspace/data/approvals/private.json"],
+        stdin: "hi",
+      },
+      "--file must be under one of:",
     );
     await expectFailure(
       { args: ["--channel", "C123", "--file", "missing.txt"], stdin: "hi" },

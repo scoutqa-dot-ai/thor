@@ -144,10 +144,12 @@ EOF
 Attach files by passing `--file <path>` to `slack-post-message` (repeatable).
 Each file is uploaded into the thread with the command's stdin message as its
 comment before the standalone message is posted, so the attachment keeps its
-context if a later operation fails. Paths must be under `/tmp` or `/workspace`.
-Generate the file in a unique temp path first unless the user explicitly asks to
-keep it; if the filename matters, use a unique temp directory and a named file
-inside it.
+context if a later operation fails. Paths must be under `/tmp` or one of the
+shared workspace roots the agent can access: `/workspace/memory`,
+`/workspace/config`, `/workspace/repos`, `/workspace/worklog`, `/workspace/cron`,
+`/workspace/runs`, or `/workspace/worktrees`. Generate the file in a unique temp
+path first unless the user explicitly asks to keep it; if the filename matters,
+use a unique temp directory and a named file inside it.
 
 ```bash
 UPLOAD_DIR="$(mktemp -d /tmp/slack-report.XXXXXX)"

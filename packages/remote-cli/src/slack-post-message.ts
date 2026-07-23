@@ -19,7 +19,17 @@ const SLACK_POST_MESSAGE_PATH = "/chat.postMessage";
 const MAX_MRKDWN_BYTES = 40 * 1024;
 const MAX_BLOCKS_FILE_BYTES = 128 * 1024;
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
-const FILE_ALLOWED_ROOTS = ["/tmp", "/workspace"] as const;
+const FILE_ALLOWED_ROOTS = [
+  "/tmp",
+  "/workspace/memory",
+  "/workspace/config",
+  "/workspace/repos",
+  "/workspace/worklog",
+  "/workspace/cron",
+  "/workspace/runs",
+  "/workspace/worktrees",
+] as const;
+const FILE_ALLOWED_ROOTS_DESCRIPTION = FILE_ALLOWED_ROOTS.join(", ");
 const MARKDOWN_TABLE_SEPARATOR_LINE = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/;
 const COMMONMARK_DOUBLE_STAR = /\*\*/;
 const LITERAL_BACKSLASH_N = /\\n/;
@@ -84,10 +94,11 @@ function isAllowedFilePath(path: string): boolean {
 
 /**
  * Resolve a user-supplied path (from `--blocks-file` or `--file`) to a real path
- * confined to /tmp or /workspace — the volumes the sandbox and remote-cli share.
- * `flag` names the originating option for error messages. Rejects absolute
- * escapes, `..` traversal, and symlinks that resolve outside the allowed roots,
- * so the agent cannot make remote-cli read arbitrary files off its own disk.
+ * confined to the exact filesystem roots shared with the agent container.
+ * `flag` names the originating option for error messages. Rejects server-only
+ * workspace paths, absolute escapes, `..` traversal, and symlinks that resolve
+ * outside the allowed roots, so the agent cannot make remote-cli read arbitrary
+ * files off its own disk.
  */
 function resolveAllowedFilePath(
   rawPath: string,
@@ -102,7 +113,7 @@ function resolveAllowedFilePath(
     ? resolve(rawPath)
     : resolve(resolve("/", cwd ?? "/"), rawPath);
   if (!isAllowedFilePath(candidatePath)) {
-    return { error: `${flag} must be under /tmp or /workspace` };
+    return { error: `${flag} must be under one of: ${FILE_ALLOWED_ROOTS_DESCRIPTION}` };
   }
 
   const realPath = realpathOrNull(candidatePath);
@@ -111,7 +122,7 @@ function resolveAllowedFilePath(
   }
 
   if (!isAllowedFilePath(realPath)) {
-    return { error: `${flag} must be under /tmp or /workspace` };
+    return { error: `${flag} must be under one of: ${FILE_ALLOWED_ROOTS_DESCRIPTION}` };
   }
 
   return realPath;
