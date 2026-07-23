@@ -1157,13 +1157,28 @@ if [[ "$seed_ok" == "true" && -n "$seed_ts" && -n "$upload_session_id" ]]; then
   upload_file_comment=$(json_field "$upload_reply_json" "text")
   assert '[[ "$upload_file_comment" == *"$slack_upload_message"* ]]' "attachment carries the standalone message as context" "reply: ${upload_reply_json:0:300}"
 
-  # The actual message posts as its own reply after the attachment.
-  message_reply_present=$(echo "$replies" | EXPECT_MSG="$slack_upload_message" node -e "
-    const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
-    const messages = d.messages || [];
-    console.log(messages.some((m) => (m.text || '').includes(process.env.EXPECT_MSG)) ? 'true' : 'false');
-  " 2>/dev/null || echo 'false')
-  assert '[[ "$message_reply_present" == "true" ]]' "message posts after the attachment" "replies: ${replies:0:1000}"
+  # The actual message posts as its own fileless reply after the attachment.
+  # Poll separately because the attachment comment contains the same text and
+  # must not satisfy this assertion.
+  message_reply_ts=""
+  for _ in $(seq 1 24); do
+    replies=$(slack_replies "$SLACK_CHANNEL_ID" "$seed_ts" 2>/dev/null || echo '{}')
+    message_reply_ts=$(echo "$replies" | EXPECT_MSG="$slack_upload_message" node -e "
+      const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+      const messages = d.messages || [];
+      const match = [...messages].reverse().find((message) => {
+        const files = Array.isArray(message.files) ? message.files : [];
+        return files.length === 0 && (message.text || '').includes(process.env.EXPECT_MSG);
+      });
+      if (!match?.ts) process.exit(1);
+      process.stdout.write(match.ts);
+    " 2>/dev/null || echo "")
+    if [[ -n "$message_reply_ts" ]]; then
+      break
+    fi
+    sleep 5
+  done
+  assert '[[ -n "$message_reply_ts" ]]' "message posts as a separate reply after the attachment" "replies: ${replies:0:1000}"
 
   if [[ -n "$upload_file_id" ]]; then
     file_info_raw=$(slack_file_info "$upload_file_id" 2>/dev/null || echo '{}')
