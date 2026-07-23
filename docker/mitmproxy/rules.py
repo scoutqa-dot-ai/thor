@@ -133,42 +133,11 @@ BUILTIN_RULES = [
     InjectRule(
         host="slack.com",
         headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
-        path_prefix="/api/reactions.add",
-    ),
-    InjectRule(
-        host="slack.com",
-        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
-        path_prefix="/api/conversations.replies",
-    ),
-    InjectRule(
-        host="slack.com",
-        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
-        path_prefix="/api/conversations.history",
-    ),
-    InjectRule(
-        host="slack.com",
-        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
-        path_prefix="/api/files.info",
-    ),
-    InjectRule(
-        host="slack.com",
-        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
-        path_prefix="/api/files.getUploadURLExternal",
-    ),
-    InjectRule(
-        host="slack.com",
-        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
-        path_prefix="/api/files.completeUploadExternal",
+        readonly=True,
     ),
     InjectRule(
         host="files.slack.com",
         headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
-        path_prefix="/upload/v1/",
-    ),
-    InjectRule(
-        host="files.slack.com",
-        headers={"Authorization": "Bearer ${SLACK_BOT_TOKEN}"},
-        path_prefix="/files-pri/",
         readonly=True,
     ),
 ]

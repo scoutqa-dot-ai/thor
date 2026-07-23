@@ -250,59 +250,20 @@ def test_builtin_jira_attachment_upload_rules_stay_path_and_method_scoped(
         assert flow.request.headers == {}
 
 
-def test_disallowed_builtin_slack_update_returns_403(tmp_path, monkeypatch) -> None:
+def test_builtin_slack_post_message_denial_points_to_helper(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
 
     config = tmp_path / "config.json"
     config.write_text(json.dumps({}), encoding="utf-8")
     addon = ThorMitmAddon(str(config))
 
-    flow = FakeFlow(request=FakeRequest(host="slack.com", path="/api/chat.update"))
-    addon.request(flow)
-
-    assert flow.response is not None
-    assert _status_code(flow.response) == 403
-    assert _response_text(flow.response) == "thor proxy denied host/path: slack.com/api/chat.update"
-
-
-def test_disallowed_builtin_slack_delete_returns_403(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
-
-    config = tmp_path / "config.json"
-    config.write_text(json.dumps({}), encoding="utf-8")
-    addon = ThorMitmAddon(str(config))
-
-    flow = FakeFlow(request=FakeRequest(host="slack.com", path="/api/chat.delete"))
-    addon.request(flow)
-
-    assert flow.response is not None
-    assert _status_code(flow.response) == 403
-    assert _response_text(flow.response) == "thor proxy denied host/path: slack.com/api/chat.delete"
-
-
-def test_disallowed_builtin_slack_reaction_remove_returns_403(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
-
-    config = tmp_path / "config.json"
-    config.write_text(json.dumps({}), encoding="utf-8")
-    addon = ThorMitmAddon(str(config))
-
-    flow = FakeFlow(request=FakeRequest(host="slack.com", path="/api/reactions.remove"))
-    addon.request(flow)
-
-    assert flow.response is not None
-    assert _status_code(flow.response) == 403
-    assert _response_text(flow.response) == "thor proxy denied host/path: slack.com/api/reactions.remove"
-
-
-def test_builtin_slack_post_message_is_denied_without_auth_injection(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
-
-    config = tmp_path / "config.json"
-    config.write_text(json.dumps({}), encoding="utf-8")
-    addon = ThorMitmAddon(str(config))
-
-    flow = FakeFlow(request=FakeRequest(host="slack.com", path="/api/chat.postMessage"))
+    flow = FakeFlow(
+        request=FakeRequest(
+            host="slack.com", method="POST", path="/api/chat.postMessage"
+        )
+    )
     addon.request(flow)
 
     assert flow.response is not None
@@ -314,7 +275,7 @@ def test_builtin_slack_post_message_is_denied_without_auth_injection(tmp_path, m
     assert "Authorization" not in flow.request.headers
 
 
-def test_builtin_slack_reaction_add_rule_sets_headers(tmp_path, monkeypatch) -> None:
+def test_builtin_slack_reaction_add_is_denied(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
 
     config = tmp_path / "config.json"
@@ -324,32 +285,17 @@ def test_builtin_slack_reaction_add_rule_sets_headers(tmp_path, monkeypatch) -> 
     flow = FakeFlow(request=FakeRequest(host="slack.com", method="POST", path="/api/reactions.add"))
     addon.request(flow)
 
-    assert flow.response is None
-    assert flow.request.headers["Authorization"] == "Bearer xoxb-test"
-
-
-def test_builtin_slack_file_download_rule_is_readonly(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
-
-    config = tmp_path / "config.json"
-    config.write_text(json.dumps({}), encoding="utf-8")
-    addon = ThorMitmAddon(str(config))
-
-    flow = FakeFlow(
-        request=FakeRequest(
-            host="files.slack.com",
-            method="POST",
-            path="/files-pri/T1-F1/download/report.txt",
-        )
-    )
-    addon.request(flow)
-
     assert flow.response is not None
     assert _status_code(flow.response) == 403
-    assert "readonly rule blocked" in _response_text(flow.response)
+    assert "readonly rule blocked method POST" in _response_text(flow.response)
+    assert "Authorization" not in flow.request.headers
 
 
-def test_builtin_slack_file_upload_rule_allows_post(tmp_path, monkeypatch) -> None:
+def test_builtin_slack_file_upload_post_is_blocked_by_readonly_rule(
+    tmp_path, monkeypatch
+) -> None:
+    # Uploads run server-side in remote-cli (slack-post-message --file); the
+    # sandbox no longer uploads directly, so the readonly rule blocks POST.
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
 
     config = tmp_path / "config.json"
@@ -365,8 +311,9 @@ def test_builtin_slack_file_upload_rule_allows_post(tmp_path, monkeypatch) -> No
     )
     addon.request(flow)
 
-    assert flow.response is None
-    assert flow.request.headers["Authorization"] == "Bearer xoxb-test"
+    assert flow.response is not None
+    assert _status_code(flow.response) == 403
+    assert "readonly rule blocked method POST" in _response_text(flow.response)
 
 
 def test_inject_rule_sets_headers(tmp_path) -> None:

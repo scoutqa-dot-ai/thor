@@ -10,28 +10,6 @@ import { findSlackTriggerCorrelationKey } from "./event-log.ts";
 
 const SLACK_SECTION_TEXT_LIMIT = 3000;
 const SLACK_THREAD_CORRELATION_PREFIX = "slack:thread:";
-const INLINE_CODE_BLOCK_OVERHEAD = "```json\n\n```".length;
-const MAX_INLINE_JSON_CHARS = SLACK_SECTION_TEXT_LIMIT - INLINE_CODE_BLOCK_OVERHEAD;
-const TRIM_STEPS = [
-  { maxDepth: 6, maxObjectEntries: 50, maxArrayItems: 25, maxStringLength: 500 },
-  { maxDepth: 5, maxObjectEntries: 25, maxArrayItems: 12, maxStringLength: 240 },
-  { maxDepth: 4, maxObjectEntries: 15, maxArrayItems: 8, maxStringLength: 120 },
-  { maxDepth: 3, maxObjectEntries: 10, maxArrayItems: 5, maxStringLength: 80 },
-  { maxDepth: 2, maxObjectEntries: 6, maxArrayItems: 3, maxStringLength: 40 },
-] as const;
-const MIN_TRIM_STEP = {
-  maxDepth: 1,
-  maxObjectEntries: 3,
-  maxArrayItems: 2,
-  maxStringLength: 16,
-} as const;
-
-type TrimStep = {
-  maxDepth: number;
-  maxObjectEntries: number;
-  maxArrayItems: number;
-  maxStringLength: number;
-};
 
 type SlackTextObject = { type: "mrkdwn"; text: string } | { type: "plain_text"; text: string };
 
@@ -58,11 +36,6 @@ export interface ApprovalButtonRoute {
 export interface ApprovalPresentation {
   title: string;
   markdown: string;
-}
-
-export interface ApprovalSlackMessage {
-  text: string;
-  blocks: SlackBlock[];
 }
 
 export interface SlackThreadTarget {
@@ -133,77 +106,47 @@ export function resolveSlackThreadTargetFromTrigger(
   return parsed;
 }
 
-export function formatApprovalArgs(args: Record<string, unknown>): string {
-  const full = JSON.stringify(args, null, 2);
-  if (full.length <= MAX_INLINE_JSON_CHARS) {
-    return full;
-  }
-
-  for (const step of TRIM_STEPS) {
-    const candidate = JSON.stringify(trimValue(args, step, 0), null, 2);
-    if (candidate.length <= MAX_INLINE_JSON_CHARS) {
-      return candidate;
-    }
-  }
-
-  const finalCandidate = JSON.stringify(trimValue(args, MIN_TRIM_STEP, 0), null, 2);
-  if (finalCandidate.length <= MAX_INLINE_JSON_CHARS) {
-    return finalCandidate;
-  }
-
-  return JSON.stringify(buildOversizeSummary(args), null, 2);
-}
-
+/**
+ * Render the approval card body for a known tool. The set of approval tools is
+ * a closed discriminated union (`ApprovalRequiredEventPayloadSchema`) and the
+ * gate (`createPending`) rejects anything outside it, so this is total: the
+ * `assertNever` default makes "every tool has a presentation" a compile-time
+ * invariant and fails loudly at runtime for a value force-cast past the type.
+ */
 export function buildApprovalPresentation(
   tool: ApprovalToolName,
   args: Record<string, unknown>,
-): ApprovalPresentation | undefined {
-  try {
-    switch (tool) {
-      case "createJiraIssue":
-        return buildCreateJiraIssuePresentation(args);
-      case "addCommentToJiraIssue":
-        return buildAddJiraCommentPresentation(args);
-      case "create-feature-flag":
-        return buildCreateFeatureFlagPresentation(args);
-      case "ghIssueCreate":
-        return buildGhIssueCreatePresentation(args);
-      case "awsExec":
-        return buildAwsExecPresentation(args);
-      default:
-        return undefined;
+): ApprovalPresentation {
+  switch (tool) {
+    case "createJiraIssue":
+      return buildCreateJiraIssuePresentation(args);
+    case "addCommentToJiraIssue":
+      return buildAddJiraCommentPresentation(args);
+    case "create-feature-flag":
+      return buildCreateFeatureFlagPresentation(args);
+    case "ghIssueCreate":
+      return buildGhIssueCreatePresentation(args);
+    case "awsExec":
+      return buildAwsExecPresentation(args);
+    default: {
+      const _exhaustive: never = tool;
+      throw new Error(`No approval presentation for tool: ${String(_exhaustive)}`);
     }
-  } catch {
-    return undefined;
   }
 }
 
-export function buildApprovalSlackMessage(input: {
-  actionId: string;
-  tool: ApprovalToolName;
-  args: Record<string, unknown>;
-  upstreamName?: string;
-  threadTs: string;
-}): ApprovalSlackMessage {
-  const buttonValue = buildApprovalButtonValue({
-    actionId: input.actionId,
-    upstreamName: input.upstreamName,
-    threadTs: input.threadTs,
-  });
-  const presentation = buildApprovalPresentation(input.tool, input.args);
+/**
+ * Whether the presentation body exceeds Slack's section limit and must be
+ * uploaded as a file rather than truncated into the card. Title overflow is not
+ * considered — titles are short by construction; the body carries the content.
+ */
+export function approvalPresentationIsOversize(presentation: ApprovalPresentation): boolean {
+  return presentation.markdown.length > SLACK_SECTION_TEXT_LIMIT;
+}
 
-  if (presentation) {
-    return {
-      text: presentation.title,
-      blocks: buildApprovalPresentationBlocks(presentation, buttonValue),
-    };
-  }
-
-  const argsJson = formatApprovalArgs(input.args);
-  return {
-    text: `Approval required for \`${input.tool}\``,
-    blocks: buildInlineApprovalBlocks(input.tool, argsJson, buttonValue),
-  };
+/** Full, untruncated Markdown for the uploaded approval file. */
+export function buildApprovalFileMarkdown(presentation: ApprovalPresentation): string {
+  return `# ${presentation.title}\n\n${presentation.markdown}\n`;
 }
 
 function buildActionBlocks(buttonValue: string): SlackBlock[] {
@@ -228,31 +171,6 @@ function buildActionBlocks(buttonValue: string): SlackBlock[] {
         },
       ],
     },
-  ];
-}
-
-export function buildInlineApprovalBlocks(
-  tool: string,
-  argsJson: string,
-  buttonValue: string,
-): SlackBlock[] {
-  return [
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `:lock: *Approval required* — \`${tool}\``,
-      },
-    },
-    {
-      type: "section",
-      expand: true,
-      text: {
-        type: "mrkdwn",
-        text: `\`\`\`json\n${argsJson}\n\`\`\``,
-      },
-    },
-    ...buildActionBlocks(buttonValue),
   ];
 }
 
@@ -381,41 +299,4 @@ function trimForSlack(value: string, maxChars: number): string {
   const overflow = value.length - maxChars;
   const suffix = `…[+${overflow} chars]`;
   return `${value.slice(0, Math.max(0, maxChars - suffix.length))}${suffix}`;
-}
-
-function trimValue(value: unknown, step: TrimStep, depth: number): unknown {
-  if (typeof value === "string") {
-    if (value.length <= step.maxStringLength) return value;
-    const overflow = value.length - step.maxStringLength;
-    return `${value.slice(0, step.maxStringLength)}…[+${overflow} chars]`;
-  }
-  if (typeof value !== "object" || value === null) return value;
-  if (depth >= step.maxDepth) return summarizeValue(value);
-  if (Array.isArray(value)) {
-    const kept = value.slice(0, step.maxArrayItems).map((item) => trimValue(item, step, depth + 1));
-    if (value.length > step.maxArrayItems)
-      kept.push(`[+${value.length - step.maxArrayItems} more items]`);
-    return kept;
-  }
-  const entries = Object.entries(value);
-  const keptEntries = entries
-    .slice(0, step.maxObjectEntries)
-    .map(([key, item]) => [key, trimValue(item, step, depth + 1)]);
-  if (entries.length > step.maxObjectEntries) {
-    keptEntries.push(["_trimmed", `[+${entries.length - step.maxObjectEntries} more keys]`]);
-  }
-  return Object.fromEntries(keptEntries);
-}
-
-function summarizeValue(value: unknown): string {
-  if (Array.isArray(value)) return `[array(${value.length})]`;
-  if (value instanceof Object) return `[object(${Object.keys(value).length})]`;
-  return String(value);
-}
-
-function buildOversizeSummary(args: Record<string, unknown>) {
-  return {
-    _summary: "approval args too large for Slack",
-    _keys: Object.keys(args).slice(0, 20),
-  };
 }

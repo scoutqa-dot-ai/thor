@@ -45,6 +45,8 @@ The manifest defines the full set. Minimum scopes for app-mention-only operation
 
 Add `*:history` (`channels:history`, `groups:history`, `im:history`, `mpim:history`) when Thor needs to read prior thread context. Add `files:read` / `files:write` when working with attachments. See the manifest for the full list.
 
+`files:write` is also required for approval cards: when an approval's arguments exceed Slack's block limit, Thor uploads the full content as a Markdown file into the approval thread with a self-contained approval description. The card remains a short preview and does not depend on a file URL. The upload is required for oversize content — without `files:write` such approvals fail closed rather than posting a truncated card. It is already in the manifest scope set.
+
 ## 4) Required event subscriptions
 
 Subscribe to:

@@ -1070,37 +1070,62 @@ status_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/git" \
 status_exit=$(json_field "$status_raw" "exitCode")
 assert '[[ "$status_exit" == "0" ]]' "git status (allowed) succeeds" "exitCode='$status_exit'"
 
-# 8. slack-upload should complete a real Slack external upload flow
+# 8. slack-post-message --file should complete a real Slack external upload flow
 echo ""
-echo "=== Slack upload wrapper ==="
+echo "=== Slack post-message file attachments ==="
 
-slack_upload_run_id="slack-upload-e2e-${REMOTE_CLI_AUTH_TS}"
-slack_upload_title="slack-upload e2e ${slack_upload_run_id}.txt"
-slack_upload_comment="slack-upload e2e comment ${slack_upload_run_id}"
-slack_upload_body="slack-upload e2e body ${slack_upload_run_id}"
+slack_upload_run_id="slack-postmsg-file-e2e-${REMOTE_CLI_AUTH_TS}"
+slack_upload_filename="${slack_upload_run_id}.txt"
+slack_upload_message="slack-post-message --file e2e ${slack_upload_run_id}"
+slack_upload_body="slack-post-message --file e2e body ${slack_upload_run_id}"
 export SLACK_CHANNEL_ID slack_upload_run_id
 
 seed_json=$(node -e "
   console.log(JSON.stringify({
     channel: process.env.SLACK_CHANNEL_ID,
-    text: '*slack-upload e2e seed* ' + process.env.slack_upload_run_id
+    text: '*slack-post-message file e2e seed* ' + process.env.slack_upload_run_id
   }));
 ")
 seed_raw=$(slack_post_json "chat.postMessage" "$seed_json")
 seed_ok=$(json_field "$seed_raw" "ok")
 seed_ts=$(json_field "$seed_raw" "ts")
-assert '[[ "$seed_ok" == "true" && -n "$seed_ts" ]]' "seeded Slack thread for slack-upload e2e" "response: ${seed_raw:0:500}"
+assert '[[ "$seed_ok" == "true" && -n "$seed_ts" ]]' "seeded Slack thread for slack-post-message file e2e" "response: ${seed_raw:0:500}"
 
-if [[ "$seed_ok" == "true" && -n "$seed_ts" ]]; then
-  slack_upload_raw=$(docker exec \
-    -e FILE_CONTENT="$slack_upload_body" \
-    -e FILE_TITLE="$slack_upload_title" \
-    -e CHANNEL_ID="$SLACK_CHANNEL_ID" \
-    -e THREAD_TS="$seed_ts" \
-    -e INITIAL_COMMENT="$slack_upload_comment" \
+# slack-post-message requires a live Thor session; bind one to the seed thread.
+upload_session_body=$(SEED_TS="$seed_ts" node -e "
+  console.log(JSON.stringify({
+    correlationKey: 'slack:thread:' + process.env.SLACK_CHANNEL_ID + '/' + process.env.SEED_TS,
+    triggerSlackId: process.env.ATTRIBUTION_E2E_SLACK_ID
+  }));
+")
+upload_session_raw=$(curl -sf -X POST "$RUNNER_URL/internal/e2e/trigger-context" \
+  -H 'Content-Type: application/json' \
+  -H "x-thor-internal-secret: $THOR_INTERNAL_SECRET" \
+  -d "$upload_session_body" \
+  2>/dev/null || echo '{}')
+upload_session_id=$(json_field "$upload_session_raw" "sessionId")
+assert '[[ -n "$upload_session_id" ]]' "created Thor session for slack-post-message file e2e" "response: ${upload_session_raw:0:300}"
+
+if [[ "$seed_ok" == "true" && -n "$seed_ts" && -n "$upload_session_id" ]]; then
+  # Write the attachment into the shared /tmp volume that both the opencode and
+  # remote-cli containers mount, so remote-cli can read it by path server-side.
+  docker exec -e FILE_CONTENT="$slack_upload_body" -e FILE_NAME="$slack_upload_filename" \
     "$opencode_container" \
-    sh -lc 'printf "%s\n" "$FILE_CONTENT" > /tmp/slack-upload-e2e.txt && slack-upload /tmp/slack-upload-e2e.txt --title "$FILE_TITLE" --channel "$CHANNEL_ID" --thread-ts "$THREAD_TS" --comment "$INITIAL_COMMENT"' 2>&1 || true)
-  assert '[[ "$slack_upload_raw" == "{\"ok\":true}" ]]' "slack-upload returns minimal success payload" "output: ${slack_upload_raw:0:500}"
+    sh -lc 'printf "%s\n" "$FILE_CONTENT" > "/tmp/$FILE_NAME"' || true
+
+  post_body=$(FILE_PATH="/tmp/$slack_upload_filename" THREAD_TS="$seed_ts" MSG="$slack_upload_message" node -e "
+    console.log(JSON.stringify({
+      args: ['--channel', process.env.SLACK_CHANNEL_ID, '--thread-ts', process.env.THREAD_TS, '--file', process.env.FILE_PATH],
+      cwd: '/workspace',
+      stdin: process.env.MSG
+    }));
+  ")
+  slack_upload_raw=$(curl -s -X POST "$REMOTE_CLI_URL/exec/slack-post-message" \
+    -H 'Content-Type: application/json' \
+    -H "x-thor-session-id: $upload_session_id" \
+    -d "$post_body" 2>/dev/null || echo '{}')
+  slack_upload_exit=$(json_field "$slack_upload_raw" "exitCode")
+  assert '[[ "$slack_upload_exit" == "0" ]]' "slack-post-message --file returns success" "output: ${slack_upload_raw:0:500}"
 
   upload_reply_json=""
   upload_file_id=""
@@ -1108,17 +1133,16 @@ if [[ "$seed_ok" == "true" && -n "$seed_ts" ]]; then
   replies='{}'
   for _ in $(seq 1 24); do
     replies=$(slack_replies "$SLACK_CHANNEL_ID" "$seed_ts" 2>/dev/null || echo '{}')
-    upload_reply_json=$(echo "$replies" | EXPECT_COMMENT="$slack_upload_comment" EXPECT_TITLE="$slack_upload_title" node -e "
+    upload_reply_json=$(echo "$replies" | EXPECT_TITLE="$slack_upload_filename" node -e "
       const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
       const messages = d.messages || [];
       const match = [...messages].reverse().find((message) => {
         const files = Array.isArray(message.files) ? message.files : [];
-        return (message.text || '').includes(process.env.EXPECT_COMMENT) &&
-          files.some((file) => file.title === process.env.EXPECT_TITLE);
+        return files.some((file) => file.title === process.env.EXPECT_TITLE);
       });
       if (!match) process.exit(1);
       const file = (match.files || []).find((candidate) => candidate.title === process.env.EXPECT_TITLE);
-      console.log(JSON.stringify({ ts: match.ts || '', fileId: file?.id || '', title: file?.title || '' }));
+      console.log(JSON.stringify({ ts: match.ts || '', fileId: file?.id || '', title: file?.title || '', text: match.text || '' }));
     " 2>/dev/null || echo "")
     upload_file_id=$(json_field "$upload_reply_json" "fileId")
     upload_file_title=$(json_field "$upload_reply_json" "title")
@@ -1129,14 +1153,39 @@ if [[ "$seed_ok" == "true" && -n "$seed_ts" ]]; then
   done
 
   assert '[[ -n "$upload_file_id" ]]' "Slack thread shows uploaded file reply" "replies: ${replies:0:1000}"
-  assert '[[ "$upload_file_title" == "$slack_upload_title" ]]' "uploaded file keeps requested title" "reply: ${upload_reply_json:0:300}"
+  assert '[[ "$upload_file_title" == "$slack_upload_filename" ]]' "uploaded file keeps the file basename as title" "reply: ${upload_reply_json:0:300}"
+  upload_file_comment=$(json_field "$upload_reply_json" "text")
+  assert '[[ "$upload_file_comment" == *"$slack_upload_message"* ]]' "attachment carries the standalone message as context" "reply: ${upload_reply_json:0:300}"
+
+  # The actual message posts as its own fileless reply after the attachment.
+  # Poll separately because the attachment comment contains the same text and
+  # must not satisfy this assertion.
+  message_reply_ts=""
+  for _ in $(seq 1 24); do
+    replies=$(slack_replies "$SLACK_CHANNEL_ID" "$seed_ts" 2>/dev/null || echo '{}')
+    message_reply_ts=$(echo "$replies" | EXPECT_MSG="$slack_upload_message" node -e "
+      const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+      const messages = d.messages || [];
+      const match = [...messages].reverse().find((message) => {
+        const files = Array.isArray(message.files) ? message.files : [];
+        return files.length === 0 && (message.text || '').includes(process.env.EXPECT_MSG);
+      });
+      if (!match?.ts) process.exit(1);
+      process.stdout.write(match.ts);
+    " 2>/dev/null || echo "")
+    if [[ -n "$message_reply_ts" ]]; then
+      break
+    fi
+    sleep 5
+  done
+  assert '[[ -n "$message_reply_ts" ]]' "message posts as a separate reply after the attachment" "replies: ${replies:0:1000}"
 
   if [[ -n "$upload_file_id" ]]; then
     file_info_raw=$(slack_file_info "$upload_file_id" 2>/dev/null || echo '{}')
     file_info_ok=$(json_field "$file_info_raw" "ok")
     file_info_title=$(json_field "$file_info_raw" "file.title")
     assert '[[ "$file_info_ok" == "true" ]]' "files.info returns uploaded Slack file" "response: ${file_info_raw:0:500}"
-    assert '[[ "$file_info_title" == "$slack_upload_title" ]]' "files.info matches uploaded title" "response: ${file_info_raw:0:500}"
+    assert '[[ "$file_info_title" == "$slack_upload_filename" ]]' "files.info matches uploaded title" "response: ${file_info_raw:0:500}"
   fi
 fi
 
