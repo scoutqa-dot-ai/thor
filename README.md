@@ -64,7 +64,7 @@ curl http://localhost:8080/global/health
 
 6. Link a ChatGPT account so opencode has an upstream model:
 
-   Visit `http://localhost:8080/dashboard` (admin-gated by Vouch + `THOR_ADMIN_EMAILS`), sign in with Google, and add a ChatGPT account from the codex-lb dashboard. Once linked, opencode picks the model from its UI (the provider whitelist surfaces `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5`, `gpt-5.6-sol`, `gpt-5.6-terra`).
+   Visit `http://localhost:8080/dashboard` (admin-gated by Vouch + `THOR_ADMIN_EMAILS`), sign in with Google, and add a ChatGPT account from the codex-lb dashboard. Once linked, opencode picks the model from its UI (the provider whitelist surfaces `gpt-5.4-mini`, `gpt-5.6-sol`, and `gpt-5.6-terra`).
 
 ## Integrations
 
