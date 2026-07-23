@@ -1,5 +1,6 @@
 import {
   AddCommentToJiraIssueApprovalArgsSchema,
+  CreateConfluencePageApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
   GhIssueCreateApprovalArgsSchema,
   AwsExecApprovalArgsSchema,
@@ -122,6 +123,8 @@ export function buildApprovalPresentation(
       return buildCreateJiraIssuePresentation(args);
     case "addCommentToJiraIssue":
       return buildAddJiraCommentPresentation(args);
+    case "createConfluencePage":
+      return buildCreateConfluencePagePresentation(args);
     case "create-feature-flag":
       return buildCreateFeatureFlagPresentation(args);
     case "ghIssueCreate":
@@ -216,6 +219,22 @@ function buildAddJiraCommentPresentation(args: Record<string, unknown>): Approva
   return {
     title: `Comment on Jira issue: ${renderValue(parsed.issueIdOrKey) ?? "unknown issue"}`,
     markdown: joinMarkdown([renderValue(parsed.commentBody)]),
+  };
+}
+
+function buildCreateConfluencePagePresentation(
+  args: Record<string, unknown>,
+): ApprovalPresentation {
+  const parsed = CreateConfluencePageApprovalArgsSchema.parse(args);
+  const parentId = "parentId" in parsed ? parsed.parentId : undefined;
+  return {
+    title: `Create Confluence page: ${renderValue(parsed.title) ?? "Untitled page"}`,
+    markdown: joinMarkdown([
+      bullet("Space", parsed.spaceKey ?? parsed.spaceId),
+      bullet("Title", parsed.title),
+      bullet("Parent", parentId),
+      section("Content preview", parsed.content),
+    ]),
   };
 }
 

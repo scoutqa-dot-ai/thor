@@ -34,6 +34,27 @@ describe("buildApprovalPresentation — gh issue create", () => {
   });
 });
 
+describe("buildApprovalPresentation — confluence page create", () => {
+  it("summarizes the page target and content without raw JSON noise", () => {
+    const presentation = buildApprovalPresentation("createConfluencePage", {
+      spaceId: "CST",
+      title: "Maybank monitoring update",
+      parentId: "123456",
+      content: "Monitoring summary\n\nAll checks passed.",
+      representation: "markdown",
+    });
+
+    expect(presentation).toBeDefined();
+    expect(presentation!.title).toBe("Create Confluence page: Maybank monitoring update");
+    expect(presentation!.markdown).toContain("*Space:* CST");
+    expect(presentation!.markdown).toContain("*Title:* Maybank monitoring update");
+    expect(presentation!.markdown).toContain("*Parent:* 123456");
+    expect(presentation!.markdown).toContain("*Content preview:*\nMonitoring summary");
+    expect(presentation!.markdown).not.toContain("representation");
+    expect(presentation!.markdown).not.toContain('"spaceId"');
+  });
+});
+
 describe("buildApprovalPresentation — aws write command", () => {
   it("renders the reviewed aws command argv in a JSON code block with the working directory", () => {
     const presentation = buildApprovalPresentation("awsExec", {

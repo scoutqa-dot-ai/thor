@@ -37,7 +37,7 @@ const ATLASSIAN_ALLOW = [
   "getConfluencePageInlineComments",
   "getConfluenceCommentChildren",
 ];
-const ATLASSIAN_APPROVE = ["createJiraIssue", "addCommentToJiraIssue"];
+const ATLASSIAN_APPROVE = ["createJiraIssue", "addCommentToJiraIssue", "createConfluencePage"];
 
 const GRAFANA_ALLOW = [
   "list_datasources",

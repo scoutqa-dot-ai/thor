@@ -16,6 +16,19 @@ export const AddCommentToJiraIssueApprovalArgsSchema = z
   })
   .passthrough();
 
+export const CreateConfluencePageApprovalArgsSchema = z
+  .object({
+    spaceId: z.string().min(1).optional(),
+    spaceKey: z.string().min(1).optional(),
+    title: z.string().min(1),
+    content: z.string().min(1),
+    body: z.never('"body" is not supported; use markdown "content"').optional(),
+  })
+  .passthrough()
+  .refine((args) => Boolean(args.spaceId || args.spaceKey), {
+    message: "spaceId or spaceKey is required",
+  });
+
 export const CreateFeatureFlagApprovalArgsSchema = z
   .object({
     key: z.string().min(1),
@@ -50,6 +63,7 @@ export const AwsExecApprovalArgsSchema = z
 export const ApprovalArgsSchema = z.union([
   CreateJiraIssueApprovalArgsSchema,
   AddCommentToJiraIssueApprovalArgsSchema,
+  CreateConfluencePageApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
   GhIssueCreateApprovalArgsSchema,
   AwsExecApprovalArgsSchema,
@@ -69,6 +83,10 @@ export const ApprovalRequiredEventPayloadSchema = z.discriminatedUnion("tool", [
   ApprovalRequiredEventBaseSchema.extend({
     tool: z.literal("addCommentToJiraIssue"),
     args: AddCommentToJiraIssueApprovalArgsSchema,
+  }),
+  ApprovalRequiredEventBaseSchema.extend({
+    tool: z.literal("createConfluencePage"),
+    args: CreateConfluencePageApprovalArgsSchema,
   }),
   ApprovalRequiredEventBaseSchema.extend({
     tool: z.literal("create-feature-flag"),
@@ -91,6 +109,7 @@ export type ApprovalRequiredEventPayload = z.infer<typeof ApprovalRequiredEventP
 const APPROVAL_TOOLS_REQUIRING_DISCLAIMER = [
   "createJiraIssue",
   "addCommentToJiraIssue",
+  "createConfluencePage",
   "create-feature-flag",
 ] as const satisfies readonly ApprovalToolName[];
 
@@ -103,13 +122,29 @@ export function validateDisclaimerCompatibleArgs(
   args: Record<string, unknown>,
 ): string | undefined {
   if (!approvalToolRequiresDisclaimer(tool)) return undefined;
-  const contentFormat = args.contentFormat;
-  if (contentFormat === undefined || contentFormat === "markdown") return undefined;
-  const formatted =
-    typeof contentFormat === "string" ? `"${contentFormat}"` : JSON.stringify(contentFormat);
+  const contentFormatError = validateMarkdownFormat(tool, "contentFormat", args.contentFormat);
+  if (contentFormatError) return contentFormatError;
+
+  if (tool === "createConfluencePage") {
+    const representationError = validateMarkdownFormat(tool, "representation", args.representation);
+    if (representationError) return representationError;
+    if (typeof args.content !== "string") {
+      return [
+        `"${tool}" is not allowed.`,
+        `Reason: createConfluencePage requires markdown content in the "content" field.`,
+      ].join("\n");
+    }
+  }
+
+  return undefined;
+}
+
+function validateMarkdownFormat(tool: string, field: string, value: unknown): string | undefined {
+  if (value === undefined || value === "markdown") return undefined;
+  const formatted = typeof value === "string" ? `"${value}"` : JSON.stringify(value);
   return [
     `"${tool}" is not allowed.`,
-    `Reason: contentFormat ${formatted} is not supported — only "markdown" is permitted.`,
+    `Reason: ${field} ${formatted} is not supported — only "markdown" is permitted.`,
   ].join("\n");
 }
 
@@ -124,7 +159,14 @@ export function injectApprovalDisclaimer(
     tool,
     args,
   });
-  if (!parsed.success) return args;
+  if (!parsed.success) {
+    // Fail closed: a disclaimer-required tool must never execute upstream without the
+    // Thor footer. If the stored args no longer parse, surface it loudly instead of
+    // silently returning args unchanged (which would skip disclaimer injection).
+    throw new Error(
+      `Cannot inject approval disclaimer for "${tool}": arguments failed validation — ${parsed.error.message}`,
+    );
+  }
   switch (parsed.data.tool) {
     case "createJiraIssue":
     case "create-feature-flag":
@@ -138,6 +180,11 @@ export function injectApprovalDisclaimer(
       return {
         ...parsed.data.args,
         commentBody: `${parsed.data.args.commentBody}\n${footer}`,
+      };
+    case "createConfluencePage":
+      return {
+        ...parsed.data.args,
+        content: `${parsed.data.args.content}\n${footer}`,
       };
     case "ghIssueCreate":
     case "awsExec":
