@@ -250,6 +250,31 @@ def test_builtin_jira_attachment_upload_rules_stay_path_and_method_scoped(
         assert flow.request.headers == {}
 
 
+def test_builtin_slack_post_message_denial_points_to_helper(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
+
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({}), encoding="utf-8")
+    addon = ThorMitmAddon(str(config))
+
+    flow = FakeFlow(
+        request=FakeRequest(
+            host="slack.com", method="POST", path="/api/chat.postMessage"
+        )
+    )
+    addon.request(flow)
+
+    assert flow.response is not None
+    assert _status_code(flow.response) == 403
+    assert (
+        _response_text(flow.response)
+        == "thor proxy denied slack.com/api/chat.postMessage; use slack-post-message instead"
+    )
+    assert "Authorization" not in flow.request.headers
+
+
 def test_builtin_slack_reaction_add_is_denied(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
 
