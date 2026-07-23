@@ -1,7 +1,7 @@
 ---
 description: Deep reasoning agent for planning, architecture, code review, and complex analysis
 mode: subagent
-model: openai/gpt-5.5
+model: openai/gpt-5.6-sol
 reasoning_effort: xhigh
 ---
 

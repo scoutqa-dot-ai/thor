@@ -82,7 +82,7 @@ CMD ["node", "/app/packages/runner/dist/index.js"]
 
 # --- Install upstream opencode from npm ---
 FROM base AS opencode
-RUN npm install -g opencode-ai@1.17.16 opencode-plugin-langfuse@0.1.8
+RUN npm install -g opencode-ai@1.18.4 opencode-plugin-langfuse@0.1.8
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl jq python3-pip ripgrep \
     && npm install -g prettier@3.8.4 \

@@ -2,6 +2,8 @@
 
 Ship `ghcr.io/soju06/codex-lb` as the OpenAI-compatible upstream for opencode, fronted behind Thor's ingress auth gate.
 
+**Addendum (2026-07-23):** All build, coder, and thinker agents now use `openai/gpt-5.6-sol`. The coupled OpenCode server/SDK pin moves to 1.18.4 because its embedded models.dev snapshot contains that model. An explicit `opencode models --refresh` against 1.17.16 also exposed the model, but Thor keeps runtime refreshes disabled and uses the newer embedded snapshot so startup remains offline and reproducible. Title generation stays on `openai/gpt-5.4-mini`.
+
 ## Goal
 
 Let opencode use ChatGPT-backed `gpt-5*` models without minting paid OpenAI API keys. codex-lb pools one or more ChatGPT account credentials and exposes an OpenAI-compatible `/v1/responses` endpoint that opencode points at. Its dashboard for account/quota management lives behind the same Google SSO + admin-email gate as `/admin`.
@@ -30,7 +32,7 @@ Let opencode use ChatGPT-backed `gpt-5*` models without minting paid OpenAI API 
 
 - codex-lb listens on `2455` (API + dashboard) and `1455` (OAuth callback for `auth.openai.com`); both are bound to loopback on the host. The image runs as a non-root user and persists its SQLite store on the mounted volume.
 - The mitmproxy addon's `passthrough` action is a policy bypass, **not** TLS passthrough — it still MITMs the TLS connection, so every container talking to passthrough hosts needs to trust the mitmproxy CA.
-- opencode does **not** read codex-lb's `/v1/models`. Its built-in `openai` provider builds the model list from the `models.dev` snapshot compiled into the binary (it never issues an HTTP model-list call), and `models.dev`'s network endpoint is blocked by mitmproxy anyway. `small_model` pins title generation to `gpt-5.4-mini` and the provider `whitelist` narrows the snapshot's openai models to `gpt-5.4` / `gpt-5.4-mini` / `gpt-5.5` — all present in the pinned `opencode-ai@1.17.13` snapshot. Model selection therefore comes from the bundled snapshot, not the proxy.
+- opencode does **not** read codex-lb's `/v1/models`. Its built-in `openai` provider builds the model list from the `models.dev` snapshot compiled into the binary (it never issues an HTTP model-list call), and `models.dev`'s network endpoint is blocked by mitmproxy anyway. `small_model` pins title generation to `gpt-5.4-mini` and the provider `whitelist` narrows the snapshot's openai models to `gpt-5.4` / `gpt-5.4-mini` / `gpt-5.5` / `gpt-5.6-sol` — all present in the pinned `opencode-ai@1.18.4` snapshot. Model selection therefore comes from the bundled snapshot, not the proxy.
   - Verify the exact pinned snapshot offline after every `opencode-ai` bump and before adding a model to `small_model`, an agent, or the provider whitelist:
 
     ```bash
@@ -39,7 +41,7 @@ Let opencode use ChatGPT-backed `gpt-5*` models without minting paid OpenAI API 
       thor-opencode-snapshot-check models openai
     ```
 
-    The current pin must print `openai/gpt-5.4`, `openai/gpt-5.4-mini`, and `openai/gpt-5.5`. A future model such as `gpt-5.6` is supported by the pinned snapshot only when this offline command prints `openai/gpt-5.6`; do not infer support from codex-lb's live `/v1/models` response or from strings found in the binary.
+    The current pin must print `openai/gpt-5.4`, `openai/gpt-5.4-mini`, `openai/gpt-5.5`, and `openai/gpt-5.6-sol`. A new model is supported by the pinned snapshot only when this offline command prints its full provider/model ID; do not infer support from codex-lb's live `/v1/models` response or from strings found in the binary.
 
   - `OPENCODE_DISABLE_MODELS_FETCH=true` disables the automatic startup and hourly `models.dev` refreshes, which egress policy blocks anyway. OpenCode still loads a disk cache first and then the snapshot embedded in the pinned binary. An operator can still explicitly request the network path with `opencode models --refresh`; normal server operation never does so.
 
@@ -115,6 +117,7 @@ flowchart LR
 | 8   | Replace the nginx-template static simulator with live `scripts/test-e2e.sh` probes | The TS simulator hand-rolled nginx's location-priority rules and didn't actually run nginx. Live probes catch real routing/auth regressions and align with AGENTS.md rule #7                                                                                                                                                              | Keeping the simulator and adding an integration test alongside; teaching the simulator about regex location precedence                                                                                                                                                                              |
 | 9   | Try codex-lb first at `/assets/`, fall back to opencode on 404                     | The shared `/assets/` fallback is asymmetric: codex-lb's `spa_fallback` raises a real 404 for unknown `/assets/<hash>` (`app/main.py`), while opencode's SPA returns 200 + index.html. With opencode first, the fallback never fires; flipping the order makes the original "try X → on 404 try Y" design work without any body rewriting | Rebase codex-lb at `/cl-assets/` via `sub_filter` (adds edge HTML/JS/CSS rewriting on every codex-lb response); `Referer`-based routing (Vite child chunks carry the parent script URL, not `/dashboard`); forking codex-lb with Vite `base: '/codex-lb/'` (rebuild + re-merge on every image bump) |
 | 10  | Disable OpenCode's automatic `models.dev` fetches                                  | The pinned binary embeds the catalog and the offline check gates model additions. Startup and hourly refreshes can only fail under the server's egress policy, so suppressing them removes network noise without changing the selected models                                                                                             | Allowing `models.dev` through mitmproxy; tolerating a failed request on startup and every hour                                                                                                                                                                                                      |
+| 11  | Use OpenCode 1.18.4's embedded catalog for `gpt-5.6-sol`                           | An explicit refresh made the model available to 1.17.16, but production egress blocks models.dev and a fetched cache would be mutable external state. The 1.18.4 binary exposes the model offline, preserving the existing reproducible startup design.                                                                                   | Re-enable runtime refreshes; seed a network-fetched model cache into the image                                                                                                                                                                                                                      |
 
 ## Implementation risks
 
