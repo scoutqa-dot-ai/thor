@@ -20,13 +20,13 @@ servers, remote-cli fixtures, and external side effects from the MVP.
 
 - A test author adds one JSON scenario containing:
   - initial conversation messages;
-  - expected tool steps with frozen results;
+  - expected tool steps with complete frozen arguments and frozen results;
   - the expected final reply characteristics.
 - Tool names, descriptions, and input schemas are defined once for the entire
   suite and are never repeated or overridden by a scenario.
 - The compiler expands a trajectory into isolated next-action checkpoints:
-  - tool checkpoint: assert the requested tool and a meaningful subset of its
-    arguments;
+  - tool checkpoint: assert exactly one requested tool and a meaningful subset
+    of its arguments;
   - reply checkpoint: assert required/forbidden content and optional response
     constraints.
 - Every checkpoint uses the current body of
@@ -62,8 +62,11 @@ Illustrative shape:
       "expect_tool": {
         "name": "bash",
         "arguments_contain": {
-          "command": "mcp grafana"
+          "command": "mcp grafana query_loki_logs"
         }
+      },
+      "frozen_arguments": {
+        "command": "mcp grafana query_loki_logs '{\"datasourceUid\":\"loki\",\"logql\":\"{service=\\\"edge\\\"} |= \\\"502\\\"\"}'"
       },
       "result": {
         "content": "edge requests return 502 before reaching checkout; checkout health is green"
@@ -84,15 +87,26 @@ Constraints:
 
 - `messages` contains only the state before the first evaluated decision.
 - Each non-final trajectory step contains one expected tool request and the
-  frozen result that will be appended before compiling the next checkpoint.
+  complete `frozen_arguments` plus result that will be appended before
+  compiling the next checkpoint.
 - The final trajectory step expects a reply and has no synthetic result.
 - Tool names must resolve in the global catalog.
-- `arguments_contain` is recursive subset matching. Exact argument matching is
-  available only for product-significant contracts where alternatives are not
-  valid.
+- `frozen_arguments` is the canonical complete argument object used in later
+  checkpoint history. It must validate against the selected tool's global input
+  schema.
+- A tool expectation contains exactly one of `arguments_contain` or
+  `arguments_exact`. `arguments_contain` recursively matches object keys, treats
+  string leaves as substring checks, and compares other leaves exactly.
+  `arguments_exact` is reserved for product-significant contracts where the
+  entire argument object is fixed.
+- The expectation must match its own `frozen_arguments`; invalid golden steps
+  fail validation before compilation.
 - Reply checks are behavioral requirements, not exact response snapshots.
 - Tool-call IDs are generated deterministically by the compiler so authors do
   not manage protocol bookkeeping.
+- A checkpoint admits one reply or one tool call. Provider requests set
+  `parallel_tool_calls: false`, and grading rejects zero or multiple tool calls
+  when a tool is expected.
 
 ## Global tool catalog
 
@@ -134,13 +148,15 @@ git.
   - reject duplicate JSON keys, unknown fields, unknown tools, malformed
     messages, empty trajectories, invalid tool/result ordering, and invalid
     reply constraints;
+  - reject incomplete `frozen_arguments` and expectations that do not match
+    their own frozen call;
   - validate assistant tool calls and tool-result linkage after checkpoint
     expansion.
 - Parse `build.md` frontmatter and body, derive the default model, and hash the
   exact system-prompt body.
 - Compile each trajectory step into a standalone chat-completions test with the
-  frozen prior steps represented as assistant tool-call and tool-result
-  messages.
+  complete frozen prior arguments represented as assistant tool-call and
+  tool-result messages.
 - Produce a stable suite digest from the tool catalog, prompt body, scenario
   inputs, and expectations.
 - Unit-test validation failures and a two-tool-plus-reply expansion without
@@ -163,10 +179,11 @@ Exit criteria:
 - Configure its OpenAI Chat Completions provider for codex-lb's existing
   `/v1/chat/completions` endpoint.
 - Send the real prompt body as the system message, followed by the compiled
-  conversation, with the global tool catalog on every request.
+  conversation, with the global tool catalog and
+  `parallel_tool_calls: false` on every request.
 - Implement one reusable next-action assertion:
-  - tool expectation fails on a text-only answer, wrong tool, malformed
-    arguments, or argument-subset mismatch;
+  - tool expectation fails on a text-only answer, zero or multiple tool calls,
+    wrong tool, malformed arguments, or argument-subset mismatch;
   - reply expectation fails on a tool request, missing required content,
     forbidden content, or response-limit violation.
 - Preserve the raw response and operational metadata in JSONL artifacts.
@@ -177,8 +194,8 @@ Exit criteria:
 Exit criteria:
 
 - One command runs a selected model and replicate count against the suite.
-- A deliberately wrong reply, wrong tool, and wrong tool argument each fail
-  with a useful checkpoint-specific explanation.
+- A deliberately wrong reply, extra tool call, wrong tool, and wrong tool
+  argument each fail with a useful checkpoint-specific explanation.
 - A passing tool trajectory is evaluated through independent frozen
   checkpoints; no tool callback or external request occurs.
 - Results identify the exact model, prompt hash, suite digest, scenario,
@@ -223,6 +240,7 @@ Exit criteria:
 | 7   | Use Promptfoo only for provider execution, matrix/repeats, and artifact output | It removes generic evaluation plumbing while keeping Thor-specific scenario compilation and assertions small and explicit.                               | A large custom runner; adopting a hosted evaluation service.                                  |
 | 8   | Keep model-backed evals manual initially                                       | Runs consume model quota and exhibit variance; first collect stability/cost data before defining a blocking threshold.                                   | Running the full model suite on every push.                                                   |
 | 9   | Do not copy the downloaded suite without provenance                            | The package has no README or license, so repository inclusion is not yet justified.                                                                      | Importing it directly as the initial corpus.                                                  |
+| 10  | Admit exactly one tool call per tool checkpoint                                | The scenario and frozen-result contract model one decision at a time; rejecting extra calls prevents a matching call from hiding an unintended action.   | Accepting parallel calls without representing and grading every call and result.              |
 
 ## Out of scope
 
@@ -246,9 +264,6 @@ Exit criteria:
 - **Tool-schema drift.** A hand-maintained global catalog can diverge from
   OpenCode. Keep it intentionally small, document its source, and change it in
   the same review as agent-visible tool changes.
-- **Equivalent command shapes.** CLI commands may differ while remaining
-  correct. Use subset, pattern, or alternative-path expectations where the
-  product contract permits them.
 - **Checkpoint optimism.** Later steps receive the golden earlier action rather
   than the candidate's action. Report per-checkpoint pass rates; do not present
   the suite as end-to-end task success.
