@@ -1,0 +1,23 @@
+docs/plan/2026072401_behavioral-next-action-evals.md
+  08762337313a0ddb 10-13,42-44,46-47,120-125,190,196,216-217,227-230,249-253,256-260,337,360-369,376-379
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "8b65d7339aba82204d4f83ac71b562f9f3ab6040",
+  "prompts": {
+    "08762337313a0ddb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9d4c3614-699a-43cf-96bd-83bbb74c58c6",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 51,
+      "total_deletions": 14,
+      "accepted_lines": 48,
+      "overriden_lines": 0
+    }
+  }
+}
