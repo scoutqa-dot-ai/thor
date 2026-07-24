@@ -1,0 +1,25 @@
+docs/plan/2026052601_codex-lb-integration.md
+  1ccac9cecdd487db 122,128-129
+docker/ingress/nginx.conf.template
+  1ccac9cecdd487db 164-175
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "bab59d4702089a988231cb5edc115ff505417591",
+  "prompts": {
+    "1ccac9cecdd487db": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8e5e0aa1-ae9c-4973-8afd-1c057aa29202",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 114,
+      "total_deletions": 7,
+      "accepted_lines": 110,
+      "overriden_lines": 0
+    }
+  }
+}
