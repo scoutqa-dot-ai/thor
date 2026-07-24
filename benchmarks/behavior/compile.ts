@@ -382,6 +382,9 @@ export function endpointKind(endpoint: string): "codex-lb" | "openai" | "other" 
     );
   }
   const hostname = parsed.hostname.toLocaleLowerCase();
+  if (hostname === "api.openai.com" && parsed.protocol !== "https:") {
+    throw new Error("api.openai.com behavior eval endpoints must use HTTPS");
+  }
   if (
     hostname === "codex-lb" ||
     ((hostname === "127.0.0.1" || hostname === "localhost") && parsed.port === "2455")

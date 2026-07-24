@@ -312,6 +312,12 @@ Exit criteria:
   they stay manual initially anyway on variance/cost grounds (decision 8).
   Record the endpoint identity in every artifact alongside the model so a
   codex-lb result is never conflated with a direct-OpenAI one.
+- The host-run evaluator's optional runtime controls are
+  `THOR_BEHAVIOR_EVAL_MODEL`, `THOR_BEHAVIOR_EVAL_REPLICATES`,
+  `THOR_BEHAVIOR_EVAL_REASONING_EFFORT`, and
+  `THOR_BEHAVIOR_EVAL_REQUEST_PARAMS`. Document them in `.env.example`, the
+  deployment table, and evaluator README; do not add them to compose services
+  or CI because model-backed runs remain manual.
 - Send the real prompt body as `instructions`, the compiled Items as `input`,
   and the canonical catalog as Responses function definitions. Set
   `parallel_tool_calls: false` and `store: false` on every request. Replicate

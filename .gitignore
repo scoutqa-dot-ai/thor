@@ -25,6 +25,8 @@ test.sh
 /docker-volumes/
 /benchmarks/behavior/results/
 /.promptfoo/
+/.context/behavior-evals/
+/.context/promptfoo/
 
 # Python
 __pycache__/

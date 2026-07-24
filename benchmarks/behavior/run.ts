@@ -304,7 +304,6 @@ async function main(): Promise<void> {
   };
   const evaluation = await promptfoo.evaluate(buildPromptfooSuite(suite, args.apiKey), options);
   const summary = await evaluation.toEvaluateSummary();
-  assertProviderIdentity(summary.results, suite);
 
   const counts = new Map<string, number>();
   const records = summary.results.map((result) => {
@@ -314,6 +313,7 @@ async function main(): Promise<void> {
     return artifactForResult(result, suite, replicate);
   });
   await writeArtifacts(records, suite, args.outputDirectory);
+  assertProviderIdentity(summary.results, suite);
 
   const passed = records.filter((record) => record.pass).length;
   const cost = records.reduce((total, record) => total + (record.cost_usd ?? 0), 0);

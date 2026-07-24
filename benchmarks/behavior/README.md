@@ -55,7 +55,8 @@ Available filters and controls:
 
 - `--scenario <id>` selects one scenario.
 - `--category <category>` selects a category.
-- `--model <id>` selects the endpoint's wire model ID.
+- `--model <id>` selects the endpoint's wire model ID and overrides
+  `THOR_BEHAVIOR_EVAL_MODEL`.
 - `--replicates <n>` repeats every selected checkpoint; the default is
   `THOR_BEHAVIOR_EVAL_REPLICATES` or `1`.
 - `--endpoint <url>` overrides `THOR_BEHAVIOR_EVAL_BASE_URL`.
