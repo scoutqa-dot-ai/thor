@@ -55,6 +55,12 @@ const twoToolScenario = {
 } as const satisfies Scenario;
 
 describe("behavior scenario compiler", () => {
+  it("validates every committed scenario offline", async () => {
+    const suite = await compileSuite();
+    expect(suite.checkpoints).toHaveLength(9);
+    expect(new Set(suite.checkpoints.map((checkpoint) => checkpoint.scenario_id)).size).toBe(6);
+  });
+
   it("expands two tools and a reply into independent frozen checkpoints", async () => {
     const suite = await compileSuite({ scenarios: [loaded(twoToolScenario)] });
     expect(suite.checkpoints).toHaveLength(3);

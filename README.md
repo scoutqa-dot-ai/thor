@@ -104,6 +104,8 @@ Integration-specific env vars live in each integration's doc. MCP integration cr
 | `THOR_ADMIN_EMAILS`                 | Yes      | `ingress`                                   | Comma-separated authenticated Google emails allowed for OpenCode-backed and `/admin/` ingress routes                                                                                                                  |
 | `THOR_INTERNAL_SECRET`              | Yes      | `remote-cli`, `gateway`, `admin`, `ingress` | Secret-gates gateway↔remote-cli internal APIs and admin config writes; `ingress` injects it on `/admin/` after Vouch, `admin` re-validates it                                                                         |
 | `THOR_E2E_TEST_HELPERS`             | No       | `runner`                                    | Enables secret-gated deterministic runner e2e helpers                                                                                                                                                                 |
+| `THOR_BEHAVIOR_EVAL_BASE_URL`       | No       | local behavior evaluator                    | Responses API base URL for manual behavioral evals; defaults to host codex-lb, and may point to in-network codex-lb or the direct OpenAI API                                                                          |
+| `THOR_BEHAVIOR_EVAL_API_KEY`        | For eval | local behavior evaluator                    | API key for the selected behavioral-eval endpoint; required by `pnpm eval:behavior` and never committed                                                                                                               |
 | `RUNNER_BASE_URL`                   | Yes      | `remote-cli`                                | Public base URL for Thor trigger viewer links in PR/Jira content                                                                                                                                                      |
 | `INGRESS_PORT`                      | No       | `ingress`                                   | Host port for the reverse proxy                                                                                                                                                                                       |
 | `ATLASSIAN_AUTH`                    | No       | `remote-cli`, `mitmproxy`                   | Atlassian MCP auth header and mitmproxy default injection; required (with cloud ID) to enable Atlassian                                                                                                               |
@@ -195,4 +197,8 @@ REMOTE_CLI_GITHUB_REPO=owner/repo \
 pnpm test:create-jira-approval-e2e # live Slack/OpenCode approval-card e2e for Atlassian approval-required tools
 pnpm test:opencode-e2e # separate explicit OpenCode/LLM smoke path
 pnpm typecheck
+pnpm eval:behavior:validate # offline scenario and checkpoint validation
 ```
+
+Manual model-backed behavioral evaluations are documented in
+[`benchmarks/behavior/README.md`](benchmarks/behavior/README.md).
