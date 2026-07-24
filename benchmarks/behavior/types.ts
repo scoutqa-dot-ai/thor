@@ -143,6 +143,7 @@ export interface NormalizedFunctionCall {
   readonly name: string;
   readonly arguments: JsonObject;
   readonly raw_arguments: string;
+  readonly parse_error?: string;
 }
 
 export interface NormalizedResponse {

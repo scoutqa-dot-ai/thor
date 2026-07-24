@@ -23,6 +23,8 @@ test.sh
 
 # Thor
 /docker-volumes/
+/benchmarks/behavior/results/
+/.promptfoo/
 
 # Python
 __pycache__/

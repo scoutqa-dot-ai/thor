@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { assertDirectory, compileSuite, repositoryRoot, type CompileOptions } from "./compile.js";
 import { gradeNextAction } from "./assert-next-action.js";
+import { buildPromptfooSuite, parseRunArguments } from "./run.js";
 import type { Checkpoint, Scenario } from "./types.js";
 
 function loaded(scenario: Scenario): NonNullable<CompileOptions["scenarios"]>[number] {
@@ -221,5 +222,82 @@ describe("behavior assertions", () => {
         assertDirectory,
       ),
     ).resolves.toMatchObject({ pass: false });
+  });
+
+  it.each([
+    [
+      "text-only answer",
+      { output: [{ type: "message", content: "I would search." }] },
+      "exactly one",
+    ],
+    [
+      "extra function call",
+      {
+        output: [
+          { type: "function_call", name: "grep", arguments: '{"pattern":"x"}' },
+          { type: "function_call", name: "grep", arguments: '{"pattern":"x"}' },
+        ],
+      },
+      "received 2",
+    ],
+    [
+      "wrong tool",
+      {
+        output: [{ type: "function_call", name: "read", arguments: '{"filePath":"x"}' }],
+      },
+      "expected tool grep",
+    ],
+    [
+      "wrong arguments",
+      {
+        output: [{ type: "function_call", name: "grep", arguments: '{"pattern":"other"}' }],
+      },
+      "arguments mismatch",
+    ],
+    [
+      "malformed arguments",
+      {
+        output: [{ type: "function_call", name: "grep", arguments: "{" }],
+      },
+      "malformed JSON",
+    ],
+  ])("rejects a %s", async (_name, response, reason) => {
+    const target = checkpoint({ name: "grep", arguments_contain: { pattern: "failure" } }, "tool");
+    await expect(gradeNextAction(target, response, assertDirectory)).resolves.toMatchObject({
+      pass: false,
+      reason: expect.stringContaining(reason),
+    });
+  });
+});
+
+describe("Promptfoo driver", () => {
+  it("builds a typed Responses suite with immutable request boundaries", async () => {
+    const compiled = await compileSuite({ scenarios: [loaded(twoToolScenario)] });
+    const suite = buildPromptfooSuite(compiled, "test-key");
+    expect(suite.providers).toMatchObject([
+      {
+        id: "openai:responses:gpt-5.6-terra",
+        config: {
+          apiBaseUrl: "http://127.0.0.1:2455/v1",
+          apiKey: "test-key",
+          parallel_tool_calls: false,
+          store: false,
+          omitDefaults: true,
+        },
+      },
+    ]);
+    expect(suite.tests).toHaveLength(3);
+  });
+
+  it("parses filters and rejects protected passthrough parameters", () => {
+    expect(parseRunArguments(["--scenario", "two-tools", "--replicates", "3"], {})).toMatchObject({
+      scenario: "two-tools",
+      replicates: 3,
+    });
+    expect(() =>
+      parseRunArguments([], {
+        THOR_BEHAVIOR_EVAL_REQUEST_PARAMS: '{"store":true}',
+      }),
+    ).toThrow(/protected key store/u);
   });
 });

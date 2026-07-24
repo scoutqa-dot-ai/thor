@@ -81,6 +81,7 @@ export function normalizeResponse(raw: unknown): NormalizedResponse {
           name: typeof item.name === "string" ? item.name : "",
           arguments: {},
           raw_arguments: parsed.raw,
+          parse_error: parsed.error,
         });
         continue;
       }
@@ -205,8 +206,11 @@ async function gradeTool(
     );
   }
   const call = response.function_calls[0]!;
+  if (call.parse_error) {
+    return fail(call.parse_error);
+  }
   if (!call.name) {
-    return fail("function call has no name or malformed arguments");
+    return fail("function call has no name");
   }
   if (call.name !== expectation.name) {
     return fail(`expected tool ${expectation.name}, received ${call.name}`);
