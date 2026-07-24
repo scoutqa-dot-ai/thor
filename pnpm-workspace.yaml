@@ -12,4 +12,5 @@ overrides:
 # explicitly allowed (true) or denied (false). We deny it, preserving the
 # prior behavior where the script was skipped.
 allowBuilds:
+  esbuild: true
   protobufjs: false

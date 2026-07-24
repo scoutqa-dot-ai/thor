@@ -8,23 +8,28 @@
     "clean": "pnpm -r clean",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm -r typecheck && tsc -p benchmarks/behavior/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "./scripts/test-e2e.sh",
     "test:opencode-e2e": "./scripts/test-opencode-e2e.sh",
     "test:create-jira-approval-e2e": "./scripts/test-create-jira-approval-e2e.sh",
     "test:sandbox-e2e": "./scripts/test-sandbox-e2e.sh",
+    "eval:behavior:validate": "tsx benchmarks/behavior/compile.ts",
     "prepare": "husky"
   },
   "lint-staged": {
     "*.{ts,js,json,md,yaml,yml}": "prettier --write"
   },
   "devDependencies": {
+    "@types/node": "24.13.3",
+    "ajv": "8.20.0",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.0",
     "prettier": "^3.8.1",
     "tsdown": "^0.22.5",
+    "tsx": "4.23.1",
+    "typescript": "^7.0.0",
     "vitest": "^4.1.9"
   }
 }
