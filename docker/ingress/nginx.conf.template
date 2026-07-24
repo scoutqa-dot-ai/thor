@@ -161,7 +161,18 @@ server {
     }
 
     # codex-lb dashboard — protected by Google SSO and admin email.
-    location ~ ^/(dashboard|accounts|settings|api)(/|$) {
+    #
+    # codex-lb and OpenCode BOTH serve browser XHR under /api/*, but their
+    # top-level segments are disjoint: codex-lb owns the prefixes listed below
+    # (its dashboard namespace), while OpenCode's web UI uses /api/session,
+    # /api/event, /api/model, /api/permission, /api/fs/*, … . An earlier
+    # `|api)` here greedily captured all of /api/* and sent OpenCode's own
+    # calls (e.g. /api/session?limit=…&order=desc) to codex-lb, which 404s
+    # them. Match only codex-lb's routes so everything else under /api/* falls
+    # through to the opencode upstream in `location /`. Keep this list in sync
+    # with codex-lb's dashboard XHR namespace; a new codex-lb /api prefix lands
+    # on opencode's SPA fallback until it is added here.
+    location ~ ^/(dashboard|accounts|settings|api/(accounts|api-keys|automations|dashboard|dashboard-auth|firewall|model-sources|models|quota-planner|reports|request-logs|runtime|settings|sticky-sessions))(/|$) {
         auth_request /vouch/validate;
 
         auth_request_set $auth_user $upstream_http_x_vouch_user;
