@@ -368,11 +368,27 @@ async function validateAndCompileScenario(
   return checkpoints;
 }
 
-function endpointKind(endpoint: string): "codex-lb" | "openai" | "other" {
-  if (/codex-lb|127\.0\.0\.1:2455|localhost:2455/u.test(endpoint)) {
+export function endpointKind(endpoint: string): "codex-lb" | "openai" | "other" {
+  const parsed = new URL(endpoint);
+  if (
+    !["http:", "https:"].includes(parsed.protocol) ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error(
+      "behavior eval endpoint must be an absolute HTTP(S) URL without credentials, query parameters, or a fragment",
+    );
+  }
+  const hostname = parsed.hostname.toLocaleLowerCase();
+  if (
+    hostname === "codex-lb" ||
+    ((hostname === "127.0.0.1" || hostname === "localhost") && parsed.port === "2455")
+  ) {
     return "codex-lb";
   }
-  return endpoint.includes("api.openai.com") ? "openai" : "other";
+  return hostname === "api.openai.com" ? "openai" : "other";
 }
 
 function gitSha(): string {

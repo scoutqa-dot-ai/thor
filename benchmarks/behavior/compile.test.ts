@@ -2,7 +2,13 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { assertDirectory, compileSuite, repositoryRoot, type CompileOptions } from "./compile.js";
+import {
+  assertDirectory,
+  compileSuite,
+  endpointKind,
+  repositoryRoot,
+  type CompileOptions,
+} from "./compile.js";
 import { gradeNextAction } from "./assert-next-action.js";
 import { buildPromptfooSuite, parseRunArguments } from "./run.js";
 import type { Checkpoint, Scenario } from "./types.js";
@@ -298,6 +304,16 @@ describe("behavior assertions", () => {
 });
 
 describe("Promptfoo driver", () => {
+  it("classifies endpoint hosts exactly", () => {
+    expect(endpointKind("http://127.0.0.1:2455/v1")).toBe("codex-lb");
+    expect(endpointKind("http://codex-lb:2455/v1")).toBe("codex-lb");
+    expect(endpointKind("https://api.openai.com/v1")).toBe("openai");
+    expect(endpointKind("https://api.openai.com.attacker.example/v1")).toBe("other");
+    expect(() => endpointKind("https://user:secret@api.openai.com/v1")).toThrow(
+      /without credentials/u,
+    );
+  });
+
   it("builds a typed Responses suite with immutable request boundaries", async () => {
     const compiled = await compileSuite({ scenarios: [loaded(twoToolScenario)] });
     const suite = buildPromptfooSuite(compiled, "test-key");
