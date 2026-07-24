@@ -21,7 +21,7 @@ export const tools = [
       required: ["command"],
       additionalProperties: false,
     },
-    strict: true,
+    strict: false,
   },
   {
     name: "read",
@@ -36,7 +36,7 @@ export const tools = [
       required: ["filePath"],
       additionalProperties: false,
     },
-    strict: true,
+    strict: false,
   },
   {
     name: "grep",
@@ -51,7 +51,7 @@ export const tools = [
       required: ["pattern"],
       additionalProperties: false,
     },
-    strict: true,
+    strict: false,
   },
   {
     name: "glob",
@@ -65,7 +65,7 @@ export const tools = [
       required: ["pattern"],
       additionalProperties: false,
     },
-    strict: true,
+    strict: false,
   },
   {
     name: "task",

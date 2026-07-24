@@ -140,6 +140,27 @@ describe("behavior scenario compiler", () => {
       /bash\.command cannot use arguments_contain/u,
     );
   });
+
+  it("rejects a missing assertion module by name", async () => {
+    const malformed = {
+      ...twoToolScenario,
+      id: "missing-assertion",
+      trajectory: [
+        {
+          expect_tool: {
+            name: "grep",
+            assert: "does-not-exist",
+          },
+          frozen_arguments: { pattern: "failure" },
+          result: "text",
+        },
+        { expect_reply: { contains_all: ["done"] } },
+      ],
+    } as unknown as Scenario;
+    await expect(compileSuite({ scenarios: [loaded(malformed)] })).rejects.toThrow(
+      /assertion "does-not-exist" could not be loaded/u,
+    );
+  });
 });
 
 function checkpoint(

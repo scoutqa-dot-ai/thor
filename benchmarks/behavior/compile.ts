@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { access, readFile, readdir } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -165,7 +165,6 @@ function expectationAssert(step: TrajectoryStep): string | undefined {
 
 async function ensureAssertion(name: string): Promise<string> {
   const path = assertionPath(assertDirectory, name);
-  await access(path);
   await loadAssertion(assertDirectory, name);
   return path;
 }
