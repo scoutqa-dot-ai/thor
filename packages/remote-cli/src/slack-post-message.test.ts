@@ -344,7 +344,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("uploads --file attachments with the stdin message before posting it standalone", async () => {
+  it("uploads --file attachments uncommented before posting the stdin message standalone", async () => {
     writeFileSync(join(testCwd, "a.txt"), "alpha", "utf8");
     writeFileSync(join(testCwd, "b.txt"), "beta", "utf8");
     fetchMock.mockImplementation((async (url: string) => {
@@ -393,15 +393,15 @@ describe("remote-cli slack-post-message endpoint", () => {
     expect(urls[urls.length - 1]).toBe("https://slack.com/api/chat.postMessage");
     expect(urls.filter((u) => u.endsWith("/chat.postMessage"))).toHaveLength(1);
 
-    // Each file reply carries the meaningful stdin message and requested
-    // thread; the raw uploads carry each file's exact bytes.
+    // Each file reply carries no comment (the stdin message is posted exactly
+    // once, standalone) but does carry the requested thread.
     const completes = fetchMock.mock.calls.filter((c) =>
       String(c[0]).endsWith("/files.completeUploadExternal"),
     );
     const comments = completes.map((c) =>
       new URLSearchParams(String((c[1] as RequestInit).body)).get("initial_comment"),
     );
-    expect(comments).toEqual(["here are the files", "here are the files"]);
+    expect(comments).toEqual([null, null]);
     for (const c of completes) {
       expect(new URLSearchParams(String((c[1] as RequestInit).body)).get("thread_ts")).toBe(
         "1777940300.000000",

@@ -142,10 +142,9 @@ EOF
 ### 5. Upload a file
 
 Attach files by passing `--file <path>` to `slack-post-message` (repeatable).
-Each file is uploaded into the thread with the command's stdin message as its
-comment before the standalone message is posted, so the attachment keeps its
-context if a later operation fails. Paths must be under `/tmp` or one of the
-shared workspace roots the agent can access: `/workspace/memory`,
+Each file uploads into the thread without a comment, then the stdin message
+is posted once, standalone, after every file lands. Paths must be under
+`/tmp` or one of the shared workspace roots the agent can access: `/workspace/memory`,
 `/workspace/config`, `/workspace/repos`, `/workspace/worklog`, `/workspace/cron`,
 `/workspace/runs`, or `/workspace/worktrees`. Generate the file in a unique temp
 path first unless the user explicitly asks to keep it; if the filename matters,
@@ -188,8 +187,8 @@ Common failures to report as-is:
 - Do not use literal `\n` inside single-quoted `text=...` arguments.
 - Do not use shared temp paths. Default to `mktemp` under `/tmp`; use
   `mktemp -d` when you need a stable filename inside a unique temp directory.
-- Uploads go through `slack-post-message --file`; each file is uploaded into the
-  thread with your stdin message as its comment before the standalone message.
+- Uploads go through `slack-post-message --file`; each file uploads into the
+  thread without a comment, then the stdin message posts once, standalone.
   Do not call Slack's external-upload endpoints directly.
 - `/tmp` is the default location for temporary Slack artifacts. Treat
   `/workspace/worktrees` as persistent storage and use it only when

@@ -328,9 +328,8 @@ export async function handleSlackPostMessage(
     payload.blocks = blocks;
   }
 
-  // Attachments are uploaded into the thread first, each with the stdin message
-  // as its comment so it remains useful even if a later upload or message post
-  // fails. Successfully shared files are intentionally left in the thread.
+  // Attachments are uploaded into the thread first, uncommented; the stdin
+  // message is posted once, standalone, after every file lands.
   for (const [index, rawPath] of parsed.files.entries()) {
     const filePath = resolveAllowedFilePath(rawPath, request.cwd, "--file");
     if (typeof filePath !== "string") return result(`${filePath.error}\n`);
@@ -364,7 +363,6 @@ export async function handleSlackPostMessage(
         filename: basename(filePath),
         title: basename(filePath),
         content,
-        initialComment: text,
       },
       { fetch: deps.fetch, env: deps.env },
     );
