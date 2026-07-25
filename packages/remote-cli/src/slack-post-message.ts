@@ -328,9 +328,10 @@ export async function handleSlackPostMessage(
     payload.blocks = blocks;
   }
 
-  // Attachments are uploaded into the thread first, uncommented; the stdin
-  // message is posted once, standalone, after every file lands.
-  for (const [index, rawPath] of parsed.files.entries()) {
+  // Every attachment path is validated and read before any Slack call, so a
+  // bad path or oversize file fails closed without uploading anything.
+  const attachments: { title: string; content: Buffer }[] = [];
+  for (const rawPath of parsed.files) {
     const filePath = resolveAllowedFilePath(rawPath, request.cwd, "--file");
     if (typeof filePath !== "string") return result(`${filePath.error}\n`);
 
@@ -355,20 +356,40 @@ export async function handleSlackPostMessage(
         `failed to read --file ${rawPath}: ${err instanceof Error ? err.message : String(err)}\n`,
       );
     }
-    const label = `File ${index + 1}`;
-    const upload = await uploadSlackFileApi(
-      {
-        channel: parsed.channel,
-        ...(parsed.threadTs ? { threadTs: parsed.threadTs } : {}),
-        filename: basename(filePath),
-        title: basename(filePath),
-        content,
-      },
-      { fetch: deps.fetch, env: deps.env },
+    attachments.push({ title: basename(filePath), content });
+  }
+
+  // Every file's bytes upload in parallel (each gets its own presigned URL),
+  // then a single completion call shares them all into one thread message —
+  // either every attachment lands together, uncommented, or none do.
+  if (attachments.length > 0) {
+    const uploadDeps = { fetch: deps.fetch, env: deps.env };
+    const uploads = await Promise.all(
+      attachments.map((attachment) =>
+        requestSlackFileUpload(
+          { filename: attachment.title, content: attachment.content },
+          uploadDeps,
+        ),
+      ),
     );
-    if ("error" in upload) {
-      return result(`failed to upload ${label} (${basename(filePath)}): ${upload.error}\n`);
+    const failedIndex = uploads.findIndex((upload) => "error" in upload);
+    if (failedIndex !== -1) {
+      const failure = uploads[failedIndex] as { error: string };
+      return result(
+        `failed to upload File ${failedIndex + 1} (${attachments[failedIndex].title}): ${failure.error}\n`,
+      );
     }
+
+    const files = uploads.map((upload, i) => ({
+      id: (upload as { fileId: string }).fileId,
+      title: attachments[i].title,
+    }));
+    const shared = await completeSlackFileShare(
+      files,
+      { channel: parsed.channel, threadTs: parsed.threadTs },
+      uploadDeps,
+    );
+    if ("error" in shared) return result(`failed to share attachments: ${shared.error}\n`);
   }
 
   const slackResponse = await postSlackMessageApi(
@@ -488,25 +509,15 @@ async function slackApiForm(
 }
 
 /**
- * Upload a file to Slack and share it into a channel/thread via the external
- * upload flow (getUploadURLExternal → raw POST → completeUploadExternal). The
- * returned `upload_url` is pre-signed, so step 2 uses it verbatim and carries
- * no Authorization header; only the first and third calls hit the Web API base.
- * Requires the bot's `files:write` scope. A successful completion is enough;
- * callers intentionally leave uploaded files in Slack and do not need a file
- * URL or file id.
+ * Request a presigned upload URL from Slack and PUT the file's raw bytes to
+ * it. The returned `upload_url` is pre-signed, so this carries no
+ * Authorization header. The file is allocated but not yet visible to anyone
+ * until a later completeSlackFileShare call shares it.
  */
-export async function uploadSlackFileApi(
-  request: {
-    channel: string;
-    threadTs?: string;
-    filename: string;
-    title: string;
-    content: string | Buffer;
-    initialComment?: string;
-  },
-  deps: Pick<SlackPostMessageDeps, "fetch" | "env"> = {},
-): Promise<{ ok: true } | { error: string }> {
+async function requestSlackFileUpload(
+  request: { filename: string; content: string | Buffer },
+  deps: Pick<SlackPostMessageDeps, "fetch" | "env">,
+): Promise<{ fileId: string } | { error: string }> {
   if (!deps.env?.SLACK_BOT_TOKEN) return { error: "SLACK_BOT_TOKEN is not set" };
   const fetchImpl = deps.fetch ?? fetch;
 
@@ -536,8 +547,21 @@ export async function uploadSlackFileApi(
     return { error: err instanceof Error ? err.message : String(err) };
   }
 
+  return { fileId };
+}
+
+/**
+ * Share one or more already-uploaded files into a channel/thread in a single
+ * completeUploadExternal call, so multiple attachments land as one message
+ * instead of one message per file.
+ */
+async function completeSlackFileShare(
+  files: { id: string; title: string }[],
+  request: { channel: string; threadTs?: string; initialComment?: string },
+  deps: Pick<SlackPostMessageDeps, "fetch" | "env">,
+): Promise<{ ok: true } | { error: string }> {
   const completeForm = new URLSearchParams({
-    files: JSON.stringify([{ id: fileId, title: request.title }]),
+    files: JSON.stringify(files),
     channel_id: request.channel,
     ...(request.threadTs ? { thread_ts: request.threadTs } : {}),
     ...(request.initialComment ? { initial_comment: request.initialComment } : {}),
@@ -545,4 +569,38 @@ export async function uploadSlackFileApi(
   const complete = await slackApiForm("/files.completeUploadExternal", completeForm, deps);
   if ("error" in complete) return complete;
   return { ok: true };
+}
+
+/**
+ * Upload a single file to Slack and share it into a channel/thread via the
+ * external upload flow (getUploadURLExternal → raw POST → completeUploadExternal).
+ * Requires the bot's `files:write` scope. A successful completion is enough;
+ * callers intentionally leave uploaded files in Slack and do not need a file
+ * URL or file id.
+ */
+export async function uploadSlackFileApi(
+  request: {
+    channel: string;
+    threadTs?: string;
+    filename: string;
+    title: string;
+    content: string | Buffer;
+    initialComment?: string;
+  },
+  deps: Pick<SlackPostMessageDeps, "fetch" | "env"> = {},
+): Promise<{ ok: true } | { error: string }> {
+  const uploaded = await requestSlackFileUpload(
+    { filename: request.filename, content: request.content },
+    deps,
+  );
+  if ("error" in uploaded) return uploaded;
+  return completeSlackFileShare(
+    [{ id: uploaded.fileId, title: request.title }],
+    {
+      channel: request.channel,
+      threadTs: request.threadTs,
+      initialComment: request.initialComment,
+    },
+    deps,
+  );
 }

@@ -11,9 +11,9 @@ Message input is stdin-only; positional text, --text, and --json are not support
 Always pass --channel because Thor aliases store Slack thread timestamps, not channel IDs.
 Stdin uses Slack mrkdwn: `*bold*`, `_italic_`, bullets, and code spans/fences.
 For table or block output, pass --blocks-file.
-Pass --file (repeatable) to attach files; each uploads into the thread
-uncommented, then the stdin message is posted once, standalone.
-Paths must be under /tmp or one of these shared workspace roots:
+Pass --file (repeatable) to attach files; all files share into the thread
+together as one message, uncommented, then the stdin message is posted once,
+standalone. Paths must be under /tmp or one of these shared workspace roots:
 /workspace/memory, /workspace/config, /workspace/repos, /workspace/worklog,
 /workspace/cron, /workspace/runs, or /workspace/worktrees.
 
@@ -21,7 +21,7 @@ Options:
   --channel <id>     Required Slack channel ID (C...)
   --thread-ts <ts>   Reply in an existing thread timestamp
   --blocks-file <p>  Optional JSON file with a top-level Slack blocks array
-  --file <path>      Attach a file (repeatable), uploaded without a comment
+  --file <path>      Attach a file (repeatable); all share as one message
   -h, --help         Show this help
 
 Examples:
