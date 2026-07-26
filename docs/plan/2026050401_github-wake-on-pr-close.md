@@ -18,16 +18,16 @@ continuation signal, not a user instruction.
 
 ## Decisions
 
-| #   | Question             | Decision |
-| --- | -------------------- | -------- |
-| Q1  | Event primitive      | **`pull_request` action `closed`.** Covers both merged (`pull_request.merged === true`) and abandoned (`merged === false`) in one event. The agent reads `merged` from the raw JSON. |
-| Q2  | Other PR actions     | **Out of scope.** `opened`, `reopened`, `synchronize`, `edited`, `ready_for_review`, etc. are not wired here. `synchronize` overlaps with `push`/`check_suite` wakes; `opened` is created by Thor itself. Revisit per-action only if a concrete need surfaces. |
-| Q3  | Correlation          | **`pull_request.head.ref` → `git:branch:<localRepo>:<branch>`.** Same shape as every other branch-correlated event. Existing-session gate is mandatory: if no notes-backed session exists for the branch, drop with `correlation_key_unresolved`. |
-| Q4  | Authorship gate      | **Not added.** The existing-notes gate is sufficient: a PR `closed` event for a branch Thor never worked on cannot resolve a notes file, so it drops at Q3. Unlike `check_suite` there is no self-loop risk (Thor doesn't close its own PRs as part of normal work). |
-| Q5  | Interrupt semantics  | **`interrupt: false`.** PR close/merge is a continuation signal, mirroring `check_suite.completed` (D-11 of the CI-wake plan). User-initiated GitHub mention/review behaviour is unchanged. |
-| Q6  | Prompt rendering     | **JSON passthrough.** No service-layer changes. The agent reads `pull_request.merged`, `pull_request.merge_commit_sha`, `pull_request.html_url`, etc. directly from the forwarded event. |
-| Q7  | Fork PRs             | **Use the same branch-correlation flow.** Do not special-case them here; if no notes-backed session resolves from `pull_request.head.ref`, the event is ignored as `correlation_key_unresolved`. |
-| Q8  | Plan policy          | New plan file (this one), not an append to the CI-wake plan. The CI-wake plan is closed and shipped; PR-lifecycle is a distinct event surface with its own decisions, even though the gate machinery is reused. |
+| #   | Question            | Decision                                                                                                                                                                                                                                                             |
+| --- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Q1  | Event primitive     | **`pull_request` action `closed`.** Covers both merged (`pull_request.merged === true`) and abandoned (`merged === false`) in one event. The agent reads `merged` from the raw JSON.                                                                                 |
+| Q2  | Other PR actions    | **Out of scope.** `opened`, `reopened`, `synchronize`, `edited`, `ready_for_review`, etc. are not wired here. `synchronize` overlaps with `push`/`check_suite` wakes; `opened` is created by Thor itself. Revisit per-action only if a concrete need surfaces.       |
+| Q3  | Correlation         | **`pull_request.head.ref` → `git:branch:<localRepo>:<branch>`.** Same shape as every other branch-correlated event. Existing-session gate is mandatory: if no notes-backed session exists for the branch, drop with `correlation_key_unresolved`.                    |
+| Q4  | Authorship gate     | **Not added.** The existing-notes gate is sufficient: a PR `closed` event for a branch Thor never worked on cannot resolve a notes file, so it drops at Q3. Unlike `check_suite` there is no self-loop risk (Thor doesn't close its own PRs as part of normal work). |
+| Q5  | Interrupt semantics | **`interrupt: false`.** PR close/merge is a continuation signal, mirroring `check_suite.completed` (D-11 of the CI-wake plan). User-initiated GitHub mention/review behaviour is unchanged.                                                                          |
+| Q6  | Prompt rendering    | **JSON passthrough.** No service-layer changes. The agent reads `pull_request.merged`, `pull_request.merge_commit_sha`, `pull_request.html_url`, etc. directly from the forwarded event.                                                                             |
+| Q7  | Fork PRs            | **Use the same branch-correlation flow.** Do not special-case them here; if no notes-backed session resolves from `pull_request.head.ref`, the event is ignored as `correlation_key_unresolved`.                                                                     |
+| Q8  | Plan policy         | New plan file (this one), not an append to the CI-wake plan. The CI-wake plan is closed and shipped; PR-lifecycle is a distinct event surface with its own decisions, even though the gate machinery is reused.                                                      |
 
 ## Design
 
@@ -173,14 +173,14 @@ Exit criteria:
 
 ## Decision Log
 
-| #   | Decision | Rationale |
-| --- | -------- | --------- |
-| D-1 | One event (`pull_request.closed`), not a family of PR actions | Scope is "Thor reacts when its PR is done." Other actions either overlap with existing wakes (`synchronize` ↔ `push`/`check_suite`) or are out of scope. |
-| D-2 | Existing-session gate is sufficient; no git-author check | A `pull_request.closed` for a branch Thor never worked on cannot resolve a notes file. There is no self-loop risk to defend against (unlike `check_suite`). |
-| D-3 | `interrupt: false` | Continuation signal, mirrors CI-wake D-11. Aborting in-flight work to deliver a "PR was merged" notification is a worse outcome than coalescing. |
-| D-4 | JSON passthrough; no per-action prompt rendering | Phase 0 of the CI-wake plan already standardised this. A new event type costs zero rendering code. |
-| D-5 | No fork-specific PR-close gate | Keep PR-close handling on one correlation path; fork deliveries naturally ignore when no notes-backed session resolves. |
-| D-6 | Reuse existing `GitHubIgnoreReason` values | `correlation_key_unresolved` covers the PR-close drop path. No new reason strings needed; keeps the operator log surface tight. |
+| #   | Decision                                                      | Rationale                                                                                                                                                   |
+| --- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D-1 | One event (`pull_request.closed`), not a family of PR actions | Scope is "Thor reacts when its PR is done." Other actions either overlap with existing wakes (`synchronize` ↔ `push`/`check_suite`) or are out of scope.    |
+| D-2 | Existing-session gate is sufficient; no git-author check      | A `pull_request.closed` for a branch Thor never worked on cannot resolve a notes file. There is no self-loop risk to defend against (unlike `check_suite`). |
+| D-3 | `interrupt: false`                                            | Continuation signal, mirrors CI-wake D-11. Aborting in-flight work to deliver a "PR was merged" notification is a worse outcome than coalescing.            |
+| D-4 | JSON passthrough; no per-action prompt rendering              | Phase 0 of the CI-wake plan already standardised this. A new event type costs zero rendering code.                                                          |
+| D-5 | No fork-specific PR-close gate                                | Keep PR-close handling on one correlation path; fork deliveries naturally ignore when no notes-backed session resolves.                                     |
+| D-6 | Reuse existing `GitHubIgnoreReason` values                    | `correlation_key_unresolved` covers the PR-close drop path. No new reason strings needed; keeps the operator log surface tight.                             |
 
 ## Out of scope
 

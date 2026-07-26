@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { appendAlias } from "./event-log.ts";
 import {
   appendCorrelationAlias,
@@ -15,7 +17,7 @@ import {
   resolveSessionForCorrelationKey,
 } from "./correlation.ts";
 
-const worklogRoot = "/tmp/thor-common-correlation-test/worklog";
+let worklogRoot: string;
 const anchor1 = "00000000-0000-7000-8000-000000000c01";
 const anchor2 = "00000000-0000-7000-8000-000000000c02";
 const anchor3 = "00000000-0000-7000-8000-000000000c03";
@@ -42,13 +44,13 @@ function readAliases(): Array<{ aliasType: string; aliasValue: string; anchorId:
 
 describe("correlation key resolution", () => {
   beforeEach(() => {
+    worklogRoot = mkdtempSync(join(tmpdir(), "thor-common-correlation-test-"));
     vi.stubEnv("WORKLOG_DIR", worklogRoot);
-    rmSync("/tmp/thor-common-correlation-test", { recursive: true, force: true });
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
-    rmSync("/tmp/thor-common-correlation-test", { recursive: true, force: true });
+    rmSync(worklogRoot, { recursive: true, force: true });
   });
 
   it("resolves correlation keys to anchors and routes lock keys at the anchor level", () => {

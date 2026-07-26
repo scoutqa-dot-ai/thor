@@ -118,15 +118,15 @@ Exit criteria:
 
 ## Decision log
 
-| Decision | Rationale |
-| --- | --- |
-| Use a durable repo plan | This change crosses the root Dockerfile, package manager behavior, service image paths, and benchmark artifacts; repo conventions prefer `docs/plan/` for this scope. |
-| Benchmark before and after in sandbox | Docker layer-cache changes are easy to overfit by inspection; BuildKit timing and cache-hit evidence should drive which complexity is worth keeping. |
-| Align Dockerfile pnpm with `packageManager` first | Cache improvements should not preserve a package-manager mismatch that can change lockfile/install semantics between local and image builds. |
-| Treat runtime image slimming as optional/out-of-scope unless measured | Pruned runtime images may be worthwhile, but they risk changing workspace dependency/runtime behavior and are not required for layer-cache reuse. |
-| Split pnpm fetch/install with a BuildKit store cache | Sandbox evidence showed dependency download/install was one of the expensive cold-build steps; `pnpm fetch` plus offline install keeps resolution reproducible while letting BuildKit reuse tarballs across rebuilds. |
-| Use package-scoped build stages instead of broad service builds | `@thor/common` is source-exported and leaf packages can build directly from common source; package-scoped stages kept gateway edits from invalidating opencode and unrelated leaf builds without adding new tooling. |
-| Move remote-cli OS/global CLI tooling into a stable base stage | The remote-cli image still copies the built app into the final target, but apt/npm global tooling no longer depends on normal TypeScript source layers. |
+| Decision                                                              | Rationale                                                                                                                                                                                                             |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Use a durable repo plan                                               | This change crosses the root Dockerfile, package manager behavior, service image paths, and benchmark artifacts; repo conventions prefer `docs/plan/` for this scope.                                                 |
+| Benchmark before and after in sandbox                                 | Docker layer-cache changes are easy to overfit by inspection; BuildKit timing and cache-hit evidence should drive which complexity is worth keeping.                                                                  |
+| Align Dockerfile pnpm with `packageManager` first                     | Cache improvements should not preserve a package-manager mismatch that can change lockfile/install semantics between local and image builds.                                                                          |
+| Treat runtime image slimming as optional/out-of-scope unless measured | Pruned runtime images may be worthwhile, but they risk changing workspace dependency/runtime behavior and are not required for layer-cache reuse.                                                                     |
+| Split pnpm fetch/install with a BuildKit store cache                  | Sandbox evidence showed dependency download/install was one of the expensive cold-build steps; `pnpm fetch` plus offline install keeps resolution reproducible while letting BuildKit reuse tarballs across rebuilds. |
+| Use package-scoped build stages instead of broad service builds       | `@thor/common` is source-exported and leaf packages can build directly from common source; package-scoped stages kept gateway edits from invalidating opencode and unrelated leaf builds without adding new tooling.  |
+| Move remote-cli OS/global CLI tooling into a stable base stage        | The remote-cli image still copies the built app into the final target, but apt/npm global tooling no longer depends on normal TypeScript source layers.                                                               |
 
 ## Out of scope
 

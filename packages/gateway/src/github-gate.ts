@@ -6,8 +6,7 @@ type InternalExecResult = Awaited<ReturnType<InternalExecClient>>;
 export type CheckSuiteGateFailureReason = "sha_missing" | "author_mismatch" | "exec_failed";
 
 export type CheckSuiteGateResult =
-  | { ok: true }
-  | { ok: false; reason: CheckSuiteGateFailureReason };
+  { ok: true } | { ok: false; reason: CheckSuiteGateFailureReason };
 
 const PrCheckSummarySchema = z
   .object({

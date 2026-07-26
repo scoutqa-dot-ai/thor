@@ -80,7 +80,7 @@ const tools: Tool[] = [
   },
 ];
 
-const worklogDir = "/tmp/thor-remote-cli-mcp-test/worklog";
+let worklogDir: string;
 const activeTriggerId = "00000000-0000-7000-8000-000000000101";
 const githubTriggerId = "00000000-0000-7000-8000-000000000102";
 const activeAnchorId = "00000000-0000-7000-8000-0000000004a1";
@@ -145,9 +145,9 @@ describe("remote-cli MCP endpoints", () => {
     vi.stubEnv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "grafana-token");
     vi.stubEnv("GRAFANA_ORG_ID", "1");
     vi.stubEnv("THOR_INTERNAL_SECRET", "resolve-secret");
+    worklogDir = mkdtempSync(join(tmpdir(), "thor-remote-cli-mcp-test-"));
     vi.stubEnv("WORKLOG_DIR", worklogDir);
     vi.stubEnv("RUNNER_BASE_URL", "https://thor.example.com/");
-    rmSync("/tmp/thor-remote-cli-mcp-test", { recursive: true, force: true });
     approvalsDir = mkdtempSync(join(tmpdir(), "remote-cli-mcp-"));
     toolCalls = [];
     createJiraIssueDelay = undefined;
@@ -305,7 +305,7 @@ describe("remote-cli MCP endpoints", () => {
   afterEach(async () => {
     await stopRemoteCliServer();
     rmSync(approvalsDir, { recursive: true, force: true });
-    rmSync("/tmp/thor-remote-cli-mcp-test", { recursive: true, force: true });
+    rmSync(worklogDir, { recursive: true, force: true });
     vi.unstubAllEnvs();
   });
 

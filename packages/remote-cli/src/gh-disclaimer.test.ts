@@ -12,9 +12,15 @@ import {
   resolveAlias,
 } from "@thor/common";
 
-vi.hoisted(() => {
-  process.env.WORKLOG_DIR = "/tmp/thor-remote-cli-gh-test/worklog";
+// A vi.mock() in this file forces Vitest to defer all static imports, so a
+// vi.hoisted() callback here can't call into an imported module (e.g.
+// mkdtempSync) without a "used before initialization" error. process.pid
+// needs no import and is still unique per concurrent test run.
+const worklogRoot = vi.hoisted(() => {
+  const root = `/tmp/thor-remote-cli-gh-test-${process.pid}`;
+  process.env.WORKLOG_DIR = `${root}/worklog`;
   process.env.RUNNER_BASE_URL = "https://thor.example.com";
+  return root;
 });
 
 const execCalls = vi.hoisted(
@@ -44,7 +50,6 @@ vi.mock("./exec.ts", () => ({
 import { createRemoteCliApp, type RemoteCliAppConfig } from "./index.ts";
 import { execCommand } from "./exec.ts";
 
-const worklogRoot = "/tmp/thor-remote-cli-gh-test";
 const cwd = "/workspace/worktrees/acme/feat/test";
 const triggerId = "00000000-0000-7000-8000-000000000201";
 const secondTriggerId = "00000000-0000-7000-8000-000000000202";
@@ -138,7 +143,6 @@ function readAliases(): Array<{ aliasType: string; aliasValue: string; anchorId:
 
 beforeEach(() => {
   execCalls.length = 0;
-  process.env.WORKLOG_DIR = "/tmp/thor-remote-cli-gh-test/worklog";
   rmSync(worklogRoot, { recursive: true, force: true });
   vi.spyOn(realpathSync, "native").mockImplementation((path) => normalizePosix(String(path)));
 });
