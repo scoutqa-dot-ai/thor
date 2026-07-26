@@ -360,8 +360,9 @@ export async function handleSlackPostMessage(
   }
 
   // Every file's bytes upload in parallel (each gets its own presigned URL),
-  // then a single completion call shares them all into one thread message —
-  // either every attachment lands together, uncommented, or none do.
+  // then a single completion call shares them all as one message — in the
+  // thread when threadTs is set, otherwise a new channel message. Either every
+  // attachment lands together, uncommented, or none do.
   if (attachments.length > 0) {
     const uploadDeps = { fetch: deps.fetch, env: deps.env };
     const uploads = await Promise.all(
