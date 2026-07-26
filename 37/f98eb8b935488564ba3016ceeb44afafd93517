@@ -1,0 +1,23 @@
+.github/workflows/unit-tests.yml
+  eb7c6671aafbb0aa 35-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "37f98eb8b935488564ba3016ceeb44afafd93517",
+  "prompts": {
+    "eb7c6671aafbb0aa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35364c19-3116-4e42-8a1c-273e13b43f45",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 0,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
