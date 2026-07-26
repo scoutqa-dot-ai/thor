@@ -1,0 +1,33 @@
+packages/runner/src/trigger.test.ts
+  eb7c6671aafbb0aa 21-25,28-29,31,33,35,388,396
+packages/common/src/correlation.test.ts
+  eb7c6671aafbb0aa 2-4,20,47,53
+packages/remote-cli/src/mcp-handler.test.ts
+  eb7c6671aafbb0aa 83,148,308
+packages/remote-cli/src/gh-disclaimer.test.ts
+  eb7c6671aafbb0aa 15-21,23
+packages/common/src/workspace-config.test.ts
+  eb7c6671aafbb0aa 126,129
+packages/common/src/disclaimer.test.ts
+  eb7c6671aafbb0aa 2-4,12-13,15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "2f9427e97f1ecf5b1be2b81f1a68c19294cb5cd5",
+  "prompts": {
+    "eb7c6671aafbb0aa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35364c19-3116-4e42-8a1c-273e13b43f45",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 51,
+      "total_deletions": 36,
+      "accepted_lines": 39,
+      "overriden_lines": 0
+    }
+  }
+}
