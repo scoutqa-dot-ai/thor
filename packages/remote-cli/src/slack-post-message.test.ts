@@ -344,18 +344,21 @@ describe("remote-cli slack-post-message endpoint", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("uploads --file attachments with the stdin message before posting it standalone", async () => {
+  it("uploads --file attachments in parallel, shares them in one batch, then posts the stdin message standalone", async () => {
     writeFileSync(join(testCwd, "a.txt"), "alpha", "utf8");
     writeFileSync(join(testCwd, "b.txt"), "beta", "utf8");
-    fetchMock.mockImplementation((async (url: string) => {
+    fetchMock.mockImplementation((async (url: string, init?: RequestInit) => {
       if (url.endsWith("/files.getUploadURLExternal")) {
+        const filename = new URLSearchParams(String(init?.body)).get("filename");
         return jsonResponse({
           ok: true,
-          upload_url: "https://files.slack.test/upload/abc",
-          file_id: "F1",
+          upload_url: `https://files.slack.test/upload/${filename}`,
+          file_id: `F-${filename}`,
         });
       }
-      if (url === "https://files.slack.test/upload/abc") return new Response("", { status: 200 });
+      if (url.startsWith("https://files.slack.test/upload/")) {
+        return new Response("", { status: 200 });
+      }
       if (url.endsWith("/files.completeUploadExternal")) {
         return jsonResponse({ ok: true });
       }
@@ -389,28 +392,35 @@ describe("remote-cli slack-post-message endpoint", () => {
     });
 
     const urls = fetchMock.mock.calls.map((c) => String(c[0]));
-    // Both files fully upload (3 calls each) before the single postMessage.
-    expect(urls[urls.length - 1]).toBe("https://slack.com/api/chat.postMessage");
+    // Both files' upload-URL + raw-upload calls happen (in parallel), then
+    // exactly one completion call shares them together, then one postMessage.
+    expect(urls.filter((u) => u.endsWith("/files.getUploadURLExternal"))).toHaveLength(2);
+    expect(urls.filter((u) => u.startsWith("https://files.slack.test/upload/"))).toHaveLength(2);
+    expect(urls.filter((u) => u.endsWith("/files.completeUploadExternal"))).toHaveLength(1);
     expect(urls.filter((u) => u.endsWith("/chat.postMessage"))).toHaveLength(1);
+    expect(urls[urls.length - 1]).toBe("https://slack.com/api/chat.postMessage");
+    expect(urls[urls.length - 2]).toBe("https://slack.com/api/files.completeUploadExternal");
 
-    // Each file reply carries the meaningful stdin message and requested
-    // thread; the raw uploads carry each file's exact bytes.
-    const completes = fetchMock.mock.calls.filter((c) =>
+    // The single share call carries no comment (the stdin message is posted
+    // exactly once, standalone) but does carry both files and the thread.
+    const completeCall = fetchMock.mock.calls.find((c) =>
       String(c[0]).endsWith("/files.completeUploadExternal"),
     );
-    const comments = completes.map((c) =>
-      new URLSearchParams(String((c[1] as RequestInit).body)).get("initial_comment"),
+    const completeParams = new URLSearchParams(String((completeCall?.[1] as RequestInit).body));
+    expect(completeParams.get("initial_comment")).toBeNull();
+    expect(completeParams.get("thread_ts")).toBe("1777940300.000000");
+    expect(JSON.parse(completeParams.get("files") ?? "[]")).toEqual([
+      { id: "F-a.txt", title: "a.txt" },
+      { id: "F-b.txt", title: "b.txt" },
+    ]);
+
+    const uploadBodiesByUrl = new Map(
+      fetchMock.mock.calls
+        .filter((c) => String(c[0]).startsWith("https://files.slack.test/upload/"))
+        .map((c) => [String(c[0]), String((c[1] as RequestInit).body)]),
     );
-    expect(comments).toEqual(["here are the files", "here are the files"]);
-    for (const c of completes) {
-      expect(new URLSearchParams(String((c[1] as RequestInit).body)).get("thread_ts")).toBe(
-        "1777940300.000000",
-      );
-    }
-    const rawBodies = fetchMock.mock.calls
-      .filter((c) => String(c[0]) === "https://files.slack.test/upload/abc")
-      .map((c) => String((c[1] as RequestInit).body));
-    expect(rawBodies).toEqual(["alpha", "beta"]);
+    expect(uploadBodiesByUrl.get("https://files.slack.test/upload/a.txt")).toBe("alpha");
+    expect(uploadBodiesByUrl.get("https://files.slack.test/upload/b.txt")).toBe("beta");
   });
 
   it("rejects --file paths outside the allowed roots and never uploads or posts", async () => {
@@ -433,6 +443,32 @@ describe("remote-cli slack-post-message endpoint", () => {
       { args: ["--channel", "C123", "--file", "missing.txt"], stdin: "hi" },
       "failed to read --file missing.txt: path does not exist",
     );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("bounds an attachment batch by count and total bytes before reading or uploading", async () => {
+    const tooMany = Array.from({ length: 11 }, (_, i) => {
+      const name = `many-${i}.txt`;
+      writeFileSync(join(testCwd, name), "x", "utf8");
+      return ["--file", name];
+    }).flat();
+    await expectFailure(
+      { args: ["--channel", "C123", ...tooMany], stdin: "hi" },
+      "--file accepts at most 10 attachments per message",
+    );
+
+    // Two files under the 50MB per-file cap that together exceed the batch cap.
+    const half = Buffer.alloc(30 * 1024 * 1024, 0);
+    writeFileSync(join(testCwd, "big-1.bin"), half);
+    writeFileSync(join(testCwd, "big-2.bin"), half);
+    await expectFailure(
+      {
+        args: ["--channel", "C123", "--file", "big-1.bin", "--file", "big-2.bin"],
+        stdin: "hi",
+      },
+      "--file attachments exceed 52428800 bytes in total",
+    );
+
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -491,27 +527,25 @@ describe("remote-cli slack-post-message endpoint", () => {
     );
   });
 
-  it("keeps already-shared attachments when a later attachment fails", async () => {
+  it("shares no attachments when the batched completion call fails", async () => {
     writeFileSync(join(testCwd, "a.txt"), "alpha", "utf8");
     writeFileSync(join(testCwd, "b.txt"), "beta", "utf8");
-    let getCount = 0;
     fetchMock.mockImplementation((async (url: string, init?: RequestInit) => {
       if (url.endsWith("/files.getUploadURLExternal")) {
-        getCount += 1;
+        const filename = new URLSearchParams(String(init?.body)).get("filename");
         return jsonResponse({
           ok: true,
-          upload_url: "https://files.slack.test/upload/abc",
-          file_id: getCount === 1 ? "F1" : "F2",
+          upload_url: `https://files.slack.test/upload/${filename}`,
+          file_id: `F-${filename}`,
         });
       }
-      if (url === "https://files.slack.test/upload/abc") return new Response("", { status: 200 });
+      if (url.startsWith("https://files.slack.test/upload/")) {
+        return new Response("", { status: 200 });
+      }
       if (url.endsWith("/files.completeUploadExternal")) {
-        // The second file's id is allocated and its raw upload succeeds, then
-        // completion fails. The already-shared first file stays in the thread.
-        if (String(init?.body).includes("F2")) {
-          return jsonResponse({ ok: false, error: "upload_failed" });
-        }
-        return jsonResponse({ ok: true });
+        // Both files' bytes uploaded fine, but the single share call that
+        // covers both of them fails, so neither reaches the thread.
+        return jsonResponse({ ok: false, error: "upload_failed" });
       }
       throw new Error(`unexpected url: ${url}`);
     }) as unknown as typeof fetch);
@@ -522,13 +556,12 @@ describe("remote-cli slack-post-message endpoint", () => {
     );
     const body = (await response.json()) as { stderr: string };
     expect(response.status).toBe(400);
-    expect(body.stderr).toContain("failed to upload File 2 (b.txt)");
-    expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain(
-      "https://slack.com/api/files.delete",
-    );
-    expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain(
-      "https://slack.com/api/chat.postMessage",
-    );
+    expect(body.stderr).toContain("failed to share attachments: Slack API error: upload_failed");
+
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(urls.filter((u) => u.endsWith("/files.completeUploadExternal"))).toHaveLength(1);
+    expect(urls).not.toContain("https://slack.com/api/files.delete");
+    expect(urls).not.toContain("https://slack.com/api/chat.postMessage");
   });
 
   it("keeps uploaded attachments when the standalone message fails", async () => {

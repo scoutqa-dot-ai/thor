@@ -1075,9 +1075,11 @@ echo ""
 echo "=== Slack post-message file attachments ==="
 
 slack_upload_run_id="slack-postmsg-file-e2e-${REMOTE_CLI_AUTH_TS}"
-slack_upload_filename="${slack_upload_run_id}.txt"
+slack_upload_filename="${slack_upload_run_id}-1.txt"
+slack_upload_filename_2="${slack_upload_run_id}-2.txt"
 slack_upload_message="slack-post-message --file e2e ${slack_upload_run_id}"
-slack_upload_body="slack-post-message --file e2e body ${slack_upload_run_id}"
+slack_upload_body="slack-post-message --file e2e body 1 ${slack_upload_run_id}"
+slack_upload_body_2="slack-post-message --file e2e body 2 ${slack_upload_run_id}"
 export SLACK_CHANNEL_ID slack_upload_run_id
 
 seed_json=$(node -e "
@@ -1107,15 +1109,25 @@ upload_session_id=$(json_field "$upload_session_raw" "sessionId")
 assert '[[ -n "$upload_session_id" ]]' "created Thor session for slack-post-message file e2e" "response: ${upload_session_raw:0:300}"
 
 if [[ "$seed_ok" == "true" && -n "$seed_ts" && -n "$upload_session_id" ]]; then
-  # Write the attachment into the shared /tmp volume that both the opencode and
-  # remote-cli containers mount, so remote-cli can read it by path server-side.
+  # Write the attachments into the shared /tmp volume that both the opencode and
+  # remote-cli containers mount, so remote-cli can read them by path server-side.
+  # Two files, because the contract under test is that a batch shares as one
+  # message rather than one message per file.
   docker exec -e FILE_CONTENT="$slack_upload_body" -e FILE_NAME="$slack_upload_filename" \
     "$opencode_container" \
     sh -lc 'printf "%s\n" "$FILE_CONTENT" > "/tmp/$FILE_NAME"' || true
+  docker exec -e FILE_CONTENT="$slack_upload_body_2" -e FILE_NAME="$slack_upload_filename_2" \
+    "$opencode_container" \
+    sh -lc 'printf "%s\n" "$FILE_CONTENT" > "/tmp/$FILE_NAME"' || true
 
-  post_body=$(FILE_PATH="/tmp/$slack_upload_filename" THREAD_TS="$seed_ts" MSG="$slack_upload_message" node -e "
+  post_body=$(FILE_PATH="/tmp/$slack_upload_filename" FILE_PATH_2="/tmp/$slack_upload_filename_2" THREAD_TS="$seed_ts" MSG="$slack_upload_message" node -e "
     console.log(JSON.stringify({
-      args: ['--channel', process.env.SLACK_CHANNEL_ID, '--thread-ts', process.env.THREAD_TS, '--file', process.env.FILE_PATH],
+      args: [
+        '--channel', process.env.SLACK_CHANNEL_ID,
+        '--thread-ts', process.env.THREAD_TS,
+        '--file', process.env.FILE_PATH,
+        '--file', process.env.FILE_PATH_2
+      ],
       cwd: '/workspace',
       stdin: process.env.MSG
     }));
@@ -1127,39 +1139,57 @@ if [[ "$seed_ok" == "true" && -n "$seed_ts" && -n "$upload_session_id" ]]; then
   slack_upload_exit=$(json_field "$slack_upload_raw" "exitCode")
   assert '[[ "$slack_upload_exit" == "0" ]]' "slack-post-message --file returns success" "output: ${slack_upload_raw:0:500}"
 
+  # Poll for the single reply that carries both attachments. The extractor only
+  # matches a message holding both titles, so a per-file share regression never
+  # satisfies it.
   upload_reply_json=""
   upload_file_id=""
   upload_file_title=""
+  upload_file_title_2=""
+  upload_file_count=""
   replies='{}'
   for _ in $(seq 1 24); do
     replies=$(slack_replies "$SLACK_CHANNEL_ID" "$seed_ts" 2>/dev/null || echo '{}')
-    upload_reply_json=$(echo "$replies" | EXPECT_TITLE="$slack_upload_filename" node -e "
+    upload_reply_json=$(echo "$replies" | EXPECT_TITLE="$slack_upload_filename" EXPECT_TITLE_2="$slack_upload_filename_2" node -e "
       const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
       const messages = d.messages || [];
+      const titles = [process.env.EXPECT_TITLE, process.env.EXPECT_TITLE_2];
       const match = [...messages].reverse().find((message) => {
         const files = Array.isArray(message.files) ? message.files : [];
-        return files.some((file) => file.title === process.env.EXPECT_TITLE);
+        return titles.every((title) => files.some((file) => file.title === title));
       });
       if (!match) process.exit(1);
-      const file = (match.files || []).find((candidate) => candidate.title === process.env.EXPECT_TITLE);
-      console.log(JSON.stringify({ ts: match.ts || '', fileId: file?.id || '', title: file?.title || '', text: match.text || '' }));
+      const files = match.files || [];
+      const byTitle = (title) => files.find((candidate) => candidate.title === title);
+      console.log(JSON.stringify({
+        ts: match.ts || '',
+        fileId: byTitle(titles[0])?.id || '',
+        title: byTitle(titles[0])?.title || '',
+        fileId2: byTitle(titles[1])?.id || '',
+        title2: byTitle(titles[1])?.title || '',
+        fileCount: files.length,
+        text: match.text || ''
+      }));
     " 2>/dev/null || echo "")
     upload_file_id=$(json_field "$upload_reply_json" "fileId")
     upload_file_title=$(json_field "$upload_reply_json" "title")
+    upload_file_title_2=$(json_field "$upload_reply_json" "title2")
+    upload_file_count=$(json_field "$upload_reply_json" "fileCount")
     if [[ -n "$upload_file_id" ]]; then
       break
     fi
     sleep 5
   done
 
-  assert '[[ -n "$upload_file_id" ]]' "Slack thread shows uploaded file reply" "replies: ${replies:0:1000}"
-  assert '[[ "$upload_file_title" == "$slack_upload_filename" ]]' "uploaded file keeps the file basename as title" "reply: ${upload_reply_json:0:300}"
+  assert '[[ -n "$upload_file_id" ]]' "Slack thread shows both attachments in one reply" "replies: ${replies:0:1000}"
+  assert '[[ "$upload_file_count" == "2" ]]' "batched share posts exactly one reply carrying both files" "reply: ${upload_reply_json:0:300}"
+  assert '[[ "$upload_file_title" == "$slack_upload_filename" && "$upload_file_title_2" == "$slack_upload_filename_2" ]]' "uploaded files keep their basenames as titles" "reply: ${upload_reply_json:0:300}"
+  # The stdin text is no longer duplicated as the attachment comment; the shared
+  # files land uncommented and the message posts once, on its own.
   upload_file_comment=$(json_field "$upload_reply_json" "text")
-  assert '[[ "$upload_file_comment" == *"$slack_upload_message"* ]]' "attachment carries the standalone message as context" "reply: ${upload_reply_json:0:300}"
+  assert '[[ -z "$upload_file_comment" ]]' "attachment reply carries no duplicated message text" "reply: ${upload_reply_json:0:300}"
 
-  # The actual message posts as its own fileless reply after the attachment.
-  # Poll separately because the attachment comment contains the same text and
-  # must not satisfy this assertion.
+  # The actual message posts as its own fileless reply after the attachments.
   message_reply_ts=""
   for _ in $(seq 1 24); do
     replies=$(slack_replies "$SLACK_CHANNEL_ID" "$seed_ts" 2>/dev/null || echo '{}')
@@ -1178,7 +1208,7 @@ if [[ "$seed_ok" == "true" && -n "$seed_ts" && -n "$upload_session_id" ]]; then
     fi
     sleep 5
   done
-  assert '[[ -n "$message_reply_ts" ]]' "message posts as a separate reply after the attachment" "replies: ${replies:0:1000}"
+  assert '[[ -n "$message_reply_ts" ]]' "message posts as a separate reply after the attachments" "replies: ${replies:0:1000}"
 
   if [[ -n "$upload_file_id" ]]; then
     file_info_raw=$(slack_file_info "$upload_file_id" 2>/dev/null || echo '{}')
