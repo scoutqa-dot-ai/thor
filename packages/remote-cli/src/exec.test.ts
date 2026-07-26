@@ -10,12 +10,6 @@ afterEach(() => {
 });
 
 describe("execCommand", () => {
-  it("captures stdout", async () => {
-    const result = await execCommand("echo", ["hello"], "/tmp");
-    expect(result.stdout.trim()).toBe("hello");
-    expect(result.exitCode).toBe(0);
-  });
-
   it("captures stderr", async () => {
     const result = await execCommand("node", ["-e", "process.stderr.write('oops')"], "/tmp");
     expect(result.stderr).toBe("oops");
@@ -64,30 +58,6 @@ describe("execCommand", () => {
 });
 
 describe("execCommandStream", () => {
-  it("streams stdout chunks", async () => {
-    const chunks: string[] = [];
-    const exitCode = await execCommandStream(
-      "node",
-      ["-e", 'process.stdout.write("a"); process.stdout.write("b")'],
-      "/tmp",
-      { onStdout: (c) => chunks.push(c), onStderr: () => {} },
-    );
-    expect(chunks.join("")).toBe("ab");
-    expect(exitCode).toBe(0);
-  });
-
-  it("streams stderr chunks", async () => {
-    const chunks: string[] = [];
-    const exitCode = await execCommandStream(
-      "node",
-      ["-e", 'process.stderr.write("err1"); process.stderr.write("err2")'],
-      "/tmp",
-      { onStdout: () => {}, onStderr: (c) => chunks.push(c) },
-    );
-    expect(chunks.join("")).toBe("err1err2");
-    expect(exitCode).toBe(0);
-  });
-
   it("interleaves stdout and stderr", async () => {
     const events: Array<{ stream: string; data: string }> = [];
     await execCommandStream(

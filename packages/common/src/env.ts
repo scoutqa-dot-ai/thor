@@ -31,13 +31,6 @@ export function envInt(env: EnvSource, name: string, defaultValue?: number, min?
   return value;
 }
 
-export function envCsv(env: EnvSource, name: string): string[] {
-  return envString(env, name)
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
 /**
  * Read a base URL env var with any trailing slashes stripped, so callers can
  * safely build URLs as `${base}/path`. Operators sometimes paste URLs with a

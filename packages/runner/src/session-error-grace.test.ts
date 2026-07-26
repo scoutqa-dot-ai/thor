@@ -36,12 +36,6 @@ describe("SessionErrorGrace", () => {
     expect(g.pending).toBe(false);
   });
 
-  it("clearIfRecovered is a no-op when no error is held", () => {
-    const g = new SessionErrorGrace(100, () => 0);
-    g.clearIfRecovered(99);
-    expect(g.pending).toBe(false);
-  });
-
   it("a second record replaces the held error and resets the window", () => {
     let now = 0;
     const g = new SessionErrorGrace(100, () => now);

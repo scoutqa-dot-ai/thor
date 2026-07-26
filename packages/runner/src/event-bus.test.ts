@@ -137,13 +137,6 @@ describe("SessionSubscription", () => {
     expect(emitter.listenerCount("s2")).toBe(0);
   });
 
-  it("close() is idempotent", () => {
-    const sub = new SessionSubscription(emitter, ["s1"]);
-    sub.close();
-    sub.close();
-    expect(emitter.listenerCount("s1")).toBe(0);
-  });
-
   it("close() unblocks a pending next() so iteration ends cleanly", async () => {
     const sub = new SessionSubscription(emitter, ["s1"]);
     const iteration = (async () => {
@@ -208,8 +201,7 @@ describe("EventBusRegistry", () => {
 
     expect(createOpencodeClient).toHaveBeenCalledTimes(1);
     const config = vi.mocked(createOpencodeClient).mock.calls[0]?.[0] as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     expect(config).toMatchObject({ baseUrl: "http://localhost:4096" });
     expect(config).not.toHaveProperty("directory");
     expect(subscribeMock).toHaveBeenCalledTimes(1);

@@ -2,42 +2,42 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { formatAge, formatBytes, formatCostUsd, formatDuration, formatTokens } from "./format.ts";
 
 describe("formatTokens", () => {
-  it("returns the raw integer below 1k", () => {
-    expect(formatTokens(0)).toBe("0");
-    expect(formatTokens(999)).toBe("999");
-  });
-
-  it("truncates (not rounds) to 0.1K between 1k and 1M", () => {
-    expect(formatTokens(1000)).toBe("1.0K");
-    expect(formatTokens(5_983)).toBe("5.9K");
-    expect(formatTokens(583_930)).toBe("583.9K");
-  });
-
-  it("truncates to 0.1M at or above 1M", () => {
-    expect(formatTokens(1_000_000)).toBe("1.0M");
-    expect(formatTokens(4_962_304)).toBe("4.9M");
+  it.each([
+    // raw integer below 1k
+    [0, "0"],
+    [999, "999"],
+    // truncates (not rounds) to 0.1K between 1k and 1M
+    [1000, "1.0K"],
+    [5_983, "5.9K"],
+    [583_930, "583.9K"],
+    // truncates to 0.1M at or above 1M
+    [1_000_000, "1.0M"],
+    [4_962_304, "4.9M"],
+  ])("formats %i as %s", (input, expected) => {
+    expect(formatTokens(input)).toBe(expected);
   });
 });
 
 describe("formatDuration", () => {
-  it("renders integer s / m+s / h+m / d+h ranges", () => {
-    expect(formatDuration(0)).toBe("0s");
-    expect(formatDuration(999)).toBe("0s");
-    expect(formatDuration(1000)).toBe("1s");
-    expect(formatDuration(59_999)).toBe("59s");
-    expect(formatDuration(60_000)).toBe("1m 0s");
-    expect(formatDuration(2 * 60_000 + 30_000)).toBe("2m 30s");
-    expect(formatDuration(60 * 60_000)).toBe("1h 0m");
-    expect(formatDuration(60 * 60_000 + 5 * 60_000)).toBe("1h 5m");
-    expect(formatDuration(24 * 60 * 60_000)).toBe("1d 0h");
-    expect(formatDuration(25 * 60 * 60_000)).toBe("1d 1h");
-  });
-
-  it("returns undefined for non-finite or non-numeric input via the unknown overload", () => {
-    expect(formatDuration(undefined)).toBeUndefined();
-    expect(formatDuration("100")).toBeUndefined();
-    expect(formatDuration(Number.NaN)).toBeUndefined();
-    expect(formatDuration(Number.POSITIVE_INFINITY)).toBeUndefined();
+  it.each([
+    // integer s / m+s / h+m / d+h ranges
+    [0, "0s"],
+    [999, "0s"],
+    [1000, "1s"],
+    [59_999, "59s"],
+    [60_000, "1m 0s"],
+    [2 * 60_000 + 30_000, "2m 30s"],
+    [60 * 60_000, "1h 0m"],
+    [60 * 60_000 + 5 * 60_000, "1h 5m"],
+    [24 * 60 * 60_000, "1d 0h"],
+    [25 * 60 * 60_000, "1d 1h"],
+    // non-finite or non-numeric input via the unknown overload
+    [undefined, undefined],
+    ["100", undefined],
+    [Number.NaN, undefined],
+    [Number.POSITIVE_INFINITY, undefined],
+  ])("formats %p as %p", (input, expected) => {
+    expect(formatDuration(input)).toBe(expected);
   });
 });
 
@@ -64,18 +64,19 @@ describe("formatAge", () => {
 });
 
 describe("formatBytes", () => {
-  it("renders B / KB / MB ranges", () => {
-    expect(formatBytes(0)).toBe("0 B");
-    expect(formatBytes(1023)).toBe("1023 B");
-    expect(formatBytes(1024)).toBe("1.0 KB");
-    expect(formatBytes(1024 * 1024)).toBe("1.0 MB");
-    expect(formatBytes(5 * 1024 * 1024)).toBe("5.0 MB");
-  });
-
-  it('returns "?" for invalid input', () => {
-    expect(formatBytes(-1)).toBe("?");
-    expect(formatBytes(Number.NaN)).toBe("?");
-    expect(formatBytes(Number.POSITIVE_INFINITY)).toBe("?");
+  it.each([
+    // B / KB / MB ranges
+    [0, "0 B"],
+    [1023, "1023 B"],
+    [1024, "1.0 KB"],
+    [1024 * 1024, "1.0 MB"],
+    [5 * 1024 * 1024, "5.0 MB"],
+    // "?" for invalid input
+    [-1, "?"],
+    [Number.NaN, "?"],
+    [Number.POSITIVE_INFINITY, "?"],
+  ])("formats %p as %s", (input, expected) => {
+    expect(formatBytes(input)).toBe(expected);
   });
 });
 
