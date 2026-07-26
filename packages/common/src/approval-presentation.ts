@@ -152,6 +152,14 @@ export function buildApprovalFileMarkdown(presentation: ApprovalPresentation): s
   return `# ${presentation.title}\n\n${presentation.markdown}\n`;
 }
 
+/**
+ * Placeholder body text for an oversize presentation's card. The full content
+ * is uploaded as a file into the same thread (see approval-service.ts); Slack
+ * does not guarantee that file message lands above the card, so this avoids
+ * claiming a position and does not duplicate a truncated, half-cut preview.
+ */
+const OVERSIZE_BODY_TEXT = "Full content shared as a file in this thread.";
+
 function buildActionBlocks(buttonValue: string): SlackBlock[] {
   return [
     { type: "divider" },
@@ -194,7 +202,9 @@ export function buildApprovalPresentationBlocks(
       expand: true,
       text: {
         type: "mrkdwn",
-        text: trimForSlack(presentation.markdown, SLACK_SECTION_TEXT_LIMIT),
+        text: approvalPresentationIsOversize(presentation)
+          ? OVERSIZE_BODY_TEXT
+          : presentation.markdown,
       },
     },
     ...buildActionBlocks(buttonValue),

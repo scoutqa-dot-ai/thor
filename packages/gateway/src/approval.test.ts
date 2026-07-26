@@ -131,12 +131,12 @@ describe("approval presentation", () => {
     });
   });
 
-  it("keeps presentation block text within Slack limits when truncating", () => {
+  it("truncates an overlong title", () => {
     const longValue = "x".repeat(4000);
     const blocks = buildApprovalPresentationBlocks(
       {
         title: `Create feature flag: ${longValue}`,
-        markdown: longValue,
+        markdown: "short body",
       },
       "v3:act-1:posthog:1710000000.001",
     );
@@ -151,7 +151,20 @@ describe("approval presentation", () => {
     expect((blocks[0] as { text: { text: string } }).text.text.length).toBeLessThanOrEqual(
       280 + 11,
     );
-    expect((blocks[1] as { text: { text: string } }).text.text.length).toBeLessThanOrEqual(3000);
+  });
+
+  it("replaces an oversize body with a pointer to the uploaded file instead of a truncated preview", () => {
+    const longValue = "x".repeat(4000);
+    const blocks = buildApprovalPresentationBlocks(
+      { title: "Create feature flag: beta", markdown: longValue },
+      "v3:act-1:posthog:1710000000.001",
+    );
+
+    expect(blocks[1]).toMatchObject({
+      type: "section",
+      expand: true,
+      text: { type: "mrkdwn", text: "Full content shared as a file in this thread." },
+    });
   });
 });
 
