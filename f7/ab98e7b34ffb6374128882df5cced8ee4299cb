@@ -1,0 +1,33 @@
+packages/common/src/approval-events.ts
+  dbe751140a5ca8b3 19-22,26-27,124-125,127,130,170-174
+packages/remote-cli/src/mcp-handler.test.ts
+  dbe751140a5ca8b3 61-62,64,1353,1411-1412,1430-1431,1446,1454,1465
+packages/common/src/approval-presentation.ts
+  dbe751140a5ca8b3 233,236
+packages/common/src/approval-events.test.ts
+  dbe751140a5ca8b3 7,10,14-15,19,21
+docs/plan/2026043001_session-event-log.md
+  dbe751140a5ca8b3 6,356,361,596
+packages/common/src/approval-presentation.test.ts
+  dbe751140a5ca8b3 43-44,53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "f7ab98e7b34ffb6374128882df5cced8ee4299cb",
+  "prompts": {
+    "dbe751140a5ca8b3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bdf084f4-ac6d-40be-886a-6d500c65973f",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 46,
+      "total_deletions": 61,
+      "accepted_lines": 41,
+      "overriden_lines": 1
+    }
+  }
+}
