@@ -19,6 +19,11 @@ const SLACK_POST_MESSAGE_PATH = "/chat.postMessage";
 const MAX_MRKDWN_BYTES = 40 * 1024;
 const MAX_BLOCKS_FILE_BYTES = 128 * 1024;
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+// A batch is read into memory in full and uploaded concurrently, so it needs
+// its own bounds on top of the per-file cap: remote-cli is shared across
+// sessions, and one caller must not be able to OOM it or burst the Slack API.
+const MAX_ATTACHMENTS = 10;
+const MAX_TOTAL_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 const FILE_ALLOWED_ROOTS = [
   "/tmp",
   "/workspace/memory",
@@ -328,9 +333,14 @@ export async function handleSlackPostMessage(
     payload.blocks = blocks;
   }
 
+  if (parsed.files.length > MAX_ATTACHMENTS) {
+    return result(`--file accepts at most ${MAX_ATTACHMENTS} attachments per message\n`);
+  }
+
   // Every attachment path is validated and read before any Slack call, so a
   // bad path or oversize file fails closed without uploading anything.
   const attachments: { title: string; content: Buffer }[] = [];
+  let totalAttachmentBytes = 0;
   for (const rawPath of parsed.files) {
     const filePath = resolveAllowedFilePath(rawPath, request.cwd, "--file");
     if (typeof filePath !== "string") return result(`${filePath.error}\n`);
@@ -346,6 +356,12 @@ export async function handleSlackPostMessage(
     if (!fileStat.isFile()) return result(`--file ${rawPath} must be a regular file\n`);
     if (fileStat.size > MAX_ATTACHMENT_BYTES) {
       return result(`--file ${rawPath} exceeds ${MAX_ATTACHMENT_BYTES} bytes\n`);
+    }
+    // Checked against the stat size so an oversize batch bails before the next
+    // buffer is allocated.
+    totalAttachmentBytes += fileStat.size;
+    if (totalAttachmentBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
+      return result(`--file attachments exceed ${MAX_TOTAL_ATTACHMENT_BYTES} bytes in total\n`);
     }
 
     let content: Buffer;

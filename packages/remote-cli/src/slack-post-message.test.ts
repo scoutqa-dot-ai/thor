@@ -446,6 +446,32 @@ describe("remote-cli slack-post-message endpoint", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("bounds an attachment batch by count and total bytes before reading or uploading", async () => {
+    const tooMany = Array.from({ length: 11 }, (_, i) => {
+      const name = `many-${i}.txt`;
+      writeFileSync(join(testCwd, name), "x", "utf8");
+      return ["--file", name];
+    }).flat();
+    await expectFailure(
+      { args: ["--channel", "C123", ...tooMany], stdin: "hi" },
+      "--file accepts at most 10 attachments per message",
+    );
+
+    // Two files under the 50MB per-file cap that together exceed the batch cap.
+    const half = Buffer.alloc(30 * 1024 * 1024, 0);
+    writeFileSync(join(testCwd, "big-1.bin"), half);
+    writeFileSync(join(testCwd, "big-2.bin"), half);
+    await expectFailure(
+      {
+        args: ["--channel", "C123", "--file", "big-1.bin", "--file", "big-2.bin"],
+        stdin: "hi",
+      },
+      "--file attachments exceed 52428800 bytes in total",
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("fails the command and posts no message when an attachment upload fails", async () => {
     writeFileSync(join(testCwd, "a.txt"), "alpha", "utf8");
     fetchMock.mockImplementation((async (url: string) => {
