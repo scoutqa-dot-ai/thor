@@ -1,0 +1,51 @@
+packages/remote-cli/src/github-app-auth.test.ts
+  dbe751140a5ca8b3 25,27-39
+packages/common/src/env.test.ts
+  dbe751140a5ca8b3 2
+packages/common/src/service-env.ts
+  dbe751140a5ca8b3 2
+packages/common/src/format.test.ts
+  dbe751140a5ca8b3 5-17,22-40,67-79
+packages/remote-cli/src/sandbox.test.ts
+  dbe751140a5ca8b3 490-502
+packages/gateway/src/cron.test.ts
+  62a385d4e4e2b496 182
+  dbe751140a5ca8b3 133-138,140-144,146-161,163-164,169,173,175-177,179,181
+packages/common/src/memory-paths.test.ts
+  dbe751140a5ca8b3 9,11-17,19-67
+packages/common/src/psql-databases.test.ts
+  dbe751140a5ca8b3 62-82,84-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "d3a4a6aa2a5ba9f38df3c927d72573c55eaea9b4",
+  "prompts": {
+    "62a385d4e4e2b496": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a47b3bdc-dd01-492b-8d1c-9b906cb3f77c",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    },
+    "dbe751140a5ca8b3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bdf084f4-ac6d-40be-886a-6d500c65973f",
+        "model": "claude-opus-5"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 193,
+      "overriden_lines": 0
+    }
+  }
+}
