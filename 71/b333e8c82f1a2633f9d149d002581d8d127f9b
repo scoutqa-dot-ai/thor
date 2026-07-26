@@ -1,0 +1,23 @@
+packages/runner/src/trigger.test.ts
+  eb7c6671aafbb0aa 2188-2192
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "71b333e8c82f1a2633f9d149d002581d8d127f9b",
+  "prompts": {
+    "eb7c6671aafbb0aa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35364c19-3116-4e42-8a1c-273e13b43f45",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 5,
+      "total_deletions": 2,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    }
+  }
+}
