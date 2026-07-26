@@ -2185,13 +2185,16 @@ describe("runner /trigger orchestration", () => {
     });
 
     await withServer(h.app, async (url) => {
-      const startedAt = Date.now();
+      // No wall-clock bound here: the window itself is pinned deterministically
+      // with an injected clock in session-error-grace.test.ts. This test only
+      // proves the terminal error still comes from the *original* session.error
+      // ("provider unavailable"), not one manufactured by the intervening
+      // status events, regardless of how long the round trip actually takes.
       const result = await trigger(url, {
         prompt: "fail",
         correlationKey: "slack:thread:C123/1710000000.009",
         stream: true,
       });
-      expect(Date.now() - startedAt).toBeLessThan(100);
       expect(result.events.find((e) => e.type === "done")).toMatchObject({
         status: "error",
         error: "provider unavailable",
