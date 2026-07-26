@@ -156,7 +156,7 @@ const POSTHOG_ALLOW = [
   // Web analytics (aggregate, no PII)
   "query-web-overview",
   "query-web-stats",
-  "web-analytics-weekly-digest",
+  "query-web-vitals",
   // Ad-hoc SQL + schema introspection (replaces the removed generic query-run)
   "execute-sql",
   "read-data-schema",

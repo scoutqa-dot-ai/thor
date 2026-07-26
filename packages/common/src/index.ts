@@ -34,6 +34,7 @@ export {
   GhIssueCreateApprovalArgsSchema,
   AwsExecApprovalArgsSchema,
   approvalToolRequiresDisclaimer,
+  disclaimerTargetField,
   injectApprovalDisclaimer,
   validateDisclaimerCompatibleArgs,
 } from "./approval-events.ts";

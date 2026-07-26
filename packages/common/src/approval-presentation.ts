@@ -240,16 +240,14 @@ function buildCreateConfluencePagePresentation(
 
 function buildCreateFeatureFlagPresentation(args: Record<string, unknown>): ApprovalPresentation {
   const parsed = CreateFeatureFlagApprovalArgsSchema.parse(args);
-  const titleTarget = renderValue(parsed.name ?? parsed.key) ?? "feature flag";
   return {
-    title: `Create feature flag: ${titleTarget}`,
+    title: `Create feature flag: ${renderValue(parsed.key) ?? "feature flag"}`,
     markdown: joinMarkdown([
       bullet("Key", parsed.key),
-      bullet("Name", parsed.name),
-      section("Description", parsed.description),
       bullet("Active", parsed.active),
-      bullet("Rollout", parsed.rolloutPercentage),
       bullet("Filters", parsed.filters),
+      // PostHog stores the flag's description in `name`.
+      section("Description", parsed.name),
     ]),
   };
 }

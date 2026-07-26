@@ -332,11 +332,11 @@ export function createMcpService(
     }
 
     try {
-      validatePolicy(proxyDef.allow, proxyDef.approve ?? [], allToolNames);
+      validatePolicy(proxyDef.allow, proxyDef.approve ?? [], upstream.tools);
     } catch (err) {
       const tolerated = err instanceof PolicyDriftError && deps.isProduction;
       if (tolerated) {
-        logWarn(log, "policy_drift", { name, orphans: err.orphans });
+        logWarn(log, "policy_drift", { name, issues: err.issues });
       } else {
         await closeUpstreamOnSetupFailure(err);
       }

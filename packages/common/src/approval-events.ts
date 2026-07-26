@@ -16,10 +16,10 @@ export const AddCommentToJiraIssueApprovalArgsSchema = z
   })
   .passthrough();
 
-// Mirrors the upstream `createConfluencePage` schema (required `cloudId`,
-// `spaceId`, `body`; `title` optional). `spaceId` also accepts a space key,
-// which upstream resolves to the numeric id. `cloudId` is injected by the
-// Atlassian proxy, so it is not required here.
+// `spaceId` is required so the approval card always names the target space —
+// an approver must not be asked to approve a page with no visible destination.
+// It also accepts a space key, which upstream resolves to the numeric id.
+// `title` is optional, matching upstream; `cloudId` is injected by the proxy.
 export const CreateConfluencePageApprovalArgsSchema = z
   .object({
     spaceId: z.string().min(1),
@@ -28,13 +28,15 @@ export const CreateConfluencePageApprovalArgsSchema = z
   })
   .passthrough();
 
+// `key` is required so the approval card always names the flag being created;
+// upstream only requires its own `context`. `name` holds the flag's description
+// prose (see DISCLAIMER_TARGET_FIELDS). Fields upstream does not define are left
+// out rather than mirrored — passthrough carries anything else the agent sends.
 export const CreateFeatureFlagApprovalArgsSchema = z
   .object({
     key: z.string().min(1),
     name: z.string().min(1).optional(),
-    description: z.string().optional(),
     active: z.boolean().optional(),
-    rolloutPercentage: z.number().optional(),
     filters: z.unknown().optional(),
   })
   .passthrough();
@@ -105,15 +107,32 @@ export type ApprovalToolName = z.infer<typeof ApprovalRequiredEventPayloadSchema
 export type ApprovalArgs = z.infer<typeof ApprovalArgsSchema>;
 export type ApprovalRequiredEventPayload = z.infer<typeof ApprovalRequiredEventPayloadSchema>;
 
-const APPROVAL_TOOLS_REQUIRING_DISCLAIMER = [
-  "createJiraIssue",
-  "addCommentToJiraIssue",
-  "createConfluencePage",
-  "create-feature-flag",
-] as const satisfies readonly ApprovalToolName[];
+/**
+ * The prose field each disclaimer-required approval tool carries, and therefore
+ * the field the Thor footer is appended to.
+ *
+ * Single source of truth: it decides which tools require a disclaimer, it drives
+ * injection below, and remote-cli's MCP policy check asserts the upstream tool
+ * schema still exposes each field as a string. That last part matters — when a
+ * provider drops or renames the field, an upstream with `additionalProperties`
+ * unset (PostHog) silently discards the footer, shipping an untraceable
+ * artifact. Drift has to fail loudly instead.
+ */
+export const DISCLAIMER_TARGET_FIELDS = {
+  createJiraIssue: "description",
+  addCommentToJiraIssue: "commentBody",
+  createConfluencePage: "body",
+  // PostHog has no `description` property: it documents `name` as the flag's
+  // description field, kept there "for backwards compatibility".
+  "create-feature-flag": "name",
+} as const satisfies Partial<Record<ApprovalToolName, string>>;
 
 export function approvalToolRequiresDisclaimer(tool: string): boolean {
-  return (APPROVAL_TOOLS_REQUIRING_DISCLAIMER as readonly string[]).includes(tool);
+  return tool in DISCLAIMER_TARGET_FIELDS;
+}
+
+export function disclaimerTargetField(tool: string): string | undefined {
+  return (DISCLAIMER_TARGET_FIELDS as Record<string, string>)[tool];
 }
 
 export function validateDisclaimerCompatibleArgs(
@@ -152,12 +171,16 @@ export function injectApprovalDisclaimer(
   }
   switch (parsed.data.tool) {
     case "createJiraIssue":
-    case "create-feature-flag":
       return {
         ...parsed.data.args,
         description: parsed.data.args.description
           ? `${parsed.data.args.description}\n${footer}`
           : footer,
+      };
+    case "create-feature-flag":
+      return {
+        ...parsed.data.args,
+        name: parsed.data.args.name ? `${parsed.data.args.name}\n${footer}` : footer,
       };
     case "addCommentToJiraIssue":
       return {

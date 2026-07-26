@@ -246,13 +246,15 @@ jobs:
       - name: Assert no MCP policy drift
         run: |
           set -euo pipefail
-          # warmUp() logs a "policy_drift" event when our allow/approve lists name
-          # tools an upstream no longer exposes. Prod tolerates it (never fails
-          # boot), so catch it here. Grafana's Tempo query frontend has already
-          # passed its readiness preflight, so any drift is a real bug.
+          # warmUp() logs a "policy_drift" event when an upstream no longer matches
+          # our config: either the allow/approve lists name tools it does not
+          # expose, or an approve-gated write no longer exposes the string field
+          # Thor appends the disclaimer to. Prod tolerates both (never fails boot),
+          # so catch them here. Grafana's Tempo query frontend has already passed
+          # its readiness preflight, so any drift is a real bug.
           logs="$(docker compose logs --no-color remote-cli 2>/dev/null || true)"
           if printf '%s\n' "$logs" | grep -q '"event":"policy_drift"'; then
-            echo "::error::MCP policy drift: allow/approve lists reference tools the upstream no longer exposes. Reconcile packages/common/src/proxies.ts against the upstream tool inventory."
+            echo "::error::MCP policy drift — see the issues below. Missing tools: reconcile the allow/approve lists in packages/common/src/proxies.ts against the upstream tool inventory. Missing disclaimer target: reconcile DISCLAIMER_TARGET_FIELDS in packages/common/src/approval-events.ts (and its injector case) against the upstream tool schema."
             printf '%s\n' "$logs" | grep '"event":"policy_drift"'
             exit 1
           fi
