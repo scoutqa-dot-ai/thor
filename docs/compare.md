@@ -3,13 +3,13 @@
 Comparison of Thor against five open-source / public-architecture coding agents:
 OpenHands, open-swe, background-agents, junior, goose.
 
-| Tool              | Repository                                                                      | License                            |
-| ----------------- | ------------------------------------------------------------------------------- | ---------------------------------- |
+| Tool              | Repository                                                                      | License                                    |
+| ----------------- | ------------------------------------------------------------------------------- | ------------------------------------------ |
 | OpenHands         | [OpenHands/OpenHands](https://github.com/OpenHands/OpenHands)                   | MIT (core) + source-available (enterprise) |
-| open-swe          | [langchain-ai/open-swe](https://github.com/langchain-ai/open-swe)               | MIT                                |
-| background-agents | [ColeMurray/background-agents](https://github.com/ColeMurray/background-agents) | Open-source                        |
-| junior            | [getsentry/junior](https://github.com/getsentry/junior)                         | Apache 2.0 (Sentry-maintained)     |
-| goose             | [aaif-goose/goose](https://github.com/aaif-goose/goose)                         | Apache 2.0                         |
+| open-swe          | [langchain-ai/open-swe](https://github.com/langchain-ai/open-swe)               | MIT                                        |
+| background-agents | [ColeMurray/background-agents](https://github.com/ColeMurray/background-agents) | Open-source                                |
+| junior            | [getsentry/junior](https://github.com/getsentry/junior)                         | Apache 2.0 (Sentry-maintained)             |
+| goose             | [aaif-goose/goose](https://github.com/aaif-goose/goose)                         | Apache 2.0                                 |
 
 ## 1. Thor in one paragraph
 
@@ -25,13 +25,13 @@ workspace, one OpenCode runtime, one runner, no per-user sandbox fleet.
 
 ## 2. The other five at a glance
 
-| Tool              | Origin                          | Shape                                               | Sandbox                                              | Trigger surface                              | Distinct trait                                                      |
-| ----------------- | ------------------------------- | --------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------- |
-| OpenHands         | All Hands AI                    | Full IDE-style platform + Enterprise SaaS           | Docker / Remote / Local runtime                      | Web GUI, CLI, GitHub/GitLab/Bitbucket, Slack | Most "product-y" — workspaces, RBAC, billing, browser tool          |
-| open-swe          | LangChain                       | LangGraph + Deep Agents framework                   | Pluggable: LangSmith / Daytona / Modal / Runloop     | Slack, Linear, GitHub, webhook               | Composable framework; separate reviewer subgraph; AGENTS.md         |
-| background-agents | Open-Inspect (Ramp-style)       | Cloudflare control plane + Modal data plane         | Modal snapshots (fast restore)                       | Web, Slack, GitHub, Linear, webhook, cron    | Async-first multiplayer; per-session Durable Object SQLite          |
-| junior            | Sentry                          | Slack-native turn-based agent harness (Pi)          | Vercel Sandbox                                       | Slack (DM, @mention, threads, app-home)      | Thinking-level routing; resumable durable turns; OAuth pause/resume |
-| goose             | Block → AAIF / Linux Foundation | Rust-native general-purpose agent                   | Local process; optional container                    | Desktop GUI, CLI, HTTP API (goosed)          | MCP-first; 15+ LLM providers; recipes; runs on the user's machine   |
+| Tool              | Origin                          | Shape                                       | Sandbox                                          | Trigger surface                              | Distinct trait                                                      |
+| ----------------- | ------------------------------- | ------------------------------------------- | ------------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------- |
+| OpenHands         | All Hands AI                    | Full IDE-style platform + Enterprise SaaS   | Docker / Remote / Local runtime                  | Web GUI, CLI, GitHub/GitLab/Bitbucket, Slack | Most "product-y" — workspaces, RBAC, billing, browser tool          |
+| open-swe          | LangChain                       | LangGraph + Deep Agents framework           | Pluggable: LangSmith / Daytona / Modal / Runloop | Slack, Linear, GitHub, webhook               | Composable framework; separate reviewer subgraph; AGENTS.md         |
+| background-agents | Open-Inspect (Ramp-style)       | Cloudflare control plane + Modal data plane | Modal snapshots (fast restore)                   | Web, Slack, GitHub, Linear, webhook, cron    | Async-first multiplayer; per-session Durable Object SQLite          |
+| junior            | Sentry                          | Slack-native turn-based agent harness (Pi)  | Vercel Sandbox                                   | Slack (DM, @mention, threads, app-home)      | Thinking-level routing; resumable durable turns; OAuth pause/resume |
+| goose             | Block → AAIF / Linux Foundation | Rust-native general-purpose agent           | Local process; optional container                | Desktop GUI, CLI, HTTP API (goosed)          | MCP-first; 15+ LLM providers; recipes; runs on the user's machine   |
 
 ## 3. Where Thor sits in the design space
 

@@ -397,8 +397,7 @@ function extractSessionId(event: Event): string | undefined {
     // Align with prompt-stream.ts: check properties.info ?? properties.message
     const properties = (event as unknown as { properties?: Record<string, unknown> }).properties;
     const info = (properties?.info ?? properties?.message) as
-      | { sessionID?: string; sessionId?: string }
-      | undefined;
+      { sessionID?: string; sessionId?: string } | undefined;
     return info?.sessionID ?? info?.sessionId;
   }
   if (

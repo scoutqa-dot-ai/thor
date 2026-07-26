@@ -5,18 +5,14 @@ import { describe, expect, it } from "vitest";
 const scriptPath = resolve(import.meta.dirname, "10-thor-admin-emails.envsh");
 
 function renderAdminRegex(input: string): string {
-  return execFileSync(
-    "sh",
-    ["-c", `. "${scriptPath}"; printf '%s' "$THOR_ADMIN_EMAILS_REGEX"`],
-    {
-      cwd: resolve(import.meta.dirname, "..", ".."),
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        THOR_ADMIN_EMAILS: input,
-      },
+  return execFileSync("sh", ["-c", `. "${scriptPath}"; printf '%s' "$THOR_ADMIN_EMAILS_REGEX"`], {
+    cwd: resolve(import.meta.dirname, "..", ".."),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      THOR_ADMIN_EMAILS: input,
     },
-  );
+  });
 }
 
 describe("10-thor-admin-emails.envsh", () => {

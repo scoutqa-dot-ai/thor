@@ -125,8 +125,7 @@ export interface ValidationIssue {
 }
 
 export type ValidationResult =
-  | { ok: true; data: WorkspaceConfig }
-  | { ok: false; issues: ValidationIssue[] };
+  { ok: true; data: WorkspaceConfig } | { ok: false; issues: ValidationIssue[] };
 
 export function validateWorkspaceConfig(parsed: unknown): ValidationResult {
   const result = WorkspaceConfigSchema.safeParse(parsed);
