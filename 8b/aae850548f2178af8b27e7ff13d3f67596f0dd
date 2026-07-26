@@ -1,0 +1,25 @@
+packages/gateway/src/approval.test.ts
+  176c45c3241e8a4b 134,139,154-167
+packages/common/src/approval-presentation.ts
+  176c45c3241e8a4b 155-162,205-207
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "8baae850548f2178af8b27e7ff13d3f67596f0dd",
+  "prompts": {
+    "176c45c3241e8a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "31487b02-d89a-4d6d-b8a5-ba32febbcd3f",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 27,
+      "total_deletions": 4,
+      "accepted_lines": 27,
+      "overriden_lines": 0
+    }
+  }
+}
