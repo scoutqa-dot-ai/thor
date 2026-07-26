@@ -34,6 +34,7 @@ export {
   GhIssueCreateApprovalArgsSchema,
   AwsExecApprovalArgsSchema,
   approvalToolRequiresDisclaimer,
+  disclaimerTargetField,
   injectApprovalDisclaimer,
   validateDisclaimerCompatibleArgs,
 } from "./approval-events.ts";
@@ -46,7 +47,6 @@ export {
   envOptionalString,
   envString,
   envInt,
-  envCsv,
   envBaseUrl,
   getRunnerBaseUrl,
   matchesInternalSecret,

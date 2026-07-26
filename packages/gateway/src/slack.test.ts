@@ -1,7 +1,6 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
-  getSlackCorrelationKey,
   isForwardableSlackMessage,
   SlackEventEnvelopeSchema,
   verifySlackSignature,
@@ -43,19 +42,6 @@ describe("slack helpers", () => {
         toleranceSeconds: 60,
       }),
     ).toBe(false);
-  });
-
-  it("builds a thread-based correlation key with channel", () => {
-    expect(
-      getSlackCorrelationKey({
-        type: "app_mention",
-        user: "U123",
-        text: "<@U999> hello",
-        ts: "1710000000.111",
-        thread_ts: "1710000000.000",
-        channel: "C123",
-      }),
-    ).toBe("slack:thread:C123/1710000000.000");
   });
 
   it("preserves file_share metadata and unknown Slack fields", () => {

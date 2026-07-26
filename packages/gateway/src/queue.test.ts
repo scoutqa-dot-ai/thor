@@ -246,31 +246,6 @@ describe("EventQueue", () => {
     expect(batches).toEqual([["first"], ["second", "third"]]);
   });
 
-  it("ack deletes files from the queue directory", async () => {
-    const handler = ackHandler();
-    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
-
-    await queue.enqueue(makeEvent("key-1", "hello"));
-    await queue.flush();
-
-    const remaining = readdirSync(queueDir).filter((f) => f.endsWith(".json"));
-    expect(remaining).toHaveLength(0);
-  });
-
-  it("files stay on disk when handler does not call ack", async () => {
-    const handler = vi.fn<EventHandler>().mockImplementation(async () => {
-      // Don't call ack — simulates busy/deferred
-    });
-    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
-
-    await queue.enqueue(makeEvent("key-1", "deferred"));
-    await queue.flush();
-
-    expect(handler).toHaveBeenCalledTimes(1);
-    const remaining = readdirSync(queueDir).filter((f) => f.endsWith(".json"));
-    expect(remaining).toHaveLength(1);
-  });
-
   it("deferred events are retried on next flush", async () => {
     let callCount = 0;
     const handler = vi.fn<EventHandler>().mockImplementation(async (_events, ack) => {

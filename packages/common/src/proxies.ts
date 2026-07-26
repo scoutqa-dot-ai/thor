@@ -37,7 +37,7 @@ const ATLASSIAN_ALLOW = [
   "getConfluencePageInlineComments",
   "getConfluenceCommentChildren",
 ];
-const ATLASSIAN_APPROVE = ["createJiraIssue", "addCommentToJiraIssue"];
+const ATLASSIAN_APPROVE = ["createJiraIssue", "addCommentToJiraIssue", "createConfluencePage"];
 
 const GRAFANA_ALLOW = [
   "list_datasources",
@@ -156,7 +156,7 @@ const POSTHOG_ALLOW = [
   // Web analytics (aggregate, no PII)
   "query-web-overview",
   "query-web-stats",
-  "web-analytics-weekly-digest",
+  "query-web-vitals",
   // Ad-hoc SQL + schema introspection (replaces the removed generic query-run)
   "execute-sql",
   "read-data-schema",

@@ -6,43 +6,65 @@ import {
   normalizeMemoryPath,
 } from "./memory-paths.ts";
 
+type StatStub = ((targetPath: string) => { isDirectory: () => boolean }) | undefined;
+
+/** Fail-open path: stat throwing (missing/unreadable) must not report a bare directory. */
+const statUnavailable: StatStub = () => {
+  throw new Error("missing");
+};
+const statDirectoryAt =
+  (directoryPath: string): StatStub =>
+  (targetPath) => ({ isDirectory: () => targetPath === directoryPath });
+
 describe("memory-paths", () => {
-  it("normalizes memory paths before checks", () => {
-    expect(normalizeMemoryPath(`${MEMORY_DIR}/thor/../thor/.`)).toBe(`${MEMORY_DIR}/thor`);
-  });
-
-  it("keeps containment checks scoped to memory root", () => {
-    expect(isMemoryPath(MEMORY_DIR)).toBe(true);
-    expect(isMemoryPath(`${MEMORY_DIR}/thor/README.md`)).toBe(true);
-    expect(isMemoryPath(normalizeMemoryPath(`${MEMORY_DIR}/../repos/thor`))).toBe(false);
-  });
-
-  it("returns false when stat is unavailable", () => {
-    const alwaysThrow = () => {
-      throw new Error("missing");
-    };
-
-    expect(
-      isBareMemoryDirectoryPath(`${MEMORY_DIR}/thor/README.md`, { statSync: alwaysThrow }),
-    ).toBe(false);
-    expect(isBareMemoryDirectoryPath(`${MEMORY_DIR}/thor`, { statSync: alwaysThrow })).toBe(false);
-    expect(isBareMemoryDirectoryPath(`${MEMORY_DIR}/my.repo`, { statSync: alwaysThrow })).toBe(
-      false,
-    );
-  });
-
-  it("treats the memory root as a bare directory without stat", () => {
-    expect(isBareMemoryDirectoryPath(MEMORY_DIR)).toBe(true);
-  });
-
-  it("suppresses paths when stat reports a directory", () => {
-    const fakeStat = (targetPath: string) => ({
-      isDirectory: () => targetPath === `${MEMORY_DIR}/my.repo`,
-    });
-
-    expect(isBareMemoryDirectoryPath(`${MEMORY_DIR}/my.repo`, { statSync: fakeStat })).toBe(true);
-    expect(isBareMemoryDirectoryPath(`${MEMORY_DIR}/thor/README.md`, { statSync: fakeStat })).toBe(
-      false,
+  it.each<[string, StatStub, { normalized: string; isMemory: boolean; isBare: boolean }]>([
+    // normalization happens before containment / stat checks
+    [
+      `${MEMORY_DIR}/thor/../thor/.`,
+      statDirectoryAt(`${MEMORY_DIR}/thor`),
+      { normalized: `${MEMORY_DIR}/thor`, isMemory: true, isBare: true },
+    ],
+    // the memory root is a bare directory without consulting stat at all
+    [MEMORY_DIR, undefined, { normalized: MEMORY_DIR, isMemory: true, isBare: true }],
+    // containment stays scoped to the memory root
+    [
+      `${MEMORY_DIR}/../repos/thor`,
+      statUnavailable,
+      { normalized: "/workspace/repos/thor", isMemory: false, isBare: false },
+    ],
+    // stat unavailable -> false (fail open, never suppress)
+    [
+      `${MEMORY_DIR}/thor/README.md`,
+      statUnavailable,
+      { normalized: `${MEMORY_DIR}/thor/README.md`, isMemory: true, isBare: false },
+    ],
+    [
+      `${MEMORY_DIR}/thor`,
+      statUnavailable,
+      { normalized: `${MEMORY_DIR}/thor`, isMemory: true, isBare: false },
+    ],
+    [
+      `${MEMORY_DIR}/my.repo`,
+      statUnavailable,
+      { normalized: `${MEMORY_DIR}/my.repo`, isMemory: true, isBare: false },
+    ],
+    // stat reports a directory -> suppressed; a file keeps rendering
+    [
+      `${MEMORY_DIR}/my.repo`,
+      statDirectoryAt(`${MEMORY_DIR}/my.repo`),
+      { normalized: `${MEMORY_DIR}/my.repo`, isMemory: true, isBare: true },
+    ],
+    [
+      `${MEMORY_DIR}/thor/README.md`,
+      statDirectoryAt(`${MEMORY_DIR}/my.repo`),
+      { normalized: `${MEMORY_DIR}/thor/README.md`, isMemory: true, isBare: false },
+    ],
+  ])("%s (stat %#)", (candidatePath, statSync, expected) => {
+    const normalized = normalizeMemoryPath(candidatePath);
+    expect(normalized).toBe(expected.normalized);
+    expect(isMemoryPath(normalized)).toBe(expected.isMemory);
+    expect(isBareMemoryDirectoryPath(candidatePath, statSync ? { statSync } : undefined)).toBe(
+      expected.isBare,
     );
   });
 });

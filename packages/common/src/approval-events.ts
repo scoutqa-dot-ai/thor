@@ -16,13 +16,27 @@ export const AddCommentToJiraIssueApprovalArgsSchema = z
   })
   .passthrough();
 
+// `spaceId` is required so the approval card always names the target space —
+// an approver must not be asked to approve a page with no visible destination.
+// It also accepts a space key, which upstream resolves to the numeric id.
+// `title` is optional, matching upstream; `cloudId` is injected by the proxy.
+export const CreateConfluencePageApprovalArgsSchema = z
+  .object({
+    spaceId: z.string().min(1),
+    title: z.string().min(1).optional(),
+    body: z.string().min(1),
+  })
+  .passthrough();
+
+// `key` is required so the approval card always names the flag being created;
+// upstream only requires its own `context`. `name` holds the flag's description
+// prose (see DISCLAIMER_TARGET_FIELDS). Fields upstream does not define are left
+// out rather than mirrored — passthrough carries anything else the agent sends.
 export const CreateFeatureFlagApprovalArgsSchema = z
   .object({
     key: z.string().min(1),
     name: z.string().min(1).optional(),
-    description: z.string().optional(),
     active: z.boolean().optional(),
-    rolloutPercentage: z.number().optional(),
     filters: z.unknown().optional(),
   })
   .passthrough();
@@ -50,6 +64,7 @@ export const AwsExecApprovalArgsSchema = z
 export const ApprovalArgsSchema = z.union([
   CreateJiraIssueApprovalArgsSchema,
   AddCommentToJiraIssueApprovalArgsSchema,
+  CreateConfluencePageApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
   GhIssueCreateApprovalArgsSchema,
   AwsExecApprovalArgsSchema,
@@ -71,6 +86,10 @@ export const ApprovalRequiredEventPayloadSchema = z.discriminatedUnion("tool", [
     args: AddCommentToJiraIssueApprovalArgsSchema,
   }),
   ApprovalRequiredEventBaseSchema.extend({
+    tool: z.literal("createConfluencePage"),
+    args: CreateConfluencePageApprovalArgsSchema,
+  }),
+  ApprovalRequiredEventBaseSchema.extend({
     tool: z.literal("create-feature-flag"),
     args: CreateFeatureFlagApprovalArgsSchema,
   }),
@@ -88,14 +107,32 @@ export type ApprovalToolName = z.infer<typeof ApprovalRequiredEventPayloadSchema
 export type ApprovalArgs = z.infer<typeof ApprovalArgsSchema>;
 export type ApprovalRequiredEventPayload = z.infer<typeof ApprovalRequiredEventPayloadSchema>;
 
-const APPROVAL_TOOLS_REQUIRING_DISCLAIMER = [
-  "createJiraIssue",
-  "addCommentToJiraIssue",
-  "create-feature-flag",
-] as const satisfies readonly ApprovalToolName[];
+/**
+ * The prose field each disclaimer-required approval tool carries, and therefore
+ * the field the Thor footer is appended to.
+ *
+ * Single source of truth: it decides which tools require a disclaimer, it drives
+ * injection below, and remote-cli's MCP policy check asserts the upstream tool
+ * schema still exposes each field as a string. That last part matters — when a
+ * provider drops or renames the field, an upstream with `additionalProperties`
+ * unset (PostHog) silently discards the footer, shipping an untraceable
+ * artifact. Drift has to fail loudly instead.
+ */
+export const DISCLAIMER_TARGET_FIELDS = {
+  createJiraIssue: "description",
+  addCommentToJiraIssue: "commentBody",
+  createConfluencePage: "body",
+  // PostHog has no `description` property: it documents `name` as the flag's
+  // description field, kept there "for backwards compatibility".
+  "create-feature-flag": "name",
+} as const satisfies Partial<Record<ApprovalToolName, string>>;
 
 export function approvalToolRequiresDisclaimer(tool: string): boolean {
-  return (APPROVAL_TOOLS_REQUIRING_DISCLAIMER as readonly string[]).includes(tool);
+  return tool in DISCLAIMER_TARGET_FIELDS;
+}
+
+export function disclaimerTargetField(tool: string): string | undefined {
+  return (DISCLAIMER_TARGET_FIELDS as Record<string, string>)[tool];
 }
 
 export function validateDisclaimerCompatibleArgs(
@@ -124,20 +161,40 @@ export function injectApprovalDisclaimer(
     tool,
     args,
   });
-  if (!parsed.success) return args;
+  if (!parsed.success) {
+    // Fail closed: a disclaimer-required tool must never execute upstream without the
+    // Thor footer. If the stored args no longer parse, surface it loudly instead of
+    // silently returning args unchanged (which would skip disclaimer injection).
+    throw new Error(
+      `Cannot inject approval disclaimer for "${tool}": arguments failed validation — ${parsed.error.message}`,
+    );
+  }
   switch (parsed.data.tool) {
     case "createJiraIssue":
-    case "create-feature-flag":
       return {
         ...parsed.data.args,
         description: parsed.data.args.description
           ? `${parsed.data.args.description}\n${footer}`
           : footer,
       };
+    case "create-feature-flag":
+      return {
+        ...parsed.data.args,
+        name: parsed.data.args.name ? `${parsed.data.args.name}\n${footer}` : footer,
+      };
     case "addCommentToJiraIssue":
       return {
         ...parsed.data.args,
         commentBody: `${parsed.data.args.commentBody}\n${footer}`,
+      };
+    case "createConfluencePage":
+      return {
+        ...parsed.data.args,
+        // The footer is markdown, and upstream leaves the body format
+        // unspecified when contentFormat is omitted — pin it so the reviewed
+        // content and the disclaimer link render as written.
+        contentFormat: "markdown",
+        body: `${parsed.data.args.body}\n${footer}`,
       };
     case "ghIssueCreate":
     case "awsExec":

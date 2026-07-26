@@ -6,7 +6,6 @@ import {
   loadWorkspaceConfig,
   createConfigLoader,
   extractRepoFromCwd,
-  getInstallationIdForOwner,
   findUserBySlack,
   findUserByGithub,
   getProfileForSlackChannel,
@@ -565,23 +564,5 @@ describe("extractRepoFromCwd", () => {
 
   it("returns undefined for path traversal", () => {
     expect(extractRepoFromCwd("/workspace/repos/../etc/passwd")).toBeUndefined();
-  });
-});
-
-describe("getInstallationIdForOwner", () => {
-  it("returns installation id for known owner", () => {
-    expect(
-      getInstallationIdForOwner(
-        { owners: { acme: { github_app_installation_id: 12345 } } },
-        "acme",
-      ),
-    ).toBe(12345);
-  });
-
-  it("returns undefined for unknown or missing owner map", () => {
-    expect(getInstallationIdForOwner({}, "acme")).toBeUndefined();
-    expect(
-      getInstallationIdForOwner({ owners: { other: { github_app_installation_id: 1 } } }, "acme"),
-    ).toBeUndefined();
   });
 });

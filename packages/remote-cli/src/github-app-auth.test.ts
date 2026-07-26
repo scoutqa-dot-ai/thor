@@ -15,63 +15,28 @@ vi.mock("@thor/common", async (importOriginal) => {
 });
 
 import {
-  parseOwnerFromRemoteUrl,
   parseOwnerRepoFromRemoteUrl,
   generateAppJWT,
   getInstallationIdFromWorkspace,
   getInstallationToken,
 } from "./github-app-auth.ts";
 
-describe("parseOwnerFromRemoteUrl", () => {
-  it("parses HTTPS remote", () => {
-    expect(parseOwnerFromRemoteUrl("https://github.com/acme/web.git")).toBe("acme");
-  });
-
-  it("parses SSH remote", () => {
-    expect(parseOwnerFromRemoteUrl("git@github.com:acme/web.git")).toBe("acme");
-  });
-
-  it("returns undefined for unparseable URL", () => {
-    expect(parseOwnerFromRemoteUrl("not-a-url")).toBeUndefined();
-  });
-});
-
 describe("parseOwnerRepoFromRemoteUrl", () => {
-  it("parses HTTPS and SSH remotes", () => {
-    expect(parseOwnerRepoFromRemoteUrl("https://github.com/acme/web.git")).toEqual({
-      host: "github.com",
-      owner: "acme",
-      repo: "web",
-    });
-    expect(parseOwnerRepoFromRemoteUrl("git@github.com:acme/web.git")).toEqual({
-      host: "github.com",
-      owner: "acme",
-      repo: "web",
-    });
-    expect(parseOwnerRepoFromRemoteUrl("git@github.com:acme/web.git/")).toEqual({
-      host: "github.com",
-      owner: "acme",
-      repo: "web",
-    });
-  });
+  const github = { host: "github.com", owner: "acme", repo: "web" };
 
-  it("includes non-GitHub remote hosts for policy-level checks", () => {
-    expect(parseOwnerRepoFromRemoteUrl("git@gitlab.com:acme/web.git")).toEqual({
-      host: "gitlab.com",
-      owner: "acme",
-      repo: "web",
-    });
-    expect(parseOwnerRepoFromRemoteUrl("https://example.com/acme/web.git")).toEqual({
-      host: "example.com",
-      owner: "acme",
-      repo: "web",
-    });
-  });
-
-  it("rejects malformed owner/repo remotes", () => {
-    expect(parseOwnerRepoFromRemoteUrl("https://github.com/acme/web/extra.git")).toBeUndefined();
-    expect(parseOwnerRepoFromRemoteUrl("git@github.com:acme/web/extra.git")).toBeUndefined();
-    expect(parseOwnerRepoFromRemoteUrl("not-a-url")).toBeUndefined();
+  it.each([
+    ["https://github.com/acme/web.git", github],
+    ["git@github.com:acme/web.git", github],
+    ["git@github.com:acme/web.git/", github],
+    // Non-GitHub hosts are parsed too, so policy-level checks can see the host.
+    ["git@gitlab.com:acme/web.git", { host: "gitlab.com", owner: "acme", repo: "web" }],
+    ["https://example.com/acme/web.git", { host: "example.com", owner: "acme", repo: "web" }],
+    // Malformed owner/repo shapes are rejected.
+    ["https://github.com/acme/web/extra.git", undefined],
+    ["git@github.com:acme/web/extra.git", undefined],
+    ["not-a-url", undefined],
+  ])("parses %s", (url, expected) => {
+    expect(parseOwnerRepoFromRemoteUrl(url)).toEqual(expected);
   });
 });
 

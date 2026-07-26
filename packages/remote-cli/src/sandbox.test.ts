@@ -487,18 +487,19 @@ describe("/exec/sandbox", () => {
 });
 
 describe("parseGitStatus", () => {
-  it("treats rename entries as upload target plus delete source in -z format", () => {
-    expect(_testing.parseGitStatus("R  new-name.txt\0old-name.txt\0")).toEqual({
-      uploads: ["new-name.txt"],
-      deletes: ["old-name.txt"],
-    });
-  });
-
-  it("treats copy entries as upload-only in -z format", () => {
-    expect(_testing.parseGitStatus("C  copy.txt\0source.txt\0")).toEqual({
-      uploads: ["copy.txt"],
-      deletes: [],
-    });
+  it.each([
+    {
+      case: "rename uploads the target and deletes the source",
+      status: "R  new-name.txt\0old-name.txt\0",
+      expected: { uploads: ["new-name.txt"], deletes: ["old-name.txt"] },
+    },
+    {
+      case: "copy uploads the target only",
+      status: "C  copy.txt\0source.txt\0",
+      expected: { uploads: ["copy.txt"], deletes: [] },
+    },
+  ])("handles two-path -z entries: $case", ({ status, expected }) => {
+    expect(_testing.parseGitStatus(status)).toEqual(expected);
   });
 });
 

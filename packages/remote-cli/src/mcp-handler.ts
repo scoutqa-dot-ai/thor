@@ -63,6 +63,8 @@ function profileDenialMessage(err: unknown): string {
 
 function buildUpstreamArgs(action: ApprovalAction): Record<string, unknown> {
   if (!approvalToolRequiresDisclaimer(action.tool)) return action.args;
+  const formatError = validateDisclaimerCompatibleArgs(action.tool, action.args);
+  if (formatError) throw new Error(formatError);
   const trigger = action.origin?.trigger;
   if (!trigger) {
     throw new Error(
@@ -330,11 +332,11 @@ export function createMcpService(
     }
 
     try {
-      validatePolicy(proxyDef.allow, proxyDef.approve ?? [], allToolNames);
+      validatePolicy(proxyDef.allow, proxyDef.approve ?? [], upstream.tools);
     } catch (err) {
       const tolerated = err instanceof PolicyDriftError && deps.isProduction;
       if (tolerated) {
-        logWarn(log, "policy_drift", { name, orphans: err.orphans });
+        logWarn(log, "policy_drift", { name, issues: err.issues });
       } else {
         await closeUpstreamOnSetupFailure(err);
       }

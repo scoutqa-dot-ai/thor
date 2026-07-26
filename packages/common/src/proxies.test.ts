@@ -288,4 +288,11 @@ describe("proxy registry", () => {
       expect(overlap).toEqual([]);
     }
   });
+
+  it("exposes Confluence page creation only through the approval gate", () => {
+    const atlassian = resolveProxyConfig("atlassian", undefined, FULL_ENV);
+
+    expect(atlassian?.approve).toContain("createConfluencePage");
+    expect(atlassian?.allow).not.toContain("createConfluencePage");
+  });
 });

@@ -52,24 +52,6 @@ describe("resolvePsqlDatabases", () => {
     expect([...targets.keys()]).toEqual(["commerce"]);
   });
 
-  it("throws on malformed JSON, naming the source var", () => {
-    expect(() => resolvePsqlDatabases("QA", { PSQL_DATABASES_QA: "{not json" })).toThrow(
-      /PSQL_DATABASES_QA is not valid JSON/,
-    );
-  });
-
-  it("throws when the bundle is not a JSON object", () => {
-    expect(() => resolvePsqlDatabases(undefined, { PSQL_DATABASES: bundle([commerce]) })).toThrow(
-      /must be a JSON object/,
-    );
-  });
-
-  it("rejects an invalid alias", () => {
-    expect(() =>
-      resolvePsqlDatabases(undefined, { PSQL_DATABASES: bundle({ "bad alias": commerce }) }),
-    ).toThrow(/invalid database alias/);
-  });
-
   it.each(["host", "database", "username", "password"])("throws when %s is missing", (field) => {
     const { [field as keyof typeof commerce]: _omitted, ...rest } = commerce;
     expect(() =>
@@ -77,11 +59,32 @@ describe("resolvePsqlDatabases", () => {
     ).toThrow(new RegExp(`"${field}" must be a non-empty string`));
   });
 
-  it("throws on an out-of-range port", () => {
-    expect(() =>
-      resolvePsqlDatabases(undefined, {
-        PSQL_DATABASES: bundle({ commerce: { ...commerce, port: 0 } }),
-      }),
-    ).toThrow(/"port" must be an integer/);
+  it.each([
+    [
+      "malformed JSON, naming the source var",
+      "QA",
+      { PSQL_DATABASES_QA: "{not json" },
+      /PSQL_DATABASES_QA is not valid JSON/,
+    ],
+    [
+      "a bundle that is not a JSON object",
+      undefined,
+      { PSQL_DATABASES: bundle([commerce]) },
+      /must be a JSON object/,
+    ],
+    [
+      "an invalid alias",
+      undefined,
+      { PSQL_DATABASES: bundle({ "bad alias": commerce }) },
+      /invalid database alias/,
+    ],
+    [
+      "an out-of-range port",
+      undefined,
+      { PSQL_DATABASES: bundle({ commerce: { ...commerce, port: 0 } }) },
+      /"port" must be an integer/,
+    ],
+  ] as const)("rejects %s", (_label, profile, env, expected) => {
+    expect(() => resolvePsqlDatabases(profile, env)).toThrow(expected);
   });
 });

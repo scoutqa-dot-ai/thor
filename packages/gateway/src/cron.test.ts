@@ -130,91 +130,54 @@ describe("POST /cron", () => {
     });
   });
 
-  it("returns 401 when CRON_SECRET is not configured", async () => {
-    const fetchImpl = vi.fn<typeof fetch>();
+  const unauthorizedCases: Array<{
+    name: string;
+    cronSecret?: string;
+    authorization?: string;
+    expectedError?: string;
+  }> = [
+    {
+      name: "CRON_SECRET is not configured",
+      expectedError: "CRON_SECRET not configured",
+    },
+    { name: "auth is wrong", cronSecret: "my-secret", authorization: "Bearer wrong-secret" },
+    { name: "auth header is missing", cronSecret: "my-secret" },
+    {
+      // Same byte length as the configured secret so the comparison reaches
+      // timingSafeEqual instead of short-circuiting on length.
+      name: "a same-length wrong secret is compared in constant time",
+      cronSecret: "abcdefgh",
+      authorization: "Bearer abcdefgX",
+    },
+    {
+      name: "authorization scheme is not Bearer",
+      cronSecret: "my-secret",
+      authorization: "Basic my-secret",
+    },
+  ];
 
-    await withServer(fetchImpl, {}, async (baseUrl) => {
-      const response = await fetch(`${baseUrl}/cron`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: "Do the thing" }),
+  it.each(unauthorizedCases)(
+    "returns 401 when $name",
+    async ({ cronSecret, authorization, expectedError }) => {
+      const fetchImpl = vi.fn<typeof fetch>();
+
+      await withServer(fetchImpl, { cronSecret }, async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/cron`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(authorization === undefined ? {} : { Authorization: authorization }),
+          },
+          body: JSON.stringify({ prompt: "Do the thing" }),
+        });
+
+        expect(response.status).toBe(401);
+        if (expectedError !== undefined) {
+          const body = await response.json();
+          expect(body.error).toBe(expectedError);
+        }
+        expect(fetchImpl).not.toHaveBeenCalled();
       });
-
-      expect(response.status).toBe(401);
-      const body = await response.json();
-      expect(body.error).toBe("CRON_SECRET not configured");
-      expect(fetchImpl).not.toHaveBeenCalled();
-    });
-  });
-
-  it("returns 401 when auth is wrong", async () => {
-    const fetchImpl = vi.fn<typeof fetch>();
-
-    await withServer(fetchImpl, { cronSecret: "my-secret" }, async (baseUrl) => {
-      const response = await fetch(`${baseUrl}/cron`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer wrong-secret",
-        },
-        body: JSON.stringify({ prompt: "Do the thing" }),
-      });
-
-      expect(response.status).toBe(401);
-      expect(fetchImpl).not.toHaveBeenCalled();
-    });
-  });
-
-  it("returns 401 when auth header is missing", async () => {
-    const fetchImpl = vi.fn<typeof fetch>();
-
-    await withServer(fetchImpl, { cronSecret: "my-secret" }, async (baseUrl) => {
-      const response = await fetch(`${baseUrl}/cron`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: "Do the thing" }),
-      });
-
-      expect(response.status).toBe(401);
-      expect(fetchImpl).not.toHaveBeenCalled();
-    });
-  });
-
-  it("rejects a same-length wrong secret via constant-time comparison", async () => {
-    const fetchImpl = vi.fn<typeof fetch>();
-
-    // Same byte length as the configured secret so the comparison reaches
-    // timingSafeEqual instead of short-circuiting on length.
-    await withServer(fetchImpl, { cronSecret: "abcdefgh" }, async (baseUrl) => {
-      const response = await fetch(`${baseUrl}/cron`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer abcdefgX",
-        },
-        body: JSON.stringify({ prompt: "Do the thing" }),
-      });
-
-      expect(response.status).toBe(401);
-      expect(fetchImpl).not.toHaveBeenCalled();
-    });
-  });
-
-  it("returns 401 when authorization scheme is not Bearer", async () => {
-    const fetchImpl = vi.fn<typeof fetch>();
-
-    await withServer(fetchImpl, { cronSecret: "my-secret" }, async (baseUrl) => {
-      const response = await fetch(`${baseUrl}/cron`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Basic my-secret",
-        },
-        body: JSON.stringify({ prompt: "Do the thing" }),
-      });
-
-      expect(response.status).toBe(401);
-      expect(fetchImpl).not.toHaveBeenCalled();
-    });
-  });
+    },
+  );
 });
