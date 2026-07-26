@@ -1,16 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { appendAlias, appendSessionEvent } from "./event-log.ts";
 import { buildThorDisclaimerForSession } from "./disclaimer.ts";
 
-const worklogRoot = "/tmp/thor-common-disclaimer-test";
 const triggerId = "00000000-0000-7000-8000-000000000301";
 const anchorId = "00000000-0000-7000-8000-000000000d01";
 
 describe("buildThorDisclaimerForSession", () => {
+  let worklogRoot: string;
+
   beforeEach(() => {
+    worklogRoot = mkdtempSync(join(tmpdir(), "thor-common-disclaimer-test-"));
     vi.stubEnv("WORKLOG_DIR", worklogRoot);
-    rmSync(worklogRoot, { recursive: true, force: true });
   });
 
   afterEach(() => {

@@ -18,15 +18,21 @@ import {
 } from "@thor/common";
 import type { WorkspaceConfig } from "@thor/common";
 
-const worklogDir = "/tmp/thor-runner-trigger-test/worklog";
+// Vitest hoists this above the static imports above, so calling into an
+// imported module here (e.g. node:fs's mkdtempSync) throws "used before
+// initialization". process.pid needs no import and is still unique per
+// concurrent test run; subdirectories are created on demand via mkdirSync
+// elsewhere in this file.
 const originalEnv = vi.hoisted(() => {
   const sessionErrorGraceMs = process.env.SESSION_ERROR_GRACE_MS;
-  process.env.WORKLOG_DIR = "/tmp/thor-runner-trigger-test/worklog";
+  const root = `/tmp/thor-runner-trigger-test-${process.pid}`;
+  process.env.WORKLOG_DIR = `${root}/worklog`;
   process.env.SESSION_ERROR_GRACE_MS = "20";
-  return { sessionErrorGraceMs };
+  return { sessionErrorGraceMs, root };
 });
+const worklogDir = `${originalEnv.root}/worklog`;
 const sessionDir = "/workspace/repos/runner-trigger-test";
-const memoryDir = "/tmp/thor-runner-trigger-test/memory";
+const memoryDir = `${originalEnv.root}/memory`;
 
 class FakeSubscription implements AsyncIterable<Event> {
   private queue: Event[] = [];
@@ -379,7 +385,7 @@ async function trigger(url: string, body: Record<string, unknown>) {
 
 beforeEach(() => {
   process.env.WORKLOG_DIR = worklogDir;
-  rmSync("/tmp/thor-runner-trigger-test", { recursive: true, force: true });
+  rmSync(originalEnv.root, { recursive: true, force: true });
   resetModelContextLimitCacheForTests();
 });
 
@@ -387,7 +393,7 @@ afterEach(() => {
   if (originalEnv.sessionErrorGraceMs === undefined) delete process.env.SESSION_ERROR_GRACE_MS;
   else process.env.SESSION_ERROR_GRACE_MS = originalEnv.sessionErrorGraceMs;
   vi.unstubAllEnvs();
-  rmSync("/tmp/thor-runner-trigger-test", { recursive: true, force: true });
+  rmSync(originalEnv.root, { recursive: true, force: true });
 });
 
 function bindSessionToAnchor(sessionId: string, anchorId: string): void {

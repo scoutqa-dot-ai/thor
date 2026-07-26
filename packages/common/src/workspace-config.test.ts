@@ -123,11 +123,11 @@ describe("loadWorkspaceConfig", () => {
 
   describe("resolveStrictProfileForSession", () => {
     const anchor = "00000000-0000-7000-8000-000000000aa1";
-    const worklogRoot = "/tmp/thor-strict-profile-test";
+    let worklogRoot: string;
 
     beforeEach(() => {
+      worklogRoot = mkdtempSync(join(tmpdir(), "thor-strict-profile-test-"));
       vi.stubEnv("WORKLOG_DIR", `${worklogRoot}/worklog`);
-      rmSync(worklogRoot, { recursive: true, force: true });
     });
 
     afterEach(() => {
