@@ -40,8 +40,8 @@ describe("buildApprovalPresentation — confluence page create", () => {
       spaceId: "CST",
       title: "Maybank monitoring update",
       parentId: "123456",
-      content: "Monitoring summary\n\nAll checks passed.",
-      representation: "markdown",
+      body: "Monitoring summary\n\nAll checks passed.",
+      contentFormat: "markdown",
     });
 
     expect(presentation).toBeDefined();
@@ -50,7 +50,7 @@ describe("buildApprovalPresentation — confluence page create", () => {
     expect(presentation!.markdown).toContain("*Title:* Maybank monitoring update");
     expect(presentation!.markdown).toContain("*Parent:* 123456");
     expect(presentation!.markdown).toContain("*Content preview:*\nMonitoring summary");
-    expect(presentation!.markdown).not.toContain("representation");
+    expect(presentation!.markdown).not.toContain("contentFormat");
     expect(presentation!.markdown).not.toContain('"spaceId"');
   });
 });

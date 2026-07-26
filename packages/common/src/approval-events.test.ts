@@ -4,24 +4,21 @@ import { injectApprovalDisclaimer } from "./approval-events.ts";
 const FOOTER = "[View Thor context](https://thor.example.com/runner/v/anchor)";
 
 describe("injectApprovalDisclaimer", () => {
-  it("appends the footer to Confluence content when args are valid", () => {
+  it("appends the footer to the Confluence page body and pins markdown formatting", () => {
     const result = injectApprovalDisclaimer(
       "createConfluencePage",
-      { spaceKey: "ENG", title: "Design notes", content: "Body" },
+      { spaceId: "ENG", title: "Design notes", body: "Page text" },
       FOOTER,
     );
 
-    expect(result.content).toBe(`Body\n${FOOTER}`);
+    expect(result.body).toBe(`Page text\n${FOOTER}`);
+    expect(result.contentFormat).toBe("markdown");
   });
 
   it("fails closed instead of executing without the disclaimer when args no longer parse", () => {
-    // Missing required `title`: passes a partial format check but not the full schema.
+    // Missing required `body`: no field for the injector to append the footer to.
     expect(() =>
-      injectApprovalDisclaimer(
-        "createConfluencePage",
-        { spaceKey: "ENG", content: "Body" },
-        FOOTER,
-      ),
+      injectApprovalDisclaimer("createConfluencePage", { spaceId: "ENG", title: "Notes" }, FOOTER),
     ).toThrowError(/Cannot inject approval disclaimer for "createConfluencePage"/);
   });
 });

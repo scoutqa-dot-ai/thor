@@ -230,10 +230,10 @@ function buildCreateConfluencePagePresentation(
   return {
     title: `Create Confluence page: ${renderValue(parsed.title) ?? "Untitled page"}`,
     markdown: joinMarkdown([
-      bullet("Space", parsed.spaceKey ?? parsed.spaceId),
+      bullet("Space", parsed.spaceId),
       bullet("Title", parsed.title),
       bullet("Parent", parentId),
-      section("Content preview", parsed.content),
+      section("Content preview", parsed.body),
     ]),
   };
 }

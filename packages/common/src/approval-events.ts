@@ -16,18 +16,17 @@ export const AddCommentToJiraIssueApprovalArgsSchema = z
   })
   .passthrough();
 
+// Mirrors the upstream `createConfluencePage` schema (required `cloudId`,
+// `spaceId`, `body`; `title` optional). `spaceId` also accepts a space key,
+// which upstream resolves to the numeric id. `cloudId` is injected by the
+// Atlassian proxy, so it is not required here.
 export const CreateConfluencePageApprovalArgsSchema = z
   .object({
-    spaceId: z.string().min(1).optional(),
-    spaceKey: z.string().min(1).optional(),
-    title: z.string().min(1),
-    content: z.string().min(1),
-    body: z.never('"body" is not supported; use markdown "content"').optional(),
+    spaceId: z.string().min(1),
+    title: z.string().min(1).optional(),
+    body: z.string().min(1),
   })
-  .passthrough()
-  .refine((args) => Boolean(args.spaceId || args.spaceKey), {
-    message: "spaceId or spaceKey is required",
-  });
+  .passthrough();
 
 export const CreateFeatureFlagApprovalArgsSchema = z
   .object({
@@ -122,29 +121,13 @@ export function validateDisclaimerCompatibleArgs(
   args: Record<string, unknown>,
 ): string | undefined {
   if (!approvalToolRequiresDisclaimer(tool)) return undefined;
-  const contentFormatError = validateMarkdownFormat(tool, "contentFormat", args.contentFormat);
-  if (contentFormatError) return contentFormatError;
-
-  if (tool === "createConfluencePage") {
-    const representationError = validateMarkdownFormat(tool, "representation", args.representation);
-    if (representationError) return representationError;
-    if (typeof args.content !== "string") {
-      return [
-        `"${tool}" is not allowed.`,
-        `Reason: createConfluencePage requires markdown content in the "content" field.`,
-      ].join("\n");
-    }
-  }
-
-  return undefined;
-}
-
-function validateMarkdownFormat(tool: string, field: string, value: unknown): string | undefined {
-  if (value === undefined || value === "markdown") return undefined;
-  const formatted = typeof value === "string" ? `"${value}"` : JSON.stringify(value);
+  const contentFormat = args.contentFormat;
+  if (contentFormat === undefined || contentFormat === "markdown") return undefined;
+  const formatted =
+    typeof contentFormat === "string" ? `"${contentFormat}"` : JSON.stringify(contentFormat);
   return [
     `"${tool}" is not allowed.`,
-    `Reason: ${field} ${formatted} is not supported — only "markdown" is permitted.`,
+    `Reason: contentFormat ${formatted} is not supported — only "markdown" is permitted.`,
   ].join("\n");
 }
 
@@ -184,7 +167,11 @@ export function injectApprovalDisclaimer(
     case "createConfluencePage":
       return {
         ...parsed.data.args,
-        content: `${parsed.data.args.content}\n${footer}`,
+        // The footer is markdown, and upstream leaves the body format
+        // unspecified when contentFormat is omitted — pin it so the reviewed
+        // content and the disclaimer link render as written.
+        contentFormat: "markdown",
+        body: `${parsed.data.args.body}\n${footer}`,
       };
     case "ghIssueCreate":
     case "awsExec":

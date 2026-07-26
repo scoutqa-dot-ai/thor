@@ -58,9 +58,10 @@ const tools: Tool[] = [
         cloudId: { type: "string" },
         spaceId: { type: "string" },
         title: { type: "string" },
-        content: { type: "string" },
+        body: { type: "string" },
+        contentFormat: { type: "string", enum: ["html", "markdown", "adf"] },
       },
-      required: ["cloudId", "spaceId", "title", "content"],
+      required: ["cloudId", "spaceId", "body"],
       additionalProperties: false,
     },
   },
@@ -1349,7 +1350,7 @@ describe("remote-cli MCP endpoints", () => {
     const cleanArgs = {
       spaceId: "CST",
       title: "Maybank monitoring update",
-      content: "Monitoring summary\n\nAll checks passed.",
+      body: "Monitoring summary\n\nAll checks passed.",
       parentId: "123456",
     };
 
@@ -1407,7 +1408,8 @@ describe("remote-cli MCP endpoints", () => {
         arguments: {
           ...cleanArgs,
           cloudId: configuredCloudId,
-          content: `Monitoring summary\n\nAll checks passed.\n${thorFooter}`,
+          contentFormat: "markdown",
+          body: `Monitoring summary\n\nAll checks passed.\n${thorFooter}`,
         },
       },
     ]);
@@ -1425,8 +1427,8 @@ describe("remote-cli MCP endpoints", () => {
           JSON.stringify({
             spaceId: "CST",
             title: "HTML page",
-            content: "<p>unsafe</p>",
-            contentFormat: "storage",
+            body: "<p>unsafe</p>",
+            contentFormat: "html",
           }),
         ],
       },
@@ -1441,7 +1443,7 @@ describe("remote-cli MCP endpoints", () => {
     expect(pending.status).toBe(200);
     expect(pendingBody).toMatchObject({ stdout: "", exitCode: 1 });
     expect(pendingBody.stderr).toContain('"createConfluencePage" is not allowed.');
-    expect(pendingBody.stderr).toContain('contentFormat "storage" is not supported');
+    expect(pendingBody.stderr).toContain('contentFormat "html" is not supported');
     expect(toolCalls).toEqual([]);
 
     const list = await postJson("/exec/approval", { args: ["list"] });
@@ -1449,7 +1451,7 @@ describe("remote-cli MCP endpoints", () => {
     expect(JSON.parse(listBody.stdout)).toEqual({ approvals: [] });
   });
 
-  it("rejects Confluence page creation when a body payload accompanies markdown content", async () => {
+  it("rejects Confluence page creation when the body is not a markdown string", async () => {
     appendActiveTrigger();
 
     const pending = await postJson(
@@ -1460,8 +1462,7 @@ describe("remote-cli MCP endpoints", () => {
           "createConfluencePage",
           JSON.stringify({
             spaceId: "CST",
-            title: "Conflicting page",
-            content: "Reviewed markdown",
+            title: "Structured page",
             body: { representation: "storage", value: "<p>Unreviewed storage content</p>" },
           }),
         ],
@@ -1477,7 +1478,6 @@ describe("remote-cli MCP endpoints", () => {
     expect(pending.status).toBe(200);
     expect(pendingBody).toMatchObject({ stdout: "", exitCode: 1 });
     expect(pendingBody.stderr).toContain('Invalid approval arguments for "createConfluencePage"');
-    expect(pendingBody.stderr).toContain("is not supported; use markdown");
     expect(toolCalls).toEqual([]);
 
     const list = await postJson("/exec/approval", { args: ["list"] });
