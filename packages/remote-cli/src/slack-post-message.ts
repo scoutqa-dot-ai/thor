@@ -509,7 +509,7 @@ async function slackApiForm(
 }
 
 /**
- * Request a presigned upload URL from Slack and PUT the file's raw bytes to
+ * Request a presigned upload URL from Slack and POST the file's raw bytes to
  * it. The returned `upload_url` is pre-signed, so this carries no
  * Authorization header. The file is allocated but not yet visible to anyone
  * until a later completeSlackFileShare call shares it.
