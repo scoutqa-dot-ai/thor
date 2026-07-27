@@ -1,0 +1,35 @@
+packages/common/src/index.ts
+  176c45c3241e8a4b 209
+packages/remote-cli/src/approval-service.ts
+  176c45c3241e8a4b 6,251
+packages/common/src/approval-presentation.ts
+  176c45c3241e8a4b 168-184
+packages/gateway/src/approval.test.ts
+  176c45c3241e8a4b 5,202-229
+docs/slack.md
+  176c45c3241e8a4b 48
+docs/plan/2026061601_aws-write-approval.md
+  176c45c3241e8a4b 35
+packages/remote-cli/src/mcp-handler.test.ts
+  176c45c3241e8a4b 1530-1532,1534,1537,1541-1542,1546,1563-1583,1608,1610-1612,1616,1620,1631,1633-1634,1637,1641-1642,1674,1676-1683,1685-1686,1688-1693,1695-1710,1713-1716,1718-1735
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "8840ce27c7c7c748b9d32bb00692f1d18e8fac9d",
+  "prompts": {
+    "176c45c3241e8a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "31487b02-d89a-4d6d-b8a5-ba32febbcd3f",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 152,
+      "total_deletions": 41,
+      "accepted_lines": 153,
+      "overriden_lines": 1
+    }
+  }
+}
