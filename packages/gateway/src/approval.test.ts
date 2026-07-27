@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   approvalPresentationIsOversize,
+  buildApprovalActionIdTag,
   buildApprovalButtonValue,
   buildApprovalNotificationText,
   buildApprovalPresentation,
@@ -224,6 +225,28 @@ describe("approval notification text", () => {
     expect(textA).not.toBe(textB);
     expect(textA).toContain("act-a");
     expect(textB).toContain("act-b");
+  });
+});
+
+describe("approval action ID tag", () => {
+  it("formats the shared action ID tag", () => {
+    expect(buildApprovalActionIdTag("act-1")).toBe("(approval `act-1`)");
+  });
+
+  it("is embedded verbatim in both the oversize card pointer and the notification text, so they cannot drift apart", () => {
+    const presentation = { title: "Create feature flag: beta", markdown: "x".repeat(4000) };
+    const tag = buildApprovalActionIdTag("act-1");
+
+    const blocks = buildApprovalPresentationBlocks(
+      presentation,
+      "v3:act-1:posthog:1710000000.001",
+      "act-1",
+    );
+    const pointerText = (blocks[1] as { text: { text: string } }).text.text;
+    const notificationText = buildApprovalNotificationText(presentation, "act-1");
+
+    expect(pointerText).toContain(tag);
+    expect(notificationText).toContain(tag);
   });
 });
 

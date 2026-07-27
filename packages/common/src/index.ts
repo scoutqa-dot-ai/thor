@@ -207,6 +207,7 @@ export {
   buildApprovalPresentation,
   buildApprovalPresentationBlocks,
   buildApprovalNotificationText,
+  buildApprovalActionIdTag,
   approvalPresentationIsOversize,
   buildApprovalFileMarkdown,
 } from "./approval-presentation.ts";

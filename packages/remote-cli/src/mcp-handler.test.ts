@@ -5,7 +5,12 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
-import { appendAlias, appendSessionEvent, formatThorContextFooter } from "@thor/common";
+import {
+  appendAlias,
+  appendSessionEvent,
+  buildApprovalActionIdTag,
+  formatThorContextFooter,
+} from "@thor/common";
 import type { ProxyUpstream, WorkspaceConfig } from "@thor/common";
 import type { ToolCallLogEntry } from "@thor/common";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
@@ -1628,18 +1633,20 @@ describe("remote-cli MCP endpoints", () => {
     const completeForm = new URLSearchParams(String(completeCall?.[1]?.body));
     expect(completeForm.get("initial_comment")).toContain("Full approval content for");
     expect(completeForm.get("initial_comment")).toContain("Create Jira issue: Fix it");
-    expect(completeForm.get("initial_comment")).toContain(`approval \`${actionId}\``);
+    expect(completeForm.get("initial_comment")).toContain(buildApprovalActionIdTag(actionId));
 
     // The card is posted last and contains no file URL dependency; its
-    // top-level notification text and block pointer both name the action ID.
+    // top-level notification text and block pointer both name the action ID
+    // via the same shared tag as the file's initial comment above, so all
+    // three cannot drift apart.
     const postCall = slackFetch.mock.calls.find((c) => String(c[0]).endsWith("/chat.postMessage"));
     const payload = JSON.parse(String(postCall?.[1]?.body)) as {
       text: string;
       blocks: Array<{ text?: { text?: string } }>;
     };
     expect(payload.blocks.some((b) => b.text?.text?.includes("View the full content"))).toBe(false);
-    expect(payload.text).toBe(`Create Jira issue: Fix it (approval \`${actionId}\`)`);
-    expect(payload.blocks[1]?.text?.text).toContain(`approval \`${actionId}\``);
+    expect(payload.text).toBe(`Create Jira issue: Fix it ${buildApprovalActionIdTag(actionId)}`);
+    expect(payload.blocks[1]?.text?.text).toContain(buildApprovalActionIdTag(actionId));
   });
 
   it("pairs two interleaved same-title oversize approvals with their own uploaded file, not each other's, even with out-of-order completion", async () => {

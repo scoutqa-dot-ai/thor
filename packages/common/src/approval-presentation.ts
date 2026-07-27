@@ -153,6 +153,17 @@ export function buildApprovalFileMarkdown(presentation: ApprovalPresentation): s
 }
 
 /**
+ * The `(approval \`id\`)` tag that identifies an action ID across every
+ * surface an oversize approval touches: the card pointer, the notification
+ * fallback text, and the uploaded file's initial comment (approval-service.ts).
+ * One shared formatter keeps those three in sync — a future format change
+ * only has to happen here.
+ */
+export function buildApprovalActionIdTag(actionId: string): string {
+  return `(approval \`${actionId}\`)`;
+}
+
+/**
  * Placeholder body text for an oversize presentation's card. The full content
  * is uploaded as a file into the same thread (see approval-service.ts); Slack
  * does not guarantee that file message lands above the card, so this avoids
@@ -162,7 +173,7 @@ export function buildApprovalFileMarkdown(presentation: ApprovalPresentation): s
  * title) each pair unambiguously with their own file.
  */
 function buildOversizeBodyText(actionId: string): string {
-  return `Full content shared as a file in this thread (approval \`${actionId}\`).`;
+  return `Full content shared as a file in this thread ${buildApprovalActionIdTag(actionId)}.`;
 }
 
 /**
@@ -178,7 +189,7 @@ export function buildApprovalNotificationText(
   actionId: string,
 ): string {
   return approvalPresentationIsOversize(presentation)
-    ? `${presentation.title} (approval \`${actionId}\`)`
+    ? `${presentation.title} ${buildApprovalActionIdTag(actionId)}`
     : presentation.title;
 }
 

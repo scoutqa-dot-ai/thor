@@ -1,6 +1,7 @@
 import {
   approvalPresentationIsOversize,
   ApprovalRequiredEventPayloadSchema,
+  buildApprovalActionIdTag,
   buildApprovalButtonValue,
   buildApprovalFileMarkdown,
   buildApprovalNotificationText,
@@ -235,7 +236,7 @@ export function createApprovalService(deps: ApprovalServiceDeps = {}): ApprovalS
           filename: `approval-${input.tool}-${input.action.id}.md`,
           title: presentation.title,
           content: buildApprovalFileMarkdown(presentation),
-          initialComment: `Full approval content for *${presentation.title}* (approval \`${input.action.id}\`).`,
+          initialComment: `Full approval content for *${presentation.title}* ${buildApprovalActionIdTag(input.action.id)}.`,
         },
         slackDeps,
       );
