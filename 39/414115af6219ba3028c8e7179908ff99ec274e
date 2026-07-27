@@ -1,0 +1,23 @@
+packages/remote-cli/src/mcp-handler.test.ts
+  176c45c3241e8a4b 1645,1648-1718,1729-1742,1762-1764,1775-1776,1780-1781,1783-1785
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "39414115af6219ba3028c8e7179908ff99ec274e",
+  "prompts": {
+    "176c45c3241e8a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "31487b02-d89a-4d6d-b8a5-ba32febbcd3f",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 97,
+      "total_deletions": 45,
+      "accepted_lines": 97,
+      "overriden_lines": 0
+    }
+  }
+}
