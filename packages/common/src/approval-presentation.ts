@@ -157,8 +157,13 @@ export function buildApprovalFileMarkdown(presentation: ApprovalPresentation): s
  * is uploaded as a file into the same thread (see approval-service.ts); Slack
  * does not guarantee that file message lands above the card, so this avoids
  * claiming a position and does not duplicate a truncated, half-cut preview.
+ * Includes the action ID — the same identifier the uploaded file's name and
+ * initial comment carry — so two oversize approvals in one thread (e.g. same
+ * title) each pair unambiguously with their own file.
  */
-const OVERSIZE_BODY_TEXT = "Full content shared as a file in this thread.";
+function buildOversizeBodyText(actionId: string): string {
+  return `Full content shared as a file in this thread (approval \`${actionId}\`).`;
+}
 
 function buildActionBlocks(buttonValue: string): SlackBlock[] {
   return [
@@ -188,6 +193,7 @@ function buildActionBlocks(buttonValue: string): SlackBlock[] {
 export function buildApprovalPresentationBlocks(
   presentation: ApprovalPresentation,
   buttonValue: string,
+  actionId: string,
 ): SlackBlock[] {
   return [
     {
@@ -203,7 +209,7 @@ export function buildApprovalPresentationBlocks(
       text: {
         type: "mrkdwn",
         text: approvalPresentationIsOversize(presentation)
-          ? OVERSIZE_BODY_TEXT
+          ? buildOversizeBodyText(actionId)
           : presentation.markdown,
       },
     },

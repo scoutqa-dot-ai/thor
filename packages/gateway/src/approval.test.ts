@@ -109,6 +109,7 @@ describe("approval presentation", () => {
     const blocks = buildApprovalPresentationBlocks(
       { title: "Create feature flag: beta", markdown: "*Key:* beta" },
       "v3:act-1:posthog:1710000000.001",
+      "act-1",
     );
 
     expect(blocks[0]).toMatchObject({
@@ -139,6 +140,7 @@ describe("approval presentation", () => {
         markdown: "short body",
       },
       "v3:act-1:posthog:1710000000.001",
+      "act-1",
     );
 
     expect(blocks[0]).toMatchObject({
@@ -153,18 +155,46 @@ describe("approval presentation", () => {
     );
   });
 
-  it("replaces an oversize body with a pointer to the uploaded file instead of a truncated preview", () => {
+  it("replaces an oversize body with a pointer to the uploaded file carrying the same action ID, instead of a truncated preview", () => {
     const longValue = "x".repeat(4000);
     const blocks = buildApprovalPresentationBlocks(
       { title: "Create feature flag: beta", markdown: longValue },
       "v3:act-1:posthog:1710000000.001",
+      "act-1",
     );
 
     expect(blocks[1]).toMatchObject({
       type: "section",
       expand: true,
-      text: { type: "mrkdwn", text: "Full content shared as a file in this thread." },
+      text: {
+        type: "mrkdwn",
+        text: "Full content shared as a file in this thread (approval `act-1`).",
+      },
     });
+  });
+
+  it("pairs each of two same-title oversize approvals with its own action ID, not the other's", () => {
+    const longValue = "x".repeat(4000);
+    const presentation = { title: "Create feature flag: beta", markdown: longValue };
+
+    const blocksA = buildApprovalPresentationBlocks(
+      presentation,
+      "v3:act-a:posthog:1710000000.001",
+      "act-a",
+    );
+    const blocksB = buildApprovalPresentationBlocks(
+      presentation,
+      "v3:act-b:posthog:1710000000.002",
+      "act-b",
+    );
+
+    const textA = (blocksA[1] as { text: { text: string } }).text.text;
+    const textB = (blocksB[1] as { text: { text: string } }).text.text;
+
+    expect(textA).toContain("approval `act-a`");
+    expect(textA).not.toContain("act-b");
+    expect(textB).toContain("approval `act-b`");
+    expect(textB).not.toContain("act-a");
   });
 });
 

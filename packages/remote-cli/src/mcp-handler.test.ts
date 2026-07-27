@@ -1609,6 +1609,67 @@ describe("remote-cli MCP endpoints", () => {
     expect(payload.blocks.some((b) => b.text?.text?.includes("View the full content"))).toBe(false);
   });
 
+  it("pairs two interleaved same-title oversize approvals with their own uploaded file, not each other's", async () => {
+    appendActiveTrigger();
+    routeApprovalUpload();
+
+    // Both approvals share the same summary (so the same card title) and are
+    // fired concurrently so their upload/post calls can interleave — the
+    // scenario where a reviewer could otherwise mix up which file goes with
+    // which card.
+    const [firstRes, secondRes] = await Promise.all([
+      postJson(
+        "/exec/mcp",
+        { args: oversizeCreateJiraArgs("x".repeat(4000)) },
+        { "x-thor-session-id": "parent-session" },
+      ),
+      postJson(
+        "/exec/mcp",
+        { args: oversizeCreateJiraArgs("y".repeat(4000)) },
+        { "x-thor-session-id": "parent-session" },
+      ),
+    ]);
+    const firstBody = (await firstRes.json()) as { stdout: string; exitCode: number };
+    const secondBody = (await secondRes.json()) as { stdout: string; exitCode: number };
+    expect(firstBody.exitCode).toBe(0);
+    expect(secondBody.exitCode).toBe(0);
+
+    const firstActionId = (JSON.parse(firstBody.stdout) as { actionId: string }).actionId;
+    const secondActionId = (JSON.parse(secondBody.stdout) as { actionId: string }).actionId;
+    expect(firstActionId).not.toBe(secondActionId);
+
+    const filenames = slackFetch.mock.calls
+      .filter((c) => String(c[0]).endsWith("/files.getUploadURLExternal"))
+      .map((c) => new URLSearchParams(String(c[1]?.body)).get("filename"));
+    expect(filenames).toEqual(
+      expect.arrayContaining([
+        `approval-createJiraIssue-${firstActionId}.md`,
+        `approval-createJiraIssue-${secondActionId}.md`,
+      ]),
+    );
+
+    const cardResults = slackFetch.mock.calls
+      .filter((c) => String(c[0]).endsWith("/chat.postMessage"))
+      .map((c) => {
+        const payload = JSON.parse(String(c[1]?.body)) as {
+          blocks: Array<{ text?: { text?: string } }>;
+        };
+        return payload.blocks[1]?.text?.text ?? "";
+      });
+    expect(cardResults).toHaveLength(2);
+
+    // Both cards render an identical title ("Create Jira issue: Fix it"), so
+    // the action ID embedded in the card body is the only thing that
+    // unambiguously pairs a card with its own uploaded file.
+    for (const text of cardResults) {
+      const embedsFirst = text.includes(`approval \`${firstActionId}\``);
+      const embedsSecond = text.includes(`approval \`${secondActionId}\``);
+      expect(embedsFirst).not.toBe(embedsSecond);
+    }
+    expect(cardResults.some((t) => t.includes(`approval \`${firstActionId}\``))).toBe(true);
+    expect(cardResults.some((t) => t.includes(`approval \`${secondActionId}\``))).toBe(true);
+  });
+
   it("fails the approval and posts no card when oversize-content upload fails", async () => {
     appendActiveTrigger();
     slackFetch.mockImplementation((async (input: string | URL) => {
