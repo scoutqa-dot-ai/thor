@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   approvalPresentationIsOversize,
   buildApprovalButtonValue,
+  buildApprovalNotificationText,
   buildApprovalPresentation,
   buildApprovalPresentationBlocks,
   parseApprovalButtonValue,
@@ -195,6 +196,34 @@ describe("approval presentation", () => {
     expect(textA).not.toContain("act-b");
     expect(textB).toContain("approval `act-b`");
     expect(textB).not.toContain("act-a");
+  });
+});
+
+describe("approval notification text", () => {
+  it("keeps the plain title for a normal-size presentation", () => {
+    const text = buildApprovalNotificationText(
+      { title: "Create feature flag: beta", markdown: "*Key:* beta" },
+      "act-1",
+    );
+    expect(text).toBe("Create feature flag: beta");
+  });
+
+  it("appends the action ID for an oversize presentation", () => {
+    const text = buildApprovalNotificationText(
+      { title: "Create feature flag: beta", markdown: "x".repeat(4000) },
+      "act-1",
+    );
+    expect(text).toBe("Create feature flag: beta (approval `act-1`)");
+  });
+
+  it("distinguishes two same-title oversize approvals by action ID", () => {
+    const presentation = { title: "Create feature flag: beta", markdown: "x".repeat(4000) };
+    const textA = buildApprovalNotificationText(presentation, "act-a");
+    const textB = buildApprovalNotificationText(presentation, "act-b");
+
+    expect(textA).not.toBe(textB);
+    expect(textA).toContain("act-a");
+    expect(textB).toContain("act-b");
   });
 });
 

@@ -3,6 +3,7 @@ import {
   ApprovalRequiredEventPayloadSchema,
   buildApprovalButtonValue,
   buildApprovalFileMarkdown,
+  buildApprovalNotificationText,
   buildApprovalPresentation,
   buildApprovalPresentationBlocks,
   createLogger,
@@ -247,7 +248,7 @@ export function createApprovalService(deps: ApprovalServiceDeps = {}): ApprovalS
       {
         channel: input.channel,
         threadTs: input.threadTs,
-        text: presentation.title,
+        text: buildApprovalNotificationText(presentation, input.action.id),
         blocks: buildApprovalPresentationBlocks(presentation, buttonValue, input.action.id),
       },
       slackDeps,

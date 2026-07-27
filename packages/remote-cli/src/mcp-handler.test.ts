@@ -1527,19 +1527,23 @@ describe("remote-cli MCP endpoints", () => {
 
   // Route the external file-upload flow (getUploadURLExternal → pre-signed POST
   // → completeUploadExternal) plus chat.postMessage for oversize approval tests.
+  // The upload URL and file ID are derived from the requested filename (which
+  // embeds the action ID), so concurrent uploads for different approvals never
+  // collide on a shared fake URL/ID the way a single fixed constant would.
   function routeApprovalUpload(overrides: { postMessage?: unknown } = {}) {
-    slackFetch.mockImplementation((async (input: string | URL) => {
+    slackFetch.mockImplementation((async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/files.getUploadURLExternal")) {
+        const filename = new URLSearchParams(String(init?.body)).get("filename") ?? "unknown";
         return new Response(
           JSON.stringify({
             ok: true,
-            upload_url: "https://files.slack.test/upload/abc",
-            file_id: "F1",
+            upload_url: `https://files.slack.test/upload/${encodeURIComponent(filename)}`,
+            file_id: `F-${filename}`,
           }),
         );
       }
-      if (url === "https://files.slack.test/upload/abc") {
+      if (url.startsWith("https://files.slack.test/upload/")) {
         return new Response("", { status: 200 });
       }
       if (url.endsWith("/files.completeUploadExternal")) {
@@ -1554,6 +1558,29 @@ describe("remote-cli MCP endpoints", () => {
       }
       throw new Error(`unexpected slack url: ${url}`);
     }) as unknown as typeof fetch);
+  }
+
+  // Action ID embedded by `approval-service.ts` in the upload filename
+  // (`approval-<tool>-<actionId>.md`) and in the fake file ID above (`F-<filename>`).
+  function actionIdFromFilename(filename: string): string {
+    const match = filename.match(/^approval-createJiraIssue-(.+)\.md$/);
+    if (!match) throw new Error(`unexpected approval filename: ${filename}`);
+    return match[1];
+  }
+
+  // Action ID embedded as `(approval \`<actionId>\`)` in the file's initial
+  // comment, the card's pointer text, and the card's top-level notification text.
+  function actionIdFromBacktickApproval(text: string): string {
+    const match = text.match(/approval `([^`]+)`/);
+    if (!match) throw new Error(`no action id found in: ${text}`);
+    return match[1];
+  }
+
+  // Action ID embedded as the first segment of the button's `v3:<actionId>:...` value.
+  function actionIdFromButtonValue(value: string): string {
+    const actionId = value.split(":")[1];
+    if (!actionId) throw new Error(`unexpected button value: ${value}`);
+    return actionId;
   }
 
   const oversizeCreateJiraArgs = (description: string) => [
@@ -1578,18 +1605,19 @@ describe("remote-cli MCP endpoints", () => {
       { args: oversizeCreateJiraArgs(bigDescription) },
       { "x-thor-session-id": "parent-session" },
     );
-    const pendingBody = (await pending.json()) as { exitCode: number };
+    const pendingBody = (await pending.json()) as { stdout: string; exitCode: number };
     expect(pendingBody.exitCode).toBe(0);
+    const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
+    const filename = `approval-createJiraIssue-${actionId}.md`;
+    const uploadUrl = `https://files.slack.test/upload/${encodeURIComponent(filename)}`;
 
     const urls = slackFetch.mock.calls.map((c) => String(c[0]));
     expect(urls).toContain("https://slack.test/api/files.getUploadURLExternal");
-    expect(urls).toContain("https://files.slack.test/upload/abc");
+    expect(urls).toContain(uploadUrl);
     expect(urls).toContain("https://slack.test/api/files.completeUploadExternal");
 
     // The uploaded file carries the full, untruncated description.
-    const uploadCall = slackFetch.mock.calls.find(
-      (c) => String(c[0]) === "https://files.slack.test/upload/abc",
-    );
+    const uploadCall = slackFetch.mock.calls.find((c) => String(c[0]) === uploadUrl);
     expect(String(uploadCall?.[1]?.body)).toContain(bigDescription);
 
     // The file reply explains what the attachment contains without relying on
@@ -1600,13 +1628,18 @@ describe("remote-cli MCP endpoints", () => {
     const completeForm = new URLSearchParams(String(completeCall?.[1]?.body));
     expect(completeForm.get("initial_comment")).toContain("Full approval content for");
     expect(completeForm.get("initial_comment")).toContain("Create Jira issue: Fix it");
+    expect(completeForm.get("initial_comment")).toContain(`approval \`${actionId}\``);
 
-    // The card is posted last and contains no file URL dependency.
+    // The card is posted last and contains no file URL dependency; its
+    // top-level notification text and block pointer both name the action ID.
     const postCall = slackFetch.mock.calls.find((c) => String(c[0]).endsWith("/chat.postMessage"));
     const payload = JSON.parse(String(postCall?.[1]?.body)) as {
+      text: string;
       blocks: Array<{ text?: { text?: string } }>;
     };
     expect(payload.blocks.some((b) => b.text?.text?.includes("View the full content"))).toBe(false);
+    expect(payload.text).toBe(`Create Jira issue: Fix it (approval \`${actionId}\`)`);
+    expect(payload.blocks[1]?.text?.text).toContain(`approval \`${actionId}\``);
   });
 
   it("pairs two interleaved same-title oversize approvals with their own uploaded file, not each other's", async () => {
@@ -1638,36 +1671,68 @@ describe("remote-cli MCP endpoints", () => {
     const secondActionId = (JSON.parse(secondBody.stdout) as { actionId: string }).actionId;
     expect(firstActionId).not.toBe(secondActionId);
 
-    const filenames = slackFetch.mock.calls
-      .filter((c) => String(c[0]).endsWith("/files.getUploadURLExternal"))
-      .map((c) => new URLSearchParams(String(c[1]?.body)).get("filename"));
-    expect(filenames).toEqual(
-      expect.arrayContaining([
-        `approval-createJiraIssue-${firstActionId}.md`,
-        `approval-createJiraIssue-${secondActionId}.md`,
-      ]),
-    );
+    const expectedActionIds = new Set([firstActionId, secondActionId]);
 
-    const cardResults = slackFetch.mock.calls
-      .filter((c) => String(c[0]).endsWith("/chat.postMessage"))
-      .map((c) => {
-        const payload = JSON.parse(String(c[1]?.body)) as {
-          blocks: Array<{ text?: { text?: string } }>;
-        };
-        return payload.blocks[1]?.text?.text ?? "";
-      });
-    expect(cardResults).toHaveLength(2);
+    // Each upload request's filename embeds exactly one action ID; the two
+    // requests must not share a filename (they got unique upload URLs/file IDs).
+    const uploadCalls = slackFetch.mock.calls.filter((c) =>
+      String(c[0]).endsWith("/files.getUploadURLExternal"),
+    );
+    expect(uploadCalls).toHaveLength(2);
+    const filenames = uploadCalls.map(
+      (c) => new URLSearchParams(String(c[1]?.body)).get("filename") ?? "",
+    );
+    expect(new Set(filenames).size).toBe(2);
+    expect(new Set(filenames.map(actionIdFromFilename))).toEqual(expectedActionIds);
+
+    const uploadUrls = new Set(
+      filenames.map((f) => `https://files.slack.test/upload/${encodeURIComponent(f)}`),
+    );
+    expect(uploadUrls.size).toBe(2);
+    for (const uploadUrl of uploadUrls) {
+      expect(slackFetch.mock.calls.some((c) => String(c[0]) === uploadUrl)).toBe(true);
+    }
+
+    // Each completeUploadExternal call's file ID and initial comment name the
+    // same single action ID as each other.
+    const completeCalls = slackFetch.mock.calls.filter((c) =>
+      String(c[0]).endsWith("/files.completeUploadExternal"),
+    );
+    expect(completeCalls).toHaveLength(2);
+    const completeActionIds = completeCalls.map((c) => {
+      const form = new URLSearchParams(String(c[1]?.body));
+      const files = JSON.parse(form.get("files") ?? "[]") as Array<{ id: string }>;
+      const actionIdFromFileId = actionIdFromFilename((files[0]?.id ?? "").replace(/^F-/, ""));
+      const actionIdFromComment = actionIdFromBacktickApproval(form.get("initial_comment") ?? "");
+      expect(actionIdFromComment).toBe(actionIdFromFileId);
+      return actionIdFromFileId;
+    });
+    expect(new Set(completeActionIds)).toEqual(expectedActionIds);
 
     // Both cards render an identical title ("Create Jira issue: Fix it"), so
-    // the action ID embedded in the card body is the only thing that
-    // unambiguously pairs a card with its own uploaded file.
-    for (const text of cardResults) {
-      const embedsFirst = text.includes(`approval \`${firstActionId}\``);
-      const embedsSecond = text.includes(`approval \`${secondActionId}\``);
-      expect(embedsFirst).not.toBe(embedsSecond);
-    }
-    expect(cardResults.some((t) => t.includes(`approval \`${firstActionId}\``))).toBe(true);
-    expect(cardResults.some((t) => t.includes(`approval \`${secondActionId}\``))).toBe(true);
+    // the action ID is the only thing that unambiguously pairs a card (its
+    // notification text, its block pointer, and its button value all agree)
+    // with its own uploaded file.
+    const cardCalls = slackFetch.mock.calls.filter((c) =>
+      String(c[0]).endsWith("/chat.postMessage"),
+    );
+    expect(cardCalls).toHaveLength(2);
+    const cardActionIds = cardCalls.map((c) => {
+      const payload = JSON.parse(String(c[1]?.body)) as {
+        text: string;
+        blocks: Array<{ text?: { text?: string }; elements?: Array<{ value?: string }> }>;
+      };
+      const actionsBlock = payload.blocks.find((b) => Array.isArray(b.elements));
+      const buttonValue = actionsBlock?.elements?.[0]?.value ?? "";
+
+      const fromNotificationText = actionIdFromBacktickApproval(payload.text);
+      const fromPointer = actionIdFromBacktickApproval(payload.blocks[1]?.text?.text ?? "");
+      const fromButton = actionIdFromButtonValue(buttonValue);
+      expect(fromNotificationText).toBe(fromPointer);
+      expect(fromPointer).toBe(fromButton);
+      return fromButton;
+    });
+    expect(new Set(cardActionIds)).toEqual(expectedActionIds);
   });
 
   it("fails the approval and posts no card when oversize-content upload fails", async () => {

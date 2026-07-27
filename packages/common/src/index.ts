@@ -206,6 +206,7 @@ export {
   resolveSlackThreadTargetFromTrigger,
   buildApprovalPresentation,
   buildApprovalPresentationBlocks,
+  buildApprovalNotificationText,
   approvalPresentationIsOversize,
   buildApprovalFileMarkdown,
 } from "./approval-presentation.ts";

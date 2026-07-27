@@ -165,6 +165,23 @@ function buildOversizeBodyText(actionId: string): string {
   return `Full content shared as a file in this thread (approval \`${actionId}\`).`;
 }
 
+/**
+ * Top-level Slack `text` fallback (push notifications, screen readers — shown
+ * when blocks are not rendered). Normal-size cards keep the plain title.
+ * Oversize cards append the action ID: with the block body reduced to a
+ * generic pointer sentence, the title is otherwise the only signal in the
+ * fallback text, so two same-title oversize approvals would be indistinguishable
+ * without it.
+ */
+export function buildApprovalNotificationText(
+  presentation: ApprovalPresentation,
+  actionId: string,
+): string {
+  return approvalPresentationIsOversize(presentation)
+    ? `${presentation.title} (approval \`${actionId}\`)`
+    : presentation.title;
+}
+
 function buildActionBlocks(buttonValue: string): SlackBlock[] {
   return [
     { type: "divider" },
