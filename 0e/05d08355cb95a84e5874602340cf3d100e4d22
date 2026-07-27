@@ -1,0 +1,31 @@
+packages/remote-cli/src/approval-service.ts
+  176c45c3241e8a4b 4,239
+packages/common/src/index.ts
+  176c45c3241e8a4b 210
+packages/common/src/approval-presentation.ts
+  176c45c3241e8a4b 156-165,176,192
+packages/gateway/src/approval.test.ts
+  176c45c3241e8a4b 4,231-252
+packages/remote-cli/src/mcp-handler.test.ts
+  176c45c3241e8a4b 11-12,1636,1640-1641,1648-1649
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "0e05d08355cb95a84e5874602340cf3d100e4d22",
+  "prompts": {
+    "176c45c3241e8a4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "31487b02-d89a-4d6d-b8a5-ba32febbcd3f",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 52,
+      "total_deletions": 9,
+      "accepted_lines": 46,
+      "overriden_lines": 0
+    }
+  }
+}
