@@ -68,8 +68,8 @@ importers:
   packages/gateway:
     dependencies:
       '@slack/types':
-        specifier: 2.22.0
-        version: 2.22.0
+        specifier: 3.0.0
+        version: 3.0.0
       '@slack/web-api':
         specifier: ^7.15.1
         version: 7.19.0
@@ -149,8 +149,8 @@ importers:
         specifier: ^1.18.4
         version: 1.18.4
       '@slack/types':
-        specifier: 2.22.0
-        version: 2.22.0
+        specifier: 3.0.0
+        version: 3.0.0
       '@slack/web-api':
         specifier: ^7.15.1
         version: 7.19.0
@@ -828,6 +828,10 @@ packages:
   '@slack/types@2.22.0':
     resolution: {integrity: sha512-sZ9lIgJhPX2qft/tKWiklFlc0o1FWeI7QtciZJfW1+ErH1eGGHvOZ8e73sleTCFEFJp1q/R0WeS8Oa7AsiDprg==}
     engines: {node: '>= 12.13.0', npm: '>= 6.12.0'}
+
+  '@slack/types@3.0.0':
+    resolution: {integrity: sha512-KNOqpnNAlsFt5Jk9XBclslQ0lobRIg/0tnhpmvZJAglHJx9E8oceN8hC3gaBzkR6UzQ9Wzq4rLsJ98wUcxWPfw==}
+    engines: {node: '>= 20', npm: '>=9.6.4'}
 
   '@slack/web-api@7.19.0':
     resolution: {integrity: sha512-ItjyjEZml+LDH8CjcCLRLJHh7VZtevPKExrRN3l5KWyBliyDnGAeoO4Y+K+fFBmRpKLYVPgqWMX4THldv2HVtA==}
@@ -3348,6 +3352,8 @@ snapshots:
       '@types/node': 24.13.3
 
   '@slack/types@2.22.0': {}
+
+  '@slack/types@3.0.0': {}
 
   '@slack/web-api@7.19.0':
     dependencies:
