@@ -1,8 +1,10 @@
 import {
   approvalPresentationIsOversize,
   ApprovalRequiredEventPayloadSchema,
+  buildApprovalActionIdTag,
   buildApprovalButtonValue,
   buildApprovalFileMarkdown,
+  buildApprovalNotificationText,
   buildApprovalPresentation,
   buildApprovalPresentationBlocks,
   createLogger,
@@ -234,7 +236,7 @@ export function createApprovalService(deps: ApprovalServiceDeps = {}): ApprovalS
           filename: `approval-${input.tool}-${input.action.id}.md`,
           title: presentation.title,
           content: buildApprovalFileMarkdown(presentation),
-          initialComment: `Full approval content for *${presentation.title}* (approval \`${input.action.id}\`).`,
+          initialComment: `Full approval content for *${presentation.title}* ${buildApprovalActionIdTag(input.action.id)}.`,
         },
         slackDeps,
       );
@@ -247,8 +249,8 @@ export function createApprovalService(deps: ApprovalServiceDeps = {}): ApprovalS
       {
         channel: input.channel,
         threadTs: input.threadTs,
-        text: presentation.title,
-        blocks: buildApprovalPresentationBlocks(presentation, buttonValue),
+        text: buildApprovalNotificationText(presentation, input.action.id),
+        blocks: buildApprovalPresentationBlocks(presentation, buttonValue, input.action.id),
       },
       slackDeps,
     );

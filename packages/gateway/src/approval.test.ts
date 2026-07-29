@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   approvalPresentationIsOversize,
+  buildApprovalActionIdTag,
   buildApprovalButtonValue,
+  buildApprovalNotificationText,
   buildApprovalPresentation,
   buildApprovalPresentationBlocks,
   parseApprovalButtonValue,
@@ -109,6 +111,7 @@ describe("approval presentation", () => {
     const blocks = buildApprovalPresentationBlocks(
       { title: "Create feature flag: beta", markdown: "*Key:* beta" },
       "v3:act-1:posthog:1710000000.001",
+      "act-1",
     );
 
     expect(blocks[0]).toMatchObject({
@@ -131,14 +134,15 @@ describe("approval presentation", () => {
     });
   });
 
-  it("keeps presentation block text within Slack limits when truncating", () => {
+  it("truncates an overlong title", () => {
     const longValue = "x".repeat(4000);
     const blocks = buildApprovalPresentationBlocks(
       {
         title: `Create feature flag: ${longValue}`,
-        markdown: longValue,
+        markdown: "short body",
       },
       "v3:act-1:posthog:1710000000.001",
+      "act-1",
     );
 
     expect(blocks[0]).toMatchObject({
@@ -151,7 +155,98 @@ describe("approval presentation", () => {
     expect((blocks[0] as { text: { text: string } }).text.text.length).toBeLessThanOrEqual(
       280 + 11,
     );
-    expect((blocks[1] as { text: { text: string } }).text.text.length).toBeLessThanOrEqual(3000);
+  });
+
+  it("replaces an oversize body with a pointer to the uploaded file carrying the same action ID, instead of a truncated preview", () => {
+    const longValue = "x".repeat(4000);
+    const blocks = buildApprovalPresentationBlocks(
+      { title: "Create feature flag: beta", markdown: longValue },
+      "v3:act-1:posthog:1710000000.001",
+      "act-1",
+    );
+
+    expect(blocks[1]).toMatchObject({
+      type: "section",
+      expand: true,
+      text: {
+        type: "mrkdwn",
+        text: "Full content shared as a file in this thread (approval `act-1`).",
+      },
+    });
+  });
+
+  it("pairs each of two same-title oversize approvals with its own action ID, not the other's", () => {
+    const longValue = "x".repeat(4000);
+    const presentation = { title: "Create feature flag: beta", markdown: longValue };
+
+    const blocksA = buildApprovalPresentationBlocks(
+      presentation,
+      "v3:act-a:posthog:1710000000.001",
+      "act-a",
+    );
+    const blocksB = buildApprovalPresentationBlocks(
+      presentation,
+      "v3:act-b:posthog:1710000000.002",
+      "act-b",
+    );
+
+    const textA = (blocksA[1] as { text: { text: string } }).text.text;
+    const textB = (blocksB[1] as { text: { text: string } }).text.text;
+
+    expect(textA).toContain("approval `act-a`");
+    expect(textA).not.toContain("act-b");
+    expect(textB).toContain("approval `act-b`");
+    expect(textB).not.toContain("act-a");
+  });
+});
+
+describe("approval notification text", () => {
+  it("keeps the plain title for a normal-size presentation", () => {
+    const text = buildApprovalNotificationText(
+      { title: "Create feature flag: beta", markdown: "*Key:* beta" },
+      "act-1",
+    );
+    expect(text).toBe("Create feature flag: beta");
+  });
+
+  it("appends the action ID for an oversize presentation", () => {
+    const text = buildApprovalNotificationText(
+      { title: "Create feature flag: beta", markdown: "x".repeat(4000) },
+      "act-1",
+    );
+    expect(text).toBe("Create feature flag: beta (approval `act-1`)");
+  });
+
+  it("distinguishes two same-title oversize approvals by action ID", () => {
+    const presentation = { title: "Create feature flag: beta", markdown: "x".repeat(4000) };
+    const textA = buildApprovalNotificationText(presentation, "act-a");
+    const textB = buildApprovalNotificationText(presentation, "act-b");
+
+    expect(textA).not.toBe(textB);
+    expect(textA).toContain("act-a");
+    expect(textB).toContain("act-b");
+  });
+});
+
+describe("approval action ID tag", () => {
+  it("formats the shared action ID tag", () => {
+    expect(buildApprovalActionIdTag("act-1")).toBe("(approval `act-1`)");
+  });
+
+  it("is embedded verbatim in both the oversize card pointer and the notification text, so they cannot drift apart", () => {
+    const presentation = { title: "Create feature flag: beta", markdown: "x".repeat(4000) };
+    const tag = buildApprovalActionIdTag("act-1");
+
+    const blocks = buildApprovalPresentationBlocks(
+      presentation,
+      "v3:act-1:posthog:1710000000.001",
+      "act-1",
+    );
+    const pointerText = (blocks[1] as { text: { text: string } }).text.text;
+    const notificationText = buildApprovalNotificationText(presentation, "act-1");
+
+    expect(pointerText).toContain(tag);
+    expect(notificationText).toContain(tag);
   });
 });
 

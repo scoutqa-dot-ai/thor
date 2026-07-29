@@ -152,6 +152,47 @@ export function buildApprovalFileMarkdown(presentation: ApprovalPresentation): s
   return `# ${presentation.title}\n\n${presentation.markdown}\n`;
 }
 
+/**
+ * The `(approval \`id\`)` tag that identifies an action ID across every
+ * surface an oversize approval touches: the card pointer, the notification
+ * fallback text, and the uploaded file's initial comment (approval-service.ts).
+ * One shared formatter keeps those three in sync — a future format change
+ * only has to happen here.
+ */
+export function buildApprovalActionIdTag(actionId: string): string {
+  return `(approval \`${actionId}\`)`;
+}
+
+/**
+ * Placeholder body text for an oversize presentation's card. The full content
+ * is uploaded as a file into the same thread (see approval-service.ts); Slack
+ * does not guarantee that file message lands above the card, so this avoids
+ * claiming a position and does not duplicate a truncated, half-cut preview.
+ * Includes the action ID — the same identifier the uploaded file's name and
+ * initial comment carry — so two oversize approvals in one thread (e.g. same
+ * title) each pair unambiguously with their own file.
+ */
+function buildOversizeBodyText(actionId: string): string {
+  return `Full content shared as a file in this thread ${buildApprovalActionIdTag(actionId)}.`;
+}
+
+/**
+ * Top-level Slack `text` fallback (push notifications, screen readers — shown
+ * when blocks are not rendered). Normal-size cards keep the plain title.
+ * Oversize cards append the action ID: with the block body reduced to a
+ * generic pointer sentence, the title is otherwise the only signal in the
+ * fallback text, so two same-title oversize approvals would be indistinguishable
+ * without it.
+ */
+export function buildApprovalNotificationText(
+  presentation: ApprovalPresentation,
+  actionId: string,
+): string {
+  return approvalPresentationIsOversize(presentation)
+    ? `${presentation.title} ${buildApprovalActionIdTag(actionId)}`
+    : presentation.title;
+}
+
 function buildActionBlocks(buttonValue: string): SlackBlock[] {
   return [
     { type: "divider" },
@@ -180,6 +221,7 @@ function buildActionBlocks(buttonValue: string): SlackBlock[] {
 export function buildApprovalPresentationBlocks(
   presentation: ApprovalPresentation,
   buttonValue: string,
+  actionId: string,
 ): SlackBlock[] {
   return [
     {
@@ -194,7 +236,9 @@ export function buildApprovalPresentationBlocks(
       expand: true,
       text: {
         type: "mrkdwn",
-        text: trimForSlack(presentation.markdown, SLACK_SECTION_TEXT_LIMIT),
+        text: approvalPresentationIsOversize(presentation)
+          ? buildOversizeBodyText(actionId)
+          : presentation.markdown,
       },
     },
     ...buildActionBlocks(buttonValue),
