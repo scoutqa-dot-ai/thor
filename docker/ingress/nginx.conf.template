@@ -172,7 +172,7 @@ server {
     # through to the opencode upstream in `location /`. Keep this list in sync
     # with codex-lb's dashboard XHR namespace; a new codex-lb /api prefix lands
     # on opencode's SPA fallback until it is added here.
-    location ~ ^/(dashboard|accounts|settings|api/(accounts|api-keys|automations|dashboard|dashboard-auth|firewall|model-sources|models|quota-planner|reports|request-logs|runtime|settings|sticky-sessions))(/|$) {
+    location ~ ^/(dashboard|accounts|settings|api/(accounts|api-keys|automations|conversation-archive|dashboard|dashboard-auth|firewall|model-sources|models|oauth|quota-planner|reports|request-logs|runtime|settings|sticky-sessions))(/|$) {
         auth_request /vouch/validate;
 
         auth_request_set $auth_user $upstream_http_x_vouch_user;

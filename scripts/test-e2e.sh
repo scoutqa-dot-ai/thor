@@ -1244,7 +1244,7 @@ admin_probe=$(ingress_probe "/admin/config")
 assert '[[ "${admin_probe%% *}" == "302" && "$admin_probe" == *"/vouch/login"* ]]' \
   "/admin/config redirects unauthenticated to vouch (regression)" "got $admin_probe"
 
-for path in /dashboard /accounts /settings /api/accounts; do
+for path in /dashboard /accounts /settings /api/accounts /api/conversation-archive/records /api/oauth/status; do
   codex_probe=$(ingress_probe "$path")
   assert '[[ "${codex_probe%% *}" == "302" && "$codex_probe" == *"/vouch/login"* ]]' \
     "codex-lb route $path is wired and auth-gated" "got $codex_probe"
