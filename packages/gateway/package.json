@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@slack/types": "3.0.0",
-    "@slack/web-api": "^7.15.1",
+    "@slack/web-api": "^8.0.0",
     "@thor/common": "workspace:*",
     "express": "^5.1.0",
     "zod": "^4.3.6"
