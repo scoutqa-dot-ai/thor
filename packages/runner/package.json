@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.18.4",
-    "@slack/types": "2.22.0",
+    "@slack/types": "3.0.0",
     "@slack/web-api": "^7.15.1",
     "@thor/common": "workspace:*",
     "express": "^5.1.0",
