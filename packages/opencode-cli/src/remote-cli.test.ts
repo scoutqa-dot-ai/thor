@@ -134,9 +134,7 @@ describe("fetch failure diagnostics", () => {
     const result = await invoke([], "", { endpoint: "git", fetchImpl });
 
     expect(result.code).toBe(1);
-    expect(result.stderr).toBe(
-      "Failed to reach remote-cli: network unavailable; endpoint=git\n",
-    );
+    expect(result.stderr).toBe("Failed to reach remote-cli: network unavailable; endpoint=git\n");
     expect(result.stderr).not.toContain("undefined");
   });
 });

@@ -195,7 +195,9 @@ export async function runRemoteCli(options: {
     exit(result.exitCode ?? 0);
   } catch (err) {
     if (err instanceof Error && err.message.startsWith("exit ")) throw err;
-    const fields = [`Failed to reach remote-cli: ${err instanceof Error ? err.message : String(err)}`];
+    const fields = [
+      `Failed to reach remote-cli: ${err instanceof Error ? err.message : String(err)}`,
+    ];
     const cause = err instanceof Error ? err.cause : undefined;
     if (cause instanceof Error) fields.push(`cause=${cause.message}`);
     const code = errorCode(cause) ?? errorCode(err);
