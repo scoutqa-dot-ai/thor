@@ -78,8 +78,8 @@ async function readStdin(stdin: NodeJS.ReadableStream): Promise<string> {
 }
 
 function errorCode(value: unknown): string | number | undefined {
-  if (typeof value !== "object" || value === null || !("code" in value)) return undefined;
-  const code = value.code;
+  if (typeof value !== "object" || value === null) return undefined;
+  const code = (value as { code?: unknown }).code;
   return typeof code === "string" || typeof code === "number" ? code : undefined;
 }
 
