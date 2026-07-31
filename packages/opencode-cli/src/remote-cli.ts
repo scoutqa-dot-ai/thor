@@ -77,6 +77,12 @@ async function readStdin(stdin: NodeJS.ReadableStream): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+function errorCode(value: unknown): string | number | undefined {
+  if (typeof value !== "object" || value === null || !("code" in value)) return undefined;
+  const code = value.code;
+  return typeof code === "string" || typeof code === "number" ? code : undefined;
+}
+
 export async function runRemoteCli(options: {
   argv: string[];
   env: NodeJS.ProcessEnv;
@@ -189,7 +195,15 @@ export async function runRemoteCli(options: {
     exit(result.exitCode ?? 0);
   } catch (err) {
     if (err instanceof Error && err.message.startsWith("exit ")) throw err;
-    stderr.write(`Failed to reach remote-cli: ${(err as Error).message}\n`);
+    const fields = [`Failed to reach remote-cli: ${err instanceof Error ? err.message : String(err)}`];
+    const cause = err instanceof Error ? err.cause : undefined;
+    if (cause instanceof Error) fields.push(`cause=${cause.message}`);
+    const code = errorCode(cause) ?? errorCode(err);
+    if (code !== undefined) fields.push(`code=${code}`);
+    fields.push(`endpoint=${endpoint}`);
+    if (sessionId) fields.push(`sessionId=${sessionId}`);
+    if (callId) fields.push(`callId=${callId}`);
+    stderr.write(`${fields.join("; ")}\n`);
     exit(1);
   }
 }

@@ -18,21 +18,31 @@ function stdin(text = "") {
   return Readable.from([text]);
 }
 
-async function invoke(args: string[], input = "body\n") {
+async function invoke(
+  args: string[],
+  input = "body\n",
+  options: {
+    endpoint?: string;
+    env?: NodeJS.ProcessEnv;
+    fetchImpl?: typeof fetch;
+  } = {},
+) {
   const stderr = new Capture();
   const stdout = new Capture();
-  const fetchImpl = vi.fn(
-    async () =>
-      new Response(JSON.stringify({ stdout: "", stderr: "", exitCode: 0 }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-  ) as unknown as typeof fetch;
+  const fetchImpl =
+    options.fetchImpl ??
+    (vi.fn(
+      async () =>
+        new Response(JSON.stringify({ stdout: "", stderr: "", exitCode: 0 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    ) as unknown as typeof fetch);
   let code: number | undefined;
   await expect(
     runRemoteCli({
-      argv: ["gh", ...args],
-      env: { THOR_REMOTE_CLI_URL: "http://remote-cli.test" },
+      argv: [options.endpoint ?? "gh", ...args],
+      env: { THOR_REMOTE_CLI_URL: "http://remote-cli.test", ...options.env },
       cwd: "/workspace/worktrees/repo/branch",
       stdin: stdin(input),
       fetchImpl,
@@ -80,5 +90,53 @@ describe("gh body transport guard", () => {
     const result = await invoke(["workflow", "run", "ci.yml", "--field", "body=hi"]);
     expect(result.code).toBe(0);
     expect(result.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("fetch failure diagnostics", () => {
+  it("reports native transport details and correlation IDs", async () => {
+    const cause = Object.assign(new Error("connect ECONNREFUSED 10.0.0.2:8080"), {
+      code: "ECONNREFUSED",
+    });
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError("fetch failed", { cause });
+    }) as unknown as typeof fetch;
+
+    const result = await invoke([], "", {
+      endpoint: "git",
+      env: {
+        THOR_OPENCODE_SESSION_ID: "session-123",
+        THOR_OPENCODE_CALL_ID: "call-456",
+      },
+      fetchImpl,
+    });
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toBe(
+      "Failed to reach remote-cli: fetch failed; cause=connect ECONNREFUSED 10.0.0.2:8080; code=ECONNREFUSED; endpoint=git; sessionId=session-123; callId=call-456\n",
+    );
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://remote-cli.test/exec/git",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "x-thor-session-id": "session-123",
+          "x-thor-call-id": "call-456",
+        }),
+      }),
+    );
+  });
+
+  it("omits unavailable native and correlation details", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error("network unavailable");
+    }) as unknown as typeof fetch;
+
+    const result = await invoke([], "", { endpoint: "git", fetchImpl });
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toBe(
+      "Failed to reach remote-cli: network unavailable; endpoint=git\n",
+    );
+    expect(result.stderr).not.toContain("undefined");
   });
 });
