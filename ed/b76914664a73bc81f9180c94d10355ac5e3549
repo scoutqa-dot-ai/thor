@@ -1,0 +1,27 @@
+packages/remote-cli/src/index.ts
+  94783598774c292d 460-465
+docs/plan/2026042406_command-policy-consolidation.md
+  94783598774c292d 88,223-224,255-256
+packages/remote-cli/src/gh-disclaimer.test.ts
+  94783598774c292d 235-246
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "edb76914664a73bc81f9180c94d10355ac5e3549",
+  "prompts": {
+    "94783598774c292d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "30def107-0d06-471e-9d3c-e8a866d0bb5a",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 23,
+      "total_deletions": 3,
+      "accepted_lines": 23,
+      "overriden_lines": 0
+    }
+  }
+}
