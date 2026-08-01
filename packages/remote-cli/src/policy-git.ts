@@ -95,6 +95,18 @@ const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "describe",
   "tag",
   "stash",
+  // pure read-only plumbing/inspection — no repo mutation under any flag shape
+  "rev-list",
+  "diff-tree",
+  "show-branch",
+  "ls-tree",
+  "cherry",
+  "count-objects",
+  "range-diff",
+  "check-ref-format",
+  "check-ignore",
+  "help",
+  "version",
 ]);
 
 const PROTECTED_PUSH_BRANCHES: ReadonlySet<string> = new Set(["main", "master"]);
@@ -311,6 +323,17 @@ function resolveSubcommand(
     case "name-rev":
     case "describe":
     case "rev-parse":
+    case "rev-list":
+    case "diff-tree":
+    case "show-branch":
+    case "ls-tree":
+    case "cherry":
+    case "count-objects":
+    case "range-diff":
+    case "check-ref-format":
+    case "check-ignore":
+    case "help":
+    case "version":
       return { args: [...args] };
     case "merge-base":
       return wrap(validateMergeBase(args), args);

@@ -232,6 +232,18 @@ describe("gh disclaimer injection", () => {
     );
   });
 
+  it("closes stdin on /exec/git so stdin-reading forms (e.g. rev-list --stdin) do not hang", async () => {
+    seedActor();
+    await withServer(
+      async (url) => {
+        const { response } = await postGit(url, ["rev-list", "--stdin"], "parent");
+        expect(response.status).toBe(200);
+        expect(execCalls[0].stdin).toBe("");
+      },
+      { configLoader },
+    );
+  });
+
   it("keeps an existing PR assignee", async () => {
     seedActor();
     await withServer(

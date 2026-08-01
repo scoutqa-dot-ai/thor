@@ -457,7 +457,12 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         ...(effectiveCwd !== cwd ? { effectiveCwd } : {}),
         ...ids,
       });
-      const result = await execCommand("git", effectiveArgs, effectiveCwd);
+      const result = await execCommand("git", effectiveArgs, effectiveCwd, {
+        // Close stdin (EOF) so stdin-reading forms (e.g. `rev-list --stdin`,
+        // `check-ignore --stdin`) exit immediately instead of blocking
+        // forever — the client never pipes stdin to this endpoint.
+        stdin: "",
+      });
       if ((result.exitCode ?? 0) === 0) {
         registerGitCorrelationAlias(ids.sessionId, effectiveArgs, effectiveCwd);
       }
