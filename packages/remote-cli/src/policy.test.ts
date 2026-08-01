@@ -156,6 +156,19 @@ describe("validateGitArgs", () => {
         ["merge-base", "--is-ancestor", "HEAD", "origin/main"],
         ["merge-base", "--fork-point", "origin/main"],
         ["merge-base", "--fork-point", "origin/main", "HEAD"],
+        ["rev-list", "--count", "HEAD"],
+        ["rev-list", "origin/main..HEAD"],
+        ["diff-tree", "-r", "HEAD"],
+        ["show-branch", "--all"],
+        ["ls-tree", "-r", "HEAD"],
+        ["cherry", "origin/main"],
+        ["count-objects", "-v"],
+        ["range-diff", "origin/main...HEAD"],
+        ["check-ref-format", "--branch", "feat/x"],
+        ["check-ignore", "-v", "node_modules"],
+        ["help", "worktree"],
+        ["version"],
+        ["version", "--build-options"],
       ];
 
       for (const args of allowedCommands) {
@@ -763,7 +776,6 @@ describe("validateGitArgs", () => {
 
     it("blocks commands removed from the allowlist", () => {
       expectGitDenied(["--no-pager", "log", "--oneline", "-10"]);
-      expectGitDenied(["check-ignore", "--stdin"]);
       expectGitDenied(["symbolic-ref", "HEAD", "refs/heads/main"]);
       expectGitDenied(["pull", "origin", "feat/x"]);
     });
