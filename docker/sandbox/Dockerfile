@@ -10,7 +10,7 @@
 # Local build:
 #   docker build -t thor-sandbox docker/sandbox
 
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
