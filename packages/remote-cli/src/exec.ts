@@ -49,6 +49,13 @@ export function execCommand(
       },
     );
     if (options.stdin !== undefined) {
+      // For commands that don't read stdin (e.g. `git remote get-url origin`),
+      // the child can exit — closing its stdin pipe — before this EOF write
+      // lands, raising an EPIPE on the stream. execFile's callback above
+      // still resolves the real exit code from the child itself, so a failed
+      // write here is inconsequential; without this handler the unconsumed
+      // 'error' event crashes the whole process.
+      child.stdin?.on("error", () => {});
       child.stdin?.end(options.stdin);
     }
   });
