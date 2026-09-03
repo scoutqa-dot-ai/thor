@@ -55,6 +55,47 @@ describe("execCommand", () => {
     callback?.(null, "done", "");
     await expect(resultPromise).resolves.toEqual({ stdout: "done", stderr: "", exitCode: 0 });
   });
+
+  it("does not crash when the EOF write races an already-closed child stdin (EPIPE)", async () => {
+    vi.resetModules();
+    const stdin = Object.assign(new EventEmitter(), {
+      end: vi.fn(function (this: EventEmitter) {
+        // Simulates a child that exits (closing its stdin pipe) for commands
+        // that never read stdin, e.g. `git remote get-url origin`, before
+        // this best-effort EOF write lands.
+        this.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+      }),
+    });
+    const child = Object.assign(new EventEmitter(), { kill: vi.fn(), stdin });
+    let callback: ((err: null, stdout: string, stderr: string) => void) | undefined;
+
+    vi.doMock("node:child_process", () => ({
+      execFile: vi.fn(
+        (
+          _binary: string,
+          _args: string[],
+          _options: unknown,
+          cb: (err: null, stdout: string, stderr: string) => void,
+        ) => {
+          callback = cb;
+          return child;
+        },
+      ),
+      spawn: vi.fn(),
+    }));
+
+    const { execCommand: mockedExecCommand } = await import("./exec.ts");
+    const resultPromise = mockedExecCommand("git", ["remote", "get-url", "origin"], "/tmp", {
+      stdin: "",
+    });
+
+    callback?.(null, "https://example.com/origin.git\n", "");
+    await expect(resultPromise).resolves.toEqual({
+      stdout: "https://example.com/origin.git\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 describe("execCommandStream", () => {
