@@ -1,0 +1,25 @@
+packages/remote-cli/src/exec.test.ts
+  602115742b25e245 58-98
+packages/remote-cli/src/exec.ts
+  602115742b25e245 52-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "ec2f6432246b5f5ad73c60531e37532bda8179ee",
+  "prompts": {
+    "602115742b25e245": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e70313ba-9513-4890-b05d-544cdb314911",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 48,
+      "total_deletions": 0,
+      "accepted_lines": 48,
+      "overriden_lines": 0
+    }
+  }
+}
