@@ -1,0 +1,27 @@
+Dockerfile
+  26860c1bc7640dfa 85
+  483069c5527c56dd 83,118
+  7a428ea165d8a730 144-146,149,151,153-154
+  29d5067be01d7a88 101
+  d98fd3d9cf160d4e 23,143,158
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.32",
+  "base_commit_sha": "f1b58d8e7470de255e644db98ba1856f487b76ac",
+  "prompts": {
+    "26860c1bc7640dfa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f95d9d1a-2147-4d1b-a583-e67300f497ab",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Dao Hoang Son <daohoangson@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
