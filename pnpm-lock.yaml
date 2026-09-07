@@ -112,8 +112,8 @@ importers:
   packages/remote-cli:
     dependencies:
       '@daytonaio/sdk':
-        specifier: ^0.205.0
-        version: 0.205.1(debug@4.4.3)
+        specifier: ^0.207.0
+        version: 0.207.1(debug@4.4.3)
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.30.0(zod@4.4.3)
@@ -254,17 +254,17 @@ packages:
     resolution: {integrity: sha512-sl4Bm6yiMNYrZKkqqDFWN0UfnWhlS8ivKxrYl+6t0gCLrqr8y3B2IqZZbFRkfaVVp7C/baApyh71P+LeE1A2sQ==}
     engines: {node: '>=18.0.0'}
 
-  '@daytona/analytics-api-client@0.205.1':
-    resolution: {integrity: sha512-/kGNw6RGI7psf5OYqOPTfyN2tDW/206XBMXFQxmD3Ljuor/xk17WrONRah35OJy62lk+BzvCRtnkGBNEL4EjhQ==}
+  '@daytona/analytics-api-client@0.207.1':
+    resolution: {integrity: sha512-rxB4nsUINr+GwY4HPjwpJNiryj3mus7RFPgtnwtL1JCTg98IKNYFiyjzPKv52tZme6xvq6vL2bYcbNqqYl5yxA==}
 
-  '@daytona/api-client@0.205.1':
-    resolution: {integrity: sha512-Rmeny9+8jm+7mx/0B4FnfddqXSRuQmMTRxlbYaI8ekVidvXFA5YsNExBzzijPZW2piCDfUhlJDt6qKVsrhZe4Q==}
+  '@daytona/api-client@0.207.1':
+    resolution: {integrity: sha512-CpwhsK/+9Rp51juSjkt6HnWUiQZ8CEyt4Jc+se7PJRorSIcqjXbohj7WYxlnG0TIsIs54TSHKMzHLvl8vZplJg==}
 
-  '@daytona/toolbox-api-client@0.205.1':
-    resolution: {integrity: sha512-FmiNbaAdeOiV12No+cRqs7bwklu+q4iA1QW1gA+x235imHaJ5Y8nYOjMV20tOhytGhNm0W23nz7WqyVao6A2pw==}
+  '@daytona/toolbox-api-client@0.207.1':
+    resolution: {integrity: sha512-C3A+Yx9/xLrrfKezm7gMoz8eRji1wKToO8oac67NsHIBIXssMtiW3aHlz61P3fJrrj5Bd4VD73Yod8+tAYKmRw==}
 
-  '@daytonaio/sdk@0.205.1':
-    resolution: {integrity: sha512-yxSTxpWgJ0gRtlE7HVVRwny3pz1Qb2+GEyur3Hgu4GPWIjodO0xWKFMwgwjHDaBSBLjDCni0G2sV9tIeJi9XIQ==}
+  '@daytonaio/sdk@0.207.1':
+    resolution: {integrity: sha512-ZT1HwAn4cxtwNvrp21p1tBUkSixzgclLdGcXs+QloflM7vzISv74Nu36vkaLkh8BLaqj2zsBtdpL7a2pMAaZAQ==}
     deprecated: 'Moved to @daytona/sdk, same API, no breaking changes. Please update: npm uninstall @daytonaio/sdk && npm i @daytona/sdk'
 
   '@emnapi/core@1.10.0':
@@ -511,10 +511,6 @@ packages:
     engines: {node: ^18.19.0 || >=20.6.0}
     peerDependencies:
       '@opentelemetry/api': '>=1.3.0 <1.10.0'
-
-  '@opentelemetry/semantic-conventions@1.41.1':
-    resolution: {integrity: sha512-/UhIkaZgPutTFmQ7RnIJGgDXZmtEJ7Dvi86xNTFWcnRxVRNk/aotsqDJYeEvDP+FSMB2SdW+pQzNMcWP0rwuNA==}
-    engines: {node: '>=14'}
 
   '@opentelemetry/semantic-conventions@1.43.0':
     resolution: {integrity: sha512-eSYWTm620tTk45EKSedaUL8MFYI8hW164hIXsgIHyxu3VobUB3fFCu5t0hQby6OoWRPsG1KkKUG2M5UadiLiVg==}
@@ -774,6 +770,7 @@ packages:
   '@smithy/node-http-handler@4.12.0':
     resolution: {integrity: sha512-0mq1pHadfyXCYCqm2cNpbjNIT+fbaUpNxewZb/YNr2L0IrEVMOb8gM/Fl4K6XvHCW3uSNDFwPl/+iKm0bx9jYg==}
     engines: {node: '>=18.0.0'}
+    deprecated: Depreacted due to a memory leak issue https://github.com/smithy-lang/smithy-typescript/issues/2258
 
   '@smithy/signature-v4@5.7.3':
     resolution: {integrity: sha512-7ImGm+FkHRLcBaRttIAMZ6bzJZWb2cJGoYjq46F2UjycujWzrL9GEN9h4w7eQyXJYnltrUhxbbieBAIRrdqpow==}
@@ -1181,9 +1178,6 @@ packages:
   atomic-sleep@1.0.0:
     resolution: {integrity: sha512-kNOjDqAh7px0XWNI+4QbzoiR/nTkHAWNud2uvnJquD1/x5a7EQZMJT0AczqK0Qn67oY/TTQ1LbUKajZpp3I9tQ==}
     engines: {node: '>=8.0.0'}
-
-  axios@1.18.1:
-    resolution: {integrity: sha512-3nTvFlvpn9Zu/RkHUqtc7/+al4UpRW5az71ap5zccp6e8RAYEzhMTecX8Dz1wWDYrPpUoB1HAQEGEAEvUr7S9g==}
 
   axios@1.20.0:
     resolution: {integrity: sha512-r8aOh8j9cGKpgQAqpzrUHnSIc6a59Y3Xf/cv8sy1DrHCkZHzQGEuoq1tARk6qSyDdtQGSDgpb9kFlruzPvrgwg==}
@@ -2292,18 +2286,6 @@ packages:
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
 
-  ws@8.21.0:
-    resolution: {integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==}
-    engines: {node: '>=10.0.0'}
-    peerDependencies:
-      bufferutil: ^4.0.1
-      utf-8-validate: '>=5.0.2'
-    peerDependenciesMeta:
-      bufferutil:
-        optional: true
-      utf-8-validate:
-        optional: true
-
   ws@8.21.3:
     resolution: {integrity: sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==}
     engines: {node: '>=10.0.0'}
@@ -2535,34 +2517,34 @@ snapshots:
 
   '@aws/lambda-invoke-store@0.3.0': {}
 
-  '@daytona/analytics-api-client@0.205.1(debug@4.4.3)':
+  '@daytona/analytics-api-client@0.207.1(debug@4.4.3)':
     dependencies:
-      axios: 1.18.1(debug@4.4.3)
+      axios: 1.20.0(debug@4.4.3)
     transitivePeerDependencies:
       - debug
       - supports-color
 
-  '@daytona/api-client@0.205.1(debug@4.4.3)':
+  '@daytona/api-client@0.207.1(debug@4.4.3)':
     dependencies:
-      axios: 1.18.1(debug@4.4.3)
+      axios: 1.20.0(debug@4.4.3)
     transitivePeerDependencies:
       - debug
       - supports-color
 
-  '@daytona/toolbox-api-client@0.205.1(debug@4.4.3)':
+  '@daytona/toolbox-api-client@0.207.1(debug@4.4.3)':
     dependencies:
-      axios: 1.18.1(debug@4.4.3)
+      axios: 1.20.0(debug@4.4.3)
     transitivePeerDependencies:
       - debug
       - supports-color
 
-  '@daytonaio/sdk@0.205.1(debug@4.4.3)':
+  '@daytonaio/sdk@0.207.1(debug@4.4.3)':
     dependencies:
       '@aws-sdk/client-s3': 3.1124.0
       '@aws-sdk/lib-storage': 3.1124.0(@aws-sdk/client-s3@3.1124.0)
-      '@daytona/analytics-api-client': 0.205.1(debug@4.4.3)
-      '@daytona/api-client': 0.205.1(debug@4.4.3)
-      '@daytona/toolbox-api-client': 0.205.1(debug@4.4.3)
+      '@daytona/analytics-api-client': 0.207.1(debug@4.4.3)
+      '@daytona/api-client': 0.207.1(debug@4.4.3)
+      '@daytona/toolbox-api-client': 0.207.1(debug@4.4.3)
       '@iarna/toml': 2.2.5
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/exporter-trace-otlp-http': 0.221.0(@opentelemetry/api@1.9.1)
@@ -2697,7 +2679,7 @@ snapshots:
   '@opentelemetry/core@2.10.0(@opentelemetry/api@1.9.1)':
     dependencies:
       '@opentelemetry/api': 1.9.1
-      '@opentelemetry/semantic-conventions': 1.41.1
+      '@opentelemetry/semantic-conventions': 1.43.0
 
   '@opentelemetry/exporter-logs-otlp-grpc@0.221.0(@opentelemetry/api@1.9.1)':
     dependencies:
@@ -2750,7 +2732,7 @@ snapshots:
       '@opentelemetry/core': 2.10.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/resources': 2.10.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/sdk-metrics': 2.10.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/semantic-conventions': 1.41.1
+      '@opentelemetry/semantic-conventions': 1.43.0
 
   '@opentelemetry/exporter-trace-otlp-grpc@0.221.0(@opentelemetry/api@1.9.1)':
     dependencies:
@@ -2780,14 +2762,14 @@ snapshots:
       '@opentelemetry/core': 2.10.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/resources': 2.10.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/sdk-trace': 2.10.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/semantic-conventions': 1.41.1
+      '@opentelemetry/semantic-conventions': 1.43.0
 
   '@opentelemetry/instrumentation-http@0.221.0(@opentelemetry/api@1.9.1)':
     dependencies:
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/core': 2.10.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/instrumentation': 0.221.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/semantic-conventions': 1.41.1
+      '@opentelemetry/semantic-conventions': 1.43.0
       forwarded-parse: 2.1.2
     transitivePeerDependencies:
       - supports-color
@@ -2839,7 +2821,7 @@ snapshots:
     dependencies:
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/core': 2.10.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/semantic-conventions': 1.41.1
+      '@opentelemetry/semantic-conventions': 1.43.0
 
   '@opentelemetry/sdk-logs@0.221.0(@opentelemetry/api@1.9.1)':
     dependencies:
@@ -2847,7 +2829,7 @@ snapshots:
       '@opentelemetry/api-logs': 0.221.0
       '@opentelemetry/core': 2.10.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/resources': 2.10.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/semantic-conventions': 1.41.1
+      '@opentelemetry/semantic-conventions': 1.43.0
 
   '@opentelemetry/sdk-metrics@2.10.0(@opentelemetry/api@1.9.1)':
     dependencies:
@@ -2884,7 +2866,7 @@ snapshots:
       '@opentelemetry/sdk-trace': 2.10.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/sdk-trace-base': 2.10.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/sdk-trace-node': 2.10.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/semantic-conventions': 1.41.1
+      '@opentelemetry/semantic-conventions': 1.43.0
     transitivePeerDependencies:
       - supports-color
 
@@ -2894,7 +2876,7 @@ snapshots:
       '@opentelemetry/core': 2.10.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/resources': 2.10.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/sdk-trace': 2.10.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/semantic-conventions': 1.41.1
+      '@opentelemetry/semantic-conventions': 1.43.0
 
   '@opentelemetry/sdk-trace-node@2.10.0(@opentelemetry/api@1.9.1)':
     dependencies:
@@ -2908,9 +2890,7 @@ snapshots:
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/core': 2.10.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/resources': 2.10.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/semantic-conventions': 1.41.1
-
-  '@opentelemetry/semantic-conventions@1.41.1': {}
+      '@opentelemetry/semantic-conventions': 1.43.0
 
   '@opentelemetry/semantic-conventions@1.43.0': {}
 
@@ -3376,16 +3356,6 @@ snapshots:
 
   atomic-sleep@1.0.0: {}
 
-  axios@1.18.1(debug@4.4.3):
-    dependencies:
-      follow-redirects: 1.16.0(debug@4.4.3)
-      form-data: 4.0.6
-      https-proxy-agent: 5.0.1
-      proxy-from-env: 2.1.0
-    transitivePeerDependencies:
-      - debug
-      - supports-color
-
   axios@1.20.0(debug@4.4.3):
     dependencies:
       follow-redirects: 1.16.0(debug@4.4.3)
@@ -3521,7 +3491,7 @@ snapshots:
       '@socket.io/component-emitter': 3.1.2
       debug: 4.4.3
       engine.io-parser: 5.2.3
-      ws: 8.21.0
+      ws: 8.21.3
       xmlhttprequest-ssl: 2.1.2
     transitivePeerDependencies:
       - bufferutil
@@ -4428,8 +4398,6 @@ snapshots:
       strip-ansi: 6.0.1
 
   wrappy@1.0.2: {}
-
-  ws@8.21.0: {}
 
   ws@8.21.3: {}
 
