@@ -54,6 +54,7 @@ export {
   loadRemoteCliInternalEnv,
   loadAdminEnv,
   loadMetabaseEnv,
+  loadDrataEnv,
   loadGitHubAppAuthEnv,
   loadDaytonaEnv,
 } from "./service-env.js";

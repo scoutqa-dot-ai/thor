@@ -65,6 +65,13 @@ jobs:
       METABASE_API_KEY: ci-fake
       METABASE_DATABASE_ID: "1"
       METABASE_ALLOWED_SCHEMAS: public
+      DRATA_OAUTH_TOKEN_URL: http://localhost/oauth/token
+      DRATA_CLIENT_ID: ci-fake
+      DRATA_CLIENT_SECRET: ci-fake
+      DRATA_AUDIENCE: ci-fake
+      DRATA_SCOPES: read:ci
+      DRATA_API_BASE_URL: http://localhost
+      KALI_API_BASE_URL: http://localhost:5000
       RUNNER_BASE_URL: http://localhost:3000
       THOR_E2E_TEST_HELPERS: "1"
       VOUCH_GOOGLE_CLIENT_ID: ci-fake

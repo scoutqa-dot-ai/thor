@@ -1,7 +1,7 @@
 import { APPROVAL_TOOL_NAMES } from "./approval-events.js";
 import type { ProxyConfig } from "./workspace-config.js";
 
-export const PROXY_NAMES = ["atlassian", "grafana", "posthog", "falcon"] as const;
+export const PROXY_NAMES = ["atlassian", "grafana", "posthog", "falcon", "kali"] as const;
 
 export type ProxyName = (typeof PROXY_NAMES)[number];
 
@@ -106,6 +106,24 @@ export const PROXY_REGISTRY: Record<ProxyName, ProxyConfig> = {
       "falcon_search_reports",
       "falcon_get_mitre_report",
       "falcon_search_vulnerabilities",
+    ],
+    approve: [],
+  },
+  kali: {
+    upstream: { url: "${KALI_API_BASE_URL}", transport: "kali-api" },
+    allow: [
+      "nmap_scan",
+      "gobuster_scan",
+      "dirb_scan",
+      "nikto_scan",
+      "sqlmap_scan",
+      "metasploit_run",
+      "hydra_attack",
+      "john_crack",
+      "wpscan_analyze",
+      "enum4linux_scan",
+      "server_health",
+      "execute_command",
     ],
     approve: [],
   },

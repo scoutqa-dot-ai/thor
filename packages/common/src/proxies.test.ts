@@ -5,7 +5,7 @@ import { interpolateHeaders } from "./workspace-config.js";
 
 describe("proxy registry", () => {
   it("exposes the expected hardcoded upstreams", () => {
-    expect(PROXY_NAMES).toEqual(["atlassian", "grafana", "posthog", "falcon"]);
+    expect(PROXY_NAMES).toEqual(["atlassian", "grafana", "posthog", "falcon", "kali"]);
     expect(getProxyConfig("atlassian")?.upstream.url).toBe("https://mcp.atlassian.com/v1/mcp");
     expect(getProxyConfig("grafana")?.allow).toEqual(
       expect.arrayContaining(["query_prometheus", "list_prometheus_metric_names"]),
@@ -14,6 +14,13 @@ describe("proxy registry", () => {
     expect(getProxyConfig("falcon")?.upstream.url).toBe("http://falcon-mcp:8000/mcp");
     expect(getProxyConfig("falcon")?.allow).toEqual(
       expect.arrayContaining(["falcon_search_detections", "falcon_get_host_details"]),
+    );
+    expect(getProxyConfig("kali")?.upstream).toEqual({
+      url: "${KALI_API_BASE_URL}",
+      transport: "kali-api",
+    });
+    expect(getProxyConfig("kali")?.allow).toEqual(
+      expect.arrayContaining(["server_health", "nmap_scan", "execute_command"]),
     );
     expect(getProxyConfig("unknown")).toBeUndefined();
   });

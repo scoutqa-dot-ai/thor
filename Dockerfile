@@ -99,6 +99,7 @@ COPY docker/opencode/bin/langfuse /usr/local/bin/langfuse
 COPY docker/opencode/bin/metabase /usr/local/bin/metabase
 COPY docker/opencode/bin/ldcli /usr/local/bin/ldcli
 COPY docker/opencode/bin/gws /usr/local/bin/gws
+COPY docker/opencode/bin/drata /usr/local/bin/drata
 COPY docker/opencode/bin/sandbox /usr/local/bin/sandbox
 COPY docker/opencode/bin/rg /usr/local/bin/rg
 # npm/npx/pnpm wrappers — redirect to sandbox so code runs in the cloud
@@ -127,7 +128,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
-RUN npm i -g @scoutqa/cli@latest langfuse-cli@0.0.8 @launchdarkly/ldcli@2.2.0 @googleworkspace/cli@0.22.5
+ARG GWS_VERSION=0.22.5
+RUN npm i -g @scoutqa/cli@latest langfuse-cli@0.0.8 @launchdarkly/ldcli@2.2.0
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) target="x86_64-unknown-linux-musl" ;; \
+      arm64) target="aarch64-unknown-linux-musl" ;; \
+      *) echo "Unsupported gws architecture: $arch" >&2; exit 1 ;; \
+    esac; \
+    artifact="google-workspace-cli-${target}.tar.gz"; \
+    base_url="https://github.com/googleworkspace/cli/releases/download/v${GWS_VERSION}"; \
+    tmp_dir="$(mktemp -d)"; \
+    curl -fsSL "$base_url/$artifact" -o "$tmp_dir/$artifact"; \
+    curl -fsSL "$base_url/$artifact.sha256" -o "$tmp_dir/$artifact.sha256"; \
+    (cd "$tmp_dir" && sha256sum -c "$artifact.sha256"); \
+    tar -xzf "$tmp_dir/$artifact" -C /usr/local/bin ./gws; \
+    chmod +x /usr/local/bin/gws; \
+    rm -rf "$tmp_dir"; \
+    gws --version
 
 FROM remote-cli-tools AS remote-cli
 COPY --from=remote-cli-build /app /app

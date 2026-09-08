@@ -2,16 +2,23 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { createLogger, logError, logInfo } from "@thor/common";
+import { createKaliApiMcpClient, KALI_API_TOOLS } from "./kali-api-upstream.js";
 
 const log = createLogger("mcp");
 
 export interface UpstreamConfig {
   url: string;
+  transport?: "streamable-http" | "kali-api";
   headers?: Record<string, string>;
 }
 
+export interface UpstreamClient {
+  callTool(input: { name: string; arguments?: Record<string, unknown> }): Promise<unknown>;
+  close(): Promise<void>;
+}
+
 export interface UpstreamConnection {
-  client: Client;
+  client: UpstreamClient;
   tools: Tool[];
 }
 
@@ -20,6 +27,17 @@ export async function connectUpstream(
   config: UpstreamConfig,
   onDisconnect?: () => void,
 ): Promise<UpstreamConnection> {
+  if (config.transport === "kali-api") {
+    const client = await createKaliApiMcpClient({ baseUrl: config.url });
+    logInfo(log, "upstream_connected", { name, url: config.url, transport: config.transport });
+    logInfo(log, "upstream_tools_listed", {
+      name,
+      toolCount: KALI_API_TOOLS.length,
+      tools: KALI_API_TOOLS.map((tool) => tool.name),
+    });
+    return { client, tools: KALI_API_TOOLS };
+  }
+
   const client = new Client({ name: `thor-remote-cli-${name}`, version: "0.0.1" });
 
   const headers: Record<string, string> = {

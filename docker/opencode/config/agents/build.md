@@ -41,7 +41,7 @@ Do not only answer in internal chat when a Slack reply is required.
 
 ## Environment
 
-You run inside a `node:22-slim` container. Tools commonly used here: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI), `langfuse` (Langfuse CLI for LLM trace queries), `ldcli` (LaunchDarkly CLI for read-only feature flag inspection), `metabase` (Metabase warehouse CLI), `curl`, `jq`, and `sandbox` (cloud sandbox for running project commands — builds, tests, lints). Other runtimes (Python, Go, Java, etc.) are available through the sandbox. If you need shell chaining, pipelines, or redirects, use `sandbox bash -c 'cmd1 && cmd2'`.
+You run inside a `node:22-slim` container. Tools commonly used here: Node.js, `git`, `gh` (GitHub CLI), `mcp` (MCP tool CLI), `approval` (approval status CLI), `scoutqa` (ScoutQA CLI), `langfuse` (Langfuse CLI for LLM trace queries), `ldcli` (LaunchDarkly CLI for read-only feature flag inspection), `metabase` (Metabase warehouse CLI), `drata` (Drata read-only API queries), `curl`, `jq`, and `sandbox` (cloud sandbox for running project commands — builds, tests, lints). Other runtimes (Python, Go, Java, etc.) are available through the sandbox. If you need shell chaining, pipelines, or redirects, use `sandbox bash -c 'cmd1 && cmd2'`.
 
 Outbound HTTP(S) requests use real upstream URLs through `HTTP(S)_PROXY`. For a
 simple Slack reply, use `slack-post-message` and pass message text on stdin:

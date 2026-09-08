@@ -8,7 +8,7 @@ Give Thor read-only access to Google Workspace through the `gws` CLI so agents c
 
 - Add a `gws` wrapper in the OpenCode container that forwards to `remote-cli`.
 - Add a server-side `/exec/gws` handler in `remote-cli`.
-- Install/pin the upstream `@googleworkspace/cli` package in the remote-cli image.
+- Install/pin the upstream `gws` release artifact in the remote-cli image.
 - Enforce read-only policy in Thor before invoking `gws`.
 - Document authentication, deployment configuration, and agent-facing usage.
 
@@ -38,7 +38,7 @@ Exit: the boundary is precise enough to implement and test.
 - Force API calls to JSON output unless the command is help/schema.
 - Add `POST /exec/gws` in `packages/remote-cli/src/index.ts`; ignore request cwd and execute from `/workspace`.
 - Add `docker/opencode/bin/gws` wrapper and route support through `remote-cli.mjs`.
-- Install a pinned `@googleworkspace/cli` version in the remote-cli image.
+- Install a pinned `gws` version in the remote-cli image.
 
 Exit: `gws --help` and one allowed read command work through OpenCode; denied write commands fail before invoking `gws`.
 
@@ -84,6 +84,7 @@ Exit: tests and push checks are green; PR is open.
 | Sanitization flags          | Deny `--sanitize` in v1                                                             | Workspace reads should not introduce a second Google service/config path; Thor can revisit sanitization separately if needed.                                                                                                   |
 | Cwd handling                | Ignore request cwd and run from `/workspace`                                        | Google Workspace is a global integration rather than repo-scoped, matching Metabase/Langfuse-style handlers.                                                                                                                    |
 | Availability                | Always install wrapper; document configuration dependency                           | The image stays simple and consistent, while the Thor-specific skill explains that calls require operator-configured Google credentials.                                                                                        |
+| Linux artifact              | Install the pinned static musl `gws` release binary                                 | The npm installer selects the glibc binary, and v0.22.5 requires `GLIBC_2.39` while `node:24-slim` currently provides Debian bookworm glibc 2.36; the upstream musl artifact is static and avoids a broad base-image upgrade.   |
 | ADR                         | Record the boundary in `docs/adr/0001-google-workspace-cli-boundary.md`             | Future readers should understand why Google Workspace access uses remote-cli, service identity, and an exact read-only allowlist instead of direct sandbox credentials or per-user OAuth.                                       |
 
 ## Open Questions

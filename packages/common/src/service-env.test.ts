@@ -7,6 +7,7 @@ import {
   loadGatewayEnv,
   loadGitHubAppAuthEnv,
   loadMetabaseEnv,
+  loadDrataEnv,
   loadRemoteCliAppEnv,
   loadRemoteCliEnv,
   loadRunnerEnv,
@@ -129,6 +130,22 @@ describe("service env", () => {
         METABASE_ALLOWED_SCHEMAS: "dm_products",
       }),
     ).toThrow("METABASE_DATABASE_ID must be an integer");
+  });
+
+  it("loads drata OAuth env and strips base URL slashes", () => {
+    const config = loadDrataEnv({
+      DRATA_OAUTH_TOKEN_URL: "https://auth.drata.test/oauth/token/",
+      DRATA_CLIENT_ID: "client-id",
+      DRATA_CLIENT_SECRET: "client-secret",
+      DRATA_AUDIENCE: "audience",
+      DRATA_SCOPES: "read:controls read:evidence",
+      DRATA_API_BASE_URL: "https://api.drata.test/",
+    });
+
+    expect(config.tokenUrl).toBe("https://auth.drata.test/oauth/token");
+    expect(config.apiBaseUrl).toBe("https://api.drata.test");
+    expect(config.scopes).toBe("read:controls read:evidence");
+    expect(() => loadDrataEnv({})).toThrow("Missing required env var DRATA_OAUTH_TOKEN_URL");
   });
 
   it("strips trailing slashes from RUNNER_URL and OPENCODE_URL", () => {

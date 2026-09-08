@@ -37,6 +37,16 @@ const tools: Tool[] = [
     },
   },
   {
+    name: "editJiraIssue",
+    description: "Edit a Jira issue",
+    inputSchema: {
+      type: "object",
+      properties: { issueIdOrKey: { type: "string" }, fields: { type: "object" } },
+      required: ["issueIdOrKey"],
+      additionalProperties: true,
+    },
+  },
+  {
     name: "transitionJiraIssue",
     description: "Transition a Jira issue",
     inputSchema: {
@@ -111,6 +121,7 @@ describe("remote-cli MCP endpoints", () => {
   beforeEach(async () => {
     vi.stubEnv("ATLASSIAN_AUTH", "Basic dGVzdA==");
     vi.stubEnv("POSTHOG_API_KEY", "test-posthog-key");
+    vi.stubEnv("KALI_API_BASE_URL", "http://kali.example.test:5000");
     vi.stubEnv("THOR_INTERNAL_SECRET", "resolve-secret");
     vi.stubEnv("WORKLOG_DIR", worklogDir);
     vi.stubEnv("RUNNER_BASE_URL", "https://thor.example.com/");
@@ -297,6 +308,7 @@ describe("remote-cli MCP endpoints", () => {
         { name: "grafana", toolCount: 0, connected: false },
         { name: "posthog", toolCount: 0, connected: false },
         { name: "falcon", toolCount: 0, connected: false },
+        { name: "kali", toolCount: 0, connected: false },
       ],
     });
 
@@ -360,9 +372,8 @@ describe("remote-cli MCP endpoints", () => {
     };
 
     expect(health.status).toBe(200);
-    expect(healthBody.mcp.configured).toBe(3);
-    expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 5 });
-    expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 6 });
+    expect(healthBody.mcp.configured).toBe(5);
+    expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 7 });
   });
 
   it("warms every registered upstream", async () => {
@@ -389,7 +400,13 @@ describe("remote-cli MCP endpoints", () => {
     closeRemoteCli = remoteCli.close;
     await remoteCli.warmUp();
 
-    expect(connectedUpstreams.sort()).toEqual(["atlassian", "falcon", "grafana", "posthog"]);
+    expect(connectedUpstreams.sort()).toEqual([
+      "atlassian",
+      "falcon",
+      "grafana",
+      "kali",
+      "posthog",
+    ]);
   });
 
   it("rejects worktree session directories for MCP authz", async () => {

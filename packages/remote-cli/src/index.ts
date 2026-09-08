@@ -29,6 +29,7 @@ import {
   type SlackPostMessageDeps,
 } from "./slack-post-message.js";
 import { listSchemas, listTables, getColumns, executeQuery, getQuestion } from "./metabase.js";
+import { drataApiGet } from "./drata.js";
 import {
   createSandbox,
   deleteSandbox,
@@ -55,6 +56,7 @@ import {
   validateLangfuseArgs,
   validateMetabaseArgs,
   validateScoutqaArgs,
+  validateDrataArgs,
 } from "./policy.js";
 import { attributionFields, resolveTriggerUser } from "./attribution.js";
 
@@ -1130,6 +1132,36 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logError(log, "exec_metabase_error", message, thorIds(req));
+      res.status(500).json({ stdout: "", stderr: message, exitCode: 1 });
+    }
+  });
+
+  app.post("/exec/drata", async (req, res) => {
+    try {
+      const { args } = req.body ?? {};
+
+      const argsError = validateDrataArgs(args);
+      if (argsError) {
+        res.status(400).json({ stdout: "", stderr: argsError, exitCode: 1 });
+        return;
+      }
+
+      if (args[0] === "--help" || args[0] === "-h") {
+        res.json({
+          stdout: "Usage: drata api GET /public/v2/<path>\nOnly read-only GET requests under /public/v2/ are permitted.\n",
+          stderr: "",
+          exitCode: 0,
+        });
+        return;
+      }
+
+      const path = args[2];
+      logInfo(log, "exec_drata", { method: "GET", path, ...thorIds(req) });
+      const result = await drataApiGet(path);
+      res.json({ stdout: JSON.stringify(result, null, 2), stderr: "", exitCode: 0 });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logError(log, "exec_drata_error", message, thorIds(req));
       res.status(500).json({ stdout: "", stderr: message, exitCode: 1 });
     }
   });

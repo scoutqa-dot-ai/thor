@@ -75,6 +75,7 @@ export type UserRecord = z.infer<typeof UserRecordSchema>;
 
 export interface ProxyUpstream {
   url: string;
+  transport?: "streamable-http" | "kali-api";
   headers?: Record<string, string>;
 }
 

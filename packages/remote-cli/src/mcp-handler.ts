@@ -16,6 +16,7 @@ import {
   isProxyName,
   getRunnerBaseUrl,
   ApprovalRequiredEventPayloadSchema,
+  interpolateEnv,
   interpolateHeaders,
   logError,
   logInfo,
@@ -259,7 +260,8 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   async function connectInstance(name: string, proxyDef: ProxyConfig): Promise<ProxyInstance> {
     const interpolatedHeaders = interpolateHeaders(proxyDef.upstream.headers);
     const upstreamConfig = {
-      url: proxyDef.upstream.url,
+      url: interpolateEnv(proxyDef.upstream.url),
+      transport: proxyDef.upstream.transport,
       headers: interpolatedHeaders,
     };
 
@@ -298,7 +300,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       }, delay);
     }
 
-    logInfo(log, "connecting_upstream", { name, url: proxyDef.upstream.url });
+    logInfo(log, "connecting_upstream", { name, url: upstreamConfig.url });
     const upstream = await connectUpstreamFn(name, upstreamConfig, () => scheduleReconnect(1));
 
     const allToolNames = upstream.tools.map((tool) => tool.name);

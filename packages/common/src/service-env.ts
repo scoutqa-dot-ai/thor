@@ -106,6 +106,17 @@ export function loadMetabaseEnv(env: EnvSource = process.env) {
   };
 }
 
+export function loadDrataEnv(env: EnvSource = process.env) {
+  return {
+    tokenUrl: envBaseUrl(env, "DRATA_OAUTH_TOKEN_URL"),
+    clientId: envString(env, "DRATA_CLIENT_ID"),
+    clientSecret: envString(env, "DRATA_CLIENT_SECRET"),
+    audience: envString(env, "DRATA_AUDIENCE"),
+    scopes: envString(env, "DRATA_SCOPES"),
+    apiBaseUrl: envBaseUrl(env, "DRATA_API_BASE_URL"),
+  };
+}
+
 export function loadGitHubAppAuthEnv(env: EnvSource = process.env) {
   return {
     appId: envString(env, "GITHUB_APP_ID"),
