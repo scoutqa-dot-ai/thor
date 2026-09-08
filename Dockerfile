@@ -94,6 +94,7 @@ RUN apt-get update \
 COPY --from=opencode-cli-build /app/packages/opencode-cli/dist/remote-cli.mjs /usr/local/bin/remote-cli.mjs
 COPY docker/opencode/bin/git /usr/local/bin/git
 COPY docker/opencode/bin/gh /usr/local/bin/gh
+COPY --chmod=755 docker/opencode/bin/gws /usr/local/bin/gws
 COPY docker/opencode/bin/scoutqa /usr/local/bin/scoutqa
 COPY docker/opencode/bin/ldcli /usr/local/bin/ldcli
 COPY docker/opencode/bin/aws /usr/local/bin/aws
@@ -126,6 +127,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
 RUN npm i -g @scoutqa/cli@latest @launchdarkly/ldcli@2.2.0
+RUN npm i -g @googleworkspace/cli@0.22.5 && gws --version
 # AWS CLI v2 (official installer; uname -m maps directly to AWS's arch names).
 # Pinned to a specific release for reproducible builds; override with
 # --build-arg AWSCLI_VERSION=x.y.z. Versions: https://github.com/aws/aws-cli/blob/v2/CHANGELOG.rst
@@ -146,7 +148,9 @@ COPY packages/remote-cli/bin/git /usr/local/lib/thor/bin/git
 COPY packages/remote-cli/bin/gh /usr/local/lib/thor/bin/gh
 COPY packages/remote-cli/bin/git-askpass /usr/local/lib/thor/bin/git-askpass
 RUN chmod +x /usr/local/lib/thor/bin/git /usr/local/lib/thor/bin/gh /usr/local/lib/thor/bin/git-askpass
-RUN mkdir -p /var/lib/remote-cli/github-app/cache && chown -R thor:thor /var/lib/remote-cli
+RUN mkdir -p /var/lib/remote-cli/github-app/cache /var/lib/remote-cli/gws \
+    && chown -R thor:thor /var/lib/remote-cli \
+    && chmod 700 /var/lib/remote-cli/gws
 USER thor
 RUN mkdir -p /workspace/repos
 WORKDIR /workspace/repos

@@ -63,6 +63,10 @@ jobs:
       LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
       LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
       # Fakes: services not exercised by e2e, but referenced at compose startup.
+      # Workspace is optional; deterministic gws integration uses local fixtures.
+      GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: ""
+      GOOGLE_WORKSPACE_CLI_CONFIG_DIR: /var/lib/remote-cli/gws
+      GOOGLE_WORKSPACE_PROJECT_ID: ""
       RUNNER_BASE_URL: http://localhost:3000
       THOR_E2E_TEST_HELPERS: "1"
       VOUCH_GOOGLE_CLIENT_ID: ci-fake

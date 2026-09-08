@@ -12,6 +12,8 @@ import type { ExecResult } from "@thor/common";
 
 export interface ExecCommandOptions {
   env?: NodeJS.ProcessEnv;
+  /** Replace the parent environment for integrations that must not inherit unrelated secrets. */
+  envMode?: "merge" | "replace";
   maxBuffer?: number;
   stdin?: string;
 }
@@ -34,7 +36,11 @@ export function execCommand(
       {
         cwd,
         maxBuffer,
-        ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
+        ...(options.envMode === "replace"
+          ? { env: options.env ?? {} }
+          : options.env
+            ? { env: { ...process.env, ...options.env } }
+            : {}),
       },
       (err, stdout, stderr) => {
         resolve({

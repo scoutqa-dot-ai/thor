@@ -38,6 +38,9 @@ services:
       - LD_BASE_URI=${LD_BASE_URI:-}
       - LD_PROJECT=${LD_PROJECT:-}
       - LD_ENVIRONMENT=${LD_ENVIRONMENT:-}
+      - GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=${GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE:-}
+      - GOOGLE_WORKSPACE_CLI_CONFIG_DIR=${GOOGLE_WORKSPACE_CLI_CONFIG_DIR:-/var/lib/remote-cli/gws}
+      - GOOGLE_WORKSPACE_PROJECT_ID=${GOOGLE_WORKSPACE_PROJECT_ID:-}
       - DAYTONA_API_KEY=${DAYTONA_API_KEY:-}
       - DAYTONA_API_URL=${DAYTONA_API_URL:-https://app.daytona.io/api}
       - DAYTONA_SNAPSHOT=${DAYTONA_SNAPSHOT:-}
@@ -48,6 +51,7 @@ services:
       - ./docker-volumes/home/thor:/home/thor
       - ./docker-volumes/workspace:/workspace
       - ./docker-volumes/github-app:/var/lib/remote-cli/github-app
+      - ./docker-volumes/google-workspace:/etc/thor/google-workspace:ro
       - shared-tmp:/tmp
     healthcheck:
       test:

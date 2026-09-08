@@ -21,6 +21,8 @@ import {
   type ConfigLoader,
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.ts";
+import { GwsService } from "./gws.ts";
+import { parseGwsArgs } from "./policy-gws.ts";
 import { createMcpService, type McpServiceDeps } from "./mcp-handler.ts";
 import { createApprovalService } from "./approval-service.ts";
 import {
@@ -396,6 +398,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   const appEnv = config.appEnv ?? loadRemoteCliAppEnv();
   const envConfig = config.env;
   const internalSecret = appEnv.thorInternalSecret;
+  const gws = new GwsService(process.env);
   const getConfig = config.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
   const mcpConfig: McpServiceDeps = {
     isProduction: appEnv.isProduction,
@@ -752,6 +755,24 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       logError(log, "exec_sandbox_error", message, thorIds(req));
 
       res.status(500).json({ stdout: "", stderr: message, exitCode: 1 });
+    }
+  });
+
+  app.post("/exec/gws", async (req, res) => {
+    const parsed = parseGwsArgs(req.body?.args);
+    if (!parsed.ok) {
+      logInfo(log, "exec_gws_denied", thorIds(req));
+      res.status(400).json({ stdout: "", stderr: parsed.error.message, exitCode: 1 });
+      return;
+    }
+    const fields = { operation: parsed.command.operation, ...thorIds(req) };
+    try {
+      const response = await gws.execute(parsed.command);
+      logInfo(log, "exec_gws", { ...fields, status: response.status, exitCode: response.result.exitCode });
+      res.status(response.status).json(response.result);
+    } catch {
+      logError(log, "exec_gws_error", "Unexpected Google Workspace execution failure", fields);
+      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
     }
   });
 

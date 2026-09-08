@@ -57,3 +57,4 @@ Exit: isolated container checks and required push workflows pass; PR opened. Liv
 ## Verification record
 
 - Phase 1: 57 policy tests pass; workspace typecheck passes. Reviewed upstream v0.22.5 argument parsing, auth, executor, Sheets helper, and discovery cache behavior.
+- Phase 2: 75 focused policy/HTTP/subprocess/exec tests pass; workspace typecheck passes. Credential files are checked without reading their contents. The existing subprocess helper gained an explicit replacement environment mode so gws cannot inherit unrelated Thor secrets. Config defaults to `/var/lib/remote-cli/gws`; `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`, `GOOGLE_WORKSPACE_CLI_CONFIG_DIR`, and optional `GOOGLE_WORKSPACE_PROJECT_ID` are documented in compose, env example, README, deployment docs, and Core E2E env.

@@ -73,6 +73,7 @@ Thor is an internal AI teammate for engineering and product work; it is not mean
 - **Slack** — [`docs/slack.md`](docs/slack.md). Events API intake, signing-secret verification, per-channel repo override, app manifest.
 - **GitHub App** — [`docs/github.md`](docs/github.md). Webhook intake, App permissions and event subscriptions, installation IDs, bot commit identity, CI wake gate.
 - **Daytona sandboxes** — [`docs/daytona.md`](docs/daytona.md). On-demand cloud sandboxes for project builds/tests/lints. Custom snapshot publishing.
+- **Google Workspace** — [`docs/google-workspace.md`](docs/google-workspace.md). Read-only Drive, Docs, and Sheets through `gws`; dedicated service-account setup.
 - **Outbound HTTP(S) (mitmproxy)** — [`docs/feat/security-model.md`](docs/feat/security-model.md) Layer 1a. Routing path, built-in defaults (Atlassian/Slack/OpenAI), custom credential rules.
 
 Runtime integration paths:
@@ -87,6 +88,7 @@ Runtime integration paths:
 | Slack Web API    | `gateway` + `remote-cli` + OpenCode over mitmproxy | Bot token             | Mentions, progress, approval cards, thread reads/writes |
 | LaunchDarkly     | `remote-cli /exec/ldcli`                           | Access token          | Read-only feature flag inspection                       |
 | Postgres (psql)  | `remote-cli /exec/psql`                            | Per-profile DB creds  | Read-only Postgres access by database alias             |
+| Google Workspace | `remote-cli /exec/gws` | Service-account key file | Read-only Drive, Docs, and Sheets |
 
 Common usage patterns:
 
@@ -134,6 +136,14 @@ Integration-specific env vars live in each integration's doc. MCP integration cr
 | `VOUCH_ALLOWED_EMAIL_DOMAINS`       | No       | `compose -> vouch`                          | Rendered into Vouch's `VOUCH_DOMAINS`; comma-separated email domains, default `scoutqa.cc`                                                                                                                            |
 | `VOUCH_CALLBACK_URL`                | No       | `vouch`                                     | OAuth callback URL                                                                                                                                                                                                    |
 | `VOUCH_COOKIE_DOMAIN`               | No       | `vouch`                                     | Cookie domain                                                                                                                                                                                                         |
+
+Google Workspace configuration (global identity, not profile-scoped):
+
+| Variable | Required | Service | Purpose |
+| --- | --- | --- | --- |
+| `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` | For Workspace reads | `remote-cli` only | Container path to service-account JSON under `/etc/thor/google-workspace`; unset disables reads |
+| `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | No | `remote-cli` only | Private writable config/token/discovery directory; default `/var/lib/remote-cli/gws`, never shared with OpenCode |
+| `GOOGLE_WORKSPACE_PROJECT_ID` | No | `remote-cli` only | Optional upstream GCP quota/billing project override |
 
 ### Workspace config (`thor.json`)
 
