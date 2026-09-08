@@ -41,6 +41,9 @@ jobs:
       # GitHub/Jira content, so a local fake satisfies compose/startup checks.
       RUNNER_BASE_URL: http://localhost:3000
       # Fakes: services not exercised by sandbox e2e, but referenced at compose startup.
+      GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: ""
+      GOOGLE_WORKSPACE_CLI_CONFIG_DIR: /var/lib/remote-cli/gws
+      GOOGLE_WORKSPACE_PROJECT_ID: ""
       SLACK_BOT_TOKEN: ci-fake
       SLACK_BOT_USER_ID: U000000000
       SLACK_DEFAULT_REPO: ci-fake

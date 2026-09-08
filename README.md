@@ -78,17 +78,17 @@ Thor is an internal AI teammate for engineering and product work; it is not mean
 
 Runtime integration paths:
 
-| Integration      | Path                                               | Auth                  | Notes                                                   |
-| ---------------- | -------------------------------------------------- | --------------------- | ------------------------------------------------------- |
-| Git / GitHub CLI | `remote-cli /exec/git`, `/exec/gh`                 | GitHub App token      | Repo-scoped worktree edits                              |
-| Atlassian MCP    | `remote-cli /exec/mcp`                             | Auth header           | Read + approved writes                                  |
-| PostHog MCP      | `remote-cli /exec/mcp`                             | API key               | Read + approved writes                                  |
-| Grafana MCP      | `remote-cli /exec/mcp`                             | Service account token | Logs and observability                                  |
-| Langfuse MCP     | `remote-cli /exec/mcp`                             | API key pair          | Read-only LLM observability queries                     |
-| Slack Web API    | `gateway` + `remote-cli` + OpenCode over mitmproxy | Bot token             | Mentions, progress, approval cards, thread reads/writes |
-| LaunchDarkly     | `remote-cli /exec/ldcli`                           | Access token          | Read-only feature flag inspection                       |
-| Postgres (psql)  | `remote-cli /exec/psql`                            | Per-profile DB creds  | Read-only Postgres access by database alias             |
-| Google Workspace | `remote-cli /exec/gws` | Service-account key file | Read-only Drive, Docs, and Sheets |
+| Integration      | Path                                               | Auth                     | Notes                                                   |
+| ---------------- | -------------------------------------------------- | ------------------------ | ------------------------------------------------------- |
+| Git / GitHub CLI | `remote-cli /exec/git`, `/exec/gh`                 | GitHub App token         | Repo-scoped worktree edits                              |
+| Atlassian MCP    | `remote-cli /exec/mcp`                             | Auth header              | Read + approved writes                                  |
+| PostHog MCP      | `remote-cli /exec/mcp`                             | API key                  | Read + approved writes                                  |
+| Grafana MCP      | `remote-cli /exec/mcp`                             | Service account token    | Logs and observability                                  |
+| Langfuse MCP     | `remote-cli /exec/mcp`                             | API key pair             | Read-only LLM observability queries                     |
+| Slack Web API    | `gateway` + `remote-cli` + OpenCode over mitmproxy | Bot token                | Mentions, progress, approval cards, thread reads/writes |
+| LaunchDarkly     | `remote-cli /exec/ldcli`                           | Access token             | Read-only feature flag inspection                       |
+| Postgres (psql)  | `remote-cli /exec/psql`                            | Per-profile DB creds     | Read-only Postgres access by database alias             |
+| Google Workspace | `remote-cli /exec/gws`                             | Service-account key file | Read-only Drive, Docs, and Sheets                       |
 
 Common usage patterns:
 
@@ -139,11 +139,11 @@ Integration-specific env vars live in each integration's doc. MCP integration cr
 
 Google Workspace configuration (global identity, not profile-scoped):
 
-| Variable | Required | Service | Purpose |
-| --- | --- | --- | --- |
-| `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` | For Workspace reads | `remote-cli` only | Container path to service-account JSON under `/etc/thor/google-workspace`; unset disables reads |
-| `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | No | `remote-cli` only | Private writable config/token/discovery directory; default `/var/lib/remote-cli/gws`, never shared with OpenCode |
-| `GOOGLE_WORKSPACE_PROJECT_ID` | No | `remote-cli` only | Optional upstream GCP quota/billing project override |
+| Variable                                | Required            | Service           | Purpose                                                                                                          |
+| --------------------------------------- | ------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` | For Workspace reads | `remote-cli` only | Container path to service-account JSON under `/etc/thor/google-workspace`; unset disables reads                  |
+| `GOOGLE_WORKSPACE_CLI_CONFIG_DIR`       | No                  | `remote-cli` only | Private writable config/token/discovery directory; default `/var/lib/remote-cli/gws`, never shared with OpenCode |
+| `GOOGLE_WORKSPACE_PROJECT_ID`           | No                  | `remote-cli` only | Optional upstream GCP quota/billing project override                                                             |
 
 ### Workspace config (`thor.json`)
 

@@ -768,7 +768,11 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     const fields = { operation: parsed.command.operation, ...thorIds(req) };
     try {
       const response = await gws.execute(parsed.command);
-      logInfo(log, "exec_gws", { ...fields, status: response.status, exitCode: response.result.exitCode });
+      logInfo(log, "exec_gws", {
+        ...fields,
+        status: response.status,
+        exitCode: response.result.exitCode,
+      });
       res.status(response.status).json(response.result);
     } catch {
       logError(log, "exec_gws_error", "Unexpected Google Workspace execution failure", fields);

@@ -5,6 +5,8 @@ on:
     paths:
       - ".github/workflows/core-e2e.yml"
       - "scripts/test-e2e.sh"
+      - "scripts/test-gws-e2e.sh"
+      - "scripts/fixtures/gws-*.mjs"
       - "scripts/test-create-jira-approval-e2e.sh"
       - "scripts/test-opencode-e2e.sh"
       - "packages/**"
@@ -229,6 +231,12 @@ jobs:
 
       - name: Bring up compose stack for e2e
         run: docker compose up --build --wait -d
+
+      - name: Verify Google Workspace CLI with isolated fixtures
+        run: |
+          ./scripts/test-gws-e2e.sh \
+            "$(docker inspect --format '{{.Image}}' "$(docker compose ps -q remote-cli)")" \
+            "$(docker inspect --format '{{.Image}}' "$(docker compose ps -q opencode)")"
 
       - name: Run e2e test
         env:

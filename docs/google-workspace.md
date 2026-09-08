@@ -36,6 +36,8 @@ For a live content check, share a test Doc and Sheet with that identity, then ru
 
 The integration is optional. With the credential variable unset, API reads return an actionable configuration error while help/schema remain available. Never place keys in `/workspace`, shared `/tmp`, agent memory, or a committed file. Vouch Google SSO credentials are unrelated and cannot authenticate this integration.
 
+Workspace uses one global service identity, not profile-scoped credentials. Share only resources appropriate for all Thor sessions; do not use this integration for per-profile or per-user data isolation.
+
 ## Private storage and execution
 
 - `./docker-volumes/google-workspace` is mounted **read-only into remote-cli only**, at `/etc/thor/google-workspace`.

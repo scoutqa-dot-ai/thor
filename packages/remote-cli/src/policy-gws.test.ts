@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseGwsArgs } from "./policy-gws.js";
+import { parseGwsArgs } from "./policy-gws.ts";
 
 describe("Google Workspace read policy", () => {
   it.each([

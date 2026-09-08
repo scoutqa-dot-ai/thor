@@ -121,13 +121,19 @@ ENV OPENCODE_CLIENT=thor
 COPY --chown=thor:thor docker/opencode/config/ /home/thor/.config/opencode/
 ENTRYPOINT ["opencode"]
 
+# Select upstream's static musl release: its GNU build requires glibc 2.39,
+# newer than the Debian base used by Thor. npm verifies release checksums.
+FROM node:24-alpine AS gws-binary
+RUN npm i -g @googleworkspace/cli@0.22.5 && gws --version
+
 FROM base AS remote-cli-tools
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl openssh-client bubblewrap postgresql-client && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
 RUN npm i -g @scoutqa/cli@latest @launchdarkly/ldcli@2.2.0
-RUN npm i -g @googleworkspace/cli@0.22.5 && gws --version
+COPY --from=gws-binary /usr/local/lib/node_modules/@googleworkspace/cli/bin/gws /usr/local/bin/gws
+RUN gws --version
 # AWS CLI v2 (official installer; uname -m maps directly to AWS's arch names).
 # Pinned to a specific release for reproducible builds; override with
 # --build-arg AWSCLI_VERSION=x.y.z. Versions: https://github.com/aws/aws-cli/blob/v2/CHANGELOG.rst
