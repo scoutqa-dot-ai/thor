@@ -44,8 +44,8 @@ services:
       - DRATA_SCOPES=${DRATA_SCOPES:-}
       - DRATA_API_BASE_URL=${DRATA_API_BASE_URL:-}
       - KALI_API_BASE_URL=${KALI_API_BASE_URL:-}
-      - GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=${GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE:-/var/lib/remote-cli/google-workspace/credentials/service-account.json}
-      - GOOGLE_WORKSPACE_CLI_CONFIG_DIR=${GOOGLE_WORKSPACE_CLI_CONFIG_DIR:-/var/lib/remote-cli/google-workspace/config}
+      - GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=${GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE:-}
+      - GOOGLE_WORKSPACE_CLI_CONFIG_DIR=${GOOGLE_WORKSPACE_CLI_CONFIG_DIR:-/var/lib/remote-cli/gws}
       - GOOGLE_WORKSPACE_PROJECT_ID=${GOOGLE_WORKSPACE_PROJECT_ID:-}
       - DAYTONA_API_KEY=${DAYTONA_API_KEY:-}
       - DAYTONA_API_URL=${DAYTONA_API_URL:-https://app.daytona.io/api}
@@ -55,8 +55,7 @@ services:
       - ./docker-volumes/home/thor:/home/thor
       - ./docker-volumes/workspace:/workspace
       - ./docker-volumes/github-app:/var/lib/remote-cli/github-app
-      - ./docker-volumes/google-workspace/credentials:/var/lib/remote-cli/google-workspace/credentials:ro
-      - google-workspace-config:/var/lib/remote-cli/google-workspace/config
+      - ./docker-volumes/google-workspace:/etc/thor/google-workspace:ro
       - shared-tmp:/tmp
     depends_on:
       grafana-mcp:
@@ -342,5 +341,4 @@ services:
         condition: service_healthy
 
 volumes:
-  google-workspace-config:
   shared-tmp:

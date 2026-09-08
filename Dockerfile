@@ -98,7 +98,7 @@ COPY docker/opencode/bin/scoutqa /usr/local/bin/scoutqa
 COPY docker/opencode/bin/langfuse /usr/local/bin/langfuse
 COPY docker/opencode/bin/metabase /usr/local/bin/metabase
 COPY docker/opencode/bin/ldcli /usr/local/bin/ldcli
-COPY docker/opencode/bin/gws /usr/local/bin/gws
+COPY --chmod=755 docker/opencode/bin/gws /usr/local/bin/gws
 COPY docker/opencode/bin/drata /usr/local/bin/drata
 COPY docker/opencode/bin/sandbox /usr/local/bin/sandbox
 COPY docker/opencode/bin/rg /usr/local/bin/rg
@@ -156,13 +156,15 @@ COPY packages/remote-cli/bin/git /usr/local/lib/thor/bin/git
 COPY packages/remote-cli/bin/gh /usr/local/lib/thor/bin/gh
 COPY packages/remote-cli/bin/git-askpass /usr/local/lib/thor/bin/git-askpass
 RUN chmod +x /usr/local/lib/thor/bin/git /usr/local/lib/thor/bin/gh /usr/local/lib/thor/bin/git-askpass
-RUN mkdir -p /var/lib/remote-cli/github-app/cache /var/lib/remote-cli/google-workspace/config && chown -R thor:thor /var/lib/remote-cli
+RUN mkdir -p /var/lib/remote-cli/github-app/cache /var/lib/remote-cli/gws \
+    && chown -R thor:thor /var/lib/remote-cli \
+    && chmod 700 /var/lib/remote-cli/gws
 USER thor
 RUN mkdir -p /workspace/repos
 WORKDIR /workspace/repos
 # Prepend Thor wrappers to PATH so they shadow /usr/bin/git and /usr/bin/gh
 ENV PATH="/usr/local/lib/thor/bin:$PATH"
-ENV GOOGLE_WORKSPACE_CLI_CONFIG_DIR=/var/lib/remote-cli/google-workspace/config
+ENV GOOGLE_WORKSPACE_CLI_CONFIG_DIR=/var/lib/remote-cli/gws
 ENV PORT=3004
 EXPOSE 3004
 ENTRYPOINT ["/entrypoint.sh"]

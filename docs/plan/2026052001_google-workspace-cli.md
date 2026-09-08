@@ -2,159 +2,70 @@
 
 ## Goal
 
-Give Thor read-only access to Google Workspace through the `gws` CLI so agents can inspect Google Workspace data from an OpenCode session without receiving Google credentials or unrestricted write capability.
+Give Thor read-only Google Drive, Docs, and Sheets access through `gws`, without putting Google credentials in OpenCode.
 
 ## Scope
 
-- Add a `gws` wrapper in the OpenCode container that forwards to `remote-cli`.
-- Add a server-side `/exec/gws` handler in `remote-cli`.
-- Install/pin the upstream `gws` release artifact in the remote-cli image.
-- Enforce read-only policy in Thor before invoking `gws`.
-- Document authentication, deployment configuration, and agent-facing usage.
+- Pin upstream `@googleworkspace/cli@0.22.5` in remote-cli; install only an HTTP wrapper in OpenCode.
+- Exact read-method and flag allowlists at `/exec/gws`, structured output, at most 10 pages per auto-pagination call.
+- Dedicated service-account file mounted read-only into remote-cli, private config/token/discovery cache.
+- Bundle one Thor-specific skill for finding files, reading documents (including tabs), and reading spreadsheet ranges.
+- Operator setup documentation and deterministic tests without Google credentials.
 
-Out of scope for v1:
+## Out of scope
 
-- Mutating Google Workspace actions such as send/create/update/delete/share/upload.
-- Agent-visible `gws auth login`, `gws auth setup`, or credential export/import flows.
-- Per-request impersonation or domain-wide delegation for user mailbox/calendar access.
+Writes, approvals for writes, uploads/downloads/exports, auth commands, user OAuth setup inside Thor, domain-wide delegation, Calendar/Gmail and other APIs. Live Google verification requires an operator-provided identity and shared fixtures; never create or inspect real credentials for tests.
 
 ## Phases
 
-### Phase 1 — Policy and auth shape
+### Phase 1 — Read policy
 
-- Decide which Google principal Thor uses.
-- Decide which services and read methods are allowed in v1.
-- Mount the service-account credential file into `remote-cli` only.
-- Set `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` to the mounted file.
-- Set `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` to a remote-cli-owned cache directory so token cache is separate from the raw key.
-- Treat Gmail/user-mailbox access as available only when the configured service identity can actually read it.
+Implement `parseGwsArgs` and behavior tests. Permit help for allowed command prefixes, schemas for exact read methods, inline JSON params, read-only Sheets request bodies, and `sheets +read`. Reconstruct canonical arguments, force JSON, and bound pagination to 1–10 pages.
 
-Exit: the boundary is precise enough to implement and test.
+Exit: policy tests prove allowed reads and reject mutations, alternate services, credential/file input, media output, and parser-bypass shapes.
 
-### Phase 2 — Remote CLI endpoint and wrapper
+### Phase 2 — Runtime, skill, and deployment
 
-- Add `validateGwsArgs` for the chosen read-only command surface.
-- Permit `--page-all` only with an absent or bounded `--page-limit`; enforce max 10 pages.
-- Force API calls to JSON output unless the command is help/schema.
-- Add `POST /exec/gws` in `packages/remote-cli/src/index.ts`; ignore request cwd and execute from `/workspace`.
-- Add `docker/opencode/bin/gws` wrapper and route support through `remote-cli.mjs`.
-- Install a pinned `gws` version in the remote-cli image.
+Add service execution, HTTP route, image install, wrapper, private mounts/config, deployment docs, and the agent skill. Run gws from its private config directory rather than request cwd. Reuse the existing ExecResult/client contract. Test the HTTP boundary with a real inert subprocess, including disabled/missing-credential cases.
 
-Exit: `gws --help` and one allowed read command work through OpenCode; denied write commands fail before invoking `gws`.
+Exit: local tests and typecheck pass; configured calls reach the subprocess, denied calls do not; credentials remain remote-cli-only; operators can follow setup instructions.
 
-### Phase 3 — Agent docs and deployment docs
+### Phase 3 — Integration verification and ship
 
-- Add one bundled Thor-specific skill at `docker/opencode/config/skills/gws/SKILL.md` for supported command shapes.
-- Update Docker Compose, `.env.example`, README Deployment Configuration, and examples for `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`, `GOOGLE_WORKSPACE_CLI_CONFIG_DIR`, and optional `GOOGLE_WORKSPACE_PROJECT_ID` on `remote-cli` only.
-- Document read-only constraints and denial behavior.
+Add credential-free container integration checks with the pinned real gws binary and local discovery/API fixtures. Verify OpenCode wrapper routing, help/schema, Drive/Docs/Sheets reads, output/exit propagation, denial-before-execution, and credential isolation. Run full local checks, push branch, wait for Unit Tests and Core E2E, open PR only after required checks pass.
 
-Exit: operators can configure credentials and agents know how to use the allowed read-only surface.
+Exit: isolated container checks and required push workflows pass; PR opened. Live Google access is explicitly a post-deploy operator check.
 
-### Phase 4 — Verification and ship
+## Decision log
 
-- Add unit tests for policy allow/deny cases.
-- Add targeted integration verification for the wrapper route with a fake or non-secret credential path where possible.
-- Run the relevant local tests.
-- Push branch, wait for required checks, then open PR.
+| Decision           | Choice                                                                 | Rationale                                                                                                                                                                                                            |
+| ------------------ | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity           | Dedicated service account, resources shared as Viewer                  | Auditable shared identity; no employee token or impersonation. Upstream selects scopes from discovery, so the Thor allowlist and Google resource ACLs—not an assumed read-only OAuth scope—enforce read-only access. |
+| Requested services | Drive, Docs, Sheets only                                               | Narrows the earlier draft's Calendar/Gmail scope to the user's request.                                                                                                                                              |
+| Version            | 0.22.5                                                                 | Published npm version inspected against upstream tag v0.22.5.                                                                                                                                                        |
+| Policy             | Exact methods and flags; canonical argv from parsed input              | Discovery is dynamic. Unknown methods/flags fail closed instead of relying on verbs or help flags.                                                                                                                   |
+| Exports            | Deny all exports and `alt` except `json`                               | Upstream executor writes non-JSON responses to `download.<ext>` even without an output flag. Docs/Sheets APIs provide structured content reads. Corrects the draft's stdout-export assumption.                       |
+| Working directory  | Private Google config directory, not `/workspace`                      | Upstream loads dotenv from cwd/ancestors. Repo-controlled `.env` and discovery/token caches must not affect authenticated requests. Config directory is never mounted in OpenCode or shared `/tmp`.                  |
+| Configuration      | Optional credential file; private cache default; optional project ID   | Unconfigured integration fails clearly without preventing other Thor integrations from starting. Every deployment/env surface is updated together.                                                                   |
+| Pagination         | Max 10 pages, JSON/NDJSON                                              | Explicit product boundary for bounded Workspace reads; no added output cap or timeout duplicating OpenCode.                                                                                                          |
+| Logging            | Allowlisted operation, outcome, session/call IDs only                  | Queries, document content, credentials, and raw argv are not audit-log fields.                                                                                                                                       |
+| Ownership          | Pure policy parser plus cohesive gws execution owner                   | Existing generic execCommand owns subprocess mechanics; gws owns config/credential availability. No provider adapter or changes to the already-generic HTTP wrapper client are needed.                               |
+| Parser errors      | Typed tagged errors, translated to existing ExecResult                 | Keep malformed input out of execution while preserving Thor's endpoint contract.                                                                                                                                     |
+| Skill              | One focused Thor skill rather than wholesale upstream skills           | Upstream skills include writes and interactive auth unsupported by Thor. Standard discovery details remain in upstream help/schema.                                                                                  |
+| Tests              | Policy cases, real HTTP/subprocess, pinned CLI with local HTTP fixture | No module mocks or Google secrets. Finite allowlist and adversarial flag cases are more useful here than a new property-testing dependency.                                                                          |
 
-Exit: tests and push checks are green; PR is open.
+### Container compatibility correction
 
-## Decision Log
+The first remote-cli build failed because upstream's GNU release requires `GLIBC_2.39` while Thor's Debian base provides 2.36. Install the same pinned npm version in an Alpine download stage (upstream selects and checksum-verifies its static musl release), then copy only the binary into remote-cli. This avoids changing the base of every service or compiling Rust in Thor's build. Verify `gws --version` in the final tool stage, not merely successful npm installation.
 
-| Decision                    | Choice                                                                              | Rationale                                                                                                                                                                                                                       |
-| --------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v1 safety boundary          | Read-only first                                                                     | Google Workspace contains sensitive personal and company data; mutating actions need a separate approval model and narrower use-case review.                                                                                    |
-| Google identity             | Dedicated service identity                                                          | A service account / Workspace app identity is auditable, not tied to one employee, and keeps credentials server-side in `remote-cli`; operator OAuth credentials are only a fallback if admin setup blocks service-account use. |
-| v1 services                 | Drive, Docs, Sheets, Calendar, and Gmail                                            | These cover common engineering/product collaboration lookups while avoiding broader Admin/Directory/Classroom/Chat/Forms surfaces until a concrete use case exists.                                                             |
-| Policy shape                | Exact allowlist of read commands/methods                                            | `gws` is discovery-driven and can gain methods as Google changes APIs; exact allowlisting avoids accidentally permitting new mutating methods with unexpected names.                                                            |
-| v1 command allowlist        | Help/schema plus selected read methods for Drive, Docs, Sheets, Calendar, and Gmail | The allowlist covers metadata lookup, document/spreadsheet reads, calendar availability/event reads, and Gmail profile/message/thread/label reads while excluding writes and broader Workspace surfaces.                        |
-| File output/downloads       | Deny file writes and binary downloads in v1                                         | Keeping v1 stdout-only avoids path validation, cleanup, large binary output, and accidental PII-at-rest questions; controlled exports can be added later.                                                                       |
-| Schema/help visibility      | Limit to v1 allowed services/methods                                                | Agent-facing discovery should describe only usable surfaces; exposing schemas for denied APIs encourages failed calls and policy probing.                                                                                       |
-| Service identity visibility | Shared-with-Thor visibility only                                                    | A plain service account can reliably read resources available to that service identity; Gmail/user-mailbox reads may be unavailable without domain-wide delegation, which is deferred rather than replaced with human OAuth.    |
-| Credential location         | Host-mounted service-account key file, remote-cli only                              | A read-only file secret matches `gws` credential loading, avoids putting Google credentials in the OpenCode container, and keeps operational credentials out of git.                                                            |
-| Network path                | Direct outbound from remote-cli                                                     | The explicit command allowlist and `exec_gws` audit logs are the v1 control boundary; routing `gws` through mitmproxy can be revisited if HTTP-level enforcement is needed.                                                     |
-| Pagination                  | Allow bounded pagination with max 10 pages                                          | Multi-page reads are useful, but server-side policy should cap `--page-all` so read-only calls cannot dump unbounded Workspace data.                                                                                            |
-| Output format               | Force JSON for API calls                                                            | `gws` is agent-facing in Thor; structured JSON is safer and easier to consume reliably, while help/schema can keep their normal text output.                                                                                    |
-| Env var surface             | Explicit remote-cli-only Google Workspace env vars                                  | Credential path, config/cache dir, and optional project id are deployment concerns and should be documented in compose/env/README without exposing credentials to OpenCode.                                                     |
-| Config cache mount          | Named Docker volume for the writable `gws` config dir                               | The credential directory stays a read-only bind mount, while a named volume preserves cache state without host bind-mount ownership surprises for the non-root `remote-cli` user.                                               |
-| Agent-facing docs           | One Thor-specific `gws` skill                                                       | Upstream skills are rich but include writes and broader APIs; a focused Thor skill should list only the supported read-only surface and server-side constraints.                                                                |
-| Output size                 | No Thor-side output cap                                                             | OpenCode/harness truncation plus bounded pagination is the v1 boundary, matching Thor's existing policy to avoid duplicating harness output caps without a product-specific contract.                                           |
-| Auth commands               | Deny all agent-facing `gws auth` commands                                           | Operators configure credentials outside the agent; exposing auth commands invites interactive or credential-sensitive workflows inside OpenCode.                                                                                |
-| Dry-run                     | Deny `--dry-run` entirely                                                           | Help/schema provide safe introspection; v1 should expose actual read-only execution rather than write-request construction previews.                                                                                            |
-| Sanitization flags          | Deny `--sanitize` in v1                                                             | Workspace reads should not introduce a second Google service/config path; Thor can revisit sanitization separately if needed.                                                                                                   |
-| Cwd handling                | Ignore request cwd and run from `/workspace`                                        | Google Workspace is a global integration rather than repo-scoped, matching Metabase/Langfuse-style handlers.                                                                                                                    |
-| Availability                | Always install wrapper; document configuration dependency                           | The image stays simple and consistent, while the Thor-specific skill explains that calls require operator-configured Google credentials.                                                                                        |
-| Linux artifact              | Install the pinned static musl `gws` release binary                                 | The npm installer selects the glibc binary, and v0.22.5 requires `GLIBC_2.39` while `node:24-slim` currently provides Debian bookworm glibc 2.36; the upstream musl artifact is static and avoids a broad base-image upgrade.   |
-| ADR                         | Record the boundary in `docs/adr/0001-google-workspace-cli-boundary.md`             | Future readers should understand why Google Workspace access uses remote-cli, service identity, and an exact read-only allowlist instead of direct sandbox credentials or per-user OAuth.                                       |
+## Verification record
 
-## Open Questions
+- Phase 1: 57 policy tests pass; workspace typecheck passes. Reviewed upstream v0.22.5 argument parsing, auth, executor, Sheets helper, and discovery cache behavior.
+- Phase 2: 75 focused policy/HTTP/subprocess/exec tests pass; workspace typecheck passes. Credential files are checked without reading their contents. The existing subprocess helper gained an explicit replacement environment mode so gws cannot inherit unrelated Thor secrets. Config defaults to `/var/lib/remote-cli/gws`; `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`, `GOOGLE_WORKSPACE_CLI_CONFIG_DIR`, and optional `GOOGLE_WORKSPACE_PROJECT_ID` are documented in compose, env example, README, deployment docs, and Core E2E env.
+- Phase 3 local: both images build; isolated internal-network E2E passes using the real 0.22.5 binary, synthetic service-account token exchange, Drive/Docs/Sheets APIs, 10-page cap, policy denials, upstream error propagation, and private credential/cache isolation. Full suite: 752 tests across 45 files pass; workspace typecheck and build pass. GitHub verification pending.
+- Rebased onto current `main` (`2d6a5c6`), preserving its MCP/profile integrations, `.ts` imports, and exec stdin/EPIPE fixes. Revalidated: 939 tests across 53 files, workspace typecheck, both image builds, and the isolated gws E2E pass. Workspace remains a global shared identity, explicitly documented rather than implying profile isolation. Sandbox E2E env also explicitly leaves Google reads disabled. GitHub verification pending.
+- First GitHub Unit Tests run caught README table formatting introduced during conflict resolution. Applied formatting and added a server-side hostile workspace `.env` fixture so the container test models both sides of the shared-workspace boundary. Re-run required before PR creation.
 
-## V1 Command Allowlist
+### Local-test port onto add-mcp
 
-Discovery/help:
-
-- `gws --help`
-- `gws <allowed-service> --help`
-- `gws schema <allowed-service>.<allowed-resource>.<allowed-method>`
-
-Drive:
-
-- `gws drive about get`
-- `gws drive files get`
-- `gws drive files list`
-- `gws drive files export` only when it returns to stdout; `-o`/`--output` and binary downloads remain denied in v1
-- `gws drive drives get`
-- `gws drive drives list`
-- `gws drive permissions get`
-- `gws drive permissions list`
-- `gws drive comments get`
-- `gws drive comments list`
-- `gws drive replies get`
-- `gws drive replies list`
-- `gws drive revisions get`
-- `gws drive revisions list`
-
-Docs:
-
-- `gws docs documents get`
-
-Sheets:
-
-- `gws sheets spreadsheets get`
-- `gws sheets spreadsheets getByDataFilter`
-- `gws sheets spreadsheets values get`
-- `gws sheets spreadsheets values batchGet`
-- `gws sheets +read`
-
-Calendar:
-
-- `gws calendar calendarList get`
-- `gws calendar calendarList list`
-- `gws calendar calendars get`
-- `gws calendar events get`
-- `gws calendar events list`
-- `gws calendar events instances`
-- `gws calendar freebusy query`
-- `gws calendar settings get`
-- `gws calendar settings list`
-- `gws calendar +agenda`
-
-Gmail:
-
-- `gws gmail users getProfile`
-- `gws gmail users messages get`
-- `gws gmail users messages list`
-- `gws gmail users threads get`
-- `gws gmail users threads list`
-- `gws gmail users labels get`
-- `gws gmail users labels list`
-- `gws gmail +read`
-- `gws gmail +triage`
-
-## Exit Criteria
-
-- Thor exposes `gws` to the agent through `remote-cli`, not by direct credential access.
-- v1 permits only agreed read-only Google Workspace commands.
-- Google credentials are not present in the OpenCode container.
-- Denied write attempts fail with clear policy errors.
-- Deployment documentation covers setup and credential handling.
+The historical verification entries above describe development of the GWS feature. The rebuilt local-test applies that feature to add-mcp without importing its newer remote-main base. See `docs/plan/2026090802_local-test-add-mcp-base.md` for the current local integration and validation record. This port retains add-mcp's equivalent pinned, checksum-verified musl release download rather than the feature branch's Alpine download stage.

@@ -5,6 +5,9 @@ on:
     paths:
       - ".github/workflows/core-e2e.yml"
       - "scripts/test-e2e.sh"
+      - "scripts/test-gws-e2e.sh"
+      - "scripts/fixtures/gws-*.mjs"
+      - "Dockerfile"
       - "scripts/test-create-jira-approval-e2e.sh"
       - "scripts/test-opencode-e2e.sh"
       - "packages/**"
@@ -72,6 +75,10 @@ jobs:
       DRATA_SCOPES: read:ci
       DRATA_API_BASE_URL: http://localhost
       KALI_API_BASE_URL: http://localhost:5000
+      # GWS is tested with local fixtures, never live Google credentials.
+      GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: ""
+      GOOGLE_WORKSPACE_CLI_CONFIG_DIR: /var/lib/remote-cli/gws
+      GOOGLE_WORKSPACE_PROJECT_ID: ""
       RUNNER_BASE_URL: http://localhost:3000
       THOR_E2E_TEST_HELPERS: "1"
       VOUCH_GOOGLE_CLIENT_ID: ci-fake
@@ -156,6 +163,12 @@ jobs:
           ./scripts/mitmproxy-ca-init.sh
 
           docker compose up --build --wait -d gateway
+
+      - name: Verify Google Workspace CLI with isolated fixtures
+        run: |
+          ./scripts/test-gws-e2e.sh \
+            "$(docker inspect --format '{{.Image}}' "$(docker compose ps -q remote-cli)")" \
+            "$(docker inspect --format '{{.Image}}' "$(docker compose ps -q opencode)")"
 
       - name: Run e2e test
         env:

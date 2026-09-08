@@ -21,6 +21,8 @@ import {
   type ConfigLoader,
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.js";
+import { GwsService } from "./gws.js";
+import { parseGwsArgs } from "./policy-gws.js";
 import { resolveOwnerRepoFromRemote } from "./github-app-auth.js";
 import { createMcpService, type McpServiceDeps } from "./mcp-handler.js";
 import {
@@ -51,7 +53,6 @@ import {
   resolveGitArgs,
   validateCwd,
   validateGhArgs,
-  validateGwsArgs,
   validateLdcliArgs,
   validateLangfuseArgs,
   validateMetabaseArgs,
@@ -634,6 +635,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   const appEnv = config.appEnv ?? loadRemoteCliAppEnv();
   const envConfig = config.env;
   const internalSecret = appEnv.thorInternalSecret;
+  const gws = new GwsService(process.env);
   const getConfig = config.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
   const mcpService = createMcpService({
     isProduction: appEnv.isProduction,
@@ -1060,33 +1062,23 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   });
 
   app.post("/exec/gws", async (req, res) => {
+    const parsed = parseGwsArgs(req.body?.args);
+    if (!parsed.ok) {
+      logInfo(log, "exec_gws_denied", thorIds(req));
+      res.status(400).json({ stdout: "", stderr: parsed.error.message, exitCode: 1 });
+      return;
+    }
+    const fields = { operation: parsed.command.operation, ...thorIds(req) };
     try {
-      const { args } = req.body ?? {};
-
-      const argsError = validateGwsArgs(args);
-      if (argsError) {
-        res.status(400).json({ stdout: "", stderr: argsError, exitCode: 1 });
-        return;
-      }
-
-      const finalArgs = withGwsJsonFormat(args);
-
-      logInfo(log, "exec_gws", { args: finalArgs, ...thorIds(req) });
-      const result = await execCommand("gws", finalArgs, "/workspace", {
-        env: {
-          GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: process.env.GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE,
-          GOOGLE_WORKSPACE_CLI_CONFIG_DIR: process.env.GOOGLE_WORKSPACE_CLI_CONFIG_DIR,
-          GOOGLE_WORKSPACE_PROJECT_ID: process.env.GOOGLE_WORKSPACE_PROJECT_ID,
-        },
+      const response = await gws.execute(parsed.command);
+      logInfo(log, "exec_gws", {
+        ...fields,
+        status: response.status,
+        exitCode: response.result.exitCode,
       });
-      res.json(result);
-    } catch (err) {
-      logError(
-        log,
-        "exec_gws_error",
-        err instanceof Error ? err.message : String(err),
-        thorIds(req),
-      );
+      res.status(response.status).json(response.result);
+    } catch {
+      logError(log, "exec_gws_error", "Unexpected Google Workspace execution failure", fields);
       res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
     }
   });
@@ -1148,7 +1140,8 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
       if (args[0] === "--help" || args[0] === "-h") {
         res.json({
-          stdout: "Usage: drata api GET /public/v2/<path>\nOnly read-only GET requests under /public/v2/ are permitted.\n",
+          stdout:
+            "Usage: drata api GET /public/v2/<path>\nOnly read-only GET requests under /public/v2/ are permitted.\n",
           stderr: "",
           exitCode: 0,
         });
@@ -1281,22 +1274,6 @@ function hasLdcliOutputOverride(args: string[]): boolean {
     }
 
     return arg === "--output" && Boolean(args[index + 1]);
-  });
-}
-
-function withGwsJsonFormat(args: string[]): string[] {
-  if (isGwsHelpOrSchema(args) || hasGwsFormat(args)) return args;
-  return [...args, "--format", "json"];
-}
-
-function isGwsHelpOrSchema(args: string[]): boolean {
-  return args.includes("--help") || args.includes("-h") || args[0] === "schema";
-}
-
-function hasGwsFormat(args: string[]): boolean {
-  return args.some((arg, index) => {
-    if (arg.startsWith("--format=")) return true;
-    return arg === "--format" && Boolean(args[index + 1]);
   });
 }
 
