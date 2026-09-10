@@ -12,6 +12,7 @@ const SECRET_FIXTURE = fileURLToPath(
 
 describe("1Password browser stdio upstream", () => {
   afterEach(() => {
+    delete process.env.THOR_SECRET_LEAK;
     delete process.env.OP_SERVICE_ACCOUNT_TOKEN;
   });
 
