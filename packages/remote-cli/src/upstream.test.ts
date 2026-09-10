@@ -22,6 +22,7 @@ async function waitFor(condition: () => boolean, timeoutMs = 2_000): Promise<voi
 describe("connectUpstream (stdio transport)", () => {
   afterEach(() => {
     delete process.env.THOR_SECRET_LEAK;
+    delete process.env.OP_SERVICE_ACCOUNT_TOKEN;
   });
 
   it("spawns the child, lists its tools, passes config.env, and does not leak parent secrets", async () => {
@@ -47,6 +48,7 @@ describe("connectUpstream (stdio transport)", () => {
     }
   });
   it("delivers a one-shot child secret on fd 3 without adding it to the child env", async () => {
+    process.env.OP_SERVICE_ACCOUNT_TOKEN = "secret-fd-fixture";
     const { client, tools } = await connectUpstream("secret-stdio-test", {
       kind: "stdio",
       command: process.execPath,
