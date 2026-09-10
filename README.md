@@ -68,6 +68,7 @@ Thor is an internal AI teammate for engineering and product work; it is not mean
 - **Daytona sandboxes** — [`docs/daytona.md`](docs/daytona.md). On-demand cloud sandboxes for project builds/tests/lints. Custom snapshot publishing.
 - **Google Workspace** — [`docs/google-workspace.md`](docs/google-workspace.md). Read-only Drive, Docs, and Sheets through `gws`; dedicated service-account setup.
 - **Outbound HTTP(S) (mitmproxy)** — [`docs/feat/security-model.md`](docs/feat/security-model.md) Layer 1a. Routing path, built-in defaults (Atlassian/Slack/OpenAI), custom credential rules.
+- **1Password browser login** — [`docs/onepassword-browser.md`](docs/onepassword-browser.md). Approval-gated credential injection into an ephemeral local Chromium session.
 
 Runtime integration paths:
 
@@ -83,6 +84,7 @@ Runtime integration paths:
 | LaunchDarkly     | `remote-cli /exec/ldcli`                           | Access token             | Read-only feature flag inspection                       |
 | Metabase         | `remote-cli /exec/metabase`                        | API key                  | Read-only warehouse access                              |
 | Drata            | `remote-cli /exec/drata`                           | OAuth client credentials | Read-only Drata API access                              |
+| 1Password        | `remote-cli /exec/mcp`                             | Service-account token    | Approved one-item, one-origin browser login             |
 
 Common usage patterns:
 
@@ -121,6 +123,8 @@ Integration-specific env vars live in each integration's doc. Cross-cutting vars
 | `DRATA_SCOPES`                  | No       | `remote-cli`              | Space-separated Drata OAuth scopes                                                                   |
 | `DRATA_API_BASE_URL`            | No       | `remote-cli`              | Drata API base URL                                                                                   |
 | `KALI_API_BASE_URL`             | No       | `remote-cli`              | EC2-hosted Kali API server URL for the `mcp kali` tools                                              |
+| `OP_SERVICE_ACCOUNT_TOKEN`      | No       | `remote-cli`              | Read-only token for the browser broker; service-scoped injection only                                |
+| `ONEPASSWORD_BROWSER_CONFIG`    | No       | `remote-cli`              | Non-secret exact vault/item/origin/login policy; required with `OP_SERVICE_ACCOUNT_TOKEN`            |
 | `VOUCH_GOOGLE_CLIENT_ID`        | Yes      | `vouch`                   | Google OAuth client ID                                                                               |
 | `VOUCH_GOOGLE_CLIENT_SECRET`    | Yes      | `vouch`                   | Google OAuth client secret                                                                           |
 | `VOUCH_JWT_SECRET`              | Yes      | `vouch`                   | Session JWT signing secret                                                                           |

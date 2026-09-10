@@ -16,6 +16,7 @@ The docker network — gateway, runner, remote-cli, mitmproxy — is the trust b
 
 - **Ingress + Vouch.** `ingress` terminates TLS and delegates auth to Vouch. Vouch admits Google-authenticated users whose email domain matches `VOUCH_ALLOWED_EMAIL_DOMAINS`. The OpenCode SPA root and `/admin/` additionally require membership in `THOR_ADMIN_EMAILS`; `/runner/` viewer routes remain open to any allowed-domain user. Static OpenCode assets bypass Vouch for performance.
 - **Egress through mitmproxy.** All outbound HTTP(S) from OpenCode traverses mitmproxy. See Layer 1a for the routing path, built-in defaults, and custom rule format.
+- **Credentialed browser isolation.** The 1Password browser MCP runs as a `remote-cli`-owned stdio child inside `bwrap`; its local Chromium and service-account token are not present in OpenCode or Daytona. The child has no workspace or remote-cli state mounts. See [`../onepassword-browser.md`](../onepassword-browser.md).
 - **Host port hardening.** `remote-cli` binds `127.0.0.1:3004:3004` so it is unreachable from outside the host.
 
 ## Layer 1a: Outbound proxy (mitmproxy)
@@ -71,11 +72,11 @@ mitmproxy evaluates user rules first, then built-in defaults. Rules match by exa
 
 Every external request that reaches the gateway must prove origin before any work happens.
 
-| Source                | Mechanism                                                                   | Window |
-| --------------------- | --------------------------------------------------------------------------- | ------ |
-| Slack events / interactivity | `X-Slack-Signature` HMAC-SHA256 over `v0:<ts>:<raw-body>`             | 300s   |
-| GitHub webhooks       | `X-Hub-Signature-256` HMAC over raw body, secret `GITHUB_WEBHOOK_SECRET`    | n/a    |
-| Internal gateway↔remote-cli routes | `x-thor-internal-secret: $THOR_INTERNAL_SECRET`                | n/a    |
+| Source                             | Mechanism                                                                | Window |
+| ---------------------------------- | ------------------------------------------------------------------------ | ------ |
+| Slack events / interactivity       | `X-Slack-Signature` HMAC-SHA256 over `v0:<ts>:<raw-body>`                | 300s   |
+| GitHub webhooks                    | `X-Hub-Signature-256` HMAC over raw body, secret `GITHUB_WEBHOOK_SECRET` | n/a    |
+| Internal gateway↔remote-cli routes | `x-thor-internal-secret: $THOR_INTERNAL_SECRET`                          | n/a    |
 
 `THOR_INTERNAL_SECRET` authorizes policy-bypass internal operations — approval resolution (`POST /exec/mcp`) and arbitrary `POST /internal/exec`. Agents never receive it. Treat it with the same care as a root credential.
 
@@ -90,7 +91,7 @@ After authentication, events still face content-aware gates before they wake the
 
 ## Layer 4: Server-side policy at remote-cli
 
-remote-cli is the *only* place tool-level policy is enforced. OpenCode-side wrappers (skill scripts, CLI shims) are not trusted to filter their own arguments.
+remote-cli is the _only_ place tool-level policy is enforced. OpenCode-side wrappers (skill scripts, CLI shims) are not trusted to filter their own arguments.
 
 ### MCP tool tiers
 
@@ -109,6 +110,7 @@ Approval creation **fails closed** when remote-cli cannot resolve or post to the
 - `git` uses GitHub App installation tokens minted on demand through `GIT_ASKPASS` when the target owner resolves from the command or repo remote.
 - `gh` resolves GitHub App auth before execution and exports `GH_TOKEN` only with the short-lived installation token for the resolved owner.
 - OpenCode never receives direct API credentials for MCP upstreams.
+- **1Password browser credentials stay in the broker.** `OP_SERVICE_ACCOUNT_TOKEN` exists only in `remote-cli`; a dedicated stdio transport sends it to the sandbox over anonymous fd 3, where broker startup consumes and unlinks a private tmpfs file before accepting MCP requests. The broker resolves one configured item's username/password only after Slack approval, launches Chromium with a fixed credential-free environment, blocks cross-origin requests and non-HTTP browser channels, returns no credential/cookie/storage values, and destroys the ephemeral context after success verification.
 
 ## Layer 5: Blast radius limits
 
@@ -118,6 +120,7 @@ If a policy layer fails, these limit what damage is reachable:
 - **GitHub App scopes.** The app is granted the minimum permissions listed in `github.md` §3 — no admin, no settings write, no org-wide access.
 - **Per-owner installation tokens.** GitHub installation tokens are scoped to a single owner and expire within an hour.
 - **Daytona sandbox isolation.** Project builds and test runs execute in per-worktree Daytona sandboxes; `git` is blocked inside the sandbox so the agent cannot push from there.
+- **Credential broker allowlist.** The 1Password integration reaches one configured vault/item and one exact HTTPS origin. It exposes no vault/item enumeration, arbitrary secret reference, persistent browser profile, CDP, cookie/storage, or generic browser-control surface.
 
 ## Layer 6: Audit trail
 
