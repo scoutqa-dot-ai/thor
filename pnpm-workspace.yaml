@@ -6,6 +6,14 @@ overrides:
   # 8.0.1, which carries several advisories; force the 8.x line to the patched
   # release. Scoped to @8 so the grpc-proto-loader 7.x instance is untouched.
   "protobufjs@8": "^8.6.0"
+  # Security fixes for transitives used by MCP/Express and Daytona. Pin the
+  # patched API-compatible releases so the production audit stays clean.
+  body-parser: "2.3.0"
+  hono: "4.13.5"
+  protobufjs@7: "7.6.5"
+  qs: "6.16.0"
+  fast-uri: "3.1.6"
+  shell-quote: "1.10.0"
 
 # protobufjs ships a postinstall build script that is not needed for our build.
 # pnpm v11 fails the install unless every dependency with a build script is
