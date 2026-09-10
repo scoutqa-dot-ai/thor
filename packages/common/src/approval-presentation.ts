@@ -1,5 +1,6 @@
 import {
   AddCommentToJiraIssueApprovalArgsSchema,
+  BrowserLoginApprovalArgsSchema,
   CreateConfluencePageApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
   GhIssueCreateApprovalArgsSchema,
@@ -131,6 +132,8 @@ export function buildApprovalPresentation(
       return buildGhIssueCreatePresentation(args);
     case "awsExec":
       return buildAwsExecPresentation(args);
+    case "browser_login":
+      return buildBrowserLoginPresentation(args);
     default: {
       const _exhaustive: never = tool;
       throw new Error(`No approval presentation for tool: ${String(_exhaustive)}`);
@@ -322,6 +325,18 @@ function buildAwsExecPresentation(args: Record<string, unknown>): ApprovalPresen
       // Render the exact argv shape; escaping backticks prevents an argument
       // from closing the Slack code fence.
       `*Command argv:*\n\`\`\`json\n${commandArgvJson}\n\`\`\``,
+    ]),
+  };
+}
+
+function buildBrowserLoginPresentation(args: Record<string, unknown>): ApprovalPresentation {
+  const parsed = BrowserLoginApprovalArgsSchema.parse(args);
+  return {
+    title: "Log in with approved 1Password item",
+    markdown: joinMarkdown([
+      bullet("1Password item", parsed.item_id),
+      bullet("Exact destination origin", parsed.expected_origin),
+      "The credential values, cookies, and browser storage are never shown to Neo or Slack.",
     ]),
   };
 }

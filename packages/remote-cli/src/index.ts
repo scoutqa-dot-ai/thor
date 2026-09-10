@@ -16,13 +16,16 @@ import {
   matchesInternalSecret,
   resolvePsqlDatabases,
   resolveStrictProfileForSession,
+  writeToolCallLog,
   WORKSPACE_CONFIG_PATH,
   type ExecStreamEvent,
   type ConfigLoader,
+  type ToolCallLogEntry,
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.ts";
 import { createMcpService, type McpServiceDeps } from "./mcp-handler.ts";
 import { createApprovalService } from "./approval-service.ts";
+import { sanitizeCredentialBrokerToolCallLog } from "./credential-broker-audit.ts";
 import {
   getCliApprovalDefinition,
   registerCliApprovals,
@@ -408,13 +411,19 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   };
   // The approval engine is a registry owned here at the composition root; the
   // MCP service and CLI approvals register their stores into it.
+  const rawWriteToolCallLog = mcpConfig.writeToolCallLogFn ?? writeToolCallLog;
+  const safeWriteToolCallLog = (entry: ToolCallLogEntry): void =>
+    rawWriteToolCallLog(sanitizeCredentialBrokerToolCallLog(entry));
   const approvalService = createApprovalService({
     ...(mcpConfig.approvalsDir ? { approvalsDir: mcpConfig.approvalsDir } : {}),
-    ...(mcpConfig.writeToolCallLogFn ? { writeToolCallLogFn: mcpConfig.writeToolCallLogFn } : {}),
+    writeToolCallLogFn: safeWriteToolCallLog,
     ...(mcpConfig.slack ? { slack: mcpConfig.slack } : {}),
     ...(mcpConfig.fetchImpl ? { fetchImpl: mcpConfig.fetchImpl } : {}),
   });
-  const mcpService = createMcpService(mcpConfig, approvalService);
+  const mcpService = createMcpService(
+    { ...mcpConfig, writeToolCallLogFn: safeWriteToolCallLog },
+    approvalService,
+  );
   registerCliApprovals(approvalService, execCommand, { getConfig });
 
   const app = express();

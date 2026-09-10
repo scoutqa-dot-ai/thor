@@ -16,6 +16,8 @@ const FULL_ENV: NodeJS.ProcessEnv = {
   LANGFUSE_PUBLIC_KEY: "pk-global",
   LANGFUSE_SECRET_KEY: "sk-global",
   LANGFUSE_BASE_URL: "https://us.cloud.langfuse.com",
+  OP_SERVICE_ACCOUNT_TOKEN: "ops-fixture-token",
+  ONEPASSWORD_BROWSER_CONFIG: '{"item_id":"fixture"}',
 };
 
 describe("proxy registry", () => {
@@ -94,6 +96,49 @@ describe("proxy registry", () => {
       GRAFANA_ORG_ID: "1",
     });
     expect(getAvailableProxyNames("LABS", env)).toEqual(["atlassian", "grafana"]);
+  });
+
+  it("resolves the 1Password browser broker as a sandboxed approval-gated stdio child", () => {
+    const token = "ops-fixture-token";
+    const policyJson = '{"item_id":"fixture"}';
+    const proxy = resolveProxyConfig("onepassword-browser", "QA", {
+      OP_SERVICE_ACCOUNT_TOKEN: token,
+      ONEPASSWORD_BROWSER_CONFIG: policyJson,
+    });
+
+    expect(proxy?.allow).toEqual(["get_login_metadata"]);
+    expect(proxy?.approve).toEqual(["browser_login"]);
+    expect(proxy?.target.key).toBe("onepassword-browser:GLOBAL");
+    const upstream = proxy?.upstream;
+    if (upstream?.kind !== "stdio") throw new Error("expected stdio upstream");
+    expect(upstream.command).toBe("bwrap");
+    expect(upstream.args).toContain("/app/packages/onepassword-browser-mcp/dist/index.js");
+    expect(upstream.args).toContain("/etc/chromium.d");
+    expect(upstream.args).toContain("--file");
+    expect(upstream.args).toContain("/run/secrets/thor-onepassword-service-account-token");
+    expect(upstream.args).not.toContain(token);
+    expect(upstream.args).not.toContain(policyJson);
+    expect(upstream.env).toEqual({
+      OP_SERVICE_ACCOUNT_TOKEN_FILE: "/run/secrets/thor-onepassword-service-account-token",
+      ONEPASSWORD_BROWSER_CONFIG: policyJson,
+    });
+    expect(upstream.secretInput?.fd).toBe(3);
+    expect(upstream.secretInput?.getContents()).toBe(token);
+    expect(JSON.stringify(upstream)).not.toContain(token);
+  });
+
+  it("fails closed when the 1Password token/config bundle is partial", () => {
+    expect(() =>
+      resolveProxyConfig("onepassword-browser", undefined, {
+        ONEPASSWORD_BROWSER_CONFIG: "{}",
+      }),
+    ).toThrow(/OP_SERVICE_ACCOUNT_TOKEN/);
+    expect(() =>
+      resolveProxyConfig("onepassword-browser", undefined, {
+        OP_SERVICE_ACCOUNT_TOKEN: "ops-fixture-token",
+      }),
+    ).toThrow(/ONEPASSWORD_BROWSER_CONFIG/);
+    expect(resolveProxyConfig("onepassword-browser", undefined, {})).toBeUndefined();
   });
 
   it("runs mcp-grafana directly (no bwrap) only when THOR_MCP_DISABLE_SANDBOX=1", () => {

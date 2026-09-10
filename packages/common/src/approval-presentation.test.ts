@@ -103,3 +103,20 @@ describe("buildApprovalPresentation — aws write command", () => {
     );
   });
 });
+
+describe("buildApprovalPresentation — 1Password browser login", () => {
+  it("shows only the approved item and exact origin", () => {
+    const itemId = "bbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const origin = "https://accounts.lambdatest.com";
+    const presentation = buildApprovalPresentation("browser_login", {
+      item_id: itemId,
+      expected_origin: origin,
+    });
+
+    expect(presentation.title).toBe("Log in with approved 1Password item");
+    expect(presentation.markdown).toContain(`*1Password item:* ${itemId}`);
+    expect(presentation.markdown).toContain(`*Exact destination origin:* ${origin}`);
+    expect(presentation.markdown).not.toContain("secret-password-fixture");
+    expect(presentation.markdown).not.toContain("ops-fixture-token");
+  });
+});

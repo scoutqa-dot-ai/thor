@@ -1,6 +1,12 @@
 import { envBaseUrl } from "./env.ts";
 
-export const PROXY_NAMES = ["atlassian", "grafana", "langfuse", "posthog"] as const;
+export const PROXY_NAMES = [
+  "atlassian",
+  "grafana",
+  "langfuse",
+  "onepassword-browser",
+  "posthog",
+] as const;
 
 export type ProxyName = (typeof PROXY_NAMES)[number];
 
@@ -9,9 +15,22 @@ export type ProxyName = (typeof PROXY_NAMES)[number];
  * local child process spoken to over stdio (which gives each profile its own
  * single-tenant instance).
  */
+export interface StdioSecretInput {
+  /** Child descriptor that carries the secret. Must not overlap stdin/stdout/stderr. */
+  readonly fd: 3;
+  /** A function so accidental object serialization cannot include the secret. */
+  readonly getContents: () => string;
+}
+
 export type ProxyUpstream =
   | { kind: "http"; url: string; headers?: Record<string, string> }
-  | { kind: "stdio"; command: string; args: string[]; env: Record<string, string> };
+  | {
+      kind: "stdio";
+      command: string;
+      args: string[];
+      env: Record<string, string>;
+      secretInput?: StdioSecretInput;
+    };
 
 export interface ResolvedProxyConfig {
   upstream: ProxyUpstream;
@@ -62,6 +81,96 @@ const GRAFANA_ALLOW = [
   "tempo_docs-traceql",
 ];
 const GRAFANA_APPROVE: string[] = [];
+
+const ONEPASSWORD_BROWSER_ALLOW = ["get_login_metadata"];
+const ONEPASSWORD_BROWSER_APPROVE = ["browser_login"];
+const ONEPASSWORD_BROWSER_MCP_ENTRY = "/app/packages/onepassword-browser-mcp/dist/index.js";
+export const ONEPASSWORD_BROWSER_TOKEN_FILE = "/run/secrets/thor-onepassword-service-account-token";
+const ONEPASSWORD_BROWSER_SANDBOX_ARGS = [
+  "--unshare-user",
+  "--unshare-pid",
+  "--unshare-ipc",
+  "--unshare-uts",
+  "--new-session",
+  "--die-with-parent",
+  "--setenv",
+  "PATH",
+  "/usr/local/bin:/usr/bin:/bin",
+  "--setenv",
+  "HOME",
+  "/tmp",
+  "--setenv",
+  "XDG_CACHE_HOME",
+  "/tmp/cache",
+  "--setenv",
+  "XDG_CONFIG_HOME",
+  "/tmp/config",
+  "--ro-bind",
+  "/app",
+  "/app",
+  "--ro-bind",
+  "/usr",
+  "/usr",
+  "--ro-bind",
+  "/bin",
+  "/bin",
+  "--ro-bind",
+  "/lib",
+  "/lib",
+  "--ro-bind-try",
+  "/lib64",
+  "/lib64",
+  "--ro-bind",
+  "/etc/ssl",
+  "/etc/ssl",
+  "--ro-bind-try",
+  "/etc/fonts",
+  "/etc/fonts",
+  "--ro-bind-try",
+  "/etc/chromium",
+  "/etc/chromium",
+  "--ro-bind-try",
+  "/etc/chromium.d",
+  "/etc/chromium.d",
+  "--ro-bind-try",
+  "/etc/resolv.conf",
+  "/etc/resolv.conf",
+  "--ro-bind-try",
+  "/etc/nsswitch.conf",
+  "/etc/nsswitch.conf",
+  "--ro-bind-try",
+  "/etc/hosts",
+  "/etc/hosts",
+  "--ro-bind-try",
+  "/etc/passwd",
+  "/etc/passwd",
+  "--ro-bind-try",
+  "/etc/group",
+  "/etc/group",
+  "--ro-bind-try",
+  "/sys",
+  "/sys",
+  "--bind",
+  "/proc",
+  "/proc",
+  "--dev",
+  "/dev",
+  "--tmpfs",
+  "/tmp",
+  // The transport writes the service-account token through anonymous fd 3.
+  // bwrap copies it into its private tmpfs; broker startup consumes + unlinks
+  // the file before accepting MCP requests or launching Chromium. Neither
+  // bwrap nor the broker receives the token in argv or process environment.
+  "--tmpfs",
+  "/run",
+  "--dir",
+  "/run/secrets",
+  "--file",
+  "3",
+  ONEPASSWORD_BROWSER_TOKEN_FILE,
+  "/usr/local/bin/node",
+  ONEPASSWORD_BROWSER_MCP_ENTRY,
+];
 
 // Grafana runs as a per-profile child: the mcp-grafana binary speaking MCP over
 // stdio, confined by bwrap. The arg set is static — only the credential env
@@ -120,12 +229,11 @@ const GRAFANA_SANDBOX_ARGS = [
   "--ro-bind-try",
   "/etc/hosts",
   "/etc/hosts",
-  // Bind the host /proc rather than mounting a fresh one (a fresh `--proc` is
-  // rejected on container kernels with a masked /proc). This is safe because
-  // --unshare-pid puts the child in a new PID namespace: procfs only renders
-  // PIDs that exist in the reader's namespace, so the child sees only its own
-  // sandbox processes — host PIDs (and their environ/cmdline/root) are not
-  // resolvable. /proc/1 inside is the sandbox init, not remote-cli's PID 1.
+  // Bind the container's /proc rather than mounting a fresh one (a fresh
+  // `--proc` is rejected on container kernels with a masked /proc). The child
+  // may see parent-container PID metadata, but --unshare-user prevents it from
+  // reading remote-cli's protected process state. The stdio transport also
+  // forwards only an explicit credential env, never unrelated parent secrets.
   "--bind",
   "/proc",
   "/proc",
@@ -318,6 +426,39 @@ export function resolveProxyConfig(
         key: targetKey(name, profile, useScoped ? "profile" : "global"),
         name,
         ...(profile && { profile }),
+      },
+    };
+  }
+
+  if (name === "onepassword-browser") {
+    const serviceAccountToken = envValue(env, "OP_SERVICE_ACCOUNT_TOKEN");
+    const policyJson = envValue(env, "ONEPASSWORD_BROWSER_CONFIG");
+    if (!serviceAccountToken && !policyJson) return undefined;
+    if (!serviceAccountToken || !policyJson) {
+      const missing = [
+        !serviceAccountToken ? "OP_SERVICE_ACCOUNT_TOKEN" : undefined,
+        !policyJson ? "ONEPASSWORD_BROWSER_CONFIG" : undefined,
+      ].filter(Boolean);
+      throw new Error(
+        `partial onepassword browser bundle: missing ${missing.join(", ")}. Set OP_SERVICE_ACCOUNT_TOKEN and ONEPASSWORD_BROWSER_CONFIG together, or neither of them.`,
+      );
+    }
+    return {
+      upstream: {
+        kind: "stdio",
+        command: "bwrap",
+        args: ONEPASSWORD_BROWSER_SANDBOX_ARGS,
+        env: {
+          OP_SERVICE_ACCOUNT_TOKEN_FILE: ONEPASSWORD_BROWSER_TOKEN_FILE,
+          ONEPASSWORD_BROWSER_CONFIG: policyJson,
+        },
+        secretInput: { fd: 3, getContents: () => serviceAccountToken },
+      },
+      allow: ONEPASSWORD_BROWSER_ALLOW,
+      approve: ONEPASSWORD_BROWSER_APPROVE,
+      target: {
+        key: targetKey(name, undefined, "global"),
+        name,
       },
     };
   }

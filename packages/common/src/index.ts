@@ -24,6 +24,7 @@ export {
   isProxyName,
   resolveAtlassianCloudId,
   resolveProxyConfig,
+  ONEPASSWORD_BROWSER_TOKEN_FILE,
 } from "./proxies.ts";
 export {
   ApprovalArgsSchema,
@@ -33,6 +34,8 @@ export {
   CreateFeatureFlagApprovalArgsSchema,
   GhIssueCreateApprovalArgsSchema,
   AwsExecApprovalArgsSchema,
+  GetLoginMetadataArgsSchema,
+  BrowserLoginApprovalArgsSchema,
   approvalToolRequiresDisclaimer,
   disclaimerTargetField,
   injectApprovalDisclaimer,
@@ -72,7 +75,7 @@ export type {
   ValidationIssue,
   ValidationResult,
 } from "./workspace-config.ts";
-export type { ProxyName, ProxyUpstream } from "./proxies.ts";
+export type { ProxyName, ProxyUpstream, StdioSecretInput } from "./proxies.ts";
 export { resolvePsqlDatabases } from "./psql-databases.ts";
 export type { PsqlDatabaseTarget } from "./psql-databases.ts";
 export { writeToolCallLog, appendJsonlWorklog } from "./worklog.ts";

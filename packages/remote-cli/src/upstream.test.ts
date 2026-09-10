@@ -6,6 +6,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { connectUpstream } from "./upstream.ts";
 
 const FIXTURE = fileURLToPath(new URL("./__fixtures__/stdio-mcp-server.mjs", import.meta.url));
+const SECRET_FIXTURE = fileURLToPath(
+  new URL("./__fixtures__/secret-stdio-mcp-server.mjs", import.meta.url),
+);
 
 async function waitFor(condition: () => boolean, timeoutMs = 2_000): Promise<void> {
   const started = Date.now();
@@ -39,6 +42,21 @@ describe("connectUpstream (stdio transport)", () => {
       const toolNames = tools.map((tool) => tool.name);
       expect(toolNames).toContain("custom_tool"); // config.env reached the child
       expect(toolNames).not.toContain("LEAKED"); // parent-process secret did not
+    } finally {
+      await client.close();
+    }
+  });
+  it("delivers a one-shot child secret on fd 3 without adding it to the child env", async () => {
+    const { client, tools } = await connectUpstream("secret-stdio-test", {
+      kind: "stdio",
+      command: process.execPath,
+      args: [SECRET_FIXTURE],
+      env: {},
+      secretInput: { fd: 3, getContents: () => "secret-fd-fixture" },
+    });
+
+    try {
+      expect(tools.map((tool) => tool.name)).toEqual(["secret_received_outside_env"]);
     } finally {
       await client.close();
     }

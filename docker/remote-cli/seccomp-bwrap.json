@@ -15,7 +15,7 @@
     {
       "names": ["unshare", "clone", "clone3", "setns", "mount", "umount2", "pivot_root", "keyctl"],
       "action": "SCMP_ACT_ALLOW",
-      "comment": "Allow rootless bwrap sandboxing (no CAP_SYS_ADMIN); for the remote-cli grafana child"
+      "comment": "Allow rootless bwrap sandboxing (no CAP_SYS_ADMIN) for remote-cli MCP children"
     },
     {
       "names": [

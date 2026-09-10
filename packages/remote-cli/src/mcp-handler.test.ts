@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
@@ -76,6 +76,29 @@ const tools: Tool[] = [
     inputSchema: {
       type: "object",
       properties: { cloudId: { type: "string" }, searchString: { type: "string" } },
+    },
+  },
+  {
+    name: "get_login_metadata",
+    description: "Get approved login metadata",
+    inputSchema: {
+      type: "object",
+      properties: { item_id: { type: "string" } },
+      required: ["item_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "browser_login",
+    description: "Perform an approved browser login",
+    inputSchema: {
+      type: "object",
+      properties: {
+        item_id: { type: "string" },
+        expected_origin: { type: "string" },
+      },
+      required: ["item_id", "expected_origin"],
+      additionalProperties: false,
     },
   },
   {
@@ -278,6 +301,16 @@ describe("remote-cli MCP endpoints", () => {
                     content: [{ type: "text", text: jiraLookupResultText }],
                   };
                 }
+                if (name === "get_login_metadata") {
+                  return {
+                    content: [{ type: "text", text: '{"title":"TestMu audit"}' }],
+                  };
+                }
+                if (name === "browser_login") {
+                  return {
+                    content: [{ type: "text", text: '{"status":"authenticated"}' }],
+                  };
+                }
                 throw new Error(`Unexpected tool: ${name}`);
               },
               close: async () => {},
@@ -456,7 +489,7 @@ describe("remote-cli MCP endpoints", () => {
     expect(healthBody.mcp.configured).toBe(3);
     expect(healthBody.mcp.connected).toBe(1);
     expect(healthBody.mcp.connectedTargets).toBe(1);
-    expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 6 });
+    expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 8 });
   });
 
   it("fails live MCP calls when profile config cannot be loaded", async () => {
@@ -2370,6 +2403,160 @@ describe("remote-cli MCP endpoints", () => {
     expect((createEntry!.args as Record<string, unknown>).assignee_account_id).toBe(
       "jira-account-1",
     );
+  });
+
+  it("sanitizes 1Password metadata arguments and injects only trusted session context", async () => {
+    vi.stubEnv("OP_SERVICE_ACCOUNT_TOKEN", "ops-fixture-token");
+    vi.stubEnv("ONEPASSWORD_BROWSER_CONFIG", '{"item_id":"fixture"}');
+    const itemId = "bbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    const call = await postJson(
+      "/exec/mcp",
+      { args: ["onepassword-browser", "get_login_metadata", JSON.stringify({ item_id: itemId })] },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const body = (await call.json()) as { stdout: string; stderr: string; exitCode: number };
+    expect(body).toMatchObject({ stdout: '{"title":"TestMu audit"}', stderr: "", exitCode: 0 });
+    expect(toolCalls).toContainEqual({
+      name: "get_login_metadata",
+      arguments: { item_id: itemId, _thor_session_id: "parent-session" },
+    });
+
+    const metadataLog = toolCallLogs.find((entry) => entry.tool === "get_login_metadata");
+    expect(metadataLog).toMatchObject({
+      args: { item_id: itemId, _thor_session_id: "parent-session" },
+      result: { outcome: "succeeded" },
+    });
+    expect(JSON.stringify(metadataLog)).not.toContain("TestMu audit");
+
+    const malformedSecret = "must-not-be-echoed-from-malformed-json";
+    const malformed = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "onepassword-browser",
+          "get_login_metadata",
+          `{"item_id":"${itemId}","password":"${malformedSecret}`,
+        ],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const malformedBody = (await malformed.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+    expect(malformedBody.exitCode).toBe(1);
+    expect(JSON.stringify(malformedBody)).not.toContain(malformedSecret);
+
+    const secret = "must-not-enter-tool-logs";
+    const callsBeforeInvalid = toolCalls.length;
+    const invalid = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "onepassword-browser",
+          "get_login_metadata",
+          JSON.stringify({ item_id: itemId, password: secret }),
+        ],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const invalidBody = (await invalid.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+    expect(invalidBody.exitCode).toBe(1);
+    expect(invalidBody.stderr).toBe('Invalid arguments for "get_login_metadata"');
+    expect(JSON.stringify(invalidBody)).not.toContain(secret);
+    expect(toolCalls).toHaveLength(callsBeforeInvalid);
+    expect(JSON.stringify(toolCallLogs)).not.toContain(secret);
+  });
+
+  it("executes a 1Password browser login only after Slack approval", async () => {
+    vi.stubEnv("OP_SERVICE_ACCOUNT_TOKEN", "ops-fixture-token");
+    vi.stubEnv("ONEPASSWORD_BROWSER_CONFIG", '{"item_id":"fixture"}');
+    appendActiveTrigger();
+    const itemId = "bbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const origin = "https://accounts.lambdatest.com";
+
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "onepassword-browser",
+          "browser_login",
+          JSON.stringify({ item_id: itemId, expected_origin: origin }),
+        ],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+    expect(pendingBody.exitCode).toBe(0);
+    const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
+    expect(toolCalls.some((call) => call.name === "browser_login")).toBe(false);
+
+    const resolved = await postJson(
+      "/exec/approval",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    const resolvedBody = (await resolved.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+    expect(resolvedBody).toMatchObject({
+      stdout: '{"status":"authenticated"}',
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(toolCalls).toContainEqual({
+      name: "browser_login",
+      arguments: {
+        item_id: itemId,
+        expected_origin: origin,
+        _thor_session_id: "parent-session",
+      },
+    });
+    expect(toolCallLogs.filter((entry) => entry.tool === "browser_login")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ decision: "pending", result: { outcome: "pending" } }),
+        expect.objectContaining({ decision: "approved", result: { outcome: "succeeded" } }),
+      ]),
+    );
+  });
+
+  it("rejects secret-shaped extra browser-login arguments before approval persistence", async () => {
+    vi.stubEnv("OP_SERVICE_ACCOUNT_TOKEN", "ops-fixture-token");
+    vi.stubEnv("ONEPASSWORD_BROWSER_CONFIG", '{"item_id":"fixture"}');
+    appendActiveTrigger();
+    const secret = "must-not-enter-approval-storage";
+    const response = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "onepassword-browser",
+          "browser_login",
+          JSON.stringify({
+            item_id: "bbbbbbbbbbbbbbbbbbbbbbbbbb",
+            expected_origin: "https://accounts.lambdatest.com",
+            password: secret,
+          }),
+        ],
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const body = (await response.json()) as { stdout: string; stderr: string; exitCode: number };
+    expect(body.exitCode).toBe(1);
+    expect(JSON.stringify(body)).not.toContain(secret);
+    expect(existsSync(join(approvalsDir, "onepassword-browser"))).toBe(false);
+    expect(JSON.stringify(toolCallLogs)).not.toContain(secret);
   });
 
   it("returns 401 for /internal/exec without the internal secret", async () => {

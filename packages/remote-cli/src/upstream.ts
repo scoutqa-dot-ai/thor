@@ -4,6 +4,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { createLogger, logError, logInfo, logWarn, type ProxyUpstream } from "@thor/common";
+import { SecretStdioClientTransport } from "./secret-stdio-transport.ts";
 
 const log = createLogger("mcp");
 
@@ -25,6 +26,14 @@ export function upstreamTarget(config: UpstreamConfig): string {
 
 function createTransport(config: UpstreamConfig): Transport {
   if (config.kind === "stdio") {
+    if (config.secretInput) {
+      return new SecretStdioClientTransport({
+        command: config.command,
+        args: config.args,
+        env: config.env,
+        secretInput: config.secretInput,
+      });
+    }
     // The SDK spawns with `{ ...getDefaultEnvironment(), ...config.env }`. Its
     // default is a fixed safe allowlist (HOME, LOGNAME, PATH, SHELL, TERM, USER)
     // — remote-cli's secrets (THOR_INTERNAL_SECRET, the GitHub App key path,

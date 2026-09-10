@@ -23,6 +23,7 @@ COPY packages/runner/package.json packages/runner/
 COPY packages/remote-cli/package.json packages/remote-cli/
 COPY packages/opencode-cli/package.json packages/opencode-cli/
 COPY packages/admin/package.json packages/admin/
+COPY packages/onepassword-browser-mcp/package.json packages/onepassword-browser-mcp/
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --offline --store-dir /pnpm/store
 
@@ -46,6 +47,11 @@ RUN pnpm --filter @thor/runner build
 FROM common-source AS remote-cli-build
 COPY packages/remote-cli/ packages/remote-cli/
 RUN pnpm --filter @thor/remote-cli build
+
+FROM deps AS onepassword-browser-mcp-build
+COPY tsconfig.base.json ./
+COPY packages/onepassword-browser-mcp/ packages/onepassword-browser-mcp/
+RUN pnpm --filter @thor/onepassword-browser-mcp build
 
 FROM common-source AS opencode-cli-build
 COPY packages/opencode-cli/ packages/opencode-cli/
@@ -121,7 +127,7 @@ COPY --chown=thor:thor docker/opencode/config/ /home/thor/.config/opencode/
 ENTRYPOINT ["opencode"]
 
 FROM base AS remote-cli-tools
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl openssh-client bubblewrap postgresql-client && rm -rf /var/lib/apt/lists/* \
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates chromium curl openssh-client bubblewrap postgresql-client && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
@@ -140,6 +146,7 @@ COPY --from=grafana/mcp-grafana:1.1.0 /app/mcp-grafana /usr/local/bin/mcp-grafan
 
 FROM remote-cli-tools AS remote-cli
 COPY --from=remote-cli-build /app /app
+COPY --from=onepassword-browser-mcp-build /app/packages/onepassword-browser-mcp/dist /app/packages/onepassword-browser-mcp/dist
 COPY packages/remote-cli/entrypoint.sh /entrypoint.sh
 # Thor git/gh wrappers for GitHub App auth
 COPY packages/remote-cli/bin/git /usr/local/lib/thor/bin/git

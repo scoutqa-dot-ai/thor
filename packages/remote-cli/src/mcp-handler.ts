@@ -9,6 +9,7 @@ import {
   createLogger,
   errorMessage,
   getAvailableProxyNames,
+  GetLoginMetadataArgsSchema,
   injectApprovalDisclaimer,
   isProxyName,
   getRunnerBaseUrl,
@@ -509,7 +510,11 @@ export function createMcpService(
       }
       return {};
     } catch {
-      let stderr = `Invalid JSON argument: ${jsonArg}\n`;
+      const containsBrokerCredentialBoundary =
+        toolInfo.name === "get_login_metadata" || toolInfo.name === "browser_login";
+      let stderr = containsBrokerCredentialBoundary
+        ? `Invalid JSON argument for "${toolInfo.name}"\n`
+        : `Invalid JSON argument: ${jsonArg}\n`;
       if (toolInfo.inputSchema) {
         stderr += `\n[hint] Input schema for "${toolInfo.name}":\n${JSON.stringify(toolInfo.inputSchema, null, 2)}\n`;
       }
@@ -525,7 +530,12 @@ export function createMcpService(
     instance: ProxyInstance,
     args: Record<string, unknown>,
     profile: string | undefined,
+    sessionId: string | undefined,
   ): Record<string, unknown> {
+    if (instance.name === "onepassword-browser") {
+      if (!sessionId) throw new Error("Missing Thor session id for 1Password browser request");
+      return { ...args, _thor_session_id: sessionId };
+    }
     if (instance.name !== "atlassian") return args;
     // Intentionally inject for every Atlassian call. The deterministic e2e
     // exercises atlassianUserInfo, whose schema has no cloudId, so a future
@@ -546,6 +556,7 @@ export function createMcpService(
       decision: "allowed" | "blocked" | "pending" | "approved" | "rejected";
       targetKey?: string;
       profile?: string;
+      sessionId?: string;
       extraLogFields?: Record<string, unknown>;
       onSuccess?: (rawResult: unknown) => void;
       onError?: (message: string) => void;
@@ -556,6 +567,7 @@ export function createMcpService(
       decision,
       targetKey,
       profile,
+      sessionId,
       extraLogFields = {},
       onSuccess,
       onError,
@@ -572,7 +584,7 @@ export function createMcpService(
     // (including any server-side injected fields such as the Atlassian cloudId).
     let callArgs = args;
     try {
-      callArgs = outboundArgs(instance, args, profile);
+      callArgs = outboundArgs(instance, args, profile, sessionId);
       const result = await instance.upstream.client.callTool({
         name: toolName,
         arguments: callArgs,
@@ -638,6 +650,7 @@ export function createMcpService(
       logEvent: "tool_call",
       decision: "allowed",
       profile: opts.profile,
+      sessionId,
       extraLogFields: getThorIds({ sessionId }),
     });
     if (!outcome.ok) {
@@ -686,6 +699,14 @@ export function createMcpService(
     }
     if (!instance) {
       return fail(`Upstream "${upstreamName}" is not configured for this thread/profile.`);
+    }
+
+    if (instance.name === "onepassword-browser" && toolInfo.name === "get_login_metadata") {
+      const metadataArgs = GetLoginMetadataArgsSchema.safeParse(args);
+      if (!metadataArgs.success) {
+        return fail('Invalid arguments for "get_login_metadata"');
+      }
+      args = metadataArgs.data;
     }
 
     if (toolInfo.classification === "approve") {
@@ -753,7 +774,7 @@ export function createMcpService(
           profile,
         );
       }
-      upstreamArgs = outboundArgs(instance, upstreamArgs, profile);
+      upstreamArgs = outboundArgs(instance, upstreamArgs, profile, action.origin?.sessionId);
     } catch (err) {
       return {
         ok: false,

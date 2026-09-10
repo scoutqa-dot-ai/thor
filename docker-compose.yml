@@ -42,6 +42,10 @@ services:
       - DAYTONA_API_URL=${DAYTONA_API_URL:-https://app.daytona.io/api}
       - DAYTONA_SNAPSHOT=${DAYTONA_SNAPSHOT:-}
       - RUNNER_BASE_URL=${RUNNER_BASE_URL:?set RUNNER_BASE_URL}
+      # Inject these through the remote-cli service's deployment secret/config
+      # boundary. The service-account token is never forwarded to OpenCode.
+      - OP_SERVICE_ACCOUNT_TOKEN=${OP_SERVICE_ACCOUNT_TOKEN:-}
+      - ONEPASSWORD_BROWSER_CONFIG=${ONEPASSWORD_BROWSER_CONFIG:-}
     env_file:
       - .env
     volumes:
@@ -63,6 +67,9 @@ services:
     restart: unless-stopped
     environment:
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
+      # env_file is needed for custom proxy header interpolation; explicitly
+      # blank the 1Password token so an accidental .env entry cannot leak here.
+      - OP_SERVICE_ACCOUNT_TOKEN=
     ports:
       - "127.0.0.1:3080:8080"
     env_file:
@@ -178,6 +185,9 @@ services:
       - SLACK_TEAM_ID=${SLACK_TEAM_ID:-}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:?set SLACK_BOT_TOKEN}
       - SLACK_API_BASE_URL
+      # runner loads .env for existing runtime config; never inherit the
+      # credential broker's service-account token.
+      - OP_SERVICE_ACCOUNT_TOKEN=
     env_file:
       - .env
     volumes:
