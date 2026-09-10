@@ -16,9 +16,18 @@ Use this skill when:
 
 ## Overview
 
-This skill covers the technical browser orchestration layer: selecting a browser capability, capturing evidence, and verifying that evidence. Product URLs, credentials, selectors, fixture users, and business assertions belong in repo docs, runbooks, or the task prompt.
+This skill covers the technical browser orchestration layer: selecting a browser capability, capturing evidence, and verifying that evidence. Product URLs, selectors, fixture-user names, and business assertions belong in repo docs, runbooks, or the task prompt. Credential values never belong in Slack or a task prompt.
 
 Run browser tooling in the sandbox when local dependencies are missing or when you need headed display, recording, or installable runtimes. Common sandbox tools include `agent-browser`, Chrome for Testing, `ffmpeg`, `xvfb`, and ImageMagick among others — choose by capability first.
+
+For a configured 1Password-backed SaaS login, use the dedicated MCP integration instead of sandbox browser tooling:
+
+```bash
+mcp onepassword-browser get_login_metadata '{"item_id":"<approved-item-id>"}'
+mcp onepassword-browser browser_login '{"item_id":"<approved-item-id>","expected_origin":"https://approved.example"}'
+```
+
+The login call requires human approval. Supply only the non-secret item ID and exact origin. Do not request, print, or ask a user to paste credential values. The authenticated context is intentionally destroyed after login verification; generic post-login control is not available.
 
 ---
 

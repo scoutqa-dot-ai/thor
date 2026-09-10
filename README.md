@@ -74,6 +74,7 @@ Thor is an internal AI teammate for engineering and product work; it is not mean
 - **GitHub App** — [`docs/github.md`](docs/github.md). Webhook intake, App permissions and event subscriptions, installation IDs, bot commit identity, CI wake gate.
 - **Daytona sandboxes** — [`docs/daytona.md`](docs/daytona.md). On-demand cloud sandboxes for project builds/tests/lints. Custom snapshot publishing.
 - **Outbound HTTP(S) (mitmproxy)** — [`docs/feat/security-model.md`](docs/feat/security-model.md) Layer 1a. Routing path, built-in defaults (Atlassian/Slack/OpenAI), custom credential rules.
+- **1Password browser login** — [`docs/onepassword-browser.md`](docs/onepassword-browser.md). Approval-gated credential injection into an ephemeral local Chromium session.
 
 Runtime integration paths:
 
@@ -87,6 +88,7 @@ Runtime integration paths:
 | Slack Web API    | `gateway` + `remote-cli` + OpenCode over mitmproxy | Bot token             | Mentions, progress, approval cards, thread reads/writes |
 | LaunchDarkly     | `remote-cli /exec/ldcli`                           | Access token          | Read-only feature flag inspection                       |
 | Postgres (psql)  | `remote-cli /exec/psql`                            | Per-profile DB creds  | Read-only Postgres access by database alias             |
+| 1Password        | `remote-cli /exec/mcp`                             | Service-account token | Approved one-item, one-origin browser login             |
 
 Common usage patterns:
 
@@ -128,6 +130,8 @@ Integration-specific env vars live in each integration's doc. MCP integration cr
 | `DAYTONA_API_KEY`                   | No       | `remote-cli`                                | API key for on-demand Daytona cloud sandboxes; required (with API URL) to enable Daytona                                                                                                                              |
 | `DAYTONA_API_URL`                   | No       | `remote-cli`                                | Daytona API URL; defaults to `https://app.daytona.io/api`                                                                                                                                                             |
 | `DAYTONA_SNAPSHOT`                  | No       | `remote-cli`                                | Daytona sandbox snapshot name; defaults to `daytona-medium`                                                                                                                                                           |
+| `OP_SERVICE_ACCOUNT_TOKEN`          | No       | `remote-cli`                                | Read-only token for the browser broker; service-scoped injection only. See [`docs/onepassword-browser.md`](docs/onepassword-browser.md)                                                                               |
+| `ONEPASSWORD_BROWSER_CONFIG`        | No       | `remote-cli`                                | Non-secret exact vault/item/origin/login policy; required with `OP_SERVICE_ACCOUNT_TOKEN`                                                                                                                             |
 | `VOUCH_GOOGLE_CLIENT_ID`            | Yes      | `vouch`                                     | Google OAuth client ID                                                                                                                                                                                                |
 | `VOUCH_GOOGLE_CLIENT_SECRET`        | Yes      | `vouch`                                     | Google OAuth client secret                                                                                                                                                                                            |
 | `VOUCH_JWT_SECRET`                  | Yes      | `vouch`                                     | Session JWT signing secret                                                                                                                                                                                            |
