@@ -1,5 +1,6 @@
 import {
   AddCommentToJiraIssueApprovalArgsSchema,
+  BrowserLoginApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
   CreateJiraIssueApprovalArgsSchema,
   EditJiraIssueApprovalArgsSchema,
@@ -178,6 +179,8 @@ export function buildApprovalPresentation(
         return buildTransitionJiraIssuePresentation(args);
       case "create-feature-flag":
         return buildCreateFeatureFlagPresentation(args);
+      case "browser_login":
+        return buildBrowserLoginPresentation(args);
       default:
         return undefined;
     }
@@ -345,6 +348,18 @@ function buildCreateFeatureFlagPresentation(args: Record<string, unknown>): Appr
       bullet("Active", parsed.active),
       bullet("Rollout", parsed.rolloutPercentage),
       bullet("Filters", parsed.filters),
+    ]),
+  };
+}
+
+function buildBrowserLoginPresentation(args: Record<string, unknown>): ApprovalPresentation {
+  const parsed = BrowserLoginApprovalArgsSchema.parse(args);
+  return {
+    title: "Log in with approved 1Password item",
+    markdown: joinMarkdown([
+      bullet("1Password item", parsed.item_id),
+      bullet("Exact destination origin", parsed.expected_origin),
+      "The credential values, cookies, and browser storage are never shown to Neo or Slack.",
     ]),
   };
 }

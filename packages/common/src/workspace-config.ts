@@ -75,7 +75,7 @@ export type UserRecord = z.infer<typeof UserRecordSchema>;
 
 export interface ProxyUpstream {
   url: string;
-  transport?: "streamable-http" | "kali-api";
+  transport?: "streamable-http" | "kali-api" | "onepassword-browser";
   headers?: Record<string, string>;
 }
 

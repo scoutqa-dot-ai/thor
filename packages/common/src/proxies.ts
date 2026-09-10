@@ -1,7 +1,14 @@
 import { APPROVAL_TOOL_NAMES } from "./approval-events.js";
 import type { ProxyConfig } from "./workspace-config.js";
 
-export const PROXY_NAMES = ["atlassian", "grafana", "posthog", "falcon", "kali"] as const;
+export const PROXY_NAMES = [
+  "atlassian",
+  "grafana",
+  "onepassword-browser",
+  "posthog",
+  "falcon",
+  "kali",
+] as const;
 
 export type ProxyName = (typeof PROXY_NAMES)[number];
 
@@ -53,6 +60,14 @@ export const PROXY_REGISTRY: Record<ProxyName, ProxyConfig> = {
       "tempo_docs-traceql",
     ],
     approve: [],
+  },
+  "onepassword-browser": {
+    upstream: {
+      url: "stdio://onepassword-browser",
+      transport: "onepassword-browser",
+    },
+    allow: ["get_login_metadata"],
+    approve: ["browser_login"],
   },
   posthog: {
     upstream: {

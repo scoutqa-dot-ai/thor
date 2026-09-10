@@ -5,11 +5,26 @@ import { interpolateHeaders } from "./workspace-config.js";
 
 describe("proxy registry", () => {
   it("exposes the expected hardcoded upstreams", () => {
-    expect(PROXY_NAMES).toEqual(["atlassian", "grafana", "posthog", "falcon", "kali"]);
+    expect(PROXY_NAMES).toEqual([
+      "atlassian",
+      "grafana",
+      "onepassword-browser",
+      "posthog",
+      "falcon",
+      "kali",
+    ]);
     expect(getProxyConfig("atlassian")?.upstream.url).toBe("https://mcp.atlassian.com/v1/mcp");
     expect(getProxyConfig("grafana")?.allow).toEqual(
       expect.arrayContaining(["query_prometheus", "list_prometheus_metric_names"]),
     );
+    expect(getProxyConfig("onepassword-browser")).toEqual({
+      upstream: {
+        url: "stdio://onepassword-browser",
+        transport: "onepassword-browser",
+      },
+      allow: ["get_login_metadata"],
+      approve: ["browser_login"],
+    });
     expect(getProxyConfig("posthog")?.allow).toContain("query-run");
     expect(getProxyConfig("falcon")?.upstream.url).toBe("http://falcon-mcp:8000/mcp");
     expect(getProxyConfig("falcon")?.allow).toEqual(

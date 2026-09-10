@@ -11,6 +11,7 @@ import {
   ExecResultSchema,
   extractRepoFromCwd,
   findAnchorContext,
+  GetLoginMetadataArgsSchema,
   getProxyConfig,
   injectApprovalDisclaimer,
   isProxyName,
@@ -38,7 +39,13 @@ import {
   validatePolicy,
 } from "./policy-mcp.js";
 import { unwrapResult } from "./unwrap-result.js";
-import { connectUpstream, type UpstreamConnection } from "./upstream.js";
+import {
+  connectUpstream,
+  resolveOnePasswordBrowserUpstream,
+  upstreamTarget,
+  type UpstreamConfig,
+  type UpstreamConnection,
+} from "./upstream.js";
 import { attributionFields, resolveTriggerUser } from "./attribution.js";
 import { postSlackMessageApi } from "./slack-post-message.js";
 
@@ -257,14 +264,25 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     return "error" in result ? result : { ts: result.ts };
   }
 
-  async function connectInstance(name: string, proxyDef: ProxyConfig): Promise<ProxyInstance> {
-    const interpolatedHeaders = interpolateHeaders(proxyDef.upstream.headers);
-    const upstreamConfig = {
+  function resolveUpstreamConfig(proxyDef: ProxyConfig): UpstreamConfig | undefined {
+    if (proxyDef.upstream.transport === "onepassword-browser") {
+      return resolveOnePasswordBrowserUpstream();
+    }
+    if (proxyDef.upstream.transport === "kali-api") {
+      return { kind: "kali-api", url: interpolateEnv(proxyDef.upstream.url) };
+    }
+    return {
+      kind: "http",
       url: interpolateEnv(proxyDef.upstream.url),
-      transport: proxyDef.upstream.transport,
-      headers: interpolatedHeaders,
+      headers: interpolateHeaders(proxyDef.upstream.headers),
     };
+  }
 
+  async function connectInstance(
+    name: string,
+    proxyDef: ProxyConfig,
+    upstreamConfig: UpstreamConfig,
+  ): Promise<ProxyInstance> {
     function scheduleReconnect(attempt: number): void {
       const instance = instances.get(name);
       if (!instance) return;
@@ -300,7 +318,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       }, delay);
     }
 
-    logInfo(log, "connecting_upstream", { name, url: upstreamConfig.url });
+    logInfo(log, "connecting_upstream", { name, target: upstreamTarget(upstreamConfig) });
     const upstream = await connectUpstreamFn(name, upstreamConfig, () => scheduleReconnect(1));
 
     const allToolNames = upstream.tools.map((tool) => tool.name);
@@ -341,13 +359,19 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return undefined;
     }
 
+    const upstreamConfig = resolveUpstreamConfig(proxyDef);
+    if (!upstreamConfig) {
+      instances.delete(name);
+      return undefined;
+    }
+
     const existing = instances.get(name);
     if (existing) return existing;
 
     const pending = connecting.get(name);
     if (pending) return pending;
 
-    const promise = connectInstance(name, proxyDef);
+    const promise = connectInstance(name, proxyDef, upstreamConfig);
     connecting.set(name, promise);
     try {
       const instance = await promise;
@@ -468,7 +492,11 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       }
       return {};
     } catch {
-      let stderr = `Invalid JSON argument: ${jsonArg}\n`;
+      const containsBrokerCredentialBoundary =
+        toolInfo.name === "get_login_metadata" || toolInfo.name === "browser_login";
+      let stderr = containsBrokerCredentialBoundary
+        ? `Invalid JSON argument for "${toolInfo.name}"\n`
+        : `Invalid JSON argument: ${jsonArg}\n`;
       if (toolInfo.inputSchema) {
         stderr += `\n[hint] Input schema for "${toolInfo.name}":\n${JSON.stringify(toolInfo.inputSchema, null, 2)}\n`;
       }
@@ -489,13 +517,25 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     onError?: (message: string) => void;
   }
 
+  function outboundArgs(
+    instance: ProxyInstance,
+    args: Record<string, unknown>,
+    sessionId: string | undefined,
+  ): Record<string, unknown> {
+    if (instance.name !== "onepassword-browser") return args;
+    if (!sessionId) throw new Error("Missing Thor session id for 1Password browser request");
+    return { ...args, _thor_session_id: sessionId };
+  }
+
   async function executeUpstreamCall(opts: UpstreamCallOpts): Promise<McpExecResult> {
     const { instance, toolName, args, logEvent, decision, extraLogFields, inputSchema } = opts;
     const start = Date.now();
+    let callArgs = args;
     try {
+      callArgs = outboundArgs(instance, args, opts.sessionId);
       const result = await instance.upstream.client.callTool({
         name: toolName,
-        arguments: args,
+        arguments: callArgs,
       });
       const duration = Date.now() - start;
       logInfo(log, logEvent, {
@@ -504,7 +544,13 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         durationMs: duration,
         ...extraLogFields,
       });
-      writeToolCallLogFn({ tool: toolName, decision, args, result, durationMs: duration });
+      writeToolCallLogFn({
+        tool: toolName,
+        decision,
+        args: callArgs,
+        result,
+        durationMs: duration,
+      });
       opts.onSuccess?.(result);
 
       const stdout = unwrapResult(result);
@@ -541,7 +587,13 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         durationMs: duration,
         ...extraLogFields,
       });
-      writeToolCallLogFn({ tool: toolName, decision, args, durationMs: duration, error: message });
+      writeToolCallLogFn({
+        tool: toolName,
+        decision,
+        args: callArgs,
+        durationMs: duration,
+        error: message,
+      });
       opts.onError?.(message);
 
       let stderr = `Error calling "${toolName}": ${message}\n`;
@@ -563,6 +615,13 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return fail(`Unknown upstream "${upstreamName}".`);
     }
 
+    if (instance.name === "onepassword-browser" && toolInfo.name === "get_login_metadata") {
+      const metadataArgs = GetLoginMetadataArgsSchema.safeParse(args);
+      if (!metadataArgs.success) {
+        return fail('Invalid arguments for "get_login_metadata"');
+      }
+      args = metadataArgs.data;
+    }
     if (toolInfo.classification === "approve") {
       const approvalRequired = ApprovalRequiredEventPayloadSchema.safeParse({
         type: "approval_required",
@@ -774,6 +833,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       args: upstreamArgs,
       logEvent: "tool_call_approved",
       decision: "approved",
+      sessionId: pendingAction.origin?.sessionId,
       extraLogFields: { actionId: pendingAction.id },
       onError: (message) => {
         pendingAction.error = message;

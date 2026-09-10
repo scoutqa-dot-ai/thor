@@ -16,15 +16,18 @@ import {
   loadRemoteCliGitHubEnv,
   loadRemoteCliInternalEnv,
   matchesInternalSecret,
+  writeToolCallLog,
   WORKSPACE_CONFIG_PATH,
   type ExecStreamEvent,
   type ConfigLoader,
+  type ToolCallLogEntry,
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.js";
 import { GwsService } from "./gws.js";
 import { parseGwsArgs } from "./policy-gws.js";
 import { resolveOwnerRepoFromRemote } from "./github-app-auth.js";
 import { createMcpService, type McpServiceDeps } from "./mcp-handler.js";
+import { sanitizeCredentialBrokerToolCallLog } from "./credential-broker-audit.js";
 import {
   handleSlackPostMessage,
   parseSlackPostMessageArgs,
@@ -637,9 +640,13 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   const internalSecret = appEnv.thorInternalSecret;
   const gws = new GwsService(process.env);
   const getConfig = config.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
+  const rawWriteToolCallLog = config.mcp?.writeToolCallLogFn ?? writeToolCallLog;
+  const safeWriteToolCallLog = (entry: ToolCallLogEntry): void =>
+    rawWriteToolCallLog(sanitizeCredentialBrokerToolCallLog(entry));
   const mcpService = createMcpService({
     isProduction: appEnv.isProduction,
     ...config.mcp,
+    writeToolCallLogFn: safeWriteToolCallLog,
     configLoader: config.mcp?.configLoader ?? getConfig,
     slack: config.mcp?.slack ?? {
       botToken: envConfig?.slackBotToken,

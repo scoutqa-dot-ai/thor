@@ -6,6 +6,7 @@ export const APPROVAL_TOOL_NAMES = [
   "editJiraIssue",
   "transitionJiraIssue",
   "create-feature-flag",
+  "browser_login",
 ] as const;
 
 export const CreateJiraIssueApprovalArgsSchema = z
@@ -51,12 +52,39 @@ export const CreateFeatureFlagApprovalArgsSchema = z
   })
   .passthrough();
 
+const OnePasswordOpaqueIdSchema = z.string().regex(/^[a-z0-9]{26}$/);
+
+export const GetLoginMetadataArgsSchema = z
+  .object({
+    item_id: OnePasswordOpaqueIdSchema,
+  })
+  .strict();
+
+export const BrowserLoginApprovalArgsSchema = z
+  .object({
+    item_id: OnePasswordOpaqueIdSchema,
+    expected_origin: z.url().refine((value) => {
+      const url = new URL(value);
+      return (
+        url.protocol === "https:" &&
+        !url.username &&
+        !url.password &&
+        url.pathname === "/" &&
+        !url.search &&
+        !url.hash &&
+        value === url.origin
+      );
+    }, "expected_origin must be an exact canonical HTTPS origin"),
+  })
+  .strict();
+
 export const ApprovalArgsSchema = z.union([
   CreateJiraIssueApprovalArgsSchema,
   AddCommentToJiraIssueApprovalArgsSchema,
   EditJiraIssueApprovalArgsSchema,
   TransitionJiraIssueApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
+  BrowserLoginApprovalArgsSchema,
 ]);
 
 const ApprovalRequiredEventBaseSchema = z.object({
@@ -85,6 +113,10 @@ export const ApprovalRequiredEventPayloadSchema = z.discriminatedUnion("tool", [
   ApprovalRequiredEventBaseSchema.extend({
     tool: z.literal("create-feature-flag"),
     args: CreateFeatureFlagApprovalArgsSchema,
+  }),
+  ApprovalRequiredEventBaseSchema.extend({
+    tool: z.literal("browser_login"),
+    args: BrowserLoginApprovalArgsSchema,
   }),
 ]);
 
@@ -145,6 +177,7 @@ export function injectApprovalDisclaimer(
       };
     case "editJiraIssue":
     case "transitionJiraIssue":
+    case "browser_login":
       return parsed.data.args;
   }
 }
