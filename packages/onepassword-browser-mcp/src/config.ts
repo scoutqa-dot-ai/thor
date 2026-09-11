@@ -74,21 +74,33 @@ export interface BrokerEnvironment {
   readonly policy: BrowserLoginPolicy;
 }
 
-export type ServiceAccountTokenConsumer = (path: string) => string | undefined;
+export type ServiceAccountTokenConsumer = () => string | undefined;
+
+export interface ServiceAccountTokenFileAccess {
+  readonly read: () => string;
+  readonly remove: () => void;
+}
+
+const serviceAccountTokenFileAccess: ServiceAccountTokenFileAccess = {
+  read: () => readFileSync(SERVICE_ACCOUNT_TOKEN_FILE, "utf8"),
+  remove: () => unlinkSync(SERVICE_ACCOUNT_TOKEN_FILE),
+};
 
 /**
  * Read a service-account token from a one-shot file and remove it before any
  * browser process can start. Failure to remove the file fails the broker closed.
  */
-export function consumeServiceAccountTokenFile(path: string): string | undefined {
+export function consumeServiceAccountTokenFile(
+  access: ServiceAccountTokenFileAccess = serviceAccountTokenFileAccess,
+): string | undefined {
   let token: string;
   try {
-    token = readFileSync(path, "utf8").trim();
+    token = access.read().trim();
   } catch {
     return undefined;
   }
   try {
-    unlinkSync(path);
+    access.remove();
   } catch {
     return undefined;
   }
@@ -208,7 +220,7 @@ export function parseBrokerEnvironment(
   consumeToken: ServiceAccountTokenConsumer = consumeServiceAccountTokenFile,
 ): Result<BrokerEnvironment, BrokerConfigurationError> {
   const tokenFile = env.OP_SERVICE_ACCOUNT_TOKEN_FILE?.trim();
-  const token = tokenFile === SERVICE_ACCOUNT_TOKEN_FILE ? consumeToken(tokenFile) : undefined;
+  const token = tokenFile === SERVICE_ACCOUNT_TOKEN_FILE ? consumeToken() : undefined;
   if (!token) return err(new BrokerConfigurationError("missing_token"));
   const policyJson = env.ONEPASSWORD_BROWSER_CONFIG?.trim();
   if (!policyJson) return err(new BrokerConfigurationError("missing_policy"));

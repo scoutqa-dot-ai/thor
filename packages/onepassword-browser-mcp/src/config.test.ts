@@ -1,6 +1,3 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   consumeServiceAccountTokenFile,
@@ -33,9 +30,7 @@ function policy(overrides: Record<string, unknown> = {}): string {
 }
 
 function parse(env: NodeJS.ProcessEnv) {
-  return parseBrokerEnvironment(env, (path) =>
-    path === SERVICE_ACCOUNT_TOKEN_FILE ? TOKEN : undefined,
-  );
+  return parseBrokerEnvironment(env, () => TOKEN);
 }
 
 describe("parseBrokerEnvironment", () => {
@@ -110,15 +105,16 @@ describe("parseBrokerEnvironment", () => {
   });
 
   it("consumes and deletes the one-shot service-account token file", () => {
-    const dir = mkdtempSync(join(tmpdir(), "thor-op-token-"));
-    const tokenFile = join(dir, "token");
-    try {
-      writeFileSync(tokenFile, `  ${TOKEN}\n`, { mode: 0o600 });
-      expect(consumeServiceAccountTokenFile(tokenFile)).toBe(TOKEN);
-      expect(existsSync(tokenFile)).toBe(false);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    let removed = false;
+    expect(
+      consumeServiceAccountTokenFile({
+        read: () => `  ${TOKEN}\n`,
+        remove: () => {
+          removed = true;
+        },
+      }),
+    ).toBe(TOKEN);
+    expect(removed).toBe(true);
   });
 
   it("rejects alternate token-file paths before consuming them", () => {
