@@ -10,6 +10,8 @@ overrides:
   # patched API-compatible releases so the production audit stays clean.
   body-parser: "2.3.0"
   hono: "4.13.5"
+  "@hono/node-server": "1.19.15"
+  ip-address: "10.3.1"
   protobufjs@7: "7.6.5"
   qs: "6.16.0"
   fast-uri: "3.1.6"
