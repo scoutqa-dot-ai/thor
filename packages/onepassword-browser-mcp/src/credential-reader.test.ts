@@ -1,47 +1,85 @@
-import { AutofillBehavior, ItemCategory, ItemFieldType, type Item } from "@1password/sdk";
+import {
+  AutofillBehavior,
+  ItemCategory,
+  ItemFieldType,
+  ItemState,
+  type Item,
+  type ItemOverview,
+} from "@1password/sdk";
 import { describe, expect, it } from "vitest";
-import { parseBrokerEnvironment, SERVICE_ACCOUNT_TOKEN_FILE } from "./config.ts";
+import {
+  parseBrokerEnvironment,
+  parseBrowserDestinationUrl,
+  parseOnePasswordItemId,
+  SERVICE_ACCOUNT_TOKEN_FILE,
+} from "./config.ts";
 import { OnePasswordLoginCredentialReader } from "./credential-reader.ts";
 import { RedactedString } from "./redacted.ts";
 
 const VAULT_ID = "aaaaaaaaaaaaaaaaaaaaaaaaaa";
 const ITEM_ID = "bbbbbbbbbbbbbbbbbbbbbbbbbb";
-const ORIGIN = "https://accounts.lambdatest.com";
+const OTHER_ITEM_ID = "cccccccccccccccccccccccccc";
+const ORIGIN = "https://accounts.example.com";
 const USERNAME = "audit-user@example.com";
 const PASSWORD = "secret-password-fixture";
+const TOKEN = "ops_fixture_service_account_token";
 
-function parsedPolicy() {
+function parsedEnvironment() {
   const result = parseBrokerEnvironment(
     {
       OP_SERVICE_ACCOUNT_TOKEN_FILE: SERVICE_ACCOUNT_TOKEN_FILE,
-      ONEPASSWORD_BROWSER_CONFIG: JSON.stringify({
-        vault_id: VAULT_ID,
-        item_id: ITEM_ID,
-        origin: ORIGIN,
-        login_url: `${ORIGIN}/login`,
-        username_ref: `op://${VAULT_ID}/${ITEM_ID}/username`,
-        password_ref: `op://${VAULT_ID}/${ITEM_ID}/password`,
-        selectors: { username: "#u", password: "#p", submit: "#s" },
-        success_path_prefix: "/dashboard",
-      }),
+      ONEPASSWORD_BROWSER_VAULT_ID: VAULT_ID,
     },
-    () => "ops_fixture_service_account_token",
+    () => TOKEN,
   );
   if (result._tag === "err") throw result.error;
-  return result.value.policy;
+  return result.value;
+}
+
+function destinationOrigin() {
+  const result = parseBrowserDestinationUrl(`${ORIGIN}/dashboard`);
+  if (result._tag === "err") throw result.error;
+  return result.value.origin;
+}
+
+function parsedItemId() {
+  const itemId = parseOnePasswordItemId(ITEM_ID);
+  if (!itemId) throw new Error("invalid item ID fixture");
+  return itemId;
+}
+
+function overview(overrides: Partial<ItemOverview> = {}): ItemOverview {
+  return {
+    id: ITEM_ID,
+    title: "Example audit",
+    category: ItemCategory.Login,
+    vaultId: VAULT_ID,
+    websites: [
+      {
+        url: `${ORIGIN}/login`,
+        label: "website",
+        autofillBehavior: AutofillBehavior.ExactDomain,
+      },
+    ],
+    tags: ["private-tag-fixture"],
+    createdAt: new Date("2026-09-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-09-01T00:00:00.000Z"),
+    state: ItemState.Active,
+    ...overrides,
+  };
 }
 
 function item(overrides: Partial<Item> = {}): Item {
   return {
     id: ITEM_ID,
-    title: "TestMu audit",
+    title: "Example audit",
     category: ItemCategory.Login,
     vaultId: VAULT_ID,
     fields: [
       {
         id: "username",
         title: "username",
-        fieldType: ItemFieldType.Text,
+        fieldType: ItemFieldType.Email,
         value: USERNAME,
       },
       {
@@ -52,15 +90,9 @@ function item(overrides: Partial<Item> = {}): Item {
       },
     ],
     sections: [],
-    notes: "notes-secret-fixture",
-    tags: ["tag-secret-fixture"],
-    websites: [
-      {
-        url: `${ORIGIN}/login`,
-        label: "website",
-        autofillBehavior: AutofillBehavior.ExactDomain,
-      },
-    ],
+    notes: "private-notes-fixture",
+    tags: ["private-tag-fixture"],
+    websites: overview().websites,
     version: 1,
     files: [],
     createdAt: new Date("2026-09-01T00:00:00.000Z"),
@@ -69,124 +101,265 @@ function item(overrides: Partial<Item> = {}): Item {
   };
 }
 
-describe("OnePasswordLoginCredentialReader", () => {
-  it("projects metadata without values, notes, tags, or unapproved websites", async () => {
-    const reader = new OnePasswordLoginCredentialReader(
-      RedactedString.make("ops_fixture_service_account_token"),
-      async () => ({
-        items: { get: async () => item() },
-        secrets: {
-          resolve: async (reference: string) =>
-            reference.endsWith("/username") ? USERNAME : PASSWORD,
+function readerWith(input: {
+  overviews?: ItemOverview[];
+  fullItem?: Item;
+  listFailure?: Error;
+  getFailure?: Error;
+}) {
+  const environment = parsedEnvironment();
+  let listCalls = 0;
+  let getCalls = 0;
+  const reader = new OnePasswordLoginCredentialReader(
+    environment.vaultId,
+    RedactedString.make(TOKEN),
+    async () => ({
+      items: {
+        list: async (vaultId: string) => {
+          listCalls += 1;
+          expect(vaultId).toBe(VAULT_ID);
+          if (input.listFailure) throw input.listFailure;
+          return input.overviews ?? [overview()];
         },
-      }),
-    );
+        get: async (vaultId: string, itemId: string) => {
+          getCalls += 1;
+          expect(vaultId).toBe(VAULT_ID);
+          expect(itemId).toBe(ITEM_ID);
+          if (input.getFailure) throw input.getFailure;
+          return input.fullItem ?? item();
+        },
+      },
+    }),
+  );
+  return {
+    reader,
+    counts: () => ({ listCalls, getCalls }),
+  };
+}
 
-    const result = await reader.getMetadata(parsedPolicy());
+describe("OnePasswordLoginCredentialReader discovery", () => {
+  it("lists active Login overviews and projects exact-origin metadata without full item reads", async () => {
+    const h = readerWith({
+      overviews: [
+        overview({ id: OTHER_ITEM_ID, title: "Second account" }),
+        overview(),
+        overview({
+          id: "d".repeat(26),
+          title: "Other origin",
+          websites: [
+            {
+              url: "https://other.example/login",
+              label: "website",
+              autofillBehavior: AutofillBehavior.ExactDomain,
+            },
+          ],
+        }),
+      ],
+    });
+
+    const result = await h.reader.findLoginItems(destinationOrigin());
     expect(result).toMatchObject({
       _tag: "ok",
-      value: {
-        itemId: ITEM_ID,
-        vaultId: VAULT_ID,
-        title: "TestMu audit",
-        origin: ORIGIN,
-      },
+      value: [
+        {
+          itemId: ITEM_ID,
+          title: "Example audit",
+          origin: ORIGIN,
+          loginUrl: `${ORIGIN}/login`,
+        },
+        {
+          itemId: OTHER_ITEM_ID,
+          title: "Second account",
+          origin: ORIGIN,
+          loginUrl: `${ORIGIN}/login`,
+        },
+      ],
     });
+    expect(h.counts()).toEqual({ listCalls: 1, getCalls: 0 });
     const serialized = JSON.stringify(result);
-    for (const secret of [USERNAME, PASSWORD, "notes-secret-fixture", "tag-secret-fixture"]) {
-      expect(serialized).not.toContain(secret);
-    }
+    expect(serialized).not.toContain("private-tag-fixture");
+    expect(serialized).not.toContain(USERNAME);
+    expect(serialized).not.toContain(PASSWORD);
   });
 
-  it.each([
-    ["wrong vault", { vaultId: "c".repeat(26) }],
-    ["wrong category", { category: ItemCategory.SecureNote }],
-    [
-      "wrong website",
-      {
-        websites: [
-          {
-            url: "https://evil.example/login",
-            label: "website",
-            autofillBehavior: AutofillBehavior.ExactDomain,
-          },
-        ],
-      },
-    ],
-    [
-      "an additional website origin",
-      {
-        websites: [
-          {
-            url: `${ORIGIN}/login`,
-            label: "website",
-            autofillBehavior: AutofillBehavior.ExactDomain,
-          },
-          {
-            url: "https://evil.example/login",
-            label: "other website",
-            autofillBehavior: AutofillBehavior.ExactDomain,
-          },
-        ],
-      },
-    ],
-    [
-      "a TOTP field",
-      {
-        fields: [
-          { id: "username", title: "username", fieldType: ItemFieldType.Text, value: USERNAME },
-          {
-            id: "password",
-            title: "password",
-            fieldType: ItemFieldType.Concealed,
-            value: PASSWORD,
-          },
-          { id: "otp", title: "one-time password", fieldType: ItemFieldType.Totp, value: "seed" },
-        ],
-      },
-    ],
-    [
-      "password field not concealed",
-      {
-        fields: [
-          { id: "username", title: "username", fieldType: ItemFieldType.Text, value: USERNAME },
-          { id: "password", title: "password", fieldType: ItemFieldType.Text, value: PASSWORD },
-        ],
-      },
-    ],
-  ])("rejects an item with %s", async (_label, overrides) => {
-    const reader = new OnePasswordLoginCredentialReader(
-      RedactedString.make("ops_fixture_service_account_token"),
-      async () => ({
-        items: { get: async () => item(overrides) },
-        secrets: { resolve: async () => PASSWORD },
-      }),
-    );
+  it("omits overviews that cannot safely authorize exact-domain Login autofill", async () => {
+    const h = readerWith({
+      overviews: [
+        overview({ category: ItemCategory.SecureNote }),
+        overview({ state: ItemState.Archived }),
+        overview({ vaultId: "d".repeat(26) }),
+        overview({ title: "Audit\u202eLogin" }),
+        overview({ websites: [] }),
+        overview({
+          websites: [
+            ...overview().websites,
+            {
+              url: "https://evil.example/login",
+              label: "other",
+              autofillBehavior: AutofillBehavior.ExactDomain,
+            },
+          ],
+        }),
+        overview({
+          websites: [
+            {
+              ...overview().websites[0],
+              autofillBehavior: AutofillBehavior.AnywhereOnWebsite,
+            },
+          ],
+        }),
+        overview({
+          websites: [
+            {
+              ...overview().websites[0],
+              url: `${ORIGIN}/login?token=unsafe`,
+            },
+          ],
+        }),
+      ],
+    });
 
-    await expect(reader.getCredentials(parsedPolicy())).resolves.toMatchObject({
+    await expect(h.reader.findLoginItems(destinationOrigin())).resolves.toEqual({
+      _tag: "ok",
+      value: [],
+    });
+  });
+
+  it("fails closed rather than returning an unbounded matching-account list", async () => {
+    const overviews = Array.from({ length: 51 }, (_, index) =>
+      overview({ id: index.toString(36).padStart(26, "a") }),
+    );
+    const h = readerWith({ overviews });
+
+    await expect(h.reader.findLoginItems(destinationOrigin())).resolves.toMatchObject({
       _tag: "err",
       error: { code: "item_invalid" },
     });
   });
+});
 
-  it("discards SDK error causes instead of returning credential-shaped text", async () => {
-    const cause = "SDK failed with token ops_leaked and password secret-password-fixture";
-    const reader = new OnePasswordLoginCredentialReader(
-      RedactedString.make("ops_fixture_service_account_token"),
-      async () => ({
-        items: {
-          get: async () => {
-            throw new Error(cause);
-          },
-        },
-        secrets: { resolve: async () => PASSWORD },
-      }),
-    );
+describe("OnePasswordLoginCredentialReader credential loading", () => {
+  it("revalidates a fresh full item and wraps only built-in username/password fields", async () => {
+    const h = readerWith({});
+    const result = await h.reader.getLoginCredentials({
+      itemId: parsedItemId(),
+      origin: destinationOrigin(),
+      approvedTitle: "Example audit",
+    });
 
-    const result = await reader.getMetadata(parsedPolicy());
-    expect(result).toMatchObject({ _tag: "err", error: { code: "unavailable" } });
-    expect(JSON.stringify(result)).not.toContain(cause);
-    expect(JSON.stringify(result)).not.toContain("ops_leaked");
+    expect(result).toMatchObject({
+      _tag: "ok",
+      value: {
+        metadata: { itemId: ITEM_ID, title: "Example audit", origin: ORIGIN },
+      },
+    });
+    expect(h.counts()).toEqual({ listCalls: 0, getCalls: 1 });
+    expect(JSON.stringify(result)).not.toContain(USERNAME);
     expect(JSON.stringify(result)).not.toContain(PASSWORD);
+  });
+
+  it.each([
+    ["changed title", { title: "Renamed after approval" }],
+    ["wrong category", { category: ItemCategory.SecureNote }],
+    ["wrong vault", { vaultId: "d".repeat(26) }],
+    [
+      "mixed website origins",
+      {
+        websites: [
+          ...overview().websites,
+          {
+            url: "https://evil.example/login",
+            label: "other",
+            autofillBehavior: AutofillBehavior.ExactDomain,
+          },
+        ],
+      },
+    ],
+    [
+      "TOTP field",
+      {
+        fields: [
+          ...item().fields,
+          { id: "otp", title: "one-time password", fieldType: ItemFieldType.Totp, value: "seed" },
+        ],
+      },
+    ],
+  ])("rejects a full item with %s", async (_label, overrides) => {
+    const h = readerWith({ fullItem: item(overrides) });
+    const result = await h.reader.getLoginCredentials({
+      itemId: parsedItemId(),
+      origin: destinationOrigin(),
+      approvedTitle: "Example audit",
+    });
+    expect(result).toMatchObject({ _tag: "err", error: { code: "item_invalid" } });
+    expect(JSON.stringify(result)).not.toContain(PASSWORD);
+  });
+
+  it.each([
+    [
+      "duplicate username",
+      {
+        fields: [
+          ...item().fields,
+          { id: "username", title: "other", fieldType: ItemFieldType.Text, value: "other" },
+        ],
+      },
+    ],
+    [
+      "non-concealed password",
+      {
+        fields: item().fields.map((field) =>
+          field.id === "password" ? { ...field, fieldType: ItemFieldType.Text } : field,
+        ),
+      },
+    ],
+    [
+      "empty credential",
+      {
+        fields: item().fields.map((field) =>
+          field.id === "password" ? { ...field, value: "" } : field,
+        ),
+      },
+    ],
+    [
+      "section-scoped credential lookalike",
+      {
+        fields: item().fields.map((field) =>
+          field.id === "password" ? { ...field, sectionId: "private-section" } : field,
+        ),
+      },
+    ],
+    [
+      "oversized credential",
+      {
+        fields: item().fields.map((field) =>
+          field.id === "password" ? { ...field, value: "p".repeat(4_097) } : field,
+        ),
+      },
+    ],
+  ])("rejects %s", async (_label, overrides) => {
+    const h = readerWith({ fullItem: item(overrides) });
+    const result = await h.reader.getLoginCredentials({
+      itemId: parsedItemId(),
+      origin: destinationOrigin(),
+      approvedTitle: "Example audit",
+    });
+    expect(result).toMatchObject({ _tag: "err", error: { code: "credential_invalid" } });
+  });
+
+  it("discards SDK causes instead of returning credential-shaped error text", async () => {
+    const cause = new Error(`SDK failed with token ${TOKEN} and password ${PASSWORD}`);
+    const h = readerWith({ listFailure: cause, getFailure: cause });
+
+    const discovery = await h.reader.findLoginItems(destinationOrigin());
+    const credentials = await h.reader.getLoginCredentials({
+      itemId: parsedItemId(),
+      origin: destinationOrigin(),
+      approvedTitle: "Example audit",
+    });
+    expect(discovery).toMatchObject({ _tag: "err", error: { code: "unavailable" } });
+    expect(credentials).toMatchObject({ _tag: "err", error: { code: "unavailable" } });
+    expect(JSON.stringify({ discovery, credentials })).not.toContain(TOKEN);
+    expect(JSON.stringify({ discovery, credentials })).not.toContain(PASSWORD);
   });
 });

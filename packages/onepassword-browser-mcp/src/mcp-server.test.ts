@@ -1,53 +1,98 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
-import type { BrowserLoginOutput, ICredentialBroker, LoginMetadataOutput } from "./broker.ts";
-import type { BrokerError } from "./errors.ts";
+import type { ICredentialBroker } from "./broker.ts";
 import { createBrokerMcpServer } from "./mcp-server.ts";
-import { ok, type Result } from "./result.ts";
+import { ok } from "./result.ts";
 
 const ITEM_ID = "bbbbbbbbbbbbbbbbbbbbbbbbbb";
 const VAULT_ID = "aaaaaaaaaaaaaaaaaaaaaaaaaa";
-const ORIGIN = "https://accounts.lambdatest.com";
+const ORIGIN = "https://accounts.example.com";
+const BROWSER_SESSION_ID = "00000000-0000-4000-8000-000000000001";
+const SNAPSHOT_ID = "00000000-0000-4000-8000-000000000002";
 
 class RecordingBroker implements ICredentialBroker {
-  metadataInputs: Array<{ readonly itemId: string; readonly sessionId?: string }> = [];
-  loginInputs: Array<{
-    readonly itemId: string;
-    readonly expectedOrigin: string;
-    readonly sessionId?: string;
-  }> = [];
+  readonly calls: Array<{ operation: string; input: unknown }> = [];
 
-  async getLoginMetadata(input: {
-    readonly itemId: string;
-    readonly sessionId?: string;
-  }): Promise<Result<LoginMetadataOutput, BrokerError>> {
-    this.metadataInputs.push(input);
+  async findLoginItems(input: { url: string; sessionId: string }) {
+    this.calls.push({ operation: "find", input });
     return ok({
-      item_id: ITEM_ID,
-      vault_id: VAULT_ID,
-      title: "TestMu audit",
-      approved_origin: ORIGIN,
-      fields: [
-        { name: "username", type: "Text" },
-        { name: "password", type: "Concealed" },
-      ],
+      origin: ORIGIN,
+      matches: [{ item_id: ITEM_ID, title: "Example audit", origin: ORIGIN }],
     });
   }
 
-  async browserLogin(input: {
-    readonly itemId: string;
-    readonly expectedOrigin: string;
-    readonly sessionId?: string;
-  }): Promise<Result<BrowserLoginOutput, BrokerError>> {
-    this.loginInputs.push(input);
+  async openAuthenticatedBrowser(input: {
+    itemId: string;
+    approvedTitle: string;
+    url: string;
+    sessionId: string;
+  }) {
+    this.calls.push({ operation: "open", input });
     return ok({
-      status: "authenticated",
+      status: "authenticated" as const,
+      browser_session_id: BROWSER_SESSION_ID,
       item_id: ITEM_ID,
       vault_id: VAULT_ID,
       origin: ORIGIN,
     });
   }
+
+  async snapshotBrowser(input: { browserSessionId: string; sessionId: string }) {
+    this.calls.push({ operation: "snapshot", input });
+    return ok({
+      browser_session_id: BROWSER_SESSION_ID,
+      snapshot_id: SNAPSHOT_ID,
+      origin: ORIGIN,
+      title: "Dashboard",
+      accessibility: [{ role: "heading", name: "Dashboard", ref: "e1" }],
+    });
+  }
+
+  async clickBrowser(input: {
+    browserSessionId: string;
+    snapshotId: string;
+    ref: string;
+    sessionId: string;
+  }) {
+    this.calls.push({ operation: "click", input });
+    return ok({
+      status: "ready" as const,
+      browser_session_id: BROWSER_SESSION_ID,
+      origin: ORIGIN,
+    });
+  }
+
+  async typeInBrowser(input: {
+    browserSessionId: string;
+    snapshotId: string;
+    ref: string;
+    text: string;
+    sessionId: string;
+  }) {
+    this.calls.push({ operation: "type", input });
+    return ok({
+      status: "ready" as const,
+      browser_session_id: BROWSER_SESSION_ID,
+      origin: ORIGIN,
+    });
+  }
+
+  async navigateBrowser(input: { browserSessionId: string; url: string; sessionId: string }) {
+    this.calls.push({ operation: "navigate", input });
+    return ok({
+      status: "ready" as const,
+      browser_session_id: BROWSER_SESSION_ID,
+      origin: ORIGIN,
+    });
+  }
+
+  async closeBrowser(input: { browserSessionId: string; sessionId: string }) {
+    this.calls.push({ operation: "close", input });
+    return ok({ status: "closed" as const, browser_session_id: BROWSER_SESSION_ID });
+  }
+
+  async closeAllBrowsers(): Promise<void> {}
 }
 
 async function withClient(
@@ -65,47 +110,111 @@ async function withClient(
   }
 }
 
-describe("1Password browser MCP public interface", () => {
-  it("lists only metadata and approved browser-login tools without internal context fields", async () => {
+describe("1Password authenticated browser MCP public interface", () => {
+  it("lists only safe discovery and restricted browser controls", async () => {
     await withClient(async (client) => {
       const { tools } = await client.listTools();
-      expect(tools.map((tool) => tool.name)).toEqual(["get_login_metadata", "browser_login"]);
-      expect(JSON.stringify(tools)).not.toContain("_thor_session_id");
-      expect(JSON.stringify(tools)).not.toContain("read_secret");
-      expect(JSON.stringify(tools)).not.toContain("vault");
+      expect(tools.map((tool) => tool.name)).toEqual([
+        "find_login_items",
+        "browser_open_authenticated",
+        "browser_snapshot",
+        "browser_click",
+        "browser_type",
+        "browser_navigate",
+        "browser_close",
+      ]);
+      const serialized = JSON.stringify(tools);
+      const toolNames = tools.map((tool) => tool.name).join(" ");
+      expect(serialized).not.toContain("_thor_session_id");
+      expect(serialized).not.toContain("_approved_item_title");
+      expect(serialized).not.toContain("read_secret");
+      expect(toolNames).not.toContain("cookie");
+      expect(toolNames).not.toContain("storage");
+      expect(toolNames).not.toContain("javascript");
+      expect(toolNames).not.toContain("cdp");
     });
   });
 
-  it("passes server-injected session context without returning credential material", async () => {
+  it("passes trusted approval metadata and session context without returning credentials", async () => {
     await withClient(async (client, broker) => {
       const result = await client.callTool({
-        name: "browser_login",
+        name: "browser_open_authenticated",
         arguments: {
           item_id: ITEM_ID,
-          expected_origin: ORIGIN,
-          _thor_session_id: "ses_123",
+          url: `${ORIGIN}/dashboard`,
+          _approved_item_title: "Example audit",
+          _thor_session_id: "parent-session",
         },
       });
 
       expect(result.isError).not.toBe(true);
-      expect(broker.loginInputs).toEqual([
-        { itemId: ITEM_ID, expectedOrigin: ORIGIN, sessionId: "ses_123" },
+      expect(broker.calls).toEqual([
+        {
+          operation: "open",
+          input: {
+            itemId: ITEM_ID,
+            approvedTitle: "Example audit",
+            url: `${ORIGIN}/dashboard`,
+            sessionId: "parent-session",
+          },
+        },
       ]);
       expect(JSON.stringify(result)).not.toContain("password");
       expect(JSON.stringify(result)).not.toContain("cookie");
     });
   });
 
-  it("rejects malformed or extra arguments without echoing them or invoking the broker", async () => {
+  it("routes snapshot refs and non-secret typing through strict argument schemas", async () => {
+    await withClient(async (client, broker) => {
+      await client.callTool({
+        name: "browser_snapshot",
+        arguments: {
+          browser_session_id: BROWSER_SESSION_ID,
+          _thor_session_id: "parent-session",
+        },
+      });
+      const typed = await client.callTool({
+        name: "browser_type",
+        arguments: {
+          browser_session_id: BROWSER_SESSION_ID,
+          snapshot_id: SNAPSHOT_ID,
+          ref: "e1",
+          text: "report title",
+          _thor_session_id: "parent-session",
+        },
+      });
+
+      expect(typed.isError).not.toBe(true);
+      expect(broker.calls).toEqual([
+        {
+          operation: "snapshot",
+          input: { browserSessionId: BROWSER_SESSION_ID, sessionId: "parent-session" },
+        },
+        {
+          operation: "type",
+          input: {
+            browserSessionId: BROWSER_SESSION_ID,
+            snapshotId: SNAPSHOT_ID,
+            ref: "e1",
+            text: "report title",
+            sessionId: "parent-session",
+          },
+        },
+      ]);
+      expect(JSON.stringify(typed)).not.toContain("report title");
+    });
+  });
+
+  it("rejects missing trusted context and extra arguments without echoing them", async () => {
     await withClient(async (client, broker) => {
       const secret = "must-not-be-echoed";
       const result = await client.callTool({
-        name: "get_login_metadata",
-        arguments: { item_id: "bad", injected_secret: secret },
+        name: "find_login_items",
+        arguments: { url: `${ORIGIN}/`, injected_secret: secret },
       });
 
       expect(result.isError).toBe(true);
-      expect(broker.metadataInputs).toEqual([]);
+      expect(broker.calls).toEqual([]);
       expect(JSON.stringify(result)).not.toContain(secret);
       expect(JSON.stringify(result)).toContain("invalid_request");
     });

@@ -5,46 +5,132 @@ import {
   type CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod/v4";
-import { onePasswordIdPattern } from "./config.ts";
+import { browserTypeTextMaxChars } from "./authenticated-browser.ts";
 import type { ICredentialBroker } from "./broker.ts";
+import { onePasswordIdPattern } from "./config.ts";
 import type { BrokerError } from "./errors.ts";
 import type { Result } from "./result.ts";
 
+const ThorSessionIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/);
+const BrowserSessionIdSchema = z.uuid();
+const BrowserSnapshotIdSchema = z.uuid();
+const BrowserRefPattern = /^(?:f[1-9][0-9]*)?e[1-9][0-9]*$/;
+const BrowserRefSchema = z.string().regex(BrowserRefPattern);
+const BrowserUrlSchema = z.string().trim().min(1).max(2_000);
 const InternalContextSchema = z.object({
-  _thor_session_id: z.string().trim().min(1).optional(),
+  _thor_session_id: ThorSessionIdSchema,
 });
-const MetadataInputSchema = InternalContextSchema.extend({
-  item_id: z.string().regex(onePasswordIdPattern),
+const FindLoginItemsInputSchema = InternalContextSchema.extend({
+  url: BrowserUrlSchema,
 }).strict();
-const BrowserLoginInputSchema = InternalContextSchema.extend({
+const OpenAuthenticatedBrowserInputSchema = InternalContextSchema.extend({
   item_id: z.string().regex(onePasswordIdPattern),
-  expected_origin: z.string().trim().min(1),
+  url: BrowserUrlSchema,
+  _approved_item_title: z.string().trim().min(1).max(200),
+}).strict();
+const BrowserSessionInputSchema = InternalContextSchema.extend({
+  browser_session_id: BrowserSessionIdSchema,
+}).strict();
+const BrowserRefInputSchema = BrowserSessionInputSchema.extend({
+  snapshot_id: BrowserSnapshotIdSchema,
+  ref: BrowserRefSchema,
+}).strict();
+const BrowserTypeInputSchema = BrowserRefInputSchema.extend({
+  text: z.string().min(1).max(browserTypeTextMaxChars),
+}).strict();
+const BrowserNavigateInputSchema = BrowserSessionInputSchema.extend({
+  url: BrowserUrlSchema,
 }).strict();
 
 const PUBLIC_TOOLS = [
   {
-    name: "get_login_metadata",
+    name: "find_login_items",
     description:
-      "Return non-secret metadata for the one approved 1Password login item. Never returns field values.",
+      "Find non-secret 1Password Login item metadata matching the exact HTTPS origin of a website URL.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { item_id: { type: "string", pattern: onePasswordIdPattern.source } },
-      required: ["item_id"],
+      properties: { url: { type: "string", format: "uri", maxLength: 2_000 } },
+      required: ["url"],
     },
   },
   {
-    name: "browser_login",
+    name: "browser_open_authenticated",
     description:
-      "After human approval, inject the approved 1Password login into a local ephemeral browser for the exact approved HTTPS origin.",
+      "After human approval, autofill one matching Login item and return an opaque broker-owned browser session.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
         item_id: { type: "string", pattern: onePasswordIdPattern.source },
-        expected_origin: { type: "string", format: "uri" },
+        url: { type: "string", format: "uri", maxLength: 2_000 },
       },
-      required: ["item_id", "expected_origin"],
+      required: ["item_id", "url"],
+    },
+  },
+  {
+    name: "browser_snapshot",
+    description:
+      "Return a bounded credential-redacted accessibility snapshot for an authenticated browser session.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: { browser_session_id: { type: "string", format: "uuid" } },
+      required: ["browser_session_id"],
+    },
+  },
+  {
+    name: "browser_click",
+    description:
+      "Click one element ref from the latest authenticated browser snapshot; the snapshot then expires.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        browser_session_id: { type: "string", format: "uuid" },
+        snapshot_id: { type: "string", format: "uuid" },
+        ref: { type: "string", pattern: BrowserRefPattern.source },
+      },
+      required: ["browser_session_id", "snapshot_id", "ref"],
+    },
+  },
+  {
+    name: "browser_type",
+    description:
+      "Fill ordinary non-secret text into one ref from the latest snapshot; password, MFA, token, and payment fields are denied.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        browser_session_id: { type: "string", format: "uuid" },
+        snapshot_id: { type: "string", format: "uuid" },
+        ref: { type: "string", pattern: BrowserRefPattern.source },
+        text: { type: "string", minLength: 1, maxLength: browserTypeTextMaxChars },
+      },
+      required: ["browser_session_id", "snapshot_id", "ref", "text"],
+    },
+  },
+  {
+    name: "browser_navigate",
+    description: "Navigate an authenticated browser only within its exact approved HTTPS origin.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        browser_session_id: { type: "string", format: "uuid" },
+        url: { type: "string", format: "uri", maxLength: 2_000 },
+      },
+      required: ["browser_session_id", "url"],
+    },
+  },
+  {
+    name: "browser_close",
+    description: "Destroy one authenticated browser session and its cookies and storage.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: { browser_session_id: { type: "string", format: "uuid" } },
+      required: ["browser_session_id"],
     },
   },
 ] as const;
@@ -84,32 +170,93 @@ function invalidRequest(): CallToolResult {
   };
 }
 
+/** Create the strict MCP adapter without exposing its trusted session/title fields. */
 export function createBrokerMcpServer(broker: ICredentialBroker): Server {
   const server = new Server(
     { name: "thor-onepassword-browser", version: "0.0.1" },
     { capabilities: { tools: {} } },
   );
 
+  server.onclose = () => {
+    void broker.closeAllBrowsers();
+  };
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [...PUBLIC_TOOLS] }));
   server.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
-    if (request.params.name === "get_login_metadata") {
-      const parsed = MetadataInputSchema.safeParse(request.params.arguments);
+    if (request.params.name === "find_login_items") {
+      const parsed = FindLoginItemsInputSchema.safeParse(request.params.arguments);
       if (!parsed.success) return invalidRequest();
       return resultContent(
-        await broker.getLoginMetadata({
-          itemId: parsed.data.item_id,
-          ...(parsed.data._thor_session_id ? { sessionId: parsed.data._thor_session_id } : {}),
+        await broker.findLoginItems({
+          url: parsed.data.url,
+          sessionId: parsed.data._thor_session_id,
         }),
       );
     }
-    if (request.params.name === "browser_login") {
-      const parsed = BrowserLoginInputSchema.safeParse(request.params.arguments);
+    if (request.params.name === "browser_open_authenticated") {
+      const parsed = OpenAuthenticatedBrowserInputSchema.safeParse(request.params.arguments);
       if (!parsed.success) return invalidRequest();
       return resultContent(
-        await broker.browserLogin({
+        await broker.openAuthenticatedBrowser({
           itemId: parsed.data.item_id,
-          expectedOrigin: parsed.data.expected_origin,
-          ...(parsed.data._thor_session_id ? { sessionId: parsed.data._thor_session_id } : {}),
+          approvedTitle: parsed.data._approved_item_title,
+          url: parsed.data.url,
+          sessionId: parsed.data._thor_session_id,
+        }),
+      );
+    }
+    if (request.params.name === "browser_snapshot") {
+      const parsed = BrowserSessionInputSchema.safeParse(request.params.arguments);
+      if (!parsed.success) return invalidRequest();
+      return resultContent(
+        await broker.snapshotBrowser({
+          browserSessionId: parsed.data.browser_session_id,
+          sessionId: parsed.data._thor_session_id,
+        }),
+      );
+    }
+    if (request.params.name === "browser_click") {
+      const parsed = BrowserRefInputSchema.safeParse(request.params.arguments);
+      if (!parsed.success) return invalidRequest();
+      return resultContent(
+        await broker.clickBrowser({
+          browserSessionId: parsed.data.browser_session_id,
+          snapshotId: parsed.data.snapshot_id,
+          ref: parsed.data.ref,
+          sessionId: parsed.data._thor_session_id,
+        }),
+      );
+    }
+    if (request.params.name === "browser_type") {
+      const parsed = BrowserTypeInputSchema.safeParse(request.params.arguments);
+      if (!parsed.success) return invalidRequest();
+      return resultContent(
+        await broker.typeInBrowser({
+          browserSessionId: parsed.data.browser_session_id,
+          snapshotId: parsed.data.snapshot_id,
+          ref: parsed.data.ref,
+          text: parsed.data.text,
+          sessionId: parsed.data._thor_session_id,
+        }),
+      );
+    }
+    if (request.params.name === "browser_navigate") {
+      const parsed = BrowserNavigateInputSchema.safeParse(request.params.arguments);
+      if (!parsed.success) return invalidRequest();
+      return resultContent(
+        await broker.navigateBrowser({
+          browserSessionId: parsed.data.browser_session_id,
+          url: parsed.data.url,
+          sessionId: parsed.data._thor_session_id,
+        }),
+      );
+    }
+    if (request.params.name === "browser_close") {
+      const parsed = BrowserSessionInputSchema.safeParse(request.params.arguments);
+      if (!parsed.success) return invalidRequest();
+      return resultContent(
+        await broker.closeBrowser({
+          browserSessionId: parsed.data.browser_session_id,
+          sessionId: parsed.data._thor_session_id,
         }),
       );
     }
@@ -119,4 +266,5 @@ export function createBrokerMcpServer(broker: ICredentialBroker): Server {
   return server;
 }
 
+/** Exact public tool inventory used by tests and remote-cli policy drift checks. */
 export const publicBrokerTools = PUBLIC_TOOLS;

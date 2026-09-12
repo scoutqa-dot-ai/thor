@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   consumeServiceAccountTokenFile,
   parseBrokerEnvironment,
-  parseExpectedOrigin,
+  parseBrowserDestinationUrl,
+  parseOnePasswordItemId,
   SERVICE_ACCOUNT_TOKEN_FILE,
 } from "./config.ts";
 
@@ -11,94 +12,28 @@ const ITEM_ID = "bbbbbbbbbbbbbbbbbbbbbbbbbb";
 const TOKEN = "ops_fixture_service_account_token";
 const TOKEN_ENV = { OP_SERVICE_ACCOUNT_TOKEN_FILE: SERVICE_ACCOUNT_TOKEN_FILE };
 
-function policy(overrides: Record<string, unknown> = {}): string {
-  return JSON.stringify({
-    vault_id: VAULT_ID,
-    item_id: ITEM_ID,
-    origin: "https://accounts.lambdatest.com",
-    login_url: "https://accounts.lambdatest.com/login",
-    username_ref: `op://${VAULT_ID}/${ITEM_ID}/username`,
-    password_ref: `op://${VAULT_ID}/${ITEM_ID}/password`,
-    selectors: {
-      username: "input[name=email]",
-      password: "input[name=password]",
-      submit: "button[type=submit]",
-    },
-    success_path_prefix: "/dashboard",
-    ...overrides,
-  });
-}
-
 function parse(env: NodeJS.ProcessEnv) {
   return parseBrokerEnvironment(env, () => TOKEN);
 }
 
 describe("parseBrokerEnvironment", () => {
-  it("parses an exact allowlist and redacts the service-account token", () => {
+  it("parses one dedicated vault and redacts the service-account token", () => {
     const result = parse({
       ...TOKEN_ENV,
-      ONEPASSWORD_BROWSER_CONFIG: policy(),
+      ONEPASSWORD_BROWSER_VAULT_ID: VAULT_ID,
     });
 
-    expect(result._tag).toBe("ok");
+    expect(result).toMatchObject({ _tag: "ok", value: { vaultId: VAULT_ID } });
     if (result._tag === "err") return;
-    expect(result.value.policy).toMatchObject({
-      vaultId: VAULT_ID,
-      itemId: ITEM_ID,
-      origin: "https://accounts.lambdatest.com",
-      loginUrl: "https://accounts.lambdatest.com/login",
-      successPathPrefix: "/dashboard",
-      timeoutMs: 30_000,
-    });
     expect(String(result.value.serviceAccountToken)).toBe("[REDACTED]");
     expect(JSON.stringify(result.value)).not.toContain(TOKEN);
   });
 
   it.each([
-    [{ ONEPASSWORD_BROWSER_CONFIG: policy() }, "missing_token"],
-    [TOKEN_ENV, "missing_policy"],
-    [
-      {
-        ...TOKEN_ENV,
-        ONEPASSWORD_BROWSER_CONFIG: policy({ item_id: "not-an-item-id" }),
-      },
-      "invalid_policy",
-    ],
-    [
-      {
-        ...TOKEN_ENV,
-        ONEPASSWORD_BROWSER_CONFIG: policy({ origin: "http://accounts.lambdatest.com" }),
-      },
-      "invalid_policy",
-    ],
-    [
-      {
-        ...TOKEN_ENV,
-        ONEPASSWORD_BROWSER_CONFIG: policy({
-          login_url: "https://phishing.example/login",
-        }),
-      },
-      "invalid_policy",
-    ],
-    [
-      {
-        ...TOKEN_ENV,
-        ONEPASSWORD_BROWSER_CONFIG: policy({
-          password_ref: `op://${VAULT_ID}/${"c".repeat(26)}/password`,
-        }),
-      },
-      "invalid_policy",
-    ],
-    [
-      {
-        ...TOKEN_ENV,
-        ONEPASSWORD_BROWSER_CONFIG: policy({
-          username_ref: `op://${VAULT_ID}/${ITEM_ID}/password`,
-        }),
-      },
-      "invalid_policy",
-    ],
-  ])("fails closed for invalid or partial configuration", (env, code) => {
+    [{ ONEPASSWORD_BROWSER_VAULT_ID: VAULT_ID }, "missing_token"],
+    [TOKEN_ENV, "missing_vault"],
+    [{ ...TOKEN_ENV, ONEPASSWORD_BROWSER_VAULT_ID: "not-a-vault-id" }, "invalid_vault"],
+  ])("fails closed for partial or invalid startup configuration", (env, code) => {
     const result = parse(env);
     expect(result).toMatchObject({ _tag: "err", error: { code } });
     expect(JSON.stringify(result)).not.toContain(TOKEN);
@@ -122,7 +57,7 @@ describe("parseBrokerEnvironment", () => {
     const result = parseBrokerEnvironment(
       {
         OP_SERVICE_ACCOUNT_TOKEN_FILE: "/tmp/attacker-controlled-token",
-        ONEPASSWORD_BROWSER_CONFIG: policy(),
+        ONEPASSWORD_BROWSER_VAULT_ID: VAULT_ID,
       },
       () => {
         consumed = true;
@@ -135,14 +70,39 @@ describe("parseBrokerEnvironment", () => {
   });
 });
 
-describe("parseExpectedOrigin", () => {
-  it("accepts only an exact canonical HTTPS origin", () => {
-    expect(parseExpectedOrigin("https://accounts.lambdatest.com")).toBe(
-      "https://accounts.lambdatest.com",
-    );
-    expect(parseExpectedOrigin("https://accounts.lambdatest.com/")).toBeUndefined();
-    expect(parseExpectedOrigin("https://accounts.lambdatest.com/login")).toBeUndefined();
-    expect(parseExpectedOrigin("https://user:pass@accounts.lambdatest.com")).toBeUndefined();
-    expect(parseExpectedOrigin("http://accounts.lambdatest.com")).toBeUndefined();
+describe("browser credential domain parsing", () => {
+  it("canonicalizes HTTPS page URLs while preserving an exact origin and path", () => {
+    const result = parseBrowserDestinationUrl(" https://accounts.example.com/login ");
+    expect(result).toEqual({
+      _tag: "ok",
+      value: {
+        url: "https://accounts.example.com/login",
+        origin: "https://accounts.example.com",
+      },
+    });
+
+    expect(parseBrowserDestinationUrl("https://accounts.example.com")).toMatchObject({
+      _tag: "ok",
+      value: { url: "https://accounts.example.com/" },
+    });
+  });
+
+  it.each([
+    "http://accounts.example.com/login",
+    "https://user:pass@accounts.example.com/login",
+    "https://accounts.example.com/login?token=secret",
+    "https://accounts.example.com/login#secret",
+    "not a url",
+  ])("rejects unsafe browser destination %s", (url) => {
+    expect(parseBrowserDestinationUrl(url)).toMatchObject({
+      _tag: "err",
+      error: { code: "invalid_destination" },
+    });
+  });
+
+  it("parses only 26-character lowercase 1Password item IDs", () => {
+    expect(parseOnePasswordItemId(ITEM_ID)).toBe(ITEM_ID);
+    expect(parseOnePasswordItemId(ITEM_ID.toUpperCase())).toBeUndefined();
+    expect(parseOnePasswordItemId("short")).toBeUndefined();
   });
 });

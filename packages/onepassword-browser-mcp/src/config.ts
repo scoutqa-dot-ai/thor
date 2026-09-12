@@ -1,16 +1,11 @@
 import { readFileSync, unlinkSync } from "node:fs";
 
 import { z } from "zod/v4";
-import { BrokerConfigurationError } from "./errors.ts";
+import { BrokerConfigurationError, BrokerRequestDeniedError } from "./errors.ts";
 import { RedactedString } from "./redacted.ts";
 import { err, ok, type Result } from "./result.ts";
 
 const ONEPASSWORD_ID_PATTERN = /^[a-z0-9]{26}$/;
-const SECRET_REFERENCE_PATTERN = /^op:\/\/([a-z0-9]{26})\/([a-z0-9]{26})\/([A-Za-z0-9_.-]+)$/;
-const MAX_SELECTOR_LENGTH = 500;
-const DEFAULT_TIMEOUT_MS = 30_000;
-export const SERVICE_ACCOUNT_TOKEN_FILE = "/run/secrets/thor-onepassword-service-account-token";
-
 const OnePasswordVaultIdSchema = z
   .string()
   .regex(ONEPASSWORD_ID_PATTERN)
@@ -19,63 +14,40 @@ const OnePasswordItemIdSchema = z
   .string()
   .regex(ONEPASSWORD_ID_PATTERN)
   .brand<"OnePasswordItemId">();
-const SelectorSchema = z.string().trim().min(1).max(MAX_SELECTOR_LENGTH);
+const BrowserOriginSchema = z.string().brand<"BrowserOrigin">();
+const BrowserUrlSchema = z.string().brand<"BrowserUrl">();
 
-const RawPolicySchema = z
-  .object({
-    vault_id: OnePasswordVaultIdSchema,
-    item_id: OnePasswordItemIdSchema,
-    origin: z.string().trim().min(1),
-    login_url: z.string().trim().min(1),
-    username_ref: z.string().trim().min(1),
-    password_ref: z.string().trim().min(1),
-    selectors: z
-      .object({
-        username: SelectorSchema,
-        username_submit: SelectorSchema.optional(),
-        password: SelectorSchema,
-        submit: SelectorSchema,
-      })
-      .strict(),
-    success_path_prefix: z.string().trim().startsWith("/").max(500),
-    timeout_ms: z.number().int().min(1_000).max(120_000).optional(),
-  })
-  .strict();
+/** Fixed private path populated from anonymous fd 3 and consumed once at startup. */
+export const SERVICE_ACCOUNT_TOKEN_FILE = "/run/secrets/thor-onepassword-service-account-token";
 
+/** Identifier for the only 1Password vault reachable by the broker. */
 export type OnePasswordVaultId = z.infer<typeof OnePasswordVaultIdSchema>;
+
+/** Identifier for a Login item inside the dedicated browser vault. */
 export type OnePasswordItemId = z.infer<typeof OnePasswordItemIdSchema>;
 
-export interface SecretReference {
-  readonly value: string;
-  readonly vaultId: OnePasswordVaultId;
-  readonly itemId: OnePasswordItemId;
-  readonly fieldId: string;
+/** Canonical exact HTTPS origin used as the browser network boundary. */
+export type BrowserOrigin = z.infer<typeof BrowserOriginSchema>;
+
+/** Canonical HTTPS page URL without credentials, query parameters, or a fragment. */
+export type BrowserUrl = z.infer<typeof BrowserUrlSchema>;
+
+/** Parsed website destination whose canonical URL and exact origin cannot diverge. */
+export interface BrowserDestination {
+  readonly url: BrowserUrl;
+  readonly origin: BrowserOrigin;
 }
 
-export interface BrowserLoginPolicy {
-  readonly vaultId: OnePasswordVaultId;
-  readonly itemId: OnePasswordItemId;
-  readonly origin: string;
-  readonly loginUrl: string;
-  readonly usernameRef: SecretReference;
-  readonly passwordRef: SecretReference;
-  readonly selectors: {
-    readonly username: string;
-    readonly usernameSubmit?: string;
-    readonly password: string;
-    readonly submit: string;
-  };
-  readonly successPathPrefix: string;
-  readonly timeoutMs: number;
-}
-
+/** Startup configuration parsed before the 1Password client or browser is created. */
 export interface BrokerEnvironment {
   readonly serviceAccountToken: RedactedString;
-  readonly policy: BrowserLoginPolicy;
+  readonly vaultId: OnePasswordVaultId;
 }
 
+/** Supplies the service-account token exactly once without accepting a caller path. */
 export type ServiceAccountTokenConsumer = () => string | undefined;
 
+/** Fixed-path file operations used to consume and remove the one-shot token. */
 export interface ServiceAccountTokenFileAccess {
   readonly read: () => string;
   readonly remove: () => void;
@@ -87,8 +59,8 @@ const serviceAccountTokenFileAccess: ServiceAccountTokenFileAccess = {
 };
 
 /**
- * Read a service-account token from a one-shot file and remove it before any
- * browser process can start. Failure to remove the file fails the broker closed.
+ * Read the service-account token from its fixed one-shot path and remove it before
+ * any browser process can start. A read or removal failure returns no token.
  */
 export function consumeServiceAccountTokenFile(
   access: ServiceAccountTokenFileAccess = serviceAccountTokenFileAccess,
@@ -107,114 +79,42 @@ export function consumeServiceAccountTokenFile(
   return token || undefined;
 }
 
-function parseExactHttpsOrigin(value: string): string | undefined {
+/** Parse a runtime 1Password item ID supplied by the SDK or MCP boundary. */
+export function parseOnePasswordItemId(value: string): OnePasswordItemId | undefined {
+  const parsed = OnePasswordItemIdSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/**
+ * Parse an untrusted browser destination into a canonical exact-origin value.
+ * Query strings and fragments are rejected because they can carry bearer data.
+ */
+export function parseBrowserDestinationUrl(
+  value: string,
+): Result<BrowserDestination, BrokerRequestDeniedError> {
   try {
-    const url = new URL(value);
+    const url = new URL(value.trim());
     if (
       url.protocol !== "https:" ||
       url.username ||
       url.password ||
-      url.pathname !== "/" ||
       url.search ||
       url.hash ||
-      value !== url.origin
+      !url.hostname
     ) {
-      return undefined;
+      return err(new BrokerRequestDeniedError("invalid_destination"));
     }
-    return url.origin;
+
+    return ok({
+      url: BrowserUrlSchema.parse(url.href),
+      origin: BrowserOriginSchema.parse(url.origin),
+    });
   } catch {
-    return undefined;
+    return err(new BrokerRequestDeniedError("invalid_destination"));
   }
 }
 
-export function parseExpectedOrigin(value: string): string | undefined {
-  return parseExactHttpsOrigin(value.trim());
-}
-
-function parseSameOriginUrl(value: string, origin: string): string | undefined {
-  try {
-    const url = new URL(value);
-    if (
-      url.protocol !== "https:" ||
-      url.username ||
-      url.password ||
-      url.hash ||
-      url.origin !== origin
-    ) {
-      return undefined;
-    }
-    return url.href;
-  } catch {
-    return undefined;
-  }
-}
-
-function parseSecretReference(
-  value: string,
-  vaultId: OnePasswordVaultId,
-  itemId: OnePasswordItemId,
-): SecretReference | undefined {
-  const match = SECRET_REFERENCE_PATTERN.exec(value);
-  if (!match || match[1] !== vaultId || match[2] !== itemId || !match[3]) return undefined;
-  return { value, vaultId, itemId, fieldId: match[3] };
-}
-
-function parsePolicy(value: string): Result<BrowserLoginPolicy, BrokerConfigurationError> {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(value);
-  } catch {
-    return err(new BrokerConfigurationError("invalid_policy"));
-  }
-
-  const parsed = RawPolicySchema.safeParse(raw);
-  if (!parsed.success) return err(new BrokerConfigurationError("invalid_policy"));
-
-  const origin = parseExactHttpsOrigin(parsed.data.origin);
-  if (!origin) return err(new BrokerConfigurationError("invalid_policy"));
-  const loginUrl = parseSameOriginUrl(parsed.data.login_url, origin);
-  if (!loginUrl) return err(new BrokerConfigurationError("invalid_policy"));
-  if (
-    parsed.data.success_path_prefix.includes("?") ||
-    parsed.data.success_path_prefix.includes("#")
-  ) {
-    return err(new BrokerConfigurationError("invalid_policy"));
-  }
-
-  const usernameRef = parseSecretReference(
-    parsed.data.username_ref,
-    parsed.data.vault_id,
-    parsed.data.item_id,
-  );
-  const passwordRef = parseSecretReference(
-    parsed.data.password_ref,
-    parsed.data.vault_id,
-    parsed.data.item_id,
-  );
-  if (!usernameRef || !passwordRef || usernameRef.fieldId === passwordRef.fieldId) {
-    return err(new BrokerConfigurationError("invalid_policy"));
-  }
-
-  return ok({
-    vaultId: parsed.data.vault_id,
-    itemId: parsed.data.item_id,
-    origin,
-    loginUrl,
-    usernameRef,
-    passwordRef,
-    selectors: {
-      username: parsed.data.selectors.username,
-      ...(parsed.data.selectors.username_submit
-        ? { usernameSubmit: parsed.data.selectors.username_submit }
-        : {}),
-      password: parsed.data.selectors.password,
-      submit: parsed.data.selectors.submit,
-    },
-    successPathPrefix: parsed.data.success_path_prefix,
-    timeoutMs: parsed.data.timeout_ms ?? DEFAULT_TIMEOUT_MS,
-  });
-}
-
+/** Parse the broker environment and consume the service-account token once. */
 export function parseBrokerEnvironment(
   env: NodeJS.ProcessEnv,
   consumeToken: ServiceAccountTokenConsumer = consumeServiceAccountTokenFile,
@@ -222,12 +122,17 @@ export function parseBrokerEnvironment(
   const tokenFile = env.OP_SERVICE_ACCOUNT_TOKEN_FILE?.trim();
   const token = tokenFile === SERVICE_ACCOUNT_TOKEN_FILE ? consumeToken() : undefined;
   if (!token) return err(new BrokerConfigurationError("missing_token"));
-  const policyJson = env.ONEPASSWORD_BROWSER_CONFIG?.trim();
-  if (!policyJson) return err(new BrokerConfigurationError("missing_policy"));
 
-  const policy = parsePolicy(policyJson);
-  if (policy._tag === "err") return policy;
-  return ok({ serviceAccountToken: RedactedString.make(token), policy: policy.value });
+  const vaultValue = env.ONEPASSWORD_BROWSER_VAULT_ID?.trim();
+  if (!vaultValue) return err(new BrokerConfigurationError("missing_vault"));
+  const vault = OnePasswordVaultIdSchema.safeParse(vaultValue);
+  if (!vault.success) return err(new BrokerConfigurationError("invalid_vault"));
+
+  return ok({
+    serviceAccountToken: RedactedString.make(token),
+    vaultId: vault.data,
+  });
 }
 
+/** Runtime pattern used by strict MCP and approval schemas for 1Password IDs. */
 export const onePasswordIdPattern = ONEPASSWORD_ID_PATTERN;
