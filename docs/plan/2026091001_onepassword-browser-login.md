@@ -1,134 +1,168 @@
-# 1Password-backed browser login
+# 1Password-backed authenticated browser
 
 ## Goal
 
-Allow Neo to authenticate to one explicitly approved SaaS password login using credentials from one dedicated 1Password vault item, without exposing the service-account token, username, password, cookies, or browser storage to Slack, the model, OpenCode, repository files, command arguments, MCP responses, or logs.
+Use one dedicated 1Password vault as Neo's browser credential store. Neo can find a Login item matching an exact HTTPS website, request Slack approval to autofill it, and continue using a short-lived broker-owned browser without exposing the service-account token, username, password, cookies, browser storage, CDP, or arbitrary JavaScript to Slack, the model, OpenCode, repository files, command arguments, or logs.
 
-The first deploy target is the temporary TestMu AI audit account. Live verification requires operator-provided vault/item IDs, secret references, exact login origin/URL/selectors, success condition, and a read-only 1Password service-account token.
+Live verification requires an operator-created non-production Login item, a dedicated vault ID, confirmation that the service account has Read Items-only access to that vault, and service-scoped injection of `OP_SERVICE_ACCOUNT_TOKEN`.
 
 ## Architecture
 
 ```text
 Slack -> gateway -> runner -> OpenCode (untrusted)
                               |
-                              | mcp wrapper: item id + expected origin only
+                              | mcp wrapper: website, safe item ID, opaque browser refs
                               v
                      remote-cli approval gate
                               |
                               | stdio + one-shot anonymous secret fd
                               v
-              bwrap -> 1Password browser MCP -> 1Password SDK
-                                             -> local Chromium
+       bwrap -> 1Password browser MCP -> 1Password SDK (one dedicated vault)
+                                     -> broker-owned local Chromium
 ```
 
-The MCP child and Chromium run in the `remote-cli` trust boundary. `remote-cli` receives `OP_SERVICE_ACCOUNT_TOKEN`, then transfers it through an anonymous descriptor into a private one-shot tmpfs file that broker startup consumes and unlinks. The child environment contains only non-secret dedicated configuration, and Chromium receives a separate fixed environment. OpenCode receives only metadata and redacted outcomes. `browser_login` uses the existing Slack approval pipeline and re-resolves the configured upstream when approval is clicked.
+The MCP child and Chromium run inside the `remote-cli` trust boundary. `remote-cli` receives `OP_SERVICE_ACCOUNT_TOKEN`, transfers it through anonymous descriptor 3 into a private one-shot tmpfs file, and starts the broker with a credential-free environment. Broker startup consumes and unlinks the file before Chromium can start. Chromium receives a separate fixed environment.
+
+The model can discover only safe Login-item metadata matching a requested exact HTTPS origin. `browser_open_authenticated` is approval-gated. Its Slack card is enriched by `remote-cli` with the broker-resolved item title before the action is persisted. At click time, the broker re-reads and revalidates the item, injects credentials, and creates an opaque browser session bound to the originating Thor session.
+
+Continued browser actions travel through the same trusted broker. No CDP endpoint or browser debugging handle crosses the boundary.
 
 ## Configuration
 
-`OP_SERVICE_ACCOUNT_TOKEN` is injected into the `remote-cli` service only by the deployment secret store. It must not be written to the repository `.env`: Compose uses that file for other services too.
+Configure the dedicated vault once:
 
-Non-secret login policy is supplied through `ONEPASSWORD_BROWSER_CONFIG` as JSON:
-
-```json
-{
-  "vault_id": "<dedicated-vault-id>",
-  "item_id": "<approved-item-id>",
-  "origin": "https://accounts.lambdatest.com",
-  "login_url": "https://accounts.lambdatest.com/login",
-  "username_ref": "op://<vault-id>/<item-id>/username",
-  "password_ref": "op://<vault-id>/<item-id>/password",
-  "selectors": {
-    "username": "input[name=email]",
-    "password": "input[name=password]",
-    "submit": "button[type=submit]"
-  },
-  "success_path_prefix": "/dashboard"
-}
+```text
+OP_SERVICE_ACCOUNT_TOKEN=<injected into remote-cli only>
+ONEPASSWORD_BROWSER_VAULT_ID=<26-character dedicated vault ID>
 ```
 
-An optional `selectors.username_submit` supports a same-origin two-step password flow. The broker accepts HTTPS only, exact canonical origins, 1Password IDs, references that resolve to the configured vault/item, non-empty selectors, and a bounded timeout.
+`OP_SERVICE_ACCOUNT_TOKEN` must come from the deployment secret store. It must not be written to the repository `.env`, Slack, OpenCode configuration, browser environment, or command arguments.
+
+Each usable item in the vault must be an active 1Password **Login** item with:
+
+- exactly one HTTPS Website URL;
+- standard `username` and concealed `password` fields;
+- no TOTP field;
+- no additional website origin.
+
+The broker uses the Website URL as the login entry point and matches its exact origin to the requested website. Standard username/password forms are detected semantically. Unsupported, ambiguous, cross-origin, SSO, MFA, and unusual multi-step flows fail closed; trusted site adapters are a possible future extension.
+
+## Public broker tools
+
+- `find_login_items(url)` — returns only matching item IDs, titles, and exact origin.
+- `browser_open_authenticated(item_id, url)` — approval-gated; returns an opaque browser-session ID after successful autofill.
+- `browser_snapshot(browser_session_id)` — returns a bounded, sanitized accessibility snapshot and opaque element references.
+- `browser_click(browser_session_id, snapshot_id, ref)` — clicks one element from the latest snapshot.
+- `browser_type(browser_session_id, snapshot_id, ref, text)` — fills only ordinary non-secret text controls; never password, OTP, hidden, token, or payment controls.
+- `browser_navigate(browser_session_id, url)` — navigates only within the authenticated session's exact HTTPS origin.
+- `browser_close(browser_session_id)` — destroys the context and browser.
+
+All tools receive a trusted `_thor_session_id` from `remote-cli`; it is not part of the public schema. A browser-session ID is unusable from another Thor session. Element references are valid only for the latest snapshot and are invalidated after every action.
 
 ## Phases
 
-### Phase 1 — Metadata-only trusted connector
+### Phase 1 — Vault-level credential discovery
 
-- Add `@thor/onepassword-browser-mcp`, with exact `@1password/sdk` pin and a local stdio MCP entrypoint.
-- Parse environment configuration once at startup into constrained values.
-- Add a 1Password adapter that translates SDK failures into safe typed outcomes.
-- Expose only `get_login_metadata(item_id)`. Return title, approved origin, and field names/types; never values, notes, tags, service-account details, or unapproved websites.
-- Register the upstream through `remote-cli`; do not configure it directly in OpenCode.
-- Run the child in `bwrap` with a scrubbed explicit environment and no workspace, GitHub-key, or remote-cli state mounts.
+- Replace per-item JSON policy with one parsed dedicated vault ID.
+- List only active Login overviews from that vault and filter by exact HTTPS origin.
+- Return a safe projection containing item ID, title, and origin only.
+- Re-read the selected item before credential use and validate vault, item, category, website, built-in credential fields, and absence of TOTP.
+- Remove generic secret-reference resolution and all model/operator-supplied selectors.
 
-Exit: the connector is unavailable when either configuration leg is absent; exact vault/item/reference/origin checks pass; metadata contains no item values; other 1Password tools do not exist.
+Exit: configuring one vault supports multiple exact-origin Login items; malformed, mixed-origin, non-Login, archived, TOTP, ambiguous, and wrong-vault items fail closed without exposing values, notes, tags, or SDK causes.
 
-### Phase 2 — Approved local browser injection
+### Phase 2 — Broker-owned authenticated browser sessions
 
-- Install local Chromium in the `remote-cli` image and use exact-pinned `playwright-core` from the broker.
-- Add `browser_login(item_id, expected_origin)` to the approval tier.
-- Resolve username/password only after approval, wrap them as redacted values, and unwrap only at `locator.fill`.
-- Use a fresh non-persistent browser context with TLS verification enabled, service workers blocked, downloads disabled, no screenshots/traces/video, and request routing restricted to the approved exact origin.
-- Revalidate origin immediately before username fill, password fill, and submit. Close the context/browser on every outcome.
-- Return only authenticated/denied/error state plus vault/item/origin identifiers. MFA, SSO, cross-origin redirects, and missing or ambiguous fields fail closed.
+- Replace one-shot login verification with a browser-session service that owns Chromium, context, page, credential redaction, refs, and cleanup.
+- Detect standard login fields and submit controls semantically, requiring same-origin self-targeting POST forms with no unsafe submit override.
+- Keep TLS verification enabled; block service workers, downloads, WebSockets, WebRTC, popups, and every request outside the exact approved origin.
+- Confirm that the password form disappeared without reaching an MFA challenge before retaining the session.
+- Clear credential fields after authentication when they remain attached.
+- Permit at most one active browser per Thor session, cap global sessions, and close sessions after ten minutes of inactivity.
 
-Exit: approval card contains only item/origin; denied or malformed requests never read 1Password or launch Chromium; successful login output contains no credentials/cookies/storage; browser state is destroyed after verification.
+Exit: successful login returns only safe IDs and exact-origin metadata; credentials remain wrapped except at browser fill/output-redaction sinks; sessions close on explicit close, timeout, startup failure, process shutdown, and upstream termination.
 
-### Phase 3 — Rollout and live verification
+### Phase 3 — Restricted continued-browser controls
 
-- Document dedicated-vault, read-only service-account, token injection, TestMu policy config, usage-report, rotation, and revocation steps.
-- Add an opt-in live integration procedure using a temporary test item and non-production account.
-- Run dependency/source/config/artifact secret scans and verify 1Password usage reporting.
-- Add site-specific read-only audit tools in a follow-up once TestMu's allowed observations/actions are specified. Do not expose generic browser navigation, DOM scripting, cookie/storage access, or arbitrary clicks.
+- Produce bounded accessibility snapshots through an allowlisted sanitizer.
+- Remove editable-control values, replace link targets with same-origin/blocked markers, and redact known username/password substrings before returning snapshots.
+- Return only opaque browser/snapshot IDs and the approved origin as browser location metadata; never return the current page URL or path.
+- Require latest-snapshot IDs and opaque refs for click/type.
+- Reject secret-bearing or payment form controls for type operations.
+- Revalidate exact origin before and after every browser action.
+- Sanitize credential-boundary worklogs so typed text, snapshots, full URLs, browser output, and upstream errors are never persisted.
 
-Exit: unit/in-process integration tests pass; the operator confirms a non-production login and no secret in process output/worklogs; revoking the service account prevents another approved login.
+Exit: no tool returns input values, cookies, storage, screenshots, page source, headers, CDP, selectors, or arbitrary script access; stale refs, wrong sessions, expired sessions, cross-origin navigation, popups, and disallowed inputs fail closed.
+
+### Phase 4 — Approval integration, documentation, and verification
+
+- Replace the old approval schema and proxy policy with `browser_open_authenticated`.
+- Resolve safe matching metadata before posting the Slack approval card; bind the stored action to item ID, title, destination, and Thor session.
+- Update Docker/Compose env surfaces, operator docs, and agent browser guidance.
+- Run typechecks, tests, builds, formatting for changed files, dependency/source/config/artifact secret scans, Docker/bwrap/Chromium smoke tests, and Aikido scanning.
+- Perform an opt-in non-production live login after the operator provisions the vault and token.
+
+Exit: the Slack card displays only the trusted Login title/ID and exact destination; approval click creates a session usable only by the originating Thor session; local security/integration checks pass; revoking the service account blocks new login sessions.
 
 ## Security invariants
 
-- Exactly one configured vault, item, and HTTPS origin are reachable; the item cannot contain another website origin or a TOTP field.
-- The model cannot supply a vault ID, secret reference, selector, login URL, success condition, or browser executable.
-- The service-account token exists in `remote-cli` environment/memory, an anonymous descriptor and short-lived private tmpfs file, then broker memory; it never enters broker/Chromium environment or argv.
-- 1Password values, raw SDK/browser causes, cookies, headers, page HTML, and browser storage are never logged or returned.
-- `browser_login` always requires the existing Slack approval gate; metadata is read-only.
-- Browser requests outside the configured origin are aborted, including redirects.
-- MFA and SSO remain human-controlled and unsupported by this non-interactive password phase.
+- Only one configured vault is reachable, and the service account has Read Items-only access to it.
+- The model cannot supply a vault ID, secret reference, selector, browser executable, success condition, credential value, or service-account token.
+- The service-account token exists only in `remote-cli` memory/environment, anonymous fd 3, a short-lived private tmpfs file, and broker memory. It never enters broker/Chromium env, argv, Slack, worklogs, or repository files.
+- Full item values are fetched only for an exact-origin selected item after a login action has been approved.
+- TOTP fields and visible MFA challenges fail closed. SSO, passkeys, recovery codes, and automated MFA are unsupported.
+- Browser requests and top-level navigation remain on one exact HTTPS origin. WebSockets, WebRTC, service workers, downloads, and popups are blocked.
+- Browser state stays in broker memory and is short-lived, session-bound, and non-durable.
+- Passwords, usernames, cookies, headers, storage, raw URLs with query/fragment, HTML, screenshots, SDK/browser causes, CDP endpoints, and arbitrary JavaScript are never returned or logged by the broker boundary.
+- Snapshot output is an allowlisted accessibility projection. Editable values are removed, known credential substrings are redacted, and element refs expire after one action.
+- `browser_open_authenticated` always uses the existing Slack approval workflow; denied or malformed requests never fetch credential-bearing item data or launch Chromium.
 
 ## Tests
 
-- Configuration/reference/ID/HTTPS-origin/success-path parsing and canonicalization.
-- Exact item/origin authorization before dependency calls.
-- Metadata projection excludes values, notes, tags, and unapproved URLs.
-- Missing token/config, malformed IDs, wrong item/origin, wrong category/site/field types, SDK failures, redirects, and browser failures return safe fail-closed results.
-- Redacted values cannot reveal secrets through stringification or JSON serialization.
-- MCP public surface lists only the two tools; `browser_login` is approval-gated.
-- Proxy child receives the token through anonymous fd 3 and consumes/unlinks its private tmpfs file before MCP startup; broker and Chromium environments contain no token.
-- Approval presentation shows only item ID and origin.
-- Representative credential/token strings do not appear in MCP output, worklog payloads, or broker diagnostics.
+- Vault-ID/token parsing and fixed token-file consumption.
+- Exact HTTPS destination and website URL canonicalization.
+- Active Login overview filtering, exact-origin matching, multiple-account selection, and safe metadata projection.
+- Full item validation for vault/item/category/website/username/password/TOTP invariants.
+- Standard one-page and two-step semantic form detection, authentication confirmation, MFA rejection, and credential-field clearing.
+- Same-origin request routing, popup/download/WebSocket/WebRTC blocking, and credential-free Chromium environment.
+- Browser lifecycle, owner-session binding, global/session limits, inactivity cleanup, explicit close, and stale-ref invalidation.
+- Snapshot allowlisting, input-value removal, credential substring redaction, URL sanitization, and output bounds.
+- MCP public surface, hidden Thor context, strict argument parsing, safe errors, and absence of secret/cookie/storage/CDP tools.
+- Approval preflight/title enrichment, Slack presentation, click-time revalidation, and idempotent approval handling.
+- Worklog sanitization for every credential-browser tool.
+- Representative credential/token strings do not appear in MCP responses, logs, generated artifacts, image history, or process environments.
 
 ## Acceptance criteria
 
-- Neo can request metadata for only the approved TestMu item.
-- Neo can request login only for the approved item/origin, and execution occurs only after Slack approval.
-- Neither model/Slack output nor logs expose the service-account token, username, password, cookies, authorization headers, or browser storage.
-- Any other vault, item, reference, origin, redirect, field shape, or auth mode is denied.
-- No generic secret read, vault/item enumeration, arbitrary reference resolution, write/share/delete, browser scripting, cookie/storage, or destructive UI tool is exposed.
-- 1Password usage reporting identifies access to the configured item; revocation blocks subsequent access.
+- Neo can ask to open an HTTPS website, discover matching Login items from the dedicated vault, request approval, and continue in the broker-owned authenticated browser.
+- Adding a standard Login item for another origin requires no Thor policy change or restart; only the dedicated vault remains configured.
+- Multiple accounts for one origin are presented as safe choices and require an explicit item ID.
+- No credential, token, cookie, storage value, browser handle, or arbitrary JavaScript capability crosses the trusted broker boundary.
+- Any other vault, item, origin, redirect, field shape, MFA/SSO flow, browser owner, stale ref, or expired session is denied.
+- Existing local changes are restored exactly. No push or PR is created.
 
 ## Decision log
 
-| #   | Decision                                                                                  | Rationale                                                                                                                                                                                                                                   | Rejected                                                |
-| --- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| 1   | Host the stdio MCP child behind `remote-cli`, not directly in `opencode.json`/`.mcp.json` | OpenCode is explicitly untrusted; direct local configuration would either expose the token or bypass Thor's server-side approval/policy boundary. The existing `mcp` wrapper already provides discovery and session-bound approval routing. | Direct OpenCode MCP child                               |
-| 2   | Use `@1password/sdk` `0.5.0` and `playwright-core` `1.63.0` as exact pins                 | The 1Password SDK is pre-1.0; browser protocol/runtime drift affects the security boundary.                                                                                                                                                 | Floating ranges / `op` CLI                              |
-| 3   | Keep policy in one non-secret JSON env and the token in a service-only env injection      | Selectors and IDs must be operator-controlled but are not secrets; the token must not enter shared Compose `env_file` consumers.                                                                                                            | Slack args, repository config containing secrets, argv  |
-| 4   | Put `browser_login` in the existing MCP approval tier                                     | Reuses persisted action binding, Slack cards, click-time re-resolution, and audit behavior rather than inventing a second approval system.                                                                                                  | Broker-internal yes/no flag                             |
-| 5   | Use an ephemeral context and close after success verification                             | No generic post-login browser surface is safe enough yet; retaining a CDP/session handle would let untrusted callers reach cookies/storage or mutating UI.                                                                                  | Returning CDP URL/storage state; cloud sandbox transfer |
-| 6   | Phase 3 read-only auditing needs site-specific tools                                      | `browser_login` alone cannot safely support an audit, while generic navigation/click/DOM tools cannot prove read-only behavior. TestMu's allowed observations must be specified before adding them.                                         | Generic authenticated browser control                   |
-| 7   | Override vulnerable MCP/Express/Daytona transitives to patched versions                   | The production dependency scan found findings in schema validation, HTTP parsing, telemetry, and Daytona command parsing; API-compatible workspace overrides make the production audit clean without widening the broker surface.           | Shipping with known dependency findings                 |
-| 8   | Transfer the token from `remote-cli` over a one-shot anonymous descriptor                 | A browser child can inspect same-UID process environments through container procfs. FD 3 plus consume-and-unlink tmpfs delivery keeps the token out of bwrap, broker, and Chromium environments and argv while preserving stdio for MCP.    | Passing the token in child env or argv                  |
+| #   | Decision                                                                            | Rationale                                                                                                                                                                | Rejected                                                   |
+| --- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| 1   | Host the broker behind `remote-cli`                                                 | OpenCode is untrusted; direct wiring would expose credentials or bypass Thor approval/session policy.                                                                    | Direct OpenCode MCP child                                  |
+| 2   | Keep exact pins for `@1password/sdk` and Playwright                                 | The SDK is pre-1.0 and browser protocol/runtime drift affects the security boundary.                                                                                     | Floating dependency ranges; `op` CLI                       |
+| 3   | Configure one dedicated vault ID, not per-site JSON policy                          | Login items already own website and credential metadata; exact-origin matching removes restart/configuration work per website.                                           | Item IDs, secret refs, selectors, and success paths in env |
+| 4   | Transfer the service-account token through one-shot fd 3                            | Same-UID browser children can inspect process environments; fd-to-private-tmpfs consumption keeps the token out of broker/Chromium env and argv.                         | Child env or argv token                                    |
+| 5   | Use item overview listing for discovery and full item retrieval only after approval | Overviews support safe origin/title matching without loading field values; click-time retrieval revalidates authority before credential use.                             | Vault enumeration output; full-item metadata discovery     |
+| 6   | Use built-in `username` and `password` fields only                                  | Standard Login fields are deterministic; accepting arbitrary secret refs or custom selectors would widen the secret-reading surface.                                     | User/model-supplied references or selectors                |
+| 7   | Keep authenticated Chromium inside the broker                                       | Handing CDP, cookies, or storage state to existing browser tooling would transfer the authenticated principal to the untrusted model boundary.                           | CDP handoff; persistent profile; storage-state export      |
+| 8   | Expose restricted ref-based controls with one active browser per Thor session       | The user needs generic browser continuation; owner binding, exact-origin routing, stale-ref invalidation, bounded output, and inactivity cleanup contain the capability. | TestMu-specific MCP; unrestricted Playwright/CDP           |
+| 9   | Sanitize Playwright accessibility JSON before returning it                          | Raw snapshots include text/password input values and full link URLs. An allowlisted projection can remove those fields and redact known credentials.                     | Raw ARIA snapshot, DOM, HTML, screenshot                   |
+| 10  | Enrich login approval cards with broker-resolved metadata                           | The operator must approve a trusted item title and exact destination rather than a model-authored label.                                                                 | Model-supplied title; item ID-only card                    |
+| 11  | Treat approval as a durable gate but browser sessions as ephemeral                  | Existing approval actions are idempotent and persisted; browser state cannot safely or usefully survive process loss and expires quickly.                                | Durable browser profiles/session recovery                  |
+| 12  | Fail closed on MFA, SSO, ambiguous forms, and non-standard flows                    | Generic automation cannot safely infer these workflows while preserving exact-origin and human-controlled MFA guarantees.                                                | Automated TOTP/SSO; heuristic retries across origins       |
 
 ## Out of scope
 
-- Production accounts.
+- Production-account rollout before non-production verification.
 - SSO, TOTP, recovery codes, passkeys, or automated MFA.
-- Generic 1Password read/list/write/share/delete tools.
-- Persistent browser profiles, CDP exposure, storage-state export, cloud sandbox credentials.
-- Generic authenticated browsing or claims that arbitrary UI actions are read-only.
+- Generic 1Password vault/item/secret read, write, share, delete, or archive operations.
+- Cross-origin authenticated browsing, arbitrary JavaScript, arbitrary selectors, screenshots, page source, headers, cookies/storage, downloads, tracing, recording, or CDP access.
+- Persistent browser profiles or recovery of sessions after broker/process restart.
+- Site-specific TestMu MCP tools.
