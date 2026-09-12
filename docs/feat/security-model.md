@@ -110,7 +110,7 @@ Approval creation **fails closed** when remote-cli cannot resolve or post to the
 - `git` uses GitHub App installation tokens minted on demand through `GIT_ASKPASS` when the target owner resolves from the command or repo remote.
 - `gh` resolves GitHub App auth before execution and exports `GH_TOKEN` only with the short-lived installation token for the resolved owner.
 - OpenCode never receives direct API credentials for MCP upstreams.
-- **1Password browser credentials stay in the broker.** `OP_SERVICE_ACCOUNT_TOKEN` exists only in `remote-cli`; a dedicated stdio transport sends it to the sandbox over anonymous fd 3, where broker startup consumes and unlinks a private tmpfs file before accepting MCP requests. The broker resolves one configured item's username/password only after Slack approval, launches Chromium with a fixed credential-free environment, blocks cross-origin requests and non-HTTP browser channels, returns no credential/cookie/storage values, and destroys the ephemeral context after success verification.
+- **1Password browser credentials stay in the broker.** `OP_SERVICE_ACCOUNT_TOKEN` exists only in `remote-cli`; a dedicated stdio transport sends it to the sandbox over anonymous fd 3, where broker startup consumes and unlinks a private tmpfs file before accepting MCP requests. The broker lists only safe exact-origin Login metadata from one dedicated vault and reads credential-bearing fields only after Slack approval. Authenticated Chromium remains broker-owned, credential-free in its process environment, exact-origin, Thor-session-bound, ref-controlled, and limited by a ten-minute inactivity lease. No credential, cookie/storage value, full browser handle, or raw Playwright snapshot crosses the boundary.
 
 ## Layer 5: Blast radius limits
 
@@ -120,7 +120,7 @@ If a policy layer fails, these limit what damage is reachable:
 - **GitHub App scopes.** The app is granted the minimum permissions listed in `github.md` §3 — no admin, no settings write, no org-wide access.
 - **Per-owner installation tokens.** GitHub installation tokens are scoped to a single owner and expire within an hour.
 - **Daytona sandbox isolation.** Project builds and test runs execute in per-worktree Daytona sandboxes; `git` is blocked inside the sandbox so the agent cannot push from there.
-- **Credential broker allowlist.** The 1Password integration reaches one configured vault/item and one exact HTTPS origin. It exposes no vault/item enumeration, arbitrary secret reference, persistent browser profile, CDP, cookie/storage, or generic browser-control surface.
+- **Credential broker allowlist.** The 1Password integration reaches one configured dedicated vault and matches active Login items to one exact HTTPS origin per browser session. Continued access is limited to sanitized accessibility snapshots, latest-snapshot click/type refs, same-origin navigation, and close. It exposes no generic vault/secret reads, arbitrary references/selectors/JavaScript, cross-origin browser access, persistent profile, CDP, cookie/storage, screenshot, trace, or download surface.
 
 ## Layer 6: Audit trail
 

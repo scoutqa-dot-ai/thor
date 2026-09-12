@@ -56,7 +56,7 @@ services:
       # Inject these through remote-cli's trusted deployment boundary. The
       # service-account token is never forwarded to OpenCode or other services.
       - OP_SERVICE_ACCOUNT_TOKEN=${OP_SERVICE_ACCOUNT_TOKEN:-}
-      - ONEPASSWORD_BROWSER_CONFIG=${ONEPASSWORD_BROWSER_CONFIG:-}
+      - ONEPASSWORD_BROWSER_VAULT_ID=${ONEPASSWORD_BROWSER_VAULT_ID:-}
     volumes:
       - ./docker-volumes/home/thor:/home/thor
       - ./docker-volumes/workspace:/workspace
@@ -141,9 +141,10 @@ services:
     environment:
       - ATLASSIAN_AUTH=${ATLASSIAN_AUTH:-}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
-      # env_file is used for proxy configuration; fail closed if a token was
-      # accidentally placed in the shared .env file.
+      # env_file is used for proxy configuration; keep the credential-browser
+      # bundle out of this unrelated service even if shared .env is misused.
       - OP_SERVICE_ACCOUNT_TOKEN=
+      - ONEPASSWORD_BROWSER_VAULT_ID=
     ports:
       - "127.0.0.1:3080:8080"
     env_file:

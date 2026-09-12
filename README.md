@@ -124,7 +124,7 @@ Integration-specific env vars live in each integration's doc. Cross-cutting vars
 | `DRATA_API_BASE_URL`            | No       | `remote-cli`              | Drata API base URL                                                                                   |
 | `KALI_API_BASE_URL`             | No       | `remote-cli`              | EC2-hosted Kali API server URL for the `mcp kali` tools                                              |
 | `OP_SERVICE_ACCOUNT_TOKEN`      | No       | `remote-cli`              | Read-only token for the browser broker; service-scoped injection only                                |
-| `ONEPASSWORD_BROWSER_CONFIG`    | No       | `remote-cli`              | Non-secret exact vault/item/origin/login policy; required with `OP_SERVICE_ACCOUNT_TOKEN`            |
+| `ONEPASSWORD_BROWSER_VAULT_ID`  | No       | `remote-cli`              | Dedicated Login vault ID; required with `OP_SERVICE_ACCOUNT_TOKEN`                                   |
 | `VOUCH_GOOGLE_CLIENT_ID`        | Yes      | `vouch`                   | Google OAuth client ID                                                                               |
 | `VOUCH_GOOGLE_CLIENT_SECRET`    | Yes      | `vouch`                   | Google OAuth client secret                                                                           |
 | `VOUCH_JWT_SECRET`              | Yes      | `vouch`                   | Session JWT signing secret                                                                           |

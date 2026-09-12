@@ -20,14 +20,15 @@ This skill covers the technical browser orchestration layer: selecting a browser
 
 Run browser tooling in the sandbox when local dependencies are missing or when you need headed display, recording, or installable runtimes. Common sandbox tools include `agent-browser`, Chrome for Testing, `ffmpeg`, `xvfb`, and ImageMagick among others — choose by capability first.
 
-For a configured 1Password-backed SaaS login, use the dedicated MCP integration instead of sandbox browser tooling:
+For a 1Password-backed SaaS login, use the dedicated MCP integration instead of sandbox browser tooling. Find Login choices for the destination, request an authenticated browser, then use only the returned session/snapshot refs:
 
 ```bash
-mcp onepassword-browser get_login_metadata '{"item_id":"<approved-item-id>"}'
-mcp onepassword-browser browser_login '{"item_id":"<approved-item-id>","expected_origin":"https://approved.example"}'
+mcp onepassword-browser find_login_items '{"url":"https://approved.example/dashboard"}'
+mcp onepassword-browser browser_open_authenticated '{"item_id":"<matching-item-id>","url":"https://approved.example/dashboard"}'
+mcp onepassword-browser browser_snapshot '{"browser_session_id":"<browser-session-id>"}'
 ```
 
-The login call requires human approval. Supply only the non-secret item ID and exact origin. Do not request, print, or ask a user to paste credential values. The authenticated context is intentionally destroyed after login verification; generic post-login control is not available.
+The open call requires human approval. Supply only the non-secret item ID and exact HTTPS destination. Do not request, print, or ask a user to paste credential, MFA, cookie, storage, or browser-debugging values. Continue with `browser_click`, `browser_type`, `browser_navigate`, and `browser_close`; refresh the snapshot before each ref action because click/type consumes all current refs. The authenticated browser is restricted to its exact approved origin and expires after inactivity.
 
 ---
 
