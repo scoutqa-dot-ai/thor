@@ -11,7 +11,8 @@ import {
   ExecResultSchema,
   extractRepoFromCwd,
   findAnchorContext,
-  GetLoginMetadataArgsSchema,
+  BrowserOpenAuthenticatedRequestArgsSchema,
+  FindLoginItemsArgsSchema,
   getProxyConfig,
   injectApprovalDisclaimer,
   isProxyName,
@@ -54,6 +55,35 @@ const DEFAULT_APPROVALS_DIR = "/workspace/data/approvals";
 const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
+const CREDENTIAL_BROWSER_TOOLS = new Set([
+  "find_login_items",
+  "browser_open_authenticated",
+  "browser_snapshot",
+  "browser_click",
+  "browser_type",
+  "browser_navigate",
+  "browser_close",
+]);
+const FindLoginItemsResultSchema = z
+  .object({
+    origin: z.string().url(),
+    matches: z
+      .array(
+        z
+          .object({
+            item_id: z.string().regex(/^[a-z0-9]{26}$/),
+            title: z
+              .string()
+              .min(1)
+              .max(200)
+              .regex(/^[^\u0000-\u001f\u007f]+$/),
+            origin: z.string().url(),
+          })
+          .strict(),
+      )
+      .max(50),
+  })
+  .strict();
 
 function buildUpstreamArgs(action: ApprovalAction): Record<string, unknown> {
   if (!approvalToolRequiresDisclaimer(action.tool)) return action.args;
@@ -492,8 +522,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       }
       return {};
     } catch {
-      const containsBrokerCredentialBoundary =
-        toolInfo.name === "get_login_metadata" || toolInfo.name === "browser_login";
+      const containsBrokerCredentialBoundary = CREDENTIAL_BROWSER_TOOLS.has(toolInfo.name);
       let stderr = containsBrokerCredentialBoundary
         ? `Invalid JSON argument for "${toolInfo.name}"\n`
         : `Invalid JSON argument: ${jsonArg}\n`;
@@ -524,6 +553,14 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   ): Record<string, unknown> {
     if (instance.name !== "onepassword-browser") return args;
     if (!sessionId) throw new Error("Missing Thor session id for 1Password browser request");
+    if (args.item_title !== undefined) {
+      const { item_title: approvedItemTitle, ...publicArgs } = args;
+      return {
+        ...publicArgs,
+        _approved_item_title: approvedItemTitle,
+        _thor_session_id: sessionId,
+      };
+    }
     return { ...args, _thor_session_id: sessionId };
   }
 
@@ -604,6 +641,63 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
   }
 
+  async function prepareBrowserOpenApprovalArgs(
+    instance: ProxyInstance,
+    args: Record<string, unknown>,
+    context: McpCommandContext,
+  ): Promise<Record<string, unknown> | McpExecResult> {
+    const request = BrowserOpenAuthenticatedRequestArgsSchema.safeParse(args);
+    if (!request.success) {
+      return fail('Invalid arguments for "browser_open_authenticated"');
+    }
+    if (!context.sessionId) {
+      return fail('Approval required for "browser_open_authenticated": missing Thor session id');
+    }
+    if (!instance.upstream.tools.some((tool) => tool.name === "find_login_items")) {
+      return fail("Cannot prepare authenticated browser approval: Login discovery is unavailable");
+    }
+
+    const discovery = await executeUpstreamCall({
+      instance,
+      toolName: "find_login_items",
+      args: { url: request.data.url },
+      logEvent: "credential_browser_approval_preflight",
+      decision: "allowed",
+      sessionId: context.sessionId,
+      extraLogFields: getThorIds(context),
+    });
+    if (discovery.exitCode !== 0) {
+      return fail("Cannot prepare authenticated browser approval: Login discovery failed");
+    }
+
+    let rawDiscovery: unknown;
+    try {
+      rawDiscovery = JSON.parse(discovery.stdout);
+    } catch {
+      return fail("Cannot prepare authenticated browser approval: invalid discovery response");
+    }
+    const parsedDiscovery = FindLoginItemsResultSchema.safeParse(rawDiscovery);
+    if (!parsedDiscovery.success) {
+      return fail("Cannot prepare authenticated browser approval: invalid discovery response");
+    }
+    const expectedOrigin = new URL(request.data.url).origin;
+    const matches = parsedDiscovery.data.matches.filter(
+      (match) => match.item_id === request.data.item_id && match.origin === expectedOrigin,
+    );
+    const selectedMatch = matches.length === 1 ? matches[0] : undefined;
+    if (parsedDiscovery.data.origin !== expectedOrigin || !selectedMatch) {
+      return fail(
+        "Cannot prepare authenticated browser approval: selected Login item is not available for this exact origin",
+      );
+    }
+
+    return {
+      ...request.data,
+      url: new URL(request.data.url).href,
+      item_title: selectedMatch.title,
+    };
+  }
+
   async function callTool(
     upstreamName: string,
     toolInfo: ToolInfo,
@@ -615,12 +709,17 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return fail(`Unknown upstream "${upstreamName}".`);
     }
 
-    if (instance.name === "onepassword-browser" && toolInfo.name === "get_login_metadata") {
-      const metadataArgs = GetLoginMetadataArgsSchema.safeParse(args);
-      if (!metadataArgs.success) {
-        return fail('Invalid arguments for "get_login_metadata"');
+    if (instance.name === "onepassword-browser" && toolInfo.name === "find_login_items") {
+      const findArgs = FindLoginItemsArgsSchema.safeParse(args);
+      if (!findArgs.success) {
+        return fail('Invalid arguments for "find_login_items"');
       }
-      args = metadataArgs.data;
+      args = findArgs.data;
+    }
+    if (instance.name === "onepassword-browser" && toolInfo.name === "browser_open_authenticated") {
+      const prepared = await prepareBrowserOpenApprovalArgs(instance, args, context);
+      if (isExecResult(prepared)) return prepared;
+      args = prepared;
     }
     if (toolInfo.classification === "approve") {
       const approvalRequired = ApprovalRequiredEventPayloadSchema.safeParse({

@@ -35,10 +35,10 @@ describe("1Password browser stdio upstream", () => {
 
   it("keeps the service-account token out of child env, argv, and serialization", () => {
     const token = "ops_fixture_service_account_token";
-    const policy = '{"fixture":true}';
+    const vaultId = "aaaaaaaaaaaaaaaaaaaaaaaaaa";
     const config = resolveOnePasswordBrowserUpstream({
       OP_SERVICE_ACCOUNT_TOKEN: token,
-      ONEPASSWORD_BROWSER_CONFIG: policy,
+      ONEPASSWORD_BROWSER_VAULT_ID: vaultId,
     });
 
     expect(config?.kind).toBe("stdio");
@@ -47,7 +47,7 @@ describe("1Password browser stdio upstream", () => {
     expect(config.args).not.toContain(token);
     expect(config.env).toEqual({
       OP_SERVICE_ACCOUNT_TOKEN_FILE: ONEPASSWORD_BROWSER_TOKEN_FILE,
-      ONEPASSWORD_BROWSER_CONFIG: policy,
+      ONEPASSWORD_BROWSER_VAULT_ID: vaultId,
     });
     expect(Object.values(config.env)).not.toContain(token);
     expect(JSON.stringify(config)).not.toContain(token);
@@ -58,9 +58,11 @@ describe("1Password browser stdio upstream", () => {
     expect(resolveOnePasswordBrowserUpstream({})).toBeUndefined();
     expect(() =>
       resolveOnePasswordBrowserUpstream({ OP_SERVICE_ACCOUNT_TOKEN: "token-only" }),
-    ).toThrow(/ONEPASSWORD_BROWSER_CONFIG/);
-    expect(() => resolveOnePasswordBrowserUpstream({ ONEPASSWORD_BROWSER_CONFIG: "{}" })).toThrow(
-      /OP_SERVICE_ACCOUNT_TOKEN/,
-    );
+    ).toThrow(/ONEPASSWORD_BROWSER_VAULT_ID/);
+    expect(() =>
+      resolveOnePasswordBrowserUpstream({
+        ONEPASSWORD_BROWSER_VAULT_ID: "aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      }),
+    ).toThrow(/OP_SERVICE_ACCOUNT_TOKEN/);
   });
 });

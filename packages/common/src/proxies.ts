@@ -66,8 +66,15 @@ export const PROXY_REGISTRY: Record<ProxyName, ProxyConfig> = {
       url: "stdio://onepassword-browser",
       transport: "onepassword-browser",
     },
-    allow: ["get_login_metadata"],
-    approve: ["browser_login"],
+    allow: [
+      "find_login_items",
+      "browser_snapshot",
+      "browser_click",
+      "browser_type",
+      "browser_navigate",
+      "browser_close",
+    ],
+    approve: ["browser_open_authenticated"],
   },
   posthog: {
     upstream: {

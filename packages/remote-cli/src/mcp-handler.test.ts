@@ -74,28 +74,35 @@ const tools: Tool[] = [
 const worklogDir = "/tmp/thor-remote-cli-mcp-test/worklog";
 const onePasswordTools: Tool[] = [
   {
-    name: "get_login_metadata",
-    description: "Get approved login metadata",
+    name: "find_login_items",
+    description: "Find matching Login items",
     inputSchema: {
       type: "object",
-      properties: { item_id: { type: "string" } },
-      required: ["item_id"],
+      properties: { url: { type: "string" } },
+      required: ["url"],
       additionalProperties: false,
     },
   },
   {
-    name: "browser_login",
-    description: "Log in using an approved item",
+    name: "browser_open_authenticated",
+    description: "Open an approved authenticated browser",
     inputSchema: {
       type: "object",
       properties: {
         item_id: { type: "string" },
-        expected_origin: { type: "string" },
+        url: { type: "string" },
       },
-      required: ["item_id", "expected_origin"],
+      required: ["item_id", "url"],
       additionalProperties: false,
     },
   },
+  ...["browser_snapshot", "browser_click", "browser_type", "browser_navigate", "browser_close"].map(
+    (name) => ({
+      name,
+      description: name,
+      inputSchema: { type: "object" as const, properties: {}, additionalProperties: true },
+    }),
+  ),
 ];
 
 const onePasswordItemId = "bbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -151,7 +158,7 @@ describe("remote-cli MCP endpoints", () => {
     vi.stubEnv("POSTHOG_API_KEY", "test-posthog-key");
     vi.stubEnv("KALI_API_BASE_URL", "http://kali.example.test:5000");
     vi.stubEnv("OP_SERVICE_ACCOUNT_TOKEN", "ops_fixture_service_account_token");
-    vi.stubEnv("ONEPASSWORD_BROWSER_CONFIG", '{"fixture":true}');
+    vi.stubEnv("ONEPASSWORD_BROWSER_VAULT_ID", "aaaaaaaaaaaaaaaaaaaaaaaaaa");
     vi.stubEnv("THOR_INTERNAL_SECRET", "resolve-secret");
     vi.stubEnv("WORKLOG_DIR", worklogDir);
     vi.stubEnv("RUNNER_BASE_URL", "https://thor.example.com/");
@@ -257,24 +264,37 @@ describe("remote-cli MCP endpoints", () => {
                     content: [{ type: "text", text: "transitioned" }],
                   };
                 }
-                if (name === "get_login_metadata") {
+                if (name === "find_login_items") {
                   return {
                     content: [
                       {
                         type: "text",
                         text: JSON.stringify({
-                          item_id: onePasswordItemId,
                           origin: onePasswordOrigin,
-                          username_hint: "t***@example.com",
+                          matches: [
+                            {
+                              item_id: onePasswordItemId,
+                              title: "Example audit",
+                              origin: onePasswordOrigin,
+                            },
+                          ],
                         }),
                       },
                     ],
                   };
                 }
-                if (name === "browser_login") {
+                if (name === "browser_open_authenticated") {
                   return {
-                    content: [{ type: "text", text: '{"authenticated":true}' }],
+                    content: [
+                      {
+                        type: "text",
+                        text: '{"status":"authenticated","browser_session_id":"00000000-0000-4000-8000-000000000001"}',
+                      },
+                    ],
                   };
+                }
+                if (name.startsWith("browser_")) {
+                  return { content: [{ type: "text", text: '{"status":"ready"}' }] };
                 }
                 throw new Error(`Unexpected tool: ${name}`);
               },
@@ -1306,14 +1326,14 @@ describe("remote-cli MCP endpoints", () => {
     expect(corruptStatusBody.stderr).toContain(`Failed to load approval action ${actionId}`);
   });
 
-  it("validates metadata arguments and injects the trusted session id", async () => {
+  it("validates Login discovery arguments and injects the trusted session id", async () => {
     const invalid = await postJson(
       "/exec/mcp",
       {
         args: [
           "onepassword-browser",
-          "get_login_metadata",
-          JSON.stringify({ item_id: onePasswordItemId, unexpected: "must-not-pass" }),
+          "find_login_items",
+          JSON.stringify({ url: `${onePasswordOrigin}/dashboard`, unexpected: "must-not-pass" }),
         ],
         directory: "/workspace/repos/acme",
       },
@@ -1322,7 +1342,7 @@ describe("remote-cli MCP endpoints", () => {
     const invalidBody = (await invalid.json()) as { stderr: string; exitCode: number };
     expect(invalidBody).toEqual({
       stdout: "",
-      stderr: 'Invalid arguments for "get_login_metadata"',
+      stderr: 'Invalid arguments for "find_login_items"',
       exitCode: 1,
     });
     expect(toolCalls).toEqual([]);
@@ -1332,8 +1352,8 @@ describe("remote-cli MCP endpoints", () => {
       {
         args: [
           "onepassword-browser",
-          "get_login_metadata",
-          JSON.stringify({ item_id: onePasswordItemId }),
+          "find_login_items",
+          JSON.stringify({ url: `${onePasswordOrigin}/dashboard` }),
         ],
         directory: "/workspace/repos/acme",
       },
@@ -1342,14 +1362,14 @@ describe("remote-cli MCP endpoints", () => {
     const validBody = (await valid.json()) as { stdout: string; stderr: string; exitCode: number };
     expect(validBody.exitCode).toBe(0);
     expect(JSON.parse(validBody.stdout)).toMatchObject({
-      item_id: onePasswordItemId,
       origin: onePasswordOrigin,
+      matches: [{ item_id: onePasswordItemId, title: "Example audit" }],
     });
     expect(toolCalls).toEqual([
       {
-        name: "get_login_metadata",
+        name: "find_login_items",
         arguments: {
-          item_id: onePasswordItemId,
+          url: `${onePasswordOrigin}/dashboard`,
           _thor_session_id: "parent-session",
         },
       },
@@ -1361,21 +1381,21 @@ describe("remote-cli MCP endpoints", () => {
     const malformed = await postJson(
       "/exec/mcp",
       {
-        args: ["onepassword-browser", "get_login_metadata", `{\"item_id\":\"${secret}`],
+        args: ["onepassword-browser", "find_login_items", `{\"url\":\"${secret}`],
         directory: "/workspace/repos/acme",
       },
       { "x-thor-session-id": "parent-session" },
     );
     const malformedBody = (await malformed.json()) as { stderr: string; exitCode: number };
     expect(malformedBody.exitCode).toBe(1);
-    expect(malformedBody.stderr).toContain('Invalid JSON argument for "get_login_metadata"\n');
+    expect(malformedBody.stderr).toContain('Invalid JSON argument for "find_login_items"\n');
     expect(malformedBody.stderr).not.toContain(secret);
 
     const missingSession = await postJson("/exec/mcp", {
       args: [
         "onepassword-browser",
-        "get_login_metadata",
-        JSON.stringify({ item_id: onePasswordItemId }),
+        "find_login_items",
+        JSON.stringify({ url: `${onePasswordOrigin}/dashboard` }),
       ],
       directory: "/workspace/repos/acme",
     });
@@ -1384,15 +1404,41 @@ describe("remote-cli MCP endpoints", () => {
     expect(missingBody.stderr).toContain("Missing Thor session id for 1Password browser request");
   });
 
-  it("executes browser login only after Slack approval", async () => {
+  it("does not create approval when the selected Login does not match the exact origin", async () => {
     appendActiveTrigger({ triggerSlackId: "UABCDEF1" });
+    const response = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "onepassword-browser",
+          "browser_open_authenticated",
+          JSON.stringify({
+            item_id: "cccccccccccccccccccccccccc",
+            url: `${onePasswordOrigin}/dashboard`,
+          }),
+        ],
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const body = (await response.json()) as { stderr: string; exitCode: number };
+
+    expect(body.exitCode).toBe(1);
+    expect(body.stderr).toContain("selected Login item is not available for this exact origin");
+    expect(slackFetch).not.toHaveBeenCalled();
+    expect(toolCalls.map((call) => call.name)).toEqual(["find_login_items"]);
+  });
+
+  it("resolves a trusted Login title and opens the browser only after Slack approval", async () => {
+    appendActiveTrigger({ triggerSlackId: "UABCDEF1" });
+    const requestedUrl = "https://ACCOUNTS.LAMBDATEST.COM:443/dashboard";
     const pending = await postJson(
       "/exec/mcp",
       {
         args: [
           "onepassword-browser",
-          "browser_login",
-          JSON.stringify({ item_id: onePasswordItemId, expected_origin: onePasswordOrigin }),
+          "browser_open_authenticated",
+          JSON.stringify({ item_id: onePasswordItemId, url: requestedUrl }),
         ],
         directory: "/workspace/repos/acme",
       },
@@ -1400,8 +1446,24 @@ describe("remote-cli MCP endpoints", () => {
     );
     const pendingBody = (await pending.json()) as { stdout: string; exitCode: number };
     expect(pendingBody.exitCode).toBe(0);
-    const action = JSON.parse(pendingBody.stdout) as { actionId: string };
-    expect(toolCalls).toEqual([]);
+    const action = JSON.parse(pendingBody.stdout) as {
+      actionId: string;
+      args: { item_id: string; item_title: string; url: string };
+    };
+    expect(action.args).toEqual({
+      item_id: onePasswordItemId,
+      url: `${onePasswordOrigin}/dashboard`,
+      item_title: "Example audit",
+    });
+    expect(toolCalls).toEqual([
+      {
+        name: "find_login_items",
+        arguments: {
+          url: requestedUrl,
+          _thor_session_id: "parent-session",
+        },
+      },
+    ]);
 
     const approved = await postJson(
       "/exec/mcp",
@@ -1414,16 +1476,25 @@ describe("remote-cli MCP endpoints", () => {
       exitCode: number;
     };
     expect(approvedBody).toEqual({
-      stdout: '{"authenticated":true}',
+      stdout:
+        '{"status":"authenticated","browser_session_id":"00000000-0000-4000-8000-000000000001"}',
       stderr: "",
       exitCode: 0,
     });
     expect(toolCalls).toEqual([
       {
-        name: "browser_login",
+        name: "find_login_items",
+        arguments: {
+          url: requestedUrl,
+          _thor_session_id: "parent-session",
+        },
+      },
+      {
+        name: "browser_open_authenticated",
         arguments: {
           item_id: onePasswordItemId,
-          expected_origin: onePasswordOrigin,
+          url: `${onePasswordOrigin}/dashboard`,
+          _approved_item_title: "Example audit",
           _thor_session_id: "parent-session",
         },
       },

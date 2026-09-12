@@ -136,15 +136,15 @@ export function resolveOnePasswordBrowserUpstream(
   env: NodeJS.ProcessEnv = process.env,
 ): UpstreamConfig | undefined {
   const serviceAccountToken = envValue(env, "OP_SERVICE_ACCOUNT_TOKEN");
-  const policyJson = envValue(env, "ONEPASSWORD_BROWSER_CONFIG");
-  if (!serviceAccountToken && !policyJson) return undefined;
-  if (!serviceAccountToken || !policyJson) {
+  const vaultId = envValue(env, "ONEPASSWORD_BROWSER_VAULT_ID");
+  if (!serviceAccountToken && !vaultId) return undefined;
+  if (!serviceAccountToken || !vaultId) {
     const missing = [
       !serviceAccountToken ? "OP_SERVICE_ACCOUNT_TOKEN" : undefined,
-      !policyJson ? "ONEPASSWORD_BROWSER_CONFIG" : undefined,
+      !vaultId ? "ONEPASSWORD_BROWSER_VAULT_ID" : undefined,
     ].filter((name): name is string => Boolean(name));
     throw new Error(
-      `partial onepassword browser bundle: missing ${missing.join(", ")}. Set OP_SERVICE_ACCOUNT_TOKEN and ONEPASSWORD_BROWSER_CONFIG together, or neither of them.`,
+      `partial onepassword browser bundle: missing ${missing.join(", ")}. Set OP_SERVICE_ACCOUNT_TOKEN and ONEPASSWORD_BROWSER_VAULT_ID together, or neither of them.`,
     );
   }
 
@@ -154,7 +154,7 @@ export function resolveOnePasswordBrowserUpstream(
     args: [...ONEPASSWORD_BROWSER_SANDBOX_ARGS],
     env: {
       OP_SERVICE_ACCOUNT_TOKEN_FILE: ONEPASSWORD_BROWSER_TOKEN_FILE,
-      ONEPASSWORD_BROWSER_CONFIG: policyJson,
+      ONEPASSWORD_BROWSER_VAULT_ID: vaultId,
     },
     secretInput: { fd: 3, getContents: () => serviceAccountToken },
   };

@@ -22,8 +22,15 @@ describe("proxy registry", () => {
         url: "stdio://onepassword-browser",
         transport: "onepassword-browser",
       },
-      allow: ["get_login_metadata"],
-      approve: ["browser_login"],
+      allow: [
+        "find_login_items",
+        "browser_snapshot",
+        "browser_click",
+        "browser_type",
+        "browser_navigate",
+        "browser_close",
+      ],
+      approve: ["browser_open_authenticated"],
     });
     expect(getProxyConfig("posthog")?.allow).toContain("query-run");
     expect(getProxyConfig("falcon")?.upstream.url).toBe("http://falcon-mcp:8000/mcp");

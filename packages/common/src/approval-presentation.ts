@@ -1,6 +1,6 @@
 import {
   AddCommentToJiraIssueApprovalArgsSchema,
-  BrowserLoginApprovalArgsSchema,
+  BrowserOpenAuthenticatedApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
   CreateJiraIssueApprovalArgsSchema,
   EditJiraIssueApprovalArgsSchema,
@@ -179,8 +179,8 @@ export function buildApprovalPresentation(
         return buildTransitionJiraIssuePresentation(args);
       case "create-feature-flag":
         return buildCreateFeatureFlagPresentation(args);
-      case "browser_login":
-        return buildBrowserLoginPresentation(args);
+      case "browser_open_authenticated":
+        return buildBrowserOpenAuthenticatedPresentation(args);
       default:
         return undefined;
     }
@@ -352,16 +352,35 @@ function buildCreateFeatureFlagPresentation(args: Record<string, unknown>): Appr
   };
 }
 
-function buildBrowserLoginPresentation(args: Record<string, unknown>): ApprovalPresentation {
-  const parsed = BrowserLoginApprovalArgsSchema.parse(args);
+function buildBrowserOpenAuthenticatedPresentation(
+  args: Record<string, unknown>,
+): ApprovalPresentation {
+  const parsed = BrowserOpenAuthenticatedApprovalArgsSchema.parse(args);
+  const itemTitle = renderCredentialItemTitle(parsed.item_title);
+  const destination = renderCredentialApprovalText(parsed.url);
   return {
-    title: "Log in with approved 1Password item",
+    title: `Open authenticated browser: ${itemTitle}`,
     markdown: joinMarkdown([
+      `*1Password Login:* ${itemTitle}`,
       bullet("1Password item", parsed.item_id),
-      bullet("Exact destination origin", parsed.expected_origin),
-      "The credential values, cookies, and browser storage are never shown to Neo or Slack.",
+      `*Exact destination:* ${destination}`,
+      "Approval permits a ten-minute broker-owned browser session on this exact HTTPS origin. Credential values, cookies, and browser storage are never shown to Neo or Slack.",
     ]),
   };
+}
+
+function renderCredentialItemTitle(value: string): string {
+  return renderCredentialApprovalText(value);
+}
+
+function renderCredentialApprovalText(value: string): string {
+  const markdownNeutral = value
+    .replace(/\\/g, "＼")
+    .replace(/\*/g, "＊")
+    .replace(/_/g, "＿")
+    .replace(/`/g, "｀")
+    .replace(/~/g, "～");
+  return escapeMrkdwnText(markdownNeutral);
 }
 
 function renderValue(value: unknown): string | undefined {

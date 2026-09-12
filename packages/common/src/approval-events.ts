@@ -6,7 +6,7 @@ export const APPROVAL_TOOL_NAMES = [
   "editJiraIssue",
   "transitionJiraIssue",
   "create-feature-flag",
-  "browser_login",
+  "browser_open_authenticated",
 ] as const;
 
 export const CreateJiraIssueApprovalArgsSchema = z
@@ -53,30 +53,36 @@ export const CreateFeatureFlagApprovalArgsSchema = z
   .passthrough();
 
 const OnePasswordOpaqueIdSchema = z.string().regex(/^[a-z0-9]{26}$/);
+const SafeOnePasswordLoginTitleSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(200)
+  .regex(/^[^\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]+$/u);
+const BrowserPageUrlSchema = z
+  .url()
+  .max(2000)
+  .refine((value) => {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash;
+  }, "url must be HTTPS without credentials, query parameters, or a fragment");
 
-export const GetLoginMetadataArgsSchema = z
+/** Strict public arguments for safe exact-origin Login item discovery. */
+export const FindLoginItemsArgsSchema = z.object({ url: BrowserPageUrlSchema }).strict();
+
+/** Strict model-supplied arguments before trusted Login metadata enrichment. */
+export const BrowserOpenAuthenticatedRequestArgsSchema = z
   .object({
     item_id: OnePasswordOpaqueIdSchema,
+    url: BrowserPageUrlSchema,
   })
   .strict();
 
-export const BrowserLoginApprovalArgsSchema = z
-  .object({
-    item_id: OnePasswordOpaqueIdSchema,
-    expected_origin: z.url().refine((value) => {
-      const url = new URL(value);
-      return (
-        url.protocol === "https:" &&
-        !url.username &&
-        !url.password &&
-        url.pathname === "/" &&
-        !url.search &&
-        !url.hash &&
-        value === url.origin
-      );
-    }, "expected_origin must be an exact canonical HTTPS origin"),
-  })
-  .strict();
+/** Approval arguments enriched with the item title resolved by the trusted broker. */
+export const BrowserOpenAuthenticatedApprovalArgsSchema =
+  BrowserOpenAuthenticatedRequestArgsSchema.extend({
+    item_title: SafeOnePasswordLoginTitleSchema,
+  }).strict();
 
 export const ApprovalArgsSchema = z.union([
   CreateJiraIssueApprovalArgsSchema,
@@ -84,7 +90,7 @@ export const ApprovalArgsSchema = z.union([
   EditJiraIssueApprovalArgsSchema,
   TransitionJiraIssueApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
-  BrowserLoginApprovalArgsSchema,
+  BrowserOpenAuthenticatedApprovalArgsSchema,
 ]);
 
 const ApprovalRequiredEventBaseSchema = z.object({
@@ -115,8 +121,8 @@ export const ApprovalRequiredEventPayloadSchema = z.discriminatedUnion("tool", [
     args: CreateFeatureFlagApprovalArgsSchema,
   }),
   ApprovalRequiredEventBaseSchema.extend({
-    tool: z.literal("browser_login"),
-    args: BrowserLoginApprovalArgsSchema,
+    tool: z.literal("browser_open_authenticated"),
+    args: BrowserOpenAuthenticatedApprovalArgsSchema,
   }),
 ]);
 
@@ -177,7 +183,7 @@ export function injectApprovalDisclaimer(
       };
     case "editJiraIssue":
     case "transitionJiraIssue":
-    case "browser_login":
+    case "browser_open_authenticated":
       return parsed.data.args;
   }
 }
