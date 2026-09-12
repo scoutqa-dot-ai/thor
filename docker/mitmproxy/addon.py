@@ -46,16 +46,27 @@ class ThorMitmAddon:
         self._store = RuleStore(config_path=config_path)
 
     def responseheaders(self, flow: Any) -> None:
-        if flow.response is None:
+        response = flow.response
+        if response is None:
             return
-        content_type = (
-            flow.response.headers.get("content-type", "")
-            .split(";", 1)[0]
-            .strip()
-            .lower()
+        host = getattr(flow.request, "pretty_host", None) or flow.request.host
+        is_codex_response = (
+            host == "chatgpt.com"
+            and flow.request.method.upper() == "POST"
+            and flow.request.path.split("?", 1)[0] == "/backend-api/codex/responses"
         )
-        if content_type == "text/event-stream":
-            flow.response.stream = True
+        content_type = response.headers.get("content-type", "")
+        mime_type = content_type.split(";", 1)[0].strip().lower()
+        is_sse = mime_type == "text/event-stream"
+        # The Codex backend can omit Content-Type on streaming responses.
+        # Scope the fallback so other untyped responses keep normal buffering.
+        missing_type_fallback = (
+            is_codex_response
+            and 200 <= response.status_code < 300
+            and not content_type.strip()
+        )
+        if is_sse or missing_type_fallback:
+            response.stream = True
 
     def http_connect(self, flow: Any) -> None:
         host = getattr(flow.request, "pretty_host", None) or flow.request.host
