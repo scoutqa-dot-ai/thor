@@ -7,7 +7,7 @@
 #     target: gateway
 
 FROM node:24-slim AS base
-RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.25.0 --activate
 RUN groupadd --gid 1001 thor && useradd --uid 1001 --gid thor --create-home thor
 RUN mkdir -p /workspace && chown thor:thor /workspace
 
@@ -136,7 +136,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends unzip \
     && /tmp/aws/install \
     && rm -rf /tmp/aws /tmp/awscliv2.zip \
     && apt-get purge -y unzip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
-COPY --from=grafana/mcp-grafana:1.1.0 /app/mcp-grafana /usr/local/bin/mcp-grafana
+COPY --from=grafana/mcp-grafana:1.3.0 /app/mcp-grafana /usr/local/bin/mcp-grafana
 
 FROM remote-cli-tools AS remote-cli
 COPY --from=remote-cli-build /app /app
