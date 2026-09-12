@@ -45,6 +45,18 @@ class ThorMitmAddon:
     def __init__(self, config_path: str = "/workspace/config/thor.json"):
         self._store = RuleStore(config_path=config_path)
 
+    def responseheaders(self, flow: Any) -> None:
+        if flow.response is None:
+            return
+        content_type = (
+            flow.response.headers.get("content-type", "")
+            .split(";", 1)[0]
+            .strip()
+            .lower()
+        )
+        if content_type == "text/event-stream":
+            flow.response.stream = True
+
     def http_connect(self, flow: Any) -> None:
         host = getattr(flow.request, "pretty_host", None) or flow.request.host
         if host == HEALTH_HOST:
