@@ -25,7 +25,7 @@ importers:
         version: 0.22.14(typescript@7.0.2)
       vitest:
         specifier: ^4.1.9
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(vite@8.0.16(@types/node@24.13.3)(yaml@2.9.0))
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(vite@8.0.16(@types/node@24.13.4)(yaml@2.9.0))
 
   packages/admin:
     dependencies:
@@ -72,7 +72,7 @@ importers:
         version: 3.1.0
       '@slack/web-api':
         specifier: ^8.0.0
-        version: 8.0.0
+        version: 8.1.1
       '@thor/common':
         specifier: workspace:*
         version: link:../common
@@ -153,7 +153,7 @@ importers:
         version: 3.1.0
       '@slack/web-api':
         specifier: ^8.0.0
-        version: 8.0.0
+        version: 8.1.1
       '@thor/common':
         specifier: workspace:*
         version: link:../common
@@ -755,8 +755,8 @@ packages:
     resolution: {integrity: sha512-bTzqrO3lxJ5iWedo1eJKNAs1koyEhaTwKLJUkD3KETnPeQvD978AAE4jvWstUws8Gbbc4JR6iYE6F7XjE8UGmw==}
     engines: {node: '>= 20', npm: '>=9.6.4'}
 
-  '@slack/web-api@8.0.0':
-    resolution: {integrity: sha512-ORx3XQryQPq2Jnxv5giSKXVoQRUeylrrymIR2S9fPzLjPcCts8RayMeBSZMcpfpAqp6fnBRuPW2UB6dUPUTEZA==}
+  '@slack/web-api@8.1.1':
+    resolution: {integrity: sha512-am/z/LLbEC7gNQp6FpaGT0l4XnWqcXetpwdgZHzS7Nbb96q9R9QwWA3lo0ZXGuAHDkct0MvFnouzuc2Y4XNmow==}
     engines: {node: '>= 20', npm: '>=9.6.4'}
 
   '@smithy/core@3.33.3':
@@ -829,6 +829,9 @@ packages:
   '@types/node@24.13.3':
     resolution: {integrity: sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==}
 
+  '@types/node@24.13.4':
+    resolution: {integrity: sha512-YJ7EqCstVTzIr0fMr7qul/977en+pQHrfmuKIo6Zr9i75Be21dr3MovcfvGtyvi2HAUrRerWps5sMO9I7WaxDw==}
+
   '@types/qs@6.15.1':
     resolution: {integrity: sha512-GZHUBZR9hckSUhrxmp1nG6NwdpM9fCunJwyThLW1X3AyHgd9IlHb6VANpQQqDr2o/qQp6McZ3y/IA2rVzKzSbw==}
 
@@ -837,6 +840,9 @@ packages:
 
   '@types/retry@0.12.0':
     resolution: {integrity: sha512-wWKOClTTiizcZhXnPY4wikVAwmdYHp8q6DmC+EJUzAMsycb7HB32Kh9RN4+0gExjmPmZSAQjgURXIGATPegAvA==}
+
+  '@types/retry@0.12.5':
+    resolution: {integrity: sha512-3xSjTp3v03X/lSQLkczaN9UIEwJMoMCA1+Nb5HfbJEQWogdeQIyVtTvxPXDQjZ5zws8rFQfVfRdz03ARihPJgw==}
 
   '@types/send@1.2.1':
     resolution: {integrity: sha512-arsCikDvlU99zl1g69TcAB3mzZPpxgw0UQnaHeC1Nwb015xp8bknZv5rIfri9xTOcMuaVgvabfIRA7PSZVuZIQ==}
@@ -3044,16 +3050,16 @@ snapshots:
 
   '@slack/logger@5.0.0':
     dependencies:
-      '@types/node': 24.13.3
+      '@types/node': 24.13.4
 
   '@slack/types@3.1.0': {}
 
-  '@slack/web-api@8.0.0':
+  '@slack/web-api@8.1.1':
     dependencies:
       '@slack/logger': 5.0.0
       '@slack/types': 3.1.0
-      '@types/node': 24.13.3
-      '@types/retry': 0.12.0
+      '@types/node': 24.13.4
+      '@types/retry': 0.12.5
       eventemitter3: 5.0.4
       p-queue: 6.6.2
       p-retry: 4.6.2
@@ -3147,11 +3153,17 @@ snapshots:
     dependencies:
       undici-types: 7.18.2
 
+  '@types/node@24.13.4':
+    dependencies:
+      undici-types: 7.18.2
+
   '@types/qs@6.15.1': {}
 
   '@types/range-parser@1.2.7': {}
 
   '@types/retry@0.12.0': {}
+
+  '@types/retry@0.12.5': {}
 
   '@types/send@1.2.1':
     dependencies:
@@ -3231,13 +3243,13 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.1
 
-  '@vitest/mocker@4.1.11(vite@8.0.16(@types/node@24.13.3)(yaml@2.9.0))':
+  '@vitest/mocker@4.1.11(vite@8.0.16(@types/node@24.13.4)(yaml@2.9.0))':
     dependencies:
       '@vitest/spy': 4.1.11
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 8.0.16(@types/node@24.13.3)(yaml@2.9.0)
+      vite: 8.0.16(@types/node@24.13.4)(yaml@2.9.0)
 
   '@vitest/pretty-format@4.1.11':
     dependencies:
@@ -4379,7 +4391,7 @@ snapshots:
 
   verkit@0.3.2: {}
 
-  vite@8.0.16(@types/node@24.13.3)(yaml@2.9.0):
+  vite@8.0.16(@types/node@24.13.4)(yaml@2.9.0):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7
@@ -4387,14 +4399,14 @@ snapshots:
       rolldown: 1.0.3
       tinyglobby: 0.2.17
     optionalDependencies:
-      '@types/node': 24.13.3
+      '@types/node': 24.13.4
       fsevents: 2.3.3
       yaml: 2.9.0
 
-  vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(vite@8.0.16(@types/node@24.13.3)(yaml@2.9.0)):
+  vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(vite@8.0.16(@types/node@24.13.4)(yaml@2.9.0)):
     dependencies:
       '@vitest/expect': 4.1.11
-      '@vitest/mocker': 4.1.11(vite@8.0.16(@types/node@24.13.3)(yaml@2.9.0))
+      '@vitest/mocker': 4.1.11(vite@8.0.16(@types/node@24.13.4)(yaml@2.9.0))
       '@vitest/pretty-format': 4.1.11
       '@vitest/runner': 4.1.11
       '@vitest/snapshot': 4.1.11
@@ -4411,7 +4423,7 @@ snapshots:
       tinyexec: 1.3.0
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.1
-      vite: 8.0.16(@types/node@24.13.3)(yaml@2.9.0)
+      vite: 8.0.16(@types/node@24.13.4)(yaml@2.9.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
