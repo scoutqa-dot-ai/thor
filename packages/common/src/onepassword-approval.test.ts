@@ -30,12 +30,26 @@ describe("1Password authenticated browser approval boundary", () => {
       }).success,
     ).toBe(false);
     expect(
+      BrowserOpenAuthenticatedRequestArgsSchema.safeParse({
+        item_id: ITEM_ID,
+        url: URL,
+        automate_totp: true,
+      }).success,
+    ).toBe(true);
+    expect(
       BrowserOpenAuthenticatedApprovalArgsSchema.safeParse({
         item_id: ITEM_ID,
         url: URL,
         item_title: "Example audit",
       }).success,
     ).toBe(true);
+    expect(
+      BrowserOpenAuthenticatedRequestArgsSchema.safeParse({
+        item_id: ITEM_ID,
+        url: URL,
+        automate_totp: "true",
+      }).success,
+    ).toBe(false);
   });
 
   it.each([
@@ -76,10 +90,24 @@ describe("1Password authenticated browser approval boundary", () => {
         "*1Password Login:* Example audit",
         `*1Password item:* ${ITEM_ID}`,
         `*Exact destination:* ${URL}`,
-        "Approval permits a ten-minute broker-owned browser session on this exact HTTPS origin. Credential values, cookies, and browser storage are never shown to Neo or Slack.",
+        "*Automated TOTP:* Disabled",
+        "Approval permits password autofill and a ten-minute broker-owned browser session on this exact HTTPS origin. Credential values, cookies, and browser storage are never shown to Neo or Slack.",
       ].join("\n\n"),
     });
     expect(JSON.stringify(presentation)).not.toContain("password-value");
+  });
+
+  it("explicitly discloses automated TOTP authorization", () => {
+    const presentation = buildApprovalPresentation("browser_open_authenticated", {
+      item_id: ITEM_ID,
+      url: URL,
+      item_title: "Example audit",
+      automate_totp: true,
+    });
+
+    expect(presentation?.markdown).toContain("*Automated TOTP:* Enabled");
+    expect(presentation?.markdown).toContain("one fresh TOTP code");
+    expect(presentation?.markdown).toContain("never shown to Neo or Slack");
   });
 
   it("neutralizes Slack formatting characters in the exact destination", () => {

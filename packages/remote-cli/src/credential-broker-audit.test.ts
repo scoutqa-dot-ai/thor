@@ -14,6 +14,7 @@ describe("credential browser worklog sanitization", () => {
       args: {
         item_id: ITEM_ID,
         item_title: "Private account title",
+        automate_totp: true,
         url: `https://accounts.example.com/dashboard?token=${secret}`,
         browser_session_id: BROWSER_SESSION_ID,
         snapshot_id: SNAPSHOT_ID,

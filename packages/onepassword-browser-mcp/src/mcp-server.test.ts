@@ -25,6 +25,7 @@ class RecordingBroker implements ICredentialBroker {
   async openAuthenticatedBrowser(input: {
     itemId: string;
     approvedTitle: string;
+    automateTotp: boolean;
     url: string;
     sessionId: string;
   }) {
@@ -154,6 +155,7 @@ describe("1Password authenticated browser MCP public interface", () => {
           input: {
             itemId: ITEM_ID,
             approvedTitle: "Example audit",
+            automateTotp: false,
             url: `${ORIGIN}/dashboard`,
             sessionId: "parent-session",
           },
@@ -161,6 +163,27 @@ describe("1Password authenticated browser MCP public interface", () => {
       ]);
       expect(JSON.stringify(result)).not.toContain("password");
       expect(JSON.stringify(result)).not.toContain("cookie");
+      const automatedTotp = await client.callTool({
+        name: "browser_open_authenticated",
+        arguments: {
+          item_id: ITEM_ID,
+          url: `${ORIGIN}/dashboard`,
+          automate_totp: true,
+          _approved_item_title: "Example audit",
+          _thor_session_id: "parent-session",
+        },
+      });
+      expect(automatedTotp.isError).not.toBe(true);
+      expect(broker.calls.at(-1)).toEqual({
+        operation: "open",
+        input: {
+          itemId: ITEM_ID,
+          approvedTitle: "Example audit",
+          automateTotp: true,
+          url: `${ORIGIN}/dashboard`,
+          sessionId: "parent-session",
+        },
+      });
     });
   });
 

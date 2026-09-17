@@ -72,19 +72,19 @@ Thor is an internal AI teammate for engineering and product work; it is not mean
 
 Runtime integration paths:
 
-| Integration      | Path                                               | Auth                     | Notes                                                   |
-| ---------------- | -------------------------------------------------- | ------------------------ | ------------------------------------------------------- |
-| Git / GitHub CLI | `remote-cli /exec/git`, `/exec/gh`                 | GitHub App token         | Repo-scoped worktree edits                              |
-| Atlassian MCP    | `remote-cli /exec/mcp`                             | `ATLASSIAN_AUTH` header  | Read + approved writes                                  |
-| PostHog MCP      | `remote-cli /exec/mcp`                             | API key                  | Read + approved writes                                  |
-| Grafana MCP      | `remote-cli /exec/mcp`                             | Service account token    | Logs and observability                                  |
-| Kali MCP/API     | `remote-cli /exec/mcp`                             | Network-restricted EC2   | Authorized Kali security testing tools                  |
-| Slack Web API    | `gateway` + `remote-cli` + OpenCode over mitmproxy | Bot token                | Mentions, progress, approval cards, thread reads/writes |
-| Langfuse         | `remote-cli /exec/langfuse`                        | API key pair             | Read-only trace queries                                 |
-| LaunchDarkly     | `remote-cli /exec/ldcli`                           | Access token             | Read-only feature flag inspection                       |
-| Metabase         | `remote-cli /exec/metabase`                        | API key                  | Read-only warehouse access                              |
-| Drata            | `remote-cli /exec/drata`                           | OAuth client credentials | Read-only Drata API access                              |
-| 1Password        | `remote-cli /exec/mcp`                             | Service-account token    | Approved one-item, one-origin browser login             |
+| Integration      | Path                                               | Auth                     | Notes                                                         |
+| ---------------- | -------------------------------------------------- | ------------------------ | ------------------------------------------------------------- |
+| Git / GitHub CLI | `remote-cli /exec/git`, `/exec/gh`                 | GitHub App token         | Repo-scoped worktree edits                                    |
+| Atlassian MCP    | `remote-cli /exec/mcp`                             | `ATLASSIAN_AUTH` header  | Read + approved writes                                        |
+| PostHog MCP      | `remote-cli /exec/mcp`                             | API key                  | Read + approved writes                                        |
+| Grafana MCP      | `remote-cli /exec/mcp`                             | Service account token    | Logs and observability                                        |
+| Kali MCP/API     | `remote-cli /exec/mcp`                             | Network-restricted EC2   | Authorized Kali security testing tools                        |
+| Slack Web API    | `gateway` + `remote-cli` + OpenCode over mitmproxy | Bot token                | Mentions, progress, approval cards, thread reads/writes       |
+| Langfuse         | `remote-cli /exec/langfuse`                        | API key pair             | Read-only trace queries                                       |
+| LaunchDarkly     | `remote-cli /exec/ldcli`                           | Access token             | Read-only feature flag inspection                             |
+| Metabase         | `remote-cli /exec/metabase`                        | API key                  | Read-only warehouse access                                    |
+| Drata            | `remote-cli /exec/drata`                           | OAuth client credentials | Read-only Drata API access                                    |
+| 1Password        | `remote-cli /exec/mcp`                             | Service-account token    | Approved one-item, one-origin browser login and optional TOTP |
 
 Common usage patterns:
 

@@ -10,8 +10,8 @@ import {
 } from "playwright-core";
 import { type BrowserDestination, type BrowserOrigin } from "./config.ts";
 import type { LoginCredentials } from "./credential-reader.ts";
-import { BrokerRequestDeniedError, BrowserSessionError } from "./errors.ts";
-import { withRedactedString } from "./redacted.ts";
+import { BrokerRequestDeniedError, BrowserSessionError, OnePasswordAccessError } from "./errors.ts";
+import { type RedactedString, withRedactedString } from "./redacted.ts";
 import { err, ok, type Result } from "./result.ts";
 
 const DEFAULT_ACTION_TIMEOUT_MS = 30_000;
@@ -23,6 +23,9 @@ const MAX_SNAPSHOT_DEPTH = 12;
 const MAX_SNAPSHOT_STRING_CHARS = 1_000;
 const MAX_TYPE_TEXT_CHARS = 4_000;
 const MAX_SEMANTIC_LOCATOR_CANDIDATES = 20;
+const TOTP_CODE_PATTERN = /^[0-9]{6,8}$/;
+const MFA_INPUT_SELECTOR =
+  'input:is([autocomplete="one-time-code"], [name="code" i], [id="code" i], [name*="otp" i], [id*="otp" i], [name*="totp" i], [id*="totp" i], [name*="mfa" i], [id*="mfa" i], [name*="2fa" i], [id*="2fa" i], [name*="authenticator" i], [id*="authenticator" i], [name*="verification-code" i], [id*="verification-code" i], [name*="security-code" i], [id*="security-code" i])';
 const BROWSER_ELEMENT_REF_PATTERN = /^(?:f[1-9][0-9]*)?e[1-9][0-9]*$/;
 const SENSITIVE_FIELD_NAME_PATTERN =
   /password|passcode|one.?time|otp|totp|mfa|secret|token|credit|card|cvc|cvv|pin/i;
@@ -106,7 +109,12 @@ export interface IAuthenticatedBrowserSessions {
   /** Log in with wrapped credentials and retain a short-lived browser session. */
   openAuthenticatedBrowser(
     input: OpenAuthenticatedBrowserInput,
-  ): Promise<Result<BrowserSessionLocation, BrowserSessionError | BrokerRequestDeniedError>>;
+  ): Promise<
+    Result<
+      BrowserSessionLocation,
+      BrowserSessionError | BrokerRequestDeniedError | OnePasswordAccessError
+    >
+  >;
 
   /** Return a sanitized accessibility snapshot without editable values or raw URLs. */
   snapshotBrowser(
@@ -183,7 +191,9 @@ interface ActiveBrowserSession {
   readonly browser: Browser;
   readonly context: BrowserContext;
   readonly page: Page;
-  readonly sensitiveValues: readonly [LoginCredentials["username"], LoginCredentials["password"]];
+  readonly username: RedactedString;
+  readonly password: RedactedString;
+  readonly additionalSensitiveValues: ReadonlyArray<RedactedString>;
   busy: boolean;
   snapshotLease: BrowserSnapshotLease;
   timer: BrowserSessionTimerHandle | undefined;
@@ -192,6 +202,7 @@ interface ActiveBrowserSession {
 interface SnapshotSanitizerState {
   readonly approvedOrigin: BrowserOrigin;
   readonly secrets: ReadonlyArray<string>;
+  readonly redactNumbers: boolean;
   readonly refs: Set<BrowserElementRef>;
   nodes: number;
 }
@@ -359,6 +370,9 @@ async function passwordElement(page: Page, timeoutMs: number): Promise<ElementHa
   }
   return uniqueVisibleElement([locator], timeoutMs);
 }
+async function totpElement(page: Page, timeoutMs: number): Promise<ElementHandle> {
+  return uniqueVisibleElement([page.locator(MFA_INPUT_SELECTOR)], timeoutMs);
+}
 
 async function submitLocator(page: Page, timeoutMs: number): Promise<Locator> {
   const candidates = [
@@ -379,7 +393,7 @@ async function submitLocator(page: Page, timeoutMs: number): Promise<Locator> {
 
 async function requireSafeCredentialInput(
   element: ElementHandle,
-  kind: "username" | "password",
+  kind: "username" | "password" | "totp",
   origin: BrowserOrigin,
 ): Promise<void> {
   const input = await element.evaluate((node) => {
@@ -400,10 +414,12 @@ async function requireSafeCredentialInput(
     };
   });
   const usernameTypes = new Set(["text", "email", "tel"]);
+  const totpTypes = new Set(["text", "tel", "number"]);
   if (
     !input ||
     (kind === "username" && !usernameTypes.has(input.type)) ||
     (kind === "password" && input.type !== "password") ||
+    (kind === "totp" && !totpTypes.has(input.type)) ||
     input.form === undefined ||
     input.form.method !== "post" ||
     (input.form.target !== "" && input.form.target !== "_self") ||
@@ -413,7 +429,11 @@ async function requireSafeCredentialInput(
   }
 }
 
-async function requireSafeCredentialSubmit(submit: Locator, origin: BrowserOrigin): Promise<void> {
+async function requireSafeCredentialSubmit(
+  submit: Locator,
+  credentialInput: ElementHandle,
+  origin: BrowserOrigin,
+): Promise<void> {
   const target = await submit.evaluate((node) => {
     const form = Reflect.get(node, "form") as
       | { getAttribute(name: string): string | null }
@@ -431,8 +451,18 @@ async function requireSafeCredentialSubmit(submit: Locator, origin: BrowserOrigi
       target: node.getAttribute("formtarget") ?? form.getAttribute("target") ?? "",
     };
   });
+  const submitElement = await submit.elementHandle();
+  const sameForm = submitElement
+    ? await credentialInput.evaluate(
+        (inputNode, submitNode) =>
+          Reflect.get(inputNode, "form") === Reflect.get(submitNode, "form"),
+        submitElement,
+      )
+    : false;
+  await submitElement?.dispose().catch(() => undefined);
   if (
     !target ||
+    !sameForm ||
     target.method !== "post" ||
     (target.target !== "" && target.target !== "_self") ||
     !isApprovedBrowserUrl(target.action, origin)
@@ -442,10 +472,7 @@ async function requireSafeCredentialSubmit(submit: Locator, origin: BrowserOrigi
 }
 
 async function hasVisibleMfaChallenge(page: Page): Promise<boolean> {
-  const locator = page.locator(
-    'input:is([autocomplete="one-time-code"], [name="code" i], [id="code" i], [name*="otp" i], [id*="otp" i], [name*="totp" i], [id*="totp" i], [name*="mfa" i], [id*="mfa" i], [name*="2fa" i], [id*="2fa" i], [name*="authenticator" i], [id*="authenticator" i], [name*="verification-code" i], [id*="verification-code" i], [name*="security-code" i], [id*="security-code" i])',
-  );
-  return (await visibleLocatorCount(locator)) > 0;
+  return (await visibleLocatorCount(page.locator(MFA_INPUT_SELECTOR))) > 0;
 }
 
 async function requireAuthenticatedPage(page: Page, origin: BrowserOrigin): Promise<void> {
@@ -476,6 +503,27 @@ async function waitForAuthentication(page: Page, origin: BrowserOrigin, timeoutM
   }
   throw new BrowserBoundaryError("authentication_not_confirmed");
 }
+async function waitForTotpAuthentication(
+  page: Page,
+  origin: BrowserOrigin,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let challengeAbsentSince: number | undefined;
+  while (Date.now() < deadline) {
+    requireApprovedOrigin(page, origin);
+    if (!(await hasVisibleMfaChallenge(page)) && (await visiblePasswordCount(page)) === 0) {
+      challengeAbsentSince ??= Date.now();
+      if (Date.now() - challengeAbsentSince >= 1_000) return;
+    } else {
+      challengeAbsentSince = undefined;
+    }
+    await page.waitForTimeout(100);
+  }
+  throw new BrowserBoundaryError(
+    (await hasVisibleMfaChallenge(page)) ? "mfa_required" : "authentication_not_confirmed",
+  );
+}
 
 async function clearCredentialElement(element: ElementHandle | undefined): Promise<void> {
   if (!element) return;
@@ -487,7 +535,7 @@ async function performStandardLogin(
   page: Page,
   credentials: LoginCredentials,
   timeoutMs: number,
-): Promise<void> {
+): Promise<RedactedString | undefined> {
   await page.goto(credentials.metadata.loginUrl, {
     waitUntil: "domcontentloaded",
     timeout: timeoutMs,
@@ -496,6 +544,8 @@ async function performStandardLogin(
 
   let username: ElementHandle | undefined;
   let password: ElementHandle | undefined;
+  let totpInput: ElementHandle | undefined;
+  let totpCode: RedactedString | undefined;
   try {
     username = await usernameElement(page, timeoutMs);
     const usernameToFill = username;
@@ -505,7 +555,11 @@ async function performStandardLogin(
 
     if ((await visiblePasswordCount(page)) === 0) {
       const continueButton = await submitLocator(page, timeoutMs);
-      await requireSafeCredentialSubmit(continueButton, credentials.metadata.origin);
+      await requireSafeCredentialSubmit(
+        continueButton,
+        usernameToFill,
+        credentials.metadata.origin,
+      );
       await continueButton.click({ timeout: timeoutMs });
       requireApprovedOrigin(page, credentials.metadata.origin);
     }
@@ -518,11 +572,39 @@ async function performStandardLogin(
 
     const submit = await submitLocator(page, timeoutMs);
     requireApprovedOrigin(page, credentials.metadata.origin);
-    await requireSafeCredentialSubmit(submit, credentials.metadata.origin);
+    await requireSafeCredentialSubmit(submit, passwordToFill, credentials.metadata.origin);
     await submit.click({ timeout: timeoutMs });
-    await waitForAuthentication(page, credentials.metadata.origin, timeoutMs);
+    try {
+      await waitForAuthentication(page, credentials.metadata.origin, timeoutMs);
+    } catch (error) {
+      if (!(error instanceof BrowserBoundaryError) || error.code !== "mfa_required") throw error;
+      if (!credentials.totp) throw error;
+      if ((await visiblePasswordCount(page)) > 0) {
+        throw new BrowserBoundaryError("authentication_not_confirmed");
+      }
+
+      totpInput = await totpElement(page, timeoutMs);
+      const totpInputToFill = totpInput;
+      requireApprovedOrigin(page, credentials.metadata.origin);
+      await requireSafeCredentialInput(totpInputToFill, "totp", credentials.metadata.origin);
+      const totpSubmit = await submitLocator(page, timeoutMs);
+      await requireSafeCredentialSubmit(totpSubmit, totpInputToFill, credentials.metadata.origin);
+
+      const currentCode = await credentials.totp.getCurrentCode();
+      if (currentCode._tag === "err") throw currentCode.error;
+      totpCode = currentCode.value;
+      await withRedactedString(totpCode, (value) => totpInputToFill.fill(value));
+      requireApprovedOrigin(page, credentials.metadata.origin);
+      await totpSubmit.click({ timeout: timeoutMs });
+      await waitForTotpAuthentication(page, credentials.metadata.origin, timeoutMs);
+    }
+    return totpCode;
   } finally {
-    await Promise.all([clearCredentialElement(username), clearCredentialElement(password)]);
+    await Promise.all([
+      clearCredentialElement(username),
+      clearCredentialElement(password),
+      clearCredentialElement(totpInput),
+    ]);
   }
 }
 
@@ -543,8 +625,34 @@ function sanitizeUrlForSnapshot(value: string, approvedOrigin: BrowserOrigin): s
   }
 }
 
-function knownCredentialValues(username: string, password: string): ReadonlyArray<string> {
-  return [...new Set([username, username.toLowerCase(), username.toUpperCase(), password])];
+function knownCredentialValues(
+  username: string,
+  password: string,
+  additionalSecrets: ReadonlyArray<string> = [],
+): ReadonlyArray<string> {
+  return [
+    ...new Set([
+      username,
+      username.toLowerCase(),
+      username.toUpperCase(),
+      password,
+      ...additionalSecrets,
+    ]),
+  ];
+}
+
+async function withRedactedStrings<T>(
+  secrets: ReadonlyArray<RedactedString>,
+  use: (values: ReadonlyArray<string>) => Promise<T> | T,
+  index = 0,
+  values: ReadonlyArray<string> = [],
+): Promise<T> {
+  const secret = secrets[index];
+  return secret
+    ? withRedactedString(secret, (value) =>
+        withRedactedStrings(secrets, use, index + 1, [...values, value]),
+      )
+    : use(values);
 }
 
 function redactKnownSecrets(value: string, secrets: ReadonlyArray<string>): string {
@@ -559,7 +667,10 @@ function sanitizeSnapshotText(value: string, state: SnapshotSanitizerState): str
   const urlsSanitized = value.replace(/https?:\/\/[^\s<>"']+/gi, (url) =>
     sanitizeUrlForSnapshot(url, state.approvedOrigin),
   );
-  return redactKnownSecrets(urlsSanitized, state.secrets).slice(0, MAX_SNAPSHOT_STRING_CHARS);
+  const secretsRedacted = redactKnownSecrets(urlsSanitized, state.secrets);
+  return (
+    state.redactNumbers ? secretsRedacted.replace(/[0-9]+/g, "[REDACTED]") : secretsRedacted
+  ).slice(0, MAX_SNAPSHOT_STRING_CHARS);
 }
 
 function sanitizeAccessibilityValue(
@@ -573,7 +684,8 @@ function sanitizeAccessibilityValue(
     throw new BrowserBoundaryError("snapshot_too_large");
   }
   if (typeof value === "string") return sanitizeSnapshotText(value, state);
-  if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
+  if (typeof value === "number") return state.redactNumbers ? "[REDACTED]" : value;
+  if (typeof value === "boolean" || value === null) return value;
   if (typeof value !== "object") return undefined;
 
   if (Array.isArray(value)) {
@@ -624,7 +736,9 @@ function sanitizeAccessibilityValue(
 export async function sanitizeBrowserAccessibilitySnapshot(
   rawSnapshot: unknown,
   approvedOrigin: BrowserOrigin,
-  credentials: Pick<LoginCredentials, "username" | "password">,
+  credentials: Pick<LoginCredentials, "username" | "password"> & {
+    readonly additionalSecrets?: ReadonlyArray<RedactedString>;
+  },
 ): Promise<
   Result<
     {
@@ -635,31 +749,34 @@ export async function sanitizeBrowserAccessibilitySnapshot(
   >
 > {
   return withRedactedString(credentials.username, (username) =>
-    withRedactedString(credentials.password, (password) => {
-      const refs = new Set<BrowserElementRef>();
-      const state: SnapshotSanitizerState = {
-        approvedOrigin,
-        secrets: knownCredentialValues(username, password),
-        refs,
-        nodes: 0,
-      };
-      try {
-        const accessibility = sanitizeAccessibilityValue(rawSnapshot, state, 0);
-        if (accessibility === undefined) {
-          return err(new BrowserSessionError("snapshot_failed"));
+    withRedactedString(credentials.password, (password) =>
+      withRedactedStrings(credentials.additionalSecrets ?? [], (additionalSecrets) => {
+        const refs = new Set<BrowserElementRef>();
+        const state: SnapshotSanitizerState = {
+          approvedOrigin,
+          secrets: knownCredentialValues(username, password, additionalSecrets),
+          redactNumbers: additionalSecrets.some((secret) => TOTP_CODE_PATTERN.test(secret)),
+          refs,
+          nodes: 0,
+        };
+        try {
+          const accessibility = sanitizeAccessibilityValue(rawSnapshot, state, 0);
+          if (accessibility === undefined) {
+            return err(new BrowserSessionError("snapshot_failed"));
+          }
+          if (JSON.stringify(accessibility).length > MAX_SNAPSHOT_CHARS) {
+            return err(new BrowserSessionError("snapshot_too_large"));
+          }
+          return ok({ accessibility, refs });
+        } catch (error) {
+          return err(
+            new BrowserSessionError(
+              error instanceof BrowserBoundaryError ? error.code : "snapshot_failed",
+            ),
+          );
         }
-        if (JSON.stringify(accessibility).length > MAX_SNAPSHOT_CHARS) {
-          return err(new BrowserSessionError("snapshot_too_large"));
-        }
-        return ok({ accessibility, refs });
-      } catch (error) {
-        return err(
-          new BrowserSessionError(
-            error instanceof BrowserBoundaryError ? error.code : "snapshot_failed",
-          ),
-        );
-      }
-    }),
+      }),
+    ),
   );
 }
 
@@ -820,7 +937,12 @@ export class PlaywrightAuthenticatedBrowserSessions implements IAuthenticatedBro
   /** Log in and retain one browser only when the owner and global limits permit it. */
   async openAuthenticatedBrowser(
     input: OpenAuthenticatedBrowserInput,
-  ): Promise<Result<BrowserSessionLocation, BrowserSessionError | BrokerRequestDeniedError>> {
+  ): Promise<
+    Result<
+      BrowserSessionLocation,
+      BrowserSessionError | BrokerRequestDeniedError | OnePasswordAccessError
+    >
+  > {
     if (input.destination.origin !== input.credentials.metadata.origin) {
       return err(new BrokerRequestDeniedError("origin_not_allowed"));
     }
@@ -855,7 +977,7 @@ export class PlaywrightAuthenticatedBrowserSessions implements IAuthenticatedBro
         if (openedPage !== page) void openedPage.close().catch(() => undefined);
       });
 
-      await performStandardLogin(page, input.credentials, this.#actionTimeoutMs);
+      const totpCode = await performStandardLogin(page, input.credentials, this.#actionTimeoutMs);
       requireApprovedOrigin(page, input.credentials.metadata.origin);
       if (input.destination.url !== page.url()) {
         await page.goto(input.destination.url, {
@@ -876,7 +998,9 @@ export class PlaywrightAuthenticatedBrowserSessions implements IAuthenticatedBro
         browser,
         context,
         page,
-        sensitiveValues: [input.credentials.username, input.credentials.password],
+        username: input.credentials.username,
+        password: input.credentials.password,
+        additionalSensitiveValues: totpCode ? [totpCode] : [],
         busy: false,
         snapshotLease: NO_BROWSER_SNAPSHOT,
         timer: undefined,
@@ -894,6 +1018,7 @@ export class PlaywrightAuthenticatedBrowserSessions implements IAuthenticatedBro
         await Promise.allSettled([context?.close(), browser?.close()]);
       }
       if (error instanceof BrokerRequestDeniedError) return err(error);
+      if (error instanceof OnePasswordAccessError) return err(error);
       if (error instanceof BrowserBoundaryError) {
         return err(new BrowserSessionError(error.code));
       }
@@ -923,8 +1048,9 @@ export class PlaywrightAuthenticatedBrowserSessions implements IAuthenticatedBro
         timeout: this.#actionTimeoutMs,
       });
       const sanitized = await sanitizeBrowserAccessibilitySnapshot(rawSnapshot, session.origin, {
-        username: session.sensitiveValues[0],
-        password: session.sensitiveValues[1],
+        username: session.username,
+        password: session.password,
+        additionalSecrets: session.additionalSensitiveValues,
       });
       if (sanitized._tag === "err") return sanitized;
       const snapshotId = requireGeneratedId<BrowserSnapshotId>(this.#createId);
@@ -935,14 +1061,17 @@ export class PlaywrightAuthenticatedBrowserSessions implements IAuthenticatedBro
       };
       const location = await browserLocation(session);
       const rawTitle = await session.page.title();
-      const safeTitle = await withRedactedString(session.sensitiveValues[0], (username) =>
-        withRedactedString(session.sensitiveValues[1], (password) =>
-          sanitizeSnapshotText(rawTitle, {
-            approvedOrigin: session.origin,
-            secrets: knownCredentialValues(username, password),
-            refs: new Set(),
-            nodes: 0,
-          }),
+      const safeTitle = await withRedactedString(session.username, (username) =>
+        withRedactedString(session.password, (password) =>
+          withRedactedStrings(session.additionalSensitiveValues, (additionalSecrets) =>
+            sanitizeSnapshotText(rawTitle, {
+              approvedOrigin: session.origin,
+              secrets: knownCredentialValues(username, password, additionalSecrets),
+              redactNumbers: additionalSecrets.some((secret) => TOTP_CODE_PATTERN.test(secret)),
+              refs: new Set(),
+              nodes: 0,
+            }),
+          ),
         ),
       );
       return ok({

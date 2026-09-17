@@ -22,11 +22,13 @@ import {
   parseOnePasswordItemId,
   SERVICE_ACCOUNT_TOKEN_FILE,
 } from "./config.ts";
+import { OnePasswordAccessError } from "./errors.ts";
 import { RedactedString } from "./redacted.ts";
 
 const ORIGIN = "https://accounts.example.com";
 const USERNAME = "audit-user@example.com";
 const PASSWORD = "secret-password-fixture";
+const TOTP_CODE = "123456";
 const SESSION_ID = "00000000-0000-4000-8000-000000000001";
 const SNAPSHOT_ID = "00000000-0000-4000-8000-000000000002";
 
@@ -108,6 +110,15 @@ describe("accessibility snapshot sanitization", () => {
             ref: "e5",
           },
           { role: "paragraph", text: `Known password: ${PASSWORD}`, ref: "e6" },
+          { role: "paragraph", text: "Formatted verification code: 123-456", ref: "e7" },
+          {
+            role: "group",
+            children: [
+              { role: "paragraph", text: "123", ref: "e8" },
+              { role: "paragraph", text: "456", ref: "e9" },
+            ],
+          },
+          { role: "heading", name: "Numeric value", level: 123456, ref: "e10" },
           {
             role: "paragraph",
             text: "Upper URL HTTPS://accounts.example.com/report?token=private-upper-token",
@@ -123,6 +134,7 @@ describe("accessibility snapshot sanitization", () => {
     const result = await sanitizeBrowserAccessibilitySnapshot(rawSnapshot, parsedOrigin(), {
       username: RedactedString.make(USERNAME),
       password: RedactedString.make(PASSWORD),
+      additionalSecrets: [RedactedString.make(TOTP_CODE)],
     });
 
     expect(result._tag).toBe("ok");
@@ -130,6 +142,8 @@ describe("accessibility snapshot sanitization", () => {
     const serialized = JSON.stringify(result.value.accessibility);
     expect(serialized).not.toContain(USERNAME);
     expect(serialized).not.toContain(PASSWORD);
+    expect(serialized).not.toContain(TOTP_CODE);
+    expect(serialized).not.toContain("123-456");
     expect(serialized).not.toContain("unknownProviderField");
     expect(serialized).not.toContain("download_token");
     expect(serialized).not.toContain("fragment");
@@ -145,7 +159,17 @@ describe("accessibility snapshot sanitization", () => {
     const textBox = parsedSnapshot[0]?.children[1];
     expect(textBox).not.toHaveProperty("text");
     expect(textBox).not.toHaveProperty("children");
-    expect([...result.value.refs].sort()).toEqual(["e1", "e2", "e3", "e4", "e6"]);
+    expect([...result.value.refs].sort()).toEqual([
+      "e1",
+      "e10",
+      "e2",
+      "e3",
+      "e4",
+      "e6",
+      "e7",
+      "e8",
+      "e9",
+    ]);
   });
 
   it("fails closed when the sanitized accessibility tree exceeds its node budget", async () => {
@@ -211,7 +235,9 @@ chromiumIt(
       { stdio: "ignore" },
     );
 
-    const observed = { username: "", password: "", cookie: "" };
+    const observed = { username: "", password: "", totp: "", cookie: "" };
+    let mfaChallengeServed = false;
+    let unrelatedMfaSubmits = 0;
     const server = createServer(
       {
         key: readFileSync(keyPath),
@@ -247,10 +273,55 @@ chromiumIt(
           );
           return;
         }
-        if (request.method === "POST" && requestUrl.pathname === "/mfa") {
+        if (request.method === "GET" && requestUrl.pathname === "/mismatched-mfa-login") {
           response.end(
-            '<!doctype html><title>Verification</title><main><label>Verification code<input autocomplete="one-time-code" name="otp"></label></main>',
+            '<!doctype html><title>Login</title><form method="post" action="/mismatched-mfa"><label>Email<input autocomplete="username" name="email"></label><label>Password<input type="password" name="password"></label><button type="submit">Sign in</button></form>',
           );
+          return;
+        }
+        if (request.method === "GET" && requestUrl.pathname === "/combined-mfa-login") {
+          response.end(
+            '<!doctype html><title>Login</title><form method="post" action="/combined-mfa"><label>Email<input autocomplete="username" name="email"></label><label>Password<input type="password" name="password"></label><button type="submit">Sign in</button></form>',
+          );
+          return;
+        }
+        if (request.method === "POST" && requestUrl.pathname === "/mfa") {
+          observed.password = new URLSearchParams(body).get("password") ?? "";
+          mfaChallengeServed = true;
+          response.end(
+            '<!doctype html><title>Verification</title><form method="post" action="/mfa-session"><label>Verification code<input autocomplete="one-time-code" name="otp"></label><button type="submit">Verify</button></form>',
+          );
+          return;
+        }
+        if (request.method === "POST" && requestUrl.pathname === "/mfa-session") {
+          observed.totp = new URLSearchParams(body).get("otp") ?? "";
+          if (observed.totp !== TOTP_CODE) {
+            response.writeHead(401);
+            response.end("invalid code");
+            return;
+          }
+          response.writeHead(303, {
+            location: "/dashboard",
+            "set-cookie": "session=private-cookie-fixture; Secure; HttpOnly; SameSite=Strict",
+          });
+          response.end();
+          return;
+        }
+        if (request.method === "POST" && requestUrl.pathname === "/mismatched-mfa") {
+          response.end(
+            '<!doctype html><title>Verification</title><form method="post" action="/mfa-session"><label>Verification code<input autocomplete="one-time-code" name="otp"></label></form><form method="post" action="/unrelated"><button type="submit">Continue</button></form>',
+          );
+          return;
+        }
+        if (request.method === "POST" && requestUrl.pathname === "/combined-mfa") {
+          response.end(
+            '<!doctype html><title>Still signing in</title><form method="post" action="/mfa-session"><label>Password<input type="password" name="password"></label><label>Verification code<input autocomplete="one-time-code" name="otp"></label><button type="submit">Verify</button></form>',
+          );
+          return;
+        }
+        if (request.method === "POST" && requestUrl.pathname === "/unrelated") {
+          unrelatedMfaSubmits += 1;
+          response.end("unexpected");
           return;
         }
         if (request.method === "POST" && requestUrl.pathname === "/password") {
@@ -321,6 +392,7 @@ chromiumIt(
         SNAPSHOT_ID,
         "00000000-0000-4000-8000-000000000003",
         "00000000-0000-4000-8000-000000000004",
+        "00000000-0000-4000-8000-000000000005",
       ];
       const scheduledExpirations: Array<{ active: boolean; expire: () => void }> = [];
       const scheduler: BrowserSessionScheduler = {
@@ -392,6 +464,7 @@ chromiumIt(
       expect(observed).toEqual({
         username: USERNAME,
         password: PASSWORD,
+        totp: "",
         cookie: "session=private-cookie-fixture",
       });
       if (opened._tag === "err") return;
@@ -496,6 +569,100 @@ chromiumIt(
         },
       });
       expect(mfa).toMatchObject({ _tag: "err", error: { code: "mfa_required" } });
+      const combinedMfaDestination = parseBrowserDestinationUrl(`${origin}/combined-mfa-login`);
+      if (combinedMfaDestination._tag === "err") throw combinedMfaDestination.error;
+      let combinedTotpReads = 0;
+      const combinedMfa = await sessions.openAuthenticatedBrowser({
+        ownerSessionId: "combined-mfa-owner-session",
+        destination: dashboardDestination.value,
+        credentials: {
+          ...credentials,
+          metadata: { ...credentials.metadata, loginUrl: combinedMfaDestination.value.url },
+          totp: {
+            getCurrentCode: async () => {
+              combinedTotpReads += 1;
+              return { _tag: "ok", value: RedactedString.make(TOTP_CODE) };
+            },
+          },
+        },
+      });
+      expect(combinedMfa).toMatchObject({
+        _tag: "err",
+        error: { code: "authentication_not_confirmed" },
+      });
+      expect(combinedTotpReads).toBe(0);
+
+      const mismatchedMfaDestination = parseBrowserDestinationUrl(`${origin}/mismatched-mfa-login`);
+      if (mismatchedMfaDestination._tag === "err") throw mismatchedMfaDestination.error;
+      let mismatchedTotpReads = 0;
+      const mismatchedMfa = await sessions.openAuthenticatedBrowser({
+        ownerSessionId: "mismatched-mfa-owner-session",
+        destination: dashboardDestination.value,
+        credentials: {
+          ...credentials,
+          metadata: { ...credentials.metadata, loginUrl: mismatchedMfaDestination.value.url },
+          totp: {
+            getCurrentCode: async () => {
+              mismatchedTotpReads += 1;
+              return { _tag: "ok", value: RedactedString.make(TOTP_CODE) };
+            },
+          },
+        },
+      });
+      expect(mismatchedMfa).toMatchObject({
+        _tag: "err",
+        error: { code: "field_missing_or_ambiguous" },
+      });
+      expect(mismatchedTotpReads).toBe(0);
+      expect(unrelatedMfaSubmits).toBe(0);
+
+      mfaChallengeServed = false;
+      let totpReads = 0;
+      const failedTotpRead = await sessions.openAuthenticatedBrowser({
+        ownerSessionId: "automated-mfa-owner-session",
+        destination: dashboardDestination.value,
+        credentials: {
+          ...credentials,
+          metadata: { ...credentials.metadata, loginUrl: mfaLoginDestination.value.url },
+          totp: {
+            getCurrentCode: async () => ({
+              _tag: "err",
+              error: new OnePasswordAccessError("unavailable"),
+            }),
+          },
+        },
+      });
+      expect(failedTotpRead).toMatchObject({
+        _tag: "err",
+        error: { code: "unavailable" },
+      });
+      mfaChallengeServed = false;
+
+      const automatedMfa = await sessions.openAuthenticatedBrowser({
+        ownerSessionId: "automated-mfa-owner-session",
+        destination: dashboardDestination.value,
+        credentials: {
+          ...credentials,
+          metadata: { ...credentials.metadata, loginUrl: mfaLoginDestination.value.url },
+          totp: {
+            getCurrentCode: async () => {
+              totpReads += 1;
+              expect(mfaChallengeServed).toBe(true);
+              return { _tag: "ok", value: RedactedString.make(TOTP_CODE) };
+            },
+          },
+        },
+      });
+      expect(automatedMfa).toMatchObject({ _tag: "ok", value: { origin } });
+      expect(totpReads).toBe(1);
+      expect(observed.totp).toBe(TOTP_CODE);
+      expect(JSON.stringify(automatedMfa)).not.toContain(TOTP_CODE);
+      if (automatedMfa._tag === "ok") {
+        await sessions.closeBrowser({
+          ownerSessionId: "automated-mfa-owner-session",
+          browserSessionId: automatedMfa.value.browserSessionId,
+        });
+      }
 
       const getLoginDestination = parseBrowserDestinationUrl(`${origin}/get-login`);
       if (getLoginDestination._tag === "err") throw getLoginDestination.error;

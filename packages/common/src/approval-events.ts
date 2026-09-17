@@ -75,6 +75,7 @@ export const BrowserOpenAuthenticatedRequestArgsSchema = z
   .object({
     item_id: OnePasswordOpaqueIdSchema,
     url: BrowserPageUrlSchema,
+    automate_totp: z.boolean().optional().default(false),
   })
   .strict();
 

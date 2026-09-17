@@ -219,6 +219,7 @@ describe("CredentialBroker Login discovery and opening", () => {
     const result = await h.broker.openAuthenticatedBrowser({
       itemId: ITEM_ID,
       approvedTitle: "Example audit",
+      automateTotp: true,
       url: `${ORIGIN}/dashboard`,
       sessionId: SESSION_ID,
     });
@@ -234,7 +235,12 @@ describe("CredentialBroker Login discovery and opening", () => {
       },
     });
     expect(h.credentialReader.credentialSelections).toEqual([
-      { itemId: ITEM_ID, origin: ORIGIN, approvedTitle: "Example audit" },
+      {
+        itemId: ITEM_ID,
+        origin: ORIGIN,
+        approvedTitle: "Example audit",
+        automateTotp: true,
+      },
     ]);
     expect(h.browserSessions.openInputs).toHaveLength(1);
     const serialized = JSON.stringify({ result, events: h.auditSink.events });
@@ -250,6 +256,7 @@ describe("CredentialBroker Login discovery and opening", () => {
     const result = await h.broker.openAuthenticatedBrowser({
       itemId,
       approvedTitle: "Example audit",
+      automateTotp: false,
       url,
       sessionId: SESSION_ID,
     });
@@ -265,6 +272,7 @@ describe("CredentialBroker Login discovery and opening", () => {
     const unavailable = await credentialFailure.broker.openAuthenticatedBrowser({
       itemId: ITEM_ID,
       approvedTitle: "Example audit",
+      automateTotp: false,
       url: `${ORIGIN}/dashboard`,
       sessionId: SESSION_ID,
     });
@@ -275,6 +283,7 @@ describe("CredentialBroker Login discovery and opening", () => {
     const unconfirmed = await browserFailure.broker.openAuthenticatedBrowser({
       itemId: ITEM_ID,
       approvedTitle: "Example audit",
+      automateTotp: false,
       url: `${ORIGIN}/dashboard`,
       sessionId: SESSION_ID,
     });

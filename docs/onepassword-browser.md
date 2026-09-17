@@ -2,7 +2,7 @@
 
 Thor uses one dedicated 1Password vault as Neo's browser credential store. Neo can find a Login matching an HTTPS website, ask for Slack approval, autofill it inside a broker-owned Chromium process, and continue through restricted browser controls.
 
-The service-account token, username, password, cookies, browser storage, and browser debugging connection are never returned to Neo or Slack. The website's normal visible content is returned in sanitized accessibility snapshots, so request only data the Slack task is authorized to access.
+The service-account token, username, password, TOTP secret/current code, cookies, browser storage, and browser debugging connection are never returned to Neo or Slack. The website's normal visible content is returned in sanitized accessibility snapshots, so request only data the Slack task is authorized to access.
 
 ## Trust boundary
 
@@ -28,7 +28,7 @@ Browser sessions:
    - use HTTPS and omit query parameters and fragments;
    - prefer **Only on this exact domain**; **Fill anywhere on this website** is also accepted, but Thor still matches only the Website URL's exact origin;
    - use the built-in `username` field and built-in concealed `password` field;
-   - do not add a TOTP field, recovery code, MFA secret, or another website.
+   - optionally add exactly one 1Password one-time-password field for approval-gated automated TOTP; do not add recovery codes, another MFA field, or another website.
 5. Record the 26-character vault ID and the owner/rotation procedure for the service account.
 
 The Website URL is the login entry point. The requested destination may use another path on the same exact origin. Standard one-page and username-then-password forms are detected semantically; Thor does not accept selectors or secret references from the model.
@@ -85,7 +85,20 @@ mcp onepassword-browser browser_open_authenticated \
   '{"item_id":"<matching-item-id>","url":"https://accounts.example.com/dashboard"}'
 ```
 
-Before posting the Slack card, `remote-cli` asks the broker to resolve the selected item title for that exact origin. The model cannot supply the displayed title. On **Approve**, the broker re-reads the item, verifies the approved title/item/origin and credential shape, fills the Login, and returns an opaque `browser_session_id`.
+For a Login containing one TOTP field, request that additional capability explicitly:
+
+```bash
+mcp onepassword-browser browser_open_authenticated \
+  '{"item_id":"<matching-item-id>","url":"https://accounts.example.com/dashboard","automate_totp":true}'
+```
+
+Before posting the Slack card, `remote-cli` asks the broker to resolve the selected item title for that exact origin. The model cannot supply the displayed title. The card explicitly shows whether automated TOTP is enabled. On **Approve**, the broker re-reads the item, verifies the approved title/item/origin and credential shape, fills the Login, and returns an opaque `browser_session_id`.
+
+When `automate_totp` is true, the approved item must contain exactly one TOTP field. The broker submits username/password first, requires the password control to disappear, validates one semantic same-origin TOTP form, revalidates the active item, obtains a fresh SDK-computed 6–8 digit code, and injects it once. The code remains wrapped in broker memory solely to redact browser output until session cleanup. Omitting or setting `automate_totp` to false keeps TOTP items denied.
+
+The 1Password full-item API returns all item fields together, so the approved initial credential read necessarily brings the TOTP field into broker memory. Thor first revalidates the active overview and does not use the initial code; after the challenge, it revalidates active status again and performs a second full read to minimize expiry risk. There is no field-level separation when password and TOTP share the item and service-account vault permission.
+
+Automated TOTP places the password and TOTP generator behind the same service-account token. Use it only for dedicated low-privilege automation accounts; it is approval-gated automation, not an independent second factor against broker or token compromise.
 
 The approval grants a ten-minute broker-owned interaction session on the displayed exact origin. Click **Reject** if either the Login title, item ID, or destination is unexpected.
 
@@ -119,16 +132,17 @@ Browser action responses expose only the opaque session ID and approved origin, 
 For every approved open, the broker:
 
 1. Lists safe Login overviews from only the configured vault and exact origin.
-2. Fetches the selected full item only after approval.
-3. Revalidates vault, item ID, title, Login category, one allowed Website, built-in username/concealed password fields, and absence of TOTP. `ExactDomain` and `AnywhereOnWebsite` are accepted, but Thor independently enforces the Website URL's exact origin.
+2. Revalidates the selected active overview and fetches the full item only after approval.
+3. Revalidates vault, item ID, title, Login category, one allowed Website, built-in username/concealed password fields, and zero TOTP fields unless automated TOTP was explicitly approved, in which case exactly one is required. `ExactDomain` and `AnywhereOnWebsite` are accepted, but Thor independently enforces the Website URL's exact origin.
 4. Launches headless Chromium with TLS verification enabled and a credential-free environment.
 5. Blocks requests outside the exact origin, service workers, WebSockets, WebRTC/WebTransport, downloads, dialogs, and popups.
 6. Fills wrapped credentials only at the final Playwright input operation.
-7. Rejects ambiguous forms, cross-origin redirects, visible MFA challenges, and unconfirmed login state.
-8. Clears attached credential fields before retaining the session.
-9. Rechecks the exact origin and absence of login/MFA fields before and after every continued action.
+7. For explicitly approved automated TOTP, accepts one semantic TOTP input owned by a same-origin self-targeting POST form, obtains a fresh bounded code only after the challenge appears, and attempts it once.
+8. Rejects ambiguous forms, cross-origin redirects, unapproved/remaining MFA challenges, and unconfirmed login state.
+9. Clears attached credential/TOTP fields before retaining the session and retains their wrapped values only for output redaction.
+10. Rechecks the exact origin and absence of login/MFA fields before and after every continued action.
 
-Raw Playwright accessibility output is never returned. Thor allowlists accessibility properties, removes all editable values, replaces link targets with same-origin/blocked markers, redacts known username/password substrings, bounds output size/depth, and issues short-lived opaque element refs.
+Raw Playwright accessibility output is never returned. Thor allowlists accessibility properties, removes all editable values, replaces link targets with same-origin/blocked markers, redacts known username/password substrings, bounds output size/depth, and issues short-lived opaque element refs. Sessions that used TOTP additionally redact all decimal text and numeric accessibility values so formatted or split code reflections cannot cross the boundary.
 
 Thor exposes no tool for page HTML/source, arbitrary selectors, JavaScript evaluation, screenshots, tracing, console/network capture, headers, cookies, local/session storage, IndexedDB, downloads, profiles, or CDP.
 
@@ -136,7 +150,7 @@ Thor exposes no tool for page HTML/source, arbitrary selectors, JavaScript evalu
 
 The broker fails closed for:
 
-- SSO, passkeys, recovery codes, automated MFA, and Login items containing TOTP;
+- SSO, passkeys, recovery codes, push/SMS/email MFA, TOTP without explicit approval, multiple TOTP fields, split-code inputs, and repeated TOTP attempts;
 - cross-origin redirects or resources, including different subdomains;
 - multiple Website entries, **Never fill on this website**, or Website URLs containing query/fragment data;
 - forms with ambiguous controls, missing form ownership, non-POST submission, non-self targets, or unsafe submit overrides;

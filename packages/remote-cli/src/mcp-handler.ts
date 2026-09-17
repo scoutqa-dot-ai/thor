@@ -55,6 +55,12 @@ const DEFAULT_APPROVALS_DIR = "/workspace/data/approvals";
 const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
+const AUTOMATED_TOTP_APPROVAL_CONSUMED_RESULT = {
+  stdout: "",
+  stderr:
+    "Automated TOTP approval was consumed before dispatch; the outcome is unknown and must not be retried.\n",
+  exitCode: 1,
+} as const;
 const CREDENTIAL_BROWSER_TOOLS = new Set([
   "find_login_items",
   "browser_open_authenticated",
@@ -925,6 +931,21 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       }
     } catch (err) {
       return fail(err instanceof Error ? err.message : String(err));
+    }
+    if (
+      pendingAction.tool === "browser_open_authenticated" &&
+      pendingAction.args.automate_totp === true
+    ) {
+      try {
+        lookup.store.approveLoaded(
+          pendingAction,
+          AUTOMATED_TOTP_APPROVAL_CONSUMED_RESULT,
+          reviewer,
+          reason,
+        );
+      } catch {
+        return fail("Failed to persist single-use automated TOTP approval");
+      }
     }
     const result = await executeUpstreamCall({
       instance,

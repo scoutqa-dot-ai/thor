@@ -146,6 +146,7 @@ describe("remote-cli MCP endpoints", () => {
   let toolCalls: Array<{ name: string; arguments?: Record<string, unknown> }>;
   let createJiraIssueDelay: Promise<void> | undefined;
   let createJiraIssueFailure: Error | undefined;
+  let onePasswordOpenFailure: Error | undefined;
   let connectedUpstreams: string[];
   let closeRemoteCli: () => Promise<void>;
   let jiraLookups: Array<Record<string, unknown> | undefined>;
@@ -167,6 +168,7 @@ describe("remote-cli MCP endpoints", () => {
     toolCalls = [];
     createJiraIssueDelay = undefined;
     createJiraIssueFailure = undefined;
+    onePasswordOpenFailure = undefined;
     connectedUpstreams = [];
     jiraLookups = [];
     jiraLookupResultText = JSON.stringify(jiraLookupResponse([{ accountId: "jira-account-1" }]));
@@ -284,6 +286,11 @@ describe("remote-cli MCP endpoints", () => {
                   };
                 }
                 if (name === "browser_open_authenticated") {
+                  if (onePasswordOpenFailure) {
+                    const failure = onePasswordOpenFailure;
+                    onePasswordOpenFailure = undefined;
+                    throw failure;
+                  }
                   return {
                     content: [
                       {
@@ -1438,7 +1445,11 @@ describe("remote-cli MCP endpoints", () => {
         args: [
           "onepassword-browser",
           "browser_open_authenticated",
-          JSON.stringify({ item_id: onePasswordItemId, url: requestedUrl }),
+          JSON.stringify({
+            item_id: onePasswordItemId,
+            url: requestedUrl,
+            automate_totp: true,
+          }),
         ],
         directory: "/workspace/repos/acme",
       },
@@ -1448,12 +1459,13 @@ describe("remote-cli MCP endpoints", () => {
     expect(pendingBody.exitCode).toBe(0);
     const action = JSON.parse(pendingBody.stdout) as {
       actionId: string;
-      args: { item_id: string; item_title: string; url: string };
+      args: { item_id: string; item_title: string; url: string; automate_totp: boolean };
     };
     expect(action.args).toEqual({
       item_id: onePasswordItemId,
       url: `${onePasswordOrigin}/dashboard`,
       item_title: "Example audit",
+      automate_totp: true,
     });
     expect(toolCalls).toEqual([
       {
@@ -1495,10 +1507,59 @@ describe("remote-cli MCP endpoints", () => {
           item_id: onePasswordItemId,
           url: `${onePasswordOrigin}/dashboard`,
           _approved_item_title: "Example audit",
+          automate_totp: true,
           _thor_session_id: "parent-session",
         },
       },
     ]);
+  });
+
+  it("consumes automated-TOTP approval before an uncertain upstream failure", async () => {
+    appendActiveTrigger({ triggerSlackId: "UABCDEF1" });
+    const pending = await postJson(
+      "/exec/mcp",
+      {
+        args: [
+          "onepassword-browser",
+          "browser_open_authenticated",
+          JSON.stringify({
+            item_id: onePasswordItemId,
+            url: `${onePasswordOrigin}/dashboard`,
+            automate_totp: true,
+          }),
+        ],
+        directory: "/workspace/repos/acme",
+      },
+      { "x-thor-session-id": "parent-session" },
+    );
+    const pendingBody = (await pending.json()) as { stdout: string };
+    const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
+
+    onePasswordOpenFailure = new Error("connection lost after dispatch");
+    const failed = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    expect(await failed.json()).toMatchObject({ exitCode: 1 });
+
+    const status = await postJson("/exec/approval", { args: ["status", actionId] });
+    const statusBody = (await status.json()) as { stdout: string };
+    expect(JSON.parse(statusBody.stdout)).toMatchObject({
+      status: "approved",
+      reviewer: "U123",
+      error: "connection lost after dispatch",
+    });
+
+    const retry = await postJson(
+      "/exec/mcp",
+      { args: ["resolve", actionId, "approved", "U123"] },
+      { "x-thor-internal-secret": "resolve-secret" },
+    );
+    const retryBody = (await retry.json()) as { stderr: string; exitCode: number };
+    expect(retryBody.exitCode).toBe(1);
+    expect(retryBody.stderr).toContain("outcome is unknown and must not be retried");
+    expect(toolCalls.filter((call) => call.name === "browser_open_authenticated")).toHaveLength(1);
   });
 
   it("returns 401 for /internal/exec without the internal secret", async () => {

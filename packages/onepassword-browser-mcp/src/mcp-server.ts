@@ -27,6 +27,7 @@ const OpenAuthenticatedBrowserInputSchema = InternalContextSchema.extend({
   item_id: z.string().regex(onePasswordIdPattern),
   url: BrowserUrlSchema,
   _approved_item_title: z.string().trim().min(1).max(200),
+  automate_totp: z.boolean().optional().default(false),
 }).strict();
 const BrowserSessionInputSchema = InternalContextSchema.extend({
   browser_session_id: BrowserSessionIdSchema,
@@ -64,6 +65,12 @@ const PUBLIC_TOOLS = [
       properties: {
         item_id: { type: "string", pattern: onePasswordIdPattern.source },
         url: { type: "string", format: "uri", maxLength: 2_000 },
+        automate_totp: {
+          type: "boolean",
+          description:
+            "Request approval-gated use of the Login item's TOTP field when the website presents one MFA challenge.",
+          default: false,
+        },
       },
       required: ["item_id", "url"],
     },
@@ -199,6 +206,7 @@ export function createBrokerMcpServer(broker: ICredentialBroker): Server {
         await broker.openAuthenticatedBrowser({
           itemId: parsed.data.item_id,
           approvedTitle: parsed.data._approved_item_title,
+          automateTotp: parsed.data.automate_totp,
           url: parsed.data.url,
           sessionId: parsed.data._thor_session_id,
         }),

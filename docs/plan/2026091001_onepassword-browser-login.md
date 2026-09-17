@@ -2,7 +2,7 @@
 
 ## Goal
 
-Use one dedicated 1Password vault as Neo's browser credential store. Neo can find a Login item matching an exact HTTPS website, request Slack approval to autofill it, and continue using a short-lived broker-owned browser without exposing the service-account token, username, password, cookies, browser storage, CDP, or arbitrary JavaScript to Slack, the model, OpenCode, repository files, command arguments, or logs.
+Use one dedicated 1Password vault as Neo's browser credential store. Neo can find a Login item matching an exact HTTPS website, request Slack approval to autofill it, optionally request approval-gated automated TOTP, and continue using a short-lived broker-owned browser without exposing the service-account token, username, password, TOTP secret/current code, cookies, browser storage, CDP, or arbitrary JavaScript to Slack, the model, OpenCode, repository files, command arguments, or logs.
 
 Live verification requires an operator-created non-production Login item, a dedicated vault ID, confirmation that the service account has Read Items-only access to that vault, and service-scoped injection of `OP_SERVICE_ACCOUNT_TOKEN`.
 
@@ -42,7 +42,7 @@ Each usable item in the vault must be an active 1Password **Login** item with:
 
 - exactly one HTTPS Website URL;
 - standard `username` and concealed `password` fields;
-- no TOTP field;
+- either no TOTP field or exactly one TOTP field used only when the approval explicitly enables automated TOTP;
 - no additional website origin.
 
 The broker uses the Website URL as the login entry point and matches its exact origin to the requested website. Standard username/password forms are detected semantically. Unsupported, ambiguous, cross-origin, SSO, MFA, and unusual multi-step flows fail closed; trusted site adapters are a possible future extension.
@@ -50,7 +50,7 @@ The broker uses the Website URL as the login entry point and matches its exact o
 ## Public broker tools
 
 - `find_login_items(url)` — returns only matching item IDs, titles, and exact origin.
-- `browser_open_authenticated(item_id, url)` — approval-gated; returns an opaque browser-session ID after successful autofill.
+- `browser_open_authenticated(item_id, url, automate_totp?)` — approval-gated; returns an opaque browser-session ID after successful autofill and, when explicitly enabled, one TOTP attempt.
 - `browser_snapshot(browser_session_id)` — returns a bounded, sanitized accessibility snapshot and opaque element references.
 - `browser_click(browser_session_id, snapshot_id, ref)` — clicks one element from the latest snapshot.
 - `browser_type(browser_session_id, snapshot_id, ref, text)` — fills only ordinary non-secret text controls; never password, OTP, hidden, token, or payment controls.
@@ -66,17 +66,17 @@ All tools receive a trusted `_thor_session_id` from `remote-cli`; it is not part
 - Replace per-item JSON policy with one parsed dedicated vault ID.
 - List only active Login overviews from that vault and filter by exact HTTPS origin. Accept `ExactDomain` and `AnywhereOnWebsite` item settings, but never inherit 1Password's broader subdomain semantics.
 - Return a safe projection containing item ID, title, and origin only.
-- Re-read the selected item before credential use and validate vault, item, category, website, built-in credential fields, and absence of TOTP.
+- Revalidate the selected active overview, then re-read the item before credential use and validate vault, item, category, website, built-in credential fields, and the approved zero-or-one TOTP shape.
 - Remove generic secret-reference resolution and all model/operator-supplied selectors.
 
-Exit: configuring one vault supports multiple exact-origin Login items; malformed, mixed-origin, non-Login, archived, TOTP, ambiguous, and wrong-vault items fail closed without exposing values, notes, tags, or SDK causes.
+Exit: configuring one vault supports multiple exact-origin Login items; malformed, mixed-origin, non-Login, archived, unapproved/multiple TOTP, ambiguous, and wrong-vault items fail closed without exposing values, notes, tags, or SDK causes.
 
 ### Phase 2 — Broker-owned authenticated browser sessions
 
 - Replace one-shot login verification with a browser-session service that owns Chromium, context, page, credential redaction, refs, and cleanup.
 - Detect standard login fields and submit controls semantically, requiring same-origin self-targeting POST forms with no unsafe submit override.
 - Keep TLS verification enabled; block service workers, downloads, WebSockets, WebRTC, popups, and every request outside the exact approved origin.
-- Confirm that the password form disappeared without reaching an MFA challenge before retaining the session.
+- Confirm that the password form disappeared; if one TOTP field was explicitly approved and one semantic same-origin TOTP challenge appears, re-read a fresh SDK-computed code, inject it once, and confirm the challenge disappears before retaining the session.
 - Clear credential fields after authentication when they remain attached.
 - Permit at most one active browser per Thor session, cap global sessions, and close sessions after ten minutes of inactivity.
 
@@ -85,7 +85,7 @@ Exit: successful login returns only safe IDs and exact-origin metadata; credenti
 ### Phase 3 — Restricted continued-browser controls
 
 - Produce bounded accessibility snapshots through an allowlisted sanitizer.
-- Remove editable-control values, replace link targets with same-origin/blocked markers, and redact known username/password substrings before returning snapshots.
+- Remove editable-control values, replace link targets with same-origin/blocked markers, redact known username/password substrings, and redact every decimal/numeric accessibility value in TOTP-authenticated sessions before returning snapshots.
 - Return only opaque browser/snapshot IDs and the approved origin as browser location metadata; never return the current page URL or path.
 - Require latest-snapshot IDs and opaque refs for click/type.
 - Reject secret-bearing or payment form controls for type operations.
@@ -110,7 +110,7 @@ Exit: the Slack card displays only the trusted Login title/ID and exact destinat
 - The model cannot supply a vault ID, secret reference, selector, browser executable, success condition, credential value, or service-account token.
 - The service-account token exists only in `remote-cli` memory/environment, anonymous fd 3, a short-lived private tmpfs file, and broker memory. It never enters broker/Chromium env, argv, Slack, worklogs, or repository files.
 - Full item values are fetched only for an exact-origin selected item after a login action has been approved.
-- TOTP fields and visible MFA challenges fail closed. SSO, passkeys, recovery codes, and automated MFA are unsupported.
+- TOTP defaults to denied. Explicit automated-TOTP approval requires exactly one item field and one same-origin self-targeting POST challenge; only a fresh code from a second item read after that challenge may be injected, and the approval is consumed before the single attempt. SSO, passkeys, recovery codes, push/SMS/email MFA, and human-entered MFA remain unsupported.
 - Browser requests and top-level navigation remain on one exact HTTPS origin. WebSockets, WebRTC, service workers, downloads, and popups are blocked.
 - Browser state stays in broker memory and is short-lived, session-bound, and non-durable.
 - Passwords, usernames, cookies, headers, storage, raw URLs with query/fragment, HTML, screenshots, SDK/browser causes, CDP endpoints, and arbitrary JavaScript are never returned or logged by the broker boundary.
@@ -122,8 +122,8 @@ Exit: the Slack card displays only the trusted Login title/ID and exact destinat
 - Vault-ID/token parsing and fixed token-file consumption.
 - Exact HTTPS destination and website URL canonicalization.
 - Active Login overview filtering, exact-origin matching, multiple-account selection, and safe metadata projection.
-- Full item validation for vault/item/category/website/username/password/TOTP invariants.
-- Standard one-page and two-step semantic form detection, authentication confirmation, MFA rejection, and credential-field clearing.
+- Full item validation for vault/item/category/website/username/password and approval-bound zero-or-one TOTP invariants.
+- Standard one-page and two-step semantic form detection, authentication confirmation, default MFA rejection, automated-TOTP challenge handling, and credential-field clearing.
 - Same-origin request routing, popup/download/WebSocket/WebRTC blocking, and credential-free Chromium environment.
 - Browser lifecycle, owner-session binding, global/session limits, inactivity cleanup, explicit close, and stale-ref invalidation.
 - Snapshot allowlisting, input-value removal, credential substring redaction, URL sanitization, and output bounds.
@@ -138,30 +138,30 @@ Exit: the Slack card displays only the trusted Login title/ID and exact destinat
 - Adding a standard Login item for another origin requires no Thor policy change or restart; only the dedicated vault remains configured.
 - Multiple accounts for one origin are presented as safe choices and require an explicit item ID.
 - No credential, token, cookie, storage value, browser handle, or arbitrary JavaScript capability crosses the trusted broker boundary.
-- Any other vault, item, origin, redirect, field shape, MFA/SSO flow, browser owner, stale ref, or expired session is denied.
+- Any other vault, item, origin, redirect, field shape, unapproved/ambiguous MFA or SSO flow, browser owner, stale ref, or expired session is denied.
 - Existing local changes are restored exactly. No push or PR is created.
 
 ## Decision log
 
-| #   | Decision                                                                            | Rationale                                                                                                                                                                | Rejected                                                   |
-| --- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
-| 1   | Host the broker behind `remote-cli`                                                 | OpenCode is untrusted; direct wiring would expose credentials or bypass Thor approval/session policy.                                                                    | Direct OpenCode MCP child                                  |
-| 2   | Keep exact pins for `@1password/sdk` and Playwright                                 | The SDK is pre-1.0 and browser protocol/runtime drift affects the security boundary.                                                                                     | Floating dependency ranges; `op` CLI                       |
-| 3   | Configure one dedicated vault ID, not per-site JSON policy                          | Login items already own website and credential metadata; exact-origin matching removes restart/configuration work per website.                                           | Item IDs, secret refs, selectors, and success paths in env |
-| 4   | Transfer the service-account token through one-shot fd 3                            | Same-UID browser children can inspect process environments; fd-to-private-tmpfs consumption keeps the token out of broker/Chromium env and argv.                         | Child env or argv token                                    |
-| 5   | Use item overview listing for discovery and full item retrieval only after approval | Overviews support safe origin/title matching without loading field values; click-time retrieval revalidates authority before credential use.                             | Vault enumeration output; full-item metadata discovery     |
-| 6   | Use built-in `username` and `password` fields only                                  | Standard Login fields are deterministic; accepting arbitrary secret refs or custom selectors would widen the secret-reading surface.                                     | User/model-supplied references or selectors                |
-| 7   | Keep authenticated Chromium inside the broker                                       | Handing CDP, cookies, or storage state to existing browser tooling would transfer the authenticated principal to the untrusted model boundary.                           | CDP handoff; persistent profile; storage-state export      |
-| 8   | Expose restricted ref-based controls with one active browser per Thor session       | The user needs generic browser continuation; owner binding, exact-origin routing, stale-ref invalidation, bounded output, and inactivity cleanup contain the capability. | TestMu-specific MCP; unrestricted Playwright/CDP           |
-| 9   | Sanitize Playwright accessibility JSON before returning it                          | Raw snapshots include text/password input values and full link URLs. An allowlisted projection can remove those fields and redact known credentials.                     | Raw ARIA snapshot, DOM, HTML, screenshot                   |
-| 10  | Enrich login approval cards with broker-resolved metadata                           | The operator must approve a trusted item title and exact destination rather than a model-authored label.                                                                 | Model-supplied title; item ID-only card                    |
-| 11  | Treat approval as a durable gate but browser sessions as ephemeral                  | Existing approval actions are idempotent and persisted; browser state cannot safely or usefully survive process loss and expires quickly.                                | Durable browser profiles/session recovery                  |
-| 12  | Fail closed on MFA, SSO, ambiguous forms, and non-standard flows                    | Generic automation cannot safely infer these workflows while preserving exact-origin and human-controlled MFA guarantees.                                                | Automated TOTP/SSO; heuristic retries across origins       |
+| #   | Decision                                                                                                                                | Rationale                                                                                                                                                                     | Rejected                                                                                      |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| 1   | Host the broker behind `remote-cli`                                                                                                     | OpenCode is untrusted; direct wiring would expose credentials or bypass Thor approval/session policy.                                                                         | Direct OpenCode MCP child                                                                     |
+| 2   | Keep exact pins for `@1password/sdk` and Playwright                                                                                     | The SDK is pre-1.0 and browser protocol/runtime drift affects the security boundary.                                                                                          | Floating dependency ranges; `op` CLI                                                          |
+| 3   | Configure one dedicated vault ID, not per-site JSON policy                                                                              | Login items already own website and credential metadata; exact-origin matching removes restart/configuration work per website.                                                | Item IDs, secret refs, selectors, and success paths in env                                    |
+| 4   | Transfer the service-account token through one-shot fd 3                                                                                | Same-UID browser children can inspect process environments; fd-to-private-tmpfs consumption keeps the token out of broker/Chromium env and argv.                              | Child env or argv token                                                                       |
+| 5   | Use item overview listing for discovery and full item retrieval only after approval                                                     | Overviews support safe origin/title matching without loading field values; click-time retrieval revalidates authority before credential use.                                  | Vault enumeration output; full-item metadata discovery                                        |
+| 6   | Use built-in `username` and `password` fields only                                                                                      | Standard Login fields are deterministic; accepting arbitrary secret refs or custom selectors would widen the secret-reading surface.                                          | User/model-supplied references or selectors                                                   |
+| 7   | Keep authenticated Chromium inside the broker                                                                                           | Handing CDP, cookies, or storage state to existing browser tooling would transfer the authenticated principal to the untrusted model boundary.                                | CDP handoff; persistent profile; storage-state export                                         |
+| 8   | Expose restricted ref-based controls with one active browser per Thor session                                                           | The user needs generic browser continuation; owner binding, exact-origin routing, stale-ref invalidation, bounded output, and inactivity cleanup contain the capability.      | TestMu-specific MCP; unrestricted Playwright/CDP                                              |
+| 9   | Sanitize Playwright accessibility JSON before returning it                                                                              | Raw snapshots include text/password input values and full link URLs. An allowlisted projection can remove those fields and redact known credentials.                          | Raw ARIA snapshot, DOM, HTML, screenshot                                                      |
+| 10  | Enrich login approval cards with broker-resolved metadata                                                                               | The operator must approve a trusted item title and exact destination rather than a model-authored label.                                                                      | Model-supplied title; item ID-only card                                                       |
+| 11  | Treat approval as a durable gate but browser sessions as ephemeral                                                                      | Existing approval actions are idempotent and persisted; browser state cannot safely or usefully survive process loss and expires quickly.                                     | Durable browser profiles/session recovery                                                     |
+| 12  | Permit only explicitly approved single-field automated TOTP; fail closed on all other MFA, SSO, ambiguous forms, and non-standard flows | A fresh SDK-computed code can remain inside the broker, while explicit approval, exact-origin POST validation, and one attempt bound the weakened factor-separation tradeoff. | Implicit/multiple TOTP, human codes in Slack, automated SSO, heuristic retries across origins |
 
 ## Out of scope
 
 - Production-account rollout before non-production verification.
-- SSO, TOTP, recovery codes, passkeys, or automated MFA.
+- SSO, recovery codes, passkeys, push/SMS/email MFA, human-entered TOTP, split-code inputs, or repeated automated-TOTP attempts.
 - Generic 1Password vault/item/secret read, write, share, delete, or archive operations.
 - Cross-origin authenticated browsing, arbitrary JavaScript, arbitrary selectors, screenshots, page source, headers, cookies/storage, downloads, tracing, recording, or CDP access.
 - Persistent browser profiles or recovery of sessions after broker/process restart.

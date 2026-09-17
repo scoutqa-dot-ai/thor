@@ -97,6 +97,7 @@ export interface ICredentialBroker {
   openAuthenticatedBrowser(input: {
     readonly itemId: string;
     readonly approvedTitle: string;
+    readonly automateTotp: boolean;
     readonly url: string;
     readonly sessionId: string;
   }): Promise<Result<OpenAuthenticatedBrowserOutput, BrokerError>>;
@@ -259,6 +260,7 @@ export class CredentialBroker implements ICredentialBroker {
   async openAuthenticatedBrowser(input: {
     readonly itemId: string;
     readonly approvedTitle: string;
+    readonly automateTotp: boolean;
     readonly url: string;
     readonly sessionId: string;
   }): Promise<Result<OpenAuthenticatedBrowserOutput, BrokerError>> {
@@ -284,6 +286,7 @@ export class CredentialBroker implements ICredentialBroker {
       itemId,
       origin: destination.value.origin,
       approvedTitle,
+      automateTotp: input.automateTotp,
     });
     if (credentials._tag === "err") {
       this.#record({
