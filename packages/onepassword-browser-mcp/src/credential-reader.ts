@@ -97,6 +97,12 @@ function parseLoginTitle(value: unknown): string | undefined {
     : undefined;
 }
 
+function allowsBrokerExactOriginMatching(behavior: AutofillBehavior): boolean {
+  return (
+    behavior === AutofillBehavior.ExactDomain || behavior === AutofillBehavior.AnywhereOnWebsite
+  );
+}
+
 function metadataFromOverview(
   item: ItemOverview,
   vaultId: OnePasswordVaultId,
@@ -116,7 +122,7 @@ function metadataFromOverview(
   }
 
   const website = item.websites[0];
-  if (!website || website.autofillBehavior !== AutofillBehavior.ExactDomain) return undefined;
+  if (!website || !allowsBrokerExactOriginMatching(website.autofillBehavior)) return undefined;
   const destination = parseBrowserDestinationUrl(website.url);
   if (destination._tag === "err") return undefined;
 
@@ -153,7 +159,7 @@ function metadataFromItem(
   }
 
   const website = item.websites[0];
-  if (!website || website.autofillBehavior !== AutofillBehavior.ExactDomain) {
+  if (!website || !allowsBrokerExactOriginMatching(website.autofillBehavior)) {
     return err(new OnePasswordAccessError("item_invalid"));
   }
   const destination = parseBrowserDestinationUrl(website.url);
@@ -207,7 +213,7 @@ export class OnePasswordLoginCredentialReader implements ILoginCredentialReader 
     return this.#client;
   }
 
-  /** List only safe metadata for active, exact-domain Login items at the requested origin. */
+  /** List safe metadata for active Login items whose Website exactly matches the origin. */
   async findLoginItems(
     origin: BrowserOrigin,
   ): Promise<Result<ReadonlyArray<LoginItemMetadata>, OnePasswordAccessError>> {

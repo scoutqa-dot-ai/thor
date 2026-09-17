@@ -26,7 +26,7 @@ Browser sessions:
 4. For each Login item:
    - keep exactly one Website URL;
    - use HTTPS and omit query parameters and fragments;
-   - set the website autofill behavior to **Only on this exact domain**;
+   - prefer **Only on this exact domain**; **Fill anywhere on this website** is also accepted, but Thor still matches only the Website URL's exact origin;
    - use the built-in `username` field and built-in concealed `password` field;
    - do not add a TOTP field, recovery code, MFA secret, or another website.
 5. Record the 26-character vault ID and the owner/rotation procedure for the service account.
@@ -120,7 +120,7 @@ For every approved open, the broker:
 
 1. Lists safe Login overviews from only the configured vault and exact origin.
 2. Fetches the selected full item only after approval.
-3. Revalidates vault, item ID, title, Login category, one exact-domain Website, built-in username/concealed password fields, and absence of TOTP.
+3. Revalidates vault, item ID, title, Login category, one allowed Website, built-in username/concealed password fields, and absence of TOTP. `ExactDomain` and `AnywhereOnWebsite` are accepted, but Thor independently enforces the Website URL's exact origin.
 4. Launches headless Chromium with TLS verification enabled and a credential-free environment.
 5. Blocks requests outside the exact origin, service workers, WebSockets, WebRTC/WebTransport, downloads, dialogs, and popups.
 6. Fills wrapped credentials only at the final Playwright input operation.
@@ -138,7 +138,7 @@ The broker fails closed for:
 
 - SSO, passkeys, recovery codes, automated MFA, and Login items containing TOTP;
 - cross-origin redirects or resources, including different subdomains;
-- multiple Website entries, non-exact-domain autofill behavior, or Website URLs containing query/fragment data;
+- multiple Website entries, **Never fill on this website**, or Website URLs containing query/fragment data;
 - forms with ambiguous controls, missing form ownership, non-POST submission, non-self targets, or unsafe submit overrides;
 - unusual login flows that semantic detection cannot identify.
 

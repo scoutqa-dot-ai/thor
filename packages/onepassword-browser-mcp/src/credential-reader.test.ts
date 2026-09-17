@@ -141,7 +141,16 @@ describe("OnePasswordLoginCredentialReader discovery", () => {
   it("lists active Login overviews and projects exact-origin metadata without full item reads", async () => {
     const h = readerWith({
       overviews: [
-        overview({ id: OTHER_ITEM_ID, title: "Second account" }),
+        overview({
+          id: OTHER_ITEM_ID,
+          title: "Second account",
+          websites: [
+            {
+              ...overview().websites[0],
+              autofillBehavior: AutofillBehavior.AnywhereOnWebsite,
+            },
+          ],
+        }),
         overview(),
         overview({
           id: "d".repeat(26),
@@ -182,7 +191,29 @@ describe("OnePasswordLoginCredentialReader discovery", () => {
     expect(serialized).not.toContain(PASSWORD);
   });
 
-  it("omits overviews that cannot safely authorize exact-domain Login autofill", async () => {
+  it("does not inherit 1Password subdomain matching from AnywhereOnWebsite", async () => {
+    const subdomain = parseBrowserDestinationUrl("https://sub.accounts.example.com/dashboard");
+    if (subdomain._tag === "err") throw subdomain.error;
+    const h = readerWith({
+      overviews: [
+        overview({
+          websites: [
+            {
+              ...overview().websites[0],
+              autofillBehavior: AutofillBehavior.AnywhereOnWebsite,
+            },
+          ],
+        }),
+      ],
+    });
+
+    await expect(h.reader.findLoginItems(subdomain.value.origin)).resolves.toEqual({
+      _tag: "ok",
+      value: [],
+    });
+  });
+
+  it("omits overviews that cannot safely authorize exact-origin Login autofill", async () => {
     const h = readerWith({
       overviews: [
         overview({ category: ItemCategory.SecureNote }),
@@ -204,7 +235,7 @@ describe("OnePasswordLoginCredentialReader discovery", () => {
           websites: [
             {
               ...overview().websites[0],
-              autofillBehavior: AutofillBehavior.AnywhereOnWebsite,
+              autofillBehavior: AutofillBehavior.Never,
             },
           ],
         }),
@@ -239,6 +270,27 @@ describe("OnePasswordLoginCredentialReader discovery", () => {
 });
 
 describe("OnePasswordLoginCredentialReader credential loading", () => {
+  it("accepts AnywhereOnWebsite while retaining Thor's exact-origin boundary", async () => {
+    const h = readerWith({
+      fullItem: item({
+        websites: [
+          {
+            ...overview().websites[0],
+            autofillBehavior: AutofillBehavior.AnywhereOnWebsite,
+          },
+        ],
+      }),
+    });
+
+    await expect(
+      h.reader.getLoginCredentials({
+        itemId: parsedItemId(),
+        origin: destinationOrigin(),
+        approvedTitle: "Example audit",
+      }),
+    ).resolves.toMatchObject({ _tag: "ok" });
+  });
+
   it("revalidates a fresh full item and wraps only built-in username/password fields", async () => {
     const h = readerWith({});
     const result = await h.reader.getLoginCredentials({
@@ -262,6 +314,17 @@ describe("OnePasswordLoginCredentialReader credential loading", () => {
     ["changed title", { title: "Renamed after approval" }],
     ["wrong category", { category: ItemCategory.SecureNote }],
     ["wrong vault", { vaultId: "d".repeat(26) }],
+    [
+      "disabled website autofill",
+      {
+        websites: [
+          {
+            ...overview().websites[0],
+            autofillBehavior: AutofillBehavior.Never,
+          },
+        ],
+      },
+    ],
     [
       "mixed website origins",
       {

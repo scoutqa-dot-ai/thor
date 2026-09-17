@@ -64,7 +64,7 @@ All tools receive a trusted `_thor_session_id` from `remote-cli`; it is not part
 ### Phase 1 — Vault-level credential discovery
 
 - Replace per-item JSON policy with one parsed dedicated vault ID.
-- List only active Login overviews from that vault and filter by exact HTTPS origin.
+- List only active Login overviews from that vault and filter by exact HTTPS origin. Accept `ExactDomain` and `AnywhereOnWebsite` item settings, but never inherit 1Password's broader subdomain semantics.
 - Return a safe projection containing item ID, title, and origin only.
 - Re-read the selected item before credential use and validate vault, item, category, website, built-in credential fields, and absence of TOTP.
 - Remove generic secret-reference resolution and all model/operator-supplied selectors.
