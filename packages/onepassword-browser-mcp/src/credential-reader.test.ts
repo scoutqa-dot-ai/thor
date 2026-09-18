@@ -467,6 +467,22 @@ describe("OnePasswordLoginCredentialReader credential loading", () => {
     expect(JSON.stringify(result)).not.toContain(PASSWORD);
   });
 
+  it("accepts empty SDK root sections for built-in username and password fields", async () => {
+    const h = readerWith({
+      fullItem: item({
+        fields: item().fields.map((field) => ({ ...field, sectionId: "" })),
+      }),
+    });
+
+    await expect(
+      h.reader.getLoginCredentials({
+        itemId: parsedItemId(),
+        origin: destinationOrigin(),
+        approvedTitle: "Example audit",
+      }),
+    ).resolves.toMatchObject({ _tag: "ok" });
+  });
+
   it.each([
     [
       "duplicate username",

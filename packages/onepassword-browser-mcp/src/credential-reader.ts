@@ -193,11 +193,13 @@ function metadataFromItem(
   });
 }
 
+function isRootItemField(field: Item["fields"][number]): boolean {
+  return field.sectionId === undefined || field.sectionId === "";
+}
+
 function findSingleBuiltInField(item: Item, fieldId: "username" | "password") {
   if (!Array.isArray(item.fields)) return undefined;
-  const fields = item.fields.filter(
-    (field) => field?.id === fieldId && field.sectionId === undefined,
-  );
+  const fields = item.fields.filter((field) => field?.id === fieldId && isRootItemField(field));
   return fields.length === 1 ? fields[0] : undefined;
 }
 
