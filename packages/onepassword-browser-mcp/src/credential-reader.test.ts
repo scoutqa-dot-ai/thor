@@ -467,10 +467,13 @@ describe("OnePasswordLoginCredentialReader credential loading", () => {
     expect(JSON.stringify(result)).not.toContain(PASSWORD);
   });
 
-  it("accepts empty SDK root sections for built-in username and password fields", async () => {
+  it.each([
+    ["empty", ""],
+    ["named", "login-fields"],
+  ])("accepts canonical credential IDs with %s SDK sections", async (_label, sectionId) => {
     const h = readerWith({
       fullItem: item({
-        fields: item().fields.map((field) => ({ ...field, sectionId: "" })),
+        fields: item().fields.map((field) => ({ ...field, sectionId })),
       }),
     });
 
@@ -510,10 +513,10 @@ describe("OnePasswordLoginCredentialReader credential loading", () => {
       },
     ],
     [
-      "section-scoped credential lookalike",
+      "title-only credential lookalike",
       {
         fields: item().fields.map((field) =>
-          field.id === "password" ? { ...field, sectionId: "private-section" } : field,
+          field.id === "password" ? { ...field, id: "custom-password", title: "password" } : field,
         ),
       },
     ],

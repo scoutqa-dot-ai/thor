@@ -193,13 +193,9 @@ function metadataFromItem(
   });
 }
 
-function isRootItemField(field: Item["fields"][number]): boolean {
-  return field.sectionId === undefined || field.sectionId === "";
-}
-
-function findSingleBuiltInField(item: Item, fieldId: "username" | "password") {
+function findSingleCanonicalLoginField(item: Item, fieldId: "username" | "password") {
   if (!Array.isArray(item.fields)) return undefined;
-  const fields = item.fields.filter((field) => field?.id === fieldId && isRootItemField(field));
+  const fields = item.fields.filter((field) => field?.id === fieldId);
   return fields.length === 1 ? fields[0] : undefined;
 }
 
@@ -332,8 +328,8 @@ export class OnePasswordLoginCredentialReader implements ILoginCredentialReader 
     const metadata = metadataFromItem(item.value, selection, this.#vaultId);
     if (metadata._tag === "err") return metadata;
 
-    const username = findSingleBuiltInField(item.value, "username");
-    const password = findSingleBuiltInField(item.value, "password");
+    const username = findSingleCanonicalLoginField(item.value, "username");
+    const password = findSingleCanonicalLoginField(item.value, "password");
     const usernameValue = parseCredentialValue(username?.value, MAX_USERNAME_LENGTH);
     const passwordValue = parseCredentialValue(password?.value, MAX_PASSWORD_LENGTH);
     const usernameTypeAllowed =
