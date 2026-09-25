@@ -10,6 +10,7 @@ const VAULT_ID = "aaaaaaaaaaaaaaaaaaaaaaaaaa";
 const ORIGIN = "https://accounts.example.com";
 const BROWSER_SESSION_ID = "00000000-0000-4000-8000-000000000001";
 const SNAPSHOT_ID = "00000000-0000-4000-8000-000000000002";
+const LOGIN_PLAN_ID = "00000000-0000-4000-8000-000000000003";
 
 class RecordingBroker implements ICredentialBroker {
   readonly calls: Array<{ operation: string; input: unknown }> = [];
@@ -17,16 +18,31 @@ class RecordingBroker implements ICredentialBroker {
   async findLoginItems(input: { url: string; sessionId: string }) {
     this.calls.push({ operation: "find", input });
     return ok({
-      origin: ORIGIN,
+      login_plan_id: LOGIN_PLAN_ID,
+      application_origin: ORIGIN,
+      credential_origin: ORIGIN,
+      callback_origin: ORIGIN,
       matches: [{ item_id: ITEM_ID, title: "Example audit", origin: ORIGIN }],
     });
   }
 
+  async resolveLoginPlan(input: { loginPlanId: string; itemId: string; sessionId: string }) {
+    this.calls.push({ operation: "resolve", input });
+    return ok({
+      login_plan_id: LOGIN_PLAN_ID,
+      item_id: ITEM_ID,
+      title: "Example audit",
+      application_origin: ORIGIN,
+      credential_origin: ORIGIN,
+      callback_origin: ORIGIN,
+    });
+  }
+
   async openAuthenticatedBrowser(input: {
+    loginPlanId: string;
     itemId: string;
     approvedTitle: string;
     automateTotp: boolean;
-    url: string;
     sessionId: string;
   }) {
     this.calls.push({ operation: "open", input });
@@ -136,13 +152,38 @@ describe("1Password authenticated browser MCP public interface", () => {
     });
   });
 
+  it("keeps trusted login-plan resolution callable but absent from public discovery", async () => {
+    await withClient(async (client, broker) => {
+      const result = await client.callTool({
+        name: "_resolve_login_plan",
+        arguments: {
+          login_plan_id: LOGIN_PLAN_ID,
+          item_id: ITEM_ID,
+          _thor_session_id: "parent-session",
+        },
+      });
+
+      expect(result.isError).not.toBe(true);
+      expect(broker.calls).toEqual([
+        {
+          operation: "resolve",
+          input: {
+            loginPlanId: LOGIN_PLAN_ID,
+            itemId: ITEM_ID,
+            sessionId: "parent-session",
+          },
+        },
+      ]);
+    });
+  });
+
   it("passes trusted approval metadata and session context without returning credentials", async () => {
     await withClient(async (client, broker) => {
       const result = await client.callTool({
         name: "browser_open_authenticated",
         arguments: {
+          login_plan_id: LOGIN_PLAN_ID,
           item_id: ITEM_ID,
-          url: `${ORIGIN}/dashboard`,
           _approved_item_title: "Example audit",
           _thor_session_id: "parent-session",
         },
@@ -153,10 +194,10 @@ describe("1Password authenticated browser MCP public interface", () => {
         {
           operation: "open",
           input: {
+            loginPlanId: LOGIN_PLAN_ID,
             itemId: ITEM_ID,
             approvedTitle: "Example audit",
             automateTotp: false,
-            url: `${ORIGIN}/dashboard`,
             sessionId: "parent-session",
           },
         },
@@ -166,8 +207,8 @@ describe("1Password authenticated browser MCP public interface", () => {
       const automatedTotp = await client.callTool({
         name: "browser_open_authenticated",
         arguments: {
+          login_plan_id: LOGIN_PLAN_ID,
           item_id: ITEM_ID,
-          url: `${ORIGIN}/dashboard`,
           automate_totp: true,
           _approved_item_title: "Example audit",
           _thor_session_id: "parent-session",
@@ -177,10 +218,10 @@ describe("1Password authenticated browser MCP public interface", () => {
       expect(broker.calls.at(-1)).toEqual({
         operation: "open",
         input: {
+          loginPlanId: LOGIN_PLAN_ID,
           itemId: ITEM_ID,
           approvedTitle: "Example audit",
           automateTotp: true,
-          url: `${ORIGIN}/dashboard`,
           sessionId: "parent-session",
         },
       });

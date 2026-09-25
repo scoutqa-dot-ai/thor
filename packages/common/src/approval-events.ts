@@ -66,6 +66,22 @@ const BrowserPageUrlSchema = z
     const url = new URL(value);
     return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash;
   }, "url must be HTTPS without credentials, query parameters, or a fragment");
+const BrowserLoginPlanIdSchema = z.uuid();
+const BrowserOriginSchema = z
+  .url()
+  .max(500)
+  .refine((value) => {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      !url.username &&
+      !url.password &&
+      url.origin === value &&
+      url.pathname === "/" &&
+      !url.search &&
+      !url.hash
+    );
+  }, "origin must be an exact HTTPS origin");
 
 /** Strict public arguments for safe exact-origin Login item discovery. */
 export const FindLoginItemsArgsSchema = z.object({ url: BrowserPageUrlSchema }).strict();
@@ -73,8 +89,8 @@ export const FindLoginItemsArgsSchema = z.object({ url: BrowserPageUrlSchema }).
 /** Strict model-supplied arguments before trusted Login metadata enrichment. */
 export const BrowserOpenAuthenticatedRequestArgsSchema = z
   .object({
+    login_plan_id: BrowserLoginPlanIdSchema,
     item_id: OnePasswordOpaqueIdSchema,
-    url: BrowserPageUrlSchema,
     automate_totp: z.boolean().optional().default(false),
   })
   .strict();
@@ -83,6 +99,9 @@ export const BrowserOpenAuthenticatedRequestArgsSchema = z
 export const BrowserOpenAuthenticatedApprovalArgsSchema =
   BrowserOpenAuthenticatedRequestArgsSchema.extend({
     item_title: SafeOnePasswordLoginTitleSchema,
+    application_origin: BrowserOriginSchema,
+    credential_origin: BrowserOriginSchema,
+    callback_origin: BrowserOriginSchema,
   }).strict();
 
 export const ApprovalArgsSchema = z.union([

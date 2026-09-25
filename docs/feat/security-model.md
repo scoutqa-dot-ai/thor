@@ -120,7 +120,7 @@ If a policy layer fails, these limit what damage is reachable:
 - **GitHub App scopes.** The app is granted the minimum permissions listed in `github.md` §3 — no admin, no settings write, no org-wide access.
 - **Per-owner installation tokens.** GitHub installation tokens are scoped to a single owner and expire within an hour.
 - **Daytona sandbox isolation.** Project builds and test runs execute in per-worktree Daytona sandboxes; `git` is blocked inside the sandbox so the agent cannot push from there.
-- **Credential broker allowlist.** The 1Password integration reaches one configured dedicated vault and matches active Login items to one exact HTTPS origin per browser session. Continued access is limited to sanitized accessibility snapshots, latest-snapshot click/type refs, same-origin navigation, and close. It exposes no generic vault/secret reads, arbitrary references/selectors/JavaScript, cross-origin browser access, persistent profile, CDP, cookie/storage, screenshot, trace, or download surface.
+- **Credential broker allowlist.** The 1Password integration reaches one configured dedicated vault. A credential-free browser may discover one application → credential → exact application callback route and freeze it in an owner-bound, short-lived approval plan. Credentials are injected only at the approved credential origin; after callback, continued access is restricted to the application origin and sanitized accessibility snapshots, latest-snapshot click/type refs, same-origin navigation, and close. It exposes no generic vault/secret reads, redirect parameters, arbitrary references/selectors/JavaScript, cross-origin continued browsing, persistent profile, CDP, cookie/storage, screenshot, trace, or download surface.
 
 ## Layer 6: Audit trail
 

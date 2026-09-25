@@ -15,6 +15,8 @@ export class BrokerRequestDeniedError extends Error {
   readonly code:
     | "invalid_destination"
     | "item_not_allowed"
+    | "login_plan_not_found"
+    | "login_plan_owner_mismatch"
     | "session_not_found"
     | "session_owner_mismatch"
     | "session_busy"

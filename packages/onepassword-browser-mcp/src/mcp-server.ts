@@ -14,6 +14,7 @@ import type { Result } from "./result.ts";
 const ThorSessionIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/);
 const BrowserSessionIdSchema = z.uuid();
 const BrowserSnapshotIdSchema = z.uuid();
+const BrowserLoginPlanIdSchema = z.uuid();
 const BrowserRefPattern = /^(?:f[1-9][0-9]*)?e[1-9][0-9]*$/;
 const BrowserRefSchema = z.string().regex(BrowserRefPattern);
 const BrowserUrlSchema = z.string().trim().min(1).max(2_000);
@@ -24,10 +25,14 @@ const FindLoginItemsInputSchema = InternalContextSchema.extend({
   url: BrowserUrlSchema,
 }).strict();
 const OpenAuthenticatedBrowserInputSchema = InternalContextSchema.extend({
+  login_plan_id: BrowserLoginPlanIdSchema,
   item_id: z.string().regex(onePasswordIdPattern),
-  url: BrowserUrlSchema,
   _approved_item_title: z.string().trim().min(1).max(200),
   automate_totp: z.boolean().optional().default(false),
+}).strict();
+const ResolveLoginPlanInputSchema = InternalContextSchema.extend({
+  login_plan_id: BrowserLoginPlanIdSchema,
+  item_id: z.string().regex(onePasswordIdPattern),
 }).strict();
 const BrowserSessionInputSchema = InternalContextSchema.extend({
   browser_session_id: BrowserSessionIdSchema,
@@ -47,7 +52,7 @@ const PUBLIC_TOOLS = [
   {
     name: "find_login_items",
     description:
-      "Find non-secret 1Password Login item metadata matching the exact HTTPS origin of a website URL.",
+      "Prepare a credential-free application login and find non-secret 1Password Login metadata for its approved credential origin.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -63,8 +68,8 @@ const PUBLIC_TOOLS = [
       type: "object",
       additionalProperties: false,
       properties: {
+        login_plan_id: { type: "string", format: "uuid" },
         item_id: { type: "string", pattern: onePasswordIdPattern.source },
-        url: { type: "string", format: "uri", maxLength: 2_000 },
         automate_totp: {
           type: "boolean",
           description:
@@ -72,7 +77,7 @@ const PUBLIC_TOOLS = [
           default: false,
         },
       },
-      required: ["item_id", "url"],
+      required: ["login_plan_id", "item_id"],
     },
   },
   {
@@ -204,10 +209,21 @@ export function createBrokerMcpServer(broker: ICredentialBroker): Server {
       if (!parsed.success) return invalidRequest();
       return resultContent(
         await broker.openAuthenticatedBrowser({
+          loginPlanId: parsed.data.login_plan_id,
           itemId: parsed.data.item_id,
           approvedTitle: parsed.data._approved_item_title,
           automateTotp: parsed.data.automate_totp,
-          url: parsed.data.url,
+          sessionId: parsed.data._thor_session_id,
+        }),
+      );
+    }
+    if (request.params.name === "_resolve_login_plan") {
+      const parsed = ResolveLoginPlanInputSchema.safeParse(request.params.arguments);
+      if (!parsed.success) return invalidRequest();
+      return resultContent(
+        await broker.resolveLoginPlan({
+          loginPlanId: parsed.data.login_plan_id,
+          itemId: parsed.data.item_id,
           sessionId: parsed.data._thor_session_id,
         }),
       );

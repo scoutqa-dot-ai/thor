@@ -16,6 +16,7 @@ const OnePasswordItemIdSchema = z
   .brand<"OnePasswordItemId">();
 const BrowserOriginSchema = z.string().brand<"BrowserOrigin">();
 const BrowserUrlSchema = z.string().brand<"BrowserUrl">();
+const BrowserLoginPlanIdSchema = z.uuid().brand<"BrowserLoginPlanId">();
 
 /** Fixed private path populated from anonymous fd 3 and consumed once at startup. */
 export const SERVICE_ACCOUNT_TOKEN_FILE = "/run/secrets/thor-onepassword-service-account-token";
@@ -31,6 +32,8 @@ export type BrowserOrigin = z.infer<typeof BrowserOriginSchema>;
 
 /** Canonical HTTPS page URL without credentials, query parameters, or a fragment. */
 export type BrowserUrl = z.infer<typeof BrowserUrlSchema>;
+/** Opaque UUID identifying one short-lived, approval-bound browser login plan. */
+export type BrowserLoginPlanId = z.infer<typeof BrowserLoginPlanIdSchema>;
 
 /** Parsed website destination whose canonical URL and exact origin cannot diverge. */
 export interface BrowserDestination {
@@ -83,6 +86,23 @@ export function consumeServiceAccountTokenFile(
 export function parseOnePasswordItemId(value: string): OnePasswordItemId | undefined {
   const parsed = OnePasswordItemIdSchema.safeParse(value);
   return parsed.success ? parsed.data : undefined;
+}
+/** Parse a broker-issued browser login plan UUID. */
+export function parseBrowserLoginPlanId(value: string): BrowserLoginPlanId | undefined {
+  const parsed = BrowserLoginPlanIdSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/** Parse an HTTPS URL's exact origin while ignoring its path and protocol parameters. */
+export function parseBrowserOrigin(value: string): BrowserOrigin | undefined {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || !url.hostname)
+      return undefined;
+    return BrowserOriginSchema.parse(url.origin);
+  } catch {
+    return undefined;
+  }
 }
 
 /**

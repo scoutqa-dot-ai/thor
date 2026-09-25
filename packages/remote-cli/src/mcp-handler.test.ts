@@ -89,10 +89,10 @@ const onePasswordTools: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
+        login_plan_id: { type: "string" },
         item_id: { type: "string" },
-        url: { type: "string" },
       },
-      required: ["item_id", "url"],
+      required: ["login_plan_id", "item_id"],
       additionalProperties: false,
     },
   },
@@ -107,6 +107,8 @@ const onePasswordTools: Tool[] = [
 
 const onePasswordItemId = "bbbbbbbbbbbbbbbbbbbbbbbbbb";
 const onePasswordOrigin = "https://accounts.lambdatest.com";
+const onePasswordCredentialOrigin = "https://login.lambdatest.com";
+const onePasswordLoginPlanId = "00000000-0000-4000-8000-000000000003";
 const activeTriggerId = "00000000-0000-7000-8000-000000000101";
 const githubTriggerId = "00000000-0000-7000-8000-000000000102";
 const activeAnchorId = "00000000-0000-7000-8000-0000000004a1";
@@ -272,14 +274,34 @@ describe("remote-cli MCP endpoints", () => {
                       {
                         type: "text",
                         text: JSON.stringify({
-                          origin: onePasswordOrigin,
+                          login_plan_id: onePasswordLoginPlanId,
+                          application_origin: onePasswordOrigin,
+                          credential_origin: onePasswordCredentialOrigin,
+                          callback_origin: onePasswordOrigin,
                           matches: [
                             {
                               item_id: onePasswordItemId,
                               title: "Example audit",
-                              origin: onePasswordOrigin,
+                              origin: onePasswordCredentialOrigin,
                             },
                           ],
+                        }),
+                      },
+                    ],
+                  };
+                }
+                if (name === "_resolve_login_plan") {
+                  return {
+                    content: [
+                      {
+                        type: "text",
+                        text: JSON.stringify({
+                          login_plan_id: onePasswordLoginPlanId,
+                          item_id: onePasswordItemId,
+                          title: "Example audit",
+                          application_origin: onePasswordOrigin,
+                          credential_origin: onePasswordCredentialOrigin,
+                          callback_origin: onePasswordOrigin,
                         }),
                       },
                     ],
@@ -1369,7 +1391,10 @@ describe("remote-cli MCP endpoints", () => {
     const validBody = (await valid.json()) as { stdout: string; stderr: string; exitCode: number };
     expect(validBody.exitCode).toBe(0);
     expect(JSON.parse(validBody.stdout)).toMatchObject({
-      origin: onePasswordOrigin,
+      login_plan_id: onePasswordLoginPlanId,
+      application_origin: onePasswordOrigin,
+      credential_origin: onePasswordCredentialOrigin,
+      callback_origin: onePasswordOrigin,
       matches: [{ item_id: onePasswordItemId, title: "Example audit" }],
     });
     expect(toolCalls).toEqual([
@@ -1420,8 +1445,8 @@ describe("remote-cli MCP endpoints", () => {
           "onepassword-browser",
           "browser_open_authenticated",
           JSON.stringify({
+            login_plan_id: onePasswordLoginPlanId,
             item_id: "cccccccccccccccccccccccccc",
-            url: `${onePasswordOrigin}/dashboard`,
           }),
         ],
         directory: "/workspace/repos/acme",
@@ -1431,14 +1456,13 @@ describe("remote-cli MCP endpoints", () => {
     const body = (await response.json()) as { stderr: string; exitCode: number };
 
     expect(body.exitCode).toBe(1);
-    expect(body.stderr).toContain("selected Login item is not available for this exact origin");
+    expect(body.stderr).toContain("login plan binding mismatch");
     expect(slackFetch).not.toHaveBeenCalled();
-    expect(toolCalls.map((call) => call.name)).toEqual(["find_login_items"]);
+    expect(toolCalls.map((call) => call.name)).toEqual(["_resolve_login_plan"]);
   });
 
   it("resolves a trusted Login title and opens the browser only after Slack approval", async () => {
     appendActiveTrigger({ triggerSlackId: "UABCDEF1" });
-    const requestedUrl = "https://ACCOUNTS.LAMBDATEST.COM:443/dashboard";
     const pending = await postJson(
       "/exec/mcp",
       {
@@ -1446,8 +1470,8 @@ describe("remote-cli MCP endpoints", () => {
           "onepassword-browser",
           "browser_open_authenticated",
           JSON.stringify({
+            login_plan_id: onePasswordLoginPlanId,
             item_id: onePasswordItemId,
-            url: requestedUrl,
             automate_totp: true,
           }),
         ],
@@ -1459,19 +1483,31 @@ describe("remote-cli MCP endpoints", () => {
     expect(pendingBody.exitCode).toBe(0);
     const action = JSON.parse(pendingBody.stdout) as {
       actionId: string;
-      args: { item_id: string; item_title: string; url: string; automate_totp: boolean };
+      args: {
+        login_plan_id: string;
+        item_id: string;
+        item_title: string;
+        application_origin: string;
+        credential_origin: string;
+        callback_origin: string;
+        automate_totp: boolean;
+      };
     };
     expect(action.args).toEqual({
+      login_plan_id: onePasswordLoginPlanId,
       item_id: onePasswordItemId,
-      url: `${onePasswordOrigin}/dashboard`,
       item_title: "Example audit",
+      application_origin: onePasswordOrigin,
+      credential_origin: onePasswordCredentialOrigin,
+      callback_origin: onePasswordOrigin,
       automate_totp: true,
     });
     expect(toolCalls).toEqual([
       {
-        name: "find_login_items",
+        name: "_resolve_login_plan",
         arguments: {
-          url: requestedUrl,
+          login_plan_id: onePasswordLoginPlanId,
+          item_id: onePasswordItemId,
           _thor_session_id: "parent-session",
         },
       },
@@ -1495,17 +1531,18 @@ describe("remote-cli MCP endpoints", () => {
     });
     expect(toolCalls).toEqual([
       {
-        name: "find_login_items",
+        name: "_resolve_login_plan",
         arguments: {
-          url: requestedUrl,
+          login_plan_id: onePasswordLoginPlanId,
+          item_id: onePasswordItemId,
           _thor_session_id: "parent-session",
         },
       },
       {
         name: "browser_open_authenticated",
         arguments: {
+          login_plan_id: onePasswordLoginPlanId,
           item_id: onePasswordItemId,
-          url: `${onePasswordOrigin}/dashboard`,
           _approved_item_title: "Example audit",
           automate_totp: true,
           _thor_session_id: "parent-session",
@@ -1514,53 +1551,58 @@ describe("remote-cli MCP endpoints", () => {
     ]);
   });
 
-  it("consumes automated-TOTP approval before an uncertain upstream failure", async () => {
-    appendActiveTrigger({ triggerSlackId: "UABCDEF1" });
-    const pending = await postJson(
-      "/exec/mcp",
-      {
-        args: [
-          "onepassword-browser",
-          "browser_open_authenticated",
-          JSON.stringify({
-            item_id: onePasswordItemId,
-            url: `${onePasswordOrigin}/dashboard`,
-            automate_totp: true,
-          }),
-        ],
-        directory: "/workspace/repos/acme",
-      },
-      { "x-thor-session-id": "parent-session" },
-    );
-    const pendingBody = (await pending.json()) as { stdout: string };
-    const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
+  it.each([false, true])(
+    "consumes browser approval before an uncertain upstream failure (automate_totp=%s)",
+    async (automateTotp) => {
+      appendActiveTrigger({ triggerSlackId: "UABCDEF1" });
+      const pending = await postJson(
+        "/exec/mcp",
+        {
+          args: [
+            "onepassword-browser",
+            "browser_open_authenticated",
+            JSON.stringify({
+              login_plan_id: onePasswordLoginPlanId,
+              item_id: onePasswordItemId,
+              automate_totp: automateTotp,
+            }),
+          ],
+          directory: "/workspace/repos/acme",
+        },
+        { "x-thor-session-id": "parent-session" },
+      );
+      const pendingBody = (await pending.json()) as { stdout: string };
+      const actionId = (JSON.parse(pendingBody.stdout) as { actionId: string }).actionId;
 
-    onePasswordOpenFailure = new Error("connection lost after dispatch");
-    const failed = await postJson(
-      "/exec/mcp",
-      { args: ["resolve", actionId, "approved", "U123"] },
-      { "x-thor-internal-secret": "resolve-secret" },
-    );
-    expect(await failed.json()).toMatchObject({ exitCode: 1 });
+      onePasswordOpenFailure = new Error("connection lost after dispatch");
+      const failed = await postJson(
+        "/exec/mcp",
+        { args: ["resolve", actionId, "approved", "U123"] },
+        { "x-thor-internal-secret": "resolve-secret" },
+      );
+      expect(await failed.json()).toMatchObject({ exitCode: 1 });
 
-    const status = await postJson("/exec/approval", { args: ["status", actionId] });
-    const statusBody = (await status.json()) as { stdout: string };
-    expect(JSON.parse(statusBody.stdout)).toMatchObject({
-      status: "approved",
-      reviewer: "U123",
-      error: "connection lost after dispatch",
-    });
+      const status = await postJson("/exec/approval", { args: ["status", actionId] });
+      const statusBody = (await status.json()) as { stdout: string };
+      expect(JSON.parse(statusBody.stdout)).toMatchObject({
+        status: "approved",
+        reviewer: "U123",
+        error: "connection lost after dispatch",
+      });
 
-    const retry = await postJson(
-      "/exec/mcp",
-      { args: ["resolve", actionId, "approved", "U123"] },
-      { "x-thor-internal-secret": "resolve-secret" },
-    );
-    const retryBody = (await retry.json()) as { stderr: string; exitCode: number };
-    expect(retryBody.exitCode).toBe(1);
-    expect(retryBody.stderr).toContain("outcome is unknown and must not be retried");
-    expect(toolCalls.filter((call) => call.name === "browser_open_authenticated")).toHaveLength(1);
-  });
+      const retry = await postJson(
+        "/exec/mcp",
+        { args: ["resolve", actionId, "approved", "U123"] },
+        { "x-thor-internal-secret": "resolve-secret" },
+      );
+      const retryBody = (await retry.json()) as { stderr: string; exitCode: number };
+      expect(retryBody.exitCode).toBe(1);
+      expect(retryBody.stderr).toContain("outcome is unknown and must not be retried");
+      expect(toolCalls.filter((call) => call.name === "browser_open_authenticated")).toHaveLength(
+        1,
+      );
+    },
+  );
 
   it("returns 401 for /internal/exec without the internal secret", async () => {
     const response = await postJson("/internal/exec", {

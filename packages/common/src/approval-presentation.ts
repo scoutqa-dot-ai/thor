@@ -357,16 +357,20 @@ function buildBrowserOpenAuthenticatedPresentation(
 ): ApprovalPresentation {
   const parsed = BrowserOpenAuthenticatedApprovalArgsSchema.parse(args);
   const itemTitle = renderCredentialItemTitle(parsed.item_title);
-  const destination = renderCredentialApprovalText(parsed.url);
+  const applicationOrigin = renderCredentialApprovalText(parsed.application_origin);
+  const credentialOrigin = renderCredentialApprovalText(parsed.credential_origin);
+  const callbackOrigin = renderCredentialApprovalText(parsed.callback_origin);
   const authorization = parsed.automate_totp
-    ? "Approval permits password autofill and one fresh TOTP code from this Login item, followed by a ten-minute broker-owned browser session on this exact HTTPS origin. Credential values, TOTP secrets and codes, cookies, and browser storage are never shown to Neo or Slack."
-    : "Approval permits password autofill and a ten-minute broker-owned browser session on this exact HTTPS origin. Credential values, cookies, and browser storage are never shown to Neo or Slack.";
+    ? "Approval permits password autofill and one fresh TOTP code only at the credential origin, one bounded callback to the application origin, and a ten-minute broker-owned session restricted to the application origin. Credential values, TOTP secrets and codes, callback parameters, cookies, and browser storage are never shown to Neo or Slack."
+    : "Approval permits password autofill only at the credential origin, one bounded callback to the application origin, and a ten-minute broker-owned session restricted to the application origin. Credential values, callback parameters, cookies, and browser storage are never shown to Neo or Slack.";
   return {
     title: `Open authenticated browser: ${itemTitle}`,
     markdown: joinMarkdown([
       `*1Password Login:* ${itemTitle}`,
       bullet("1Password item", parsed.item_id),
-      `*Exact destination:* ${destination}`,
+      `*Application origin:* ${applicationOrigin}`,
+      `*Credential origin:* ${credentialOrigin}`,
+      `*Callback origin:* ${callbackOrigin}`,
       `*Automated TOTP:* ${parsed.automate_totp ? "Enabled" : "Disabled"}`,
       authorization,
     ]),

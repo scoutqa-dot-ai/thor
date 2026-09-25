@@ -7,8 +7,17 @@ import {
   type ElementHandle,
   type Locator,
   type Page,
+  type Request,
+  type Route,
 } from "playwright-core";
-import { type BrowserDestination, type BrowserOrigin } from "./config.ts";
+import { parseBrowserOrigin, type BrowserDestination, type BrowserOrigin } from "./config.ts";
+import {
+  deriveBrowserLoginRoute,
+  isApprovedBrowserLoginCallback,
+  isSanitizedApplicationPage,
+  type BrowserLoginRoute,
+  type DelegatedBrowserLoginRoute,
+} from "./browser-login-route.ts";
 import type { LoginCredentials } from "./credential-reader.ts";
 import { BrokerRequestDeniedError, BrowserSessionError, OnePasswordAccessError } from "./errors.ts";
 import { type RedactedString, withRedactedString } from "./redacted.ts";
@@ -83,7 +92,7 @@ export interface BrowserAccessibilitySnapshot extends BrowserSessionLocation {
 /** Input required to create an approval-bound authenticated browser. */
 export interface OpenAuthenticatedBrowserInput {
   readonly ownerSessionId: string;
-  readonly destination: BrowserDestination;
+  readonly route: BrowserLoginRoute;
   readonly credentials: LoginCredentials;
 }
 
@@ -106,6 +115,12 @@ export interface BrowserTypeInput extends BrowserRefActionInput {
 
 /** Restricted operations supported by a broker-owned authenticated browser. */
 export interface IAuthenticatedBrowserSessions {
+  /** Discover one bounded application-to-credential login route without loading credentials. */
+  discoverLoginRoute(input: {
+    readonly ownerSessionId: string;
+    readonly destination: BrowserDestination;
+  }): Promise<Result<BrowserLoginRoute, BrowserSessionError | BrokerRequestDeniedError>>;
+
   /** Log in with wrapped credentials and retain a short-lived browser session. */
   openAuthenticatedBrowser(
     input: OpenAuthenticatedBrowserInput,
@@ -172,6 +187,8 @@ export interface AuthenticatedBrowserSessionOptions {
   readonly scheduler?: BrowserSessionScheduler;
   /** Trusted browser-launch capability; MCP callers cannot select it. */
   readonly launchBrowser?: () => Promise<Browser>;
+  /** Permit self-signed local HTTPS only when a trusted test launcher is injected. */
+  readonly ignoreHTTPSErrorsForTesting?: boolean;
 }
 
 type BrowserSnapshotLease =
@@ -205,6 +222,21 @@ interface SnapshotSanitizerState {
   readonly redactNumbers: boolean;
   readonly refs: Set<BrowserElementRef>;
   nodes: number;
+}
+
+type LoginRoutePhase = "discovery" | "credential" | "application";
+
+interface BrowserLoginRoutePolicy {
+  readonly applicationOrigin: BrowserOrigin;
+  readonly page: Page;
+  credentialOrigin: BrowserOrigin | undefined;
+  credentialOriginLocked: boolean;
+  credentialNavigationObserved: boolean;
+  credentialAuthorizationUrl: string | undefined;
+  delegatedRoute: DelegatedBrowserLoginRoute | undefined;
+  callbackObserved: boolean;
+  originViolation: boolean;
+  phase: LoginRoutePhase;
 }
 
 class BrowserBoundaryError extends Error {
@@ -531,17 +563,96 @@ async function clearCredentialElement(element: ElementHandle | undefined): Promi
   await element.dispose().catch(() => undefined);
 }
 
-async function performStandardLogin(
+interface LoginCompletionWaiters {
+  readonly afterPassword: () => Promise<void>;
+  readonly afterTotp: () => Promise<void>;
+}
+
+async function waitForCredentialLoginPage(
+  page: Page,
+  policy: BrowserLoginRoutePolicy,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (policy.originViolation) throw new BrowserBoundaryError("origin_changed");
+    const currentOrigin = parseBrowserOrigin(page.url());
+    if (
+      currentOrigin &&
+      currentOrigin !== policy.applicationOrigin &&
+      !policy.credentialOriginLocked &&
+      !policy.credentialOrigin
+    ) {
+      policy.credentialOrigin = currentOrigin;
+    }
+    if (
+      !currentOrigin ||
+      (currentOrigin !== policy.applicationOrigin && currentOrigin !== policy.credentialOrigin)
+    ) {
+      throw new BrowserBoundaryError("origin_changed");
+    }
+    try {
+      const username = await usernameElement(page, Math.min(timeoutMs, 1_000));
+      await requireSafeCredentialInput(username, "username", currentOrigin);
+      await username.dispose();
+      return;
+    } catch (error) {
+      if (!(error instanceof BrowserBoundaryError)) throw error;
+    }
+    await page.waitForTimeout(100);
+  }
+  throw new BrowserBoundaryError("field_missing_or_ambiguous");
+}
+
+async function waitForDelegatedAuthentication(
+  page: Page,
+  route: DelegatedBrowserLoginRoute,
+  policy: BrowserLoginRoutePolicy,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (policy.originViolation) throw new BrowserBoundaryError("origin_changed");
+    const currentOrigin = parseBrowserOrigin(page.url());
+    if (currentOrigin === route.credentialOrigin) {
+      if (await hasVisibleMfaChallenge(page)) {
+        throw new BrowserBoundaryError("mfa_required");
+      }
+    } else if (
+      currentOrigin === route.application.origin &&
+      policy.callbackObserved &&
+      isSanitizedApplicationPage(page.url(), route.application.origin) &&
+      !(await hasVisibleMfaChallenge(page)) &&
+      (await visiblePasswordCount(page)) === 0
+    ) {
+      return;
+    } else if (currentOrigin !== route.application.origin) {
+      throw new BrowserBoundaryError("origin_changed");
+    }
+    await page.waitForTimeout(100);
+  }
+  const finalOrigin = parseBrowserOrigin(page.url());
+  if (finalOrigin === route.application.origin && !policy.callbackObserved) {
+    throw new BrowserBoundaryError("origin_changed");
+  }
+  if (
+    finalOrigin === route.application.origin &&
+    !isSanitizedApplicationPage(page.url(), route.application.origin)
+  ) {
+    throw new BrowserBoundaryError("browser_flow_failed");
+  }
+  throw new BrowserBoundaryError(
+    (await hasVisibleMfaChallenge(page)) ? "mfa_required" : "authentication_not_confirmed",
+  );
+}
+
+async function performLoginAtCurrentPage(
   page: Page,
   credentials: LoginCredentials,
+  credentialOrigin: BrowserOrigin,
   timeoutMs: number,
+  completion: LoginCompletionWaiters,
 ): Promise<RedactedString | undefined> {
-  await page.goto(credentials.metadata.loginUrl, {
-    waitUntil: "domcontentloaded",
-    timeout: timeoutMs,
-  });
-  requireApprovedOrigin(page, credentials.metadata.origin);
-
   let username: ElementHandle | undefined;
   let password: ElementHandle | undefined;
   let totpInput: ElementHandle | undefined;
@@ -549,33 +660,29 @@ async function performStandardLogin(
   try {
     username = await usernameElement(page, timeoutMs);
     const usernameToFill = username;
-    requireApprovedOrigin(page, credentials.metadata.origin);
-    await requireSafeCredentialInput(usernameToFill, "username", credentials.metadata.origin);
+    requireApprovedOrigin(page, credentialOrigin);
+    await requireSafeCredentialInput(usernameToFill, "username", credentialOrigin);
     await withRedactedString(credentials.username, (value) => usernameToFill.fill(value));
 
     if ((await visiblePasswordCount(page)) === 0) {
       const continueButton = await submitLocator(page, timeoutMs);
-      await requireSafeCredentialSubmit(
-        continueButton,
-        usernameToFill,
-        credentials.metadata.origin,
-      );
+      await requireSafeCredentialSubmit(continueButton, usernameToFill, credentialOrigin);
       await continueButton.click({ timeout: timeoutMs });
-      requireApprovedOrigin(page, credentials.metadata.origin);
+      requireApprovedOrigin(page, credentialOrigin);
     }
 
     password = await passwordElement(page, timeoutMs);
     const passwordToFill = password;
-    requireApprovedOrigin(page, credentials.metadata.origin);
-    await requireSafeCredentialInput(passwordToFill, "password", credentials.metadata.origin);
+    requireApprovedOrigin(page, credentialOrigin);
+    await requireSafeCredentialInput(passwordToFill, "password", credentialOrigin);
     await withRedactedString(credentials.password, (value) => passwordToFill.fill(value));
 
     const submit = await submitLocator(page, timeoutMs);
-    requireApprovedOrigin(page, credentials.metadata.origin);
-    await requireSafeCredentialSubmit(submit, passwordToFill, credentials.metadata.origin);
+    requireApprovedOrigin(page, credentialOrigin);
+    await requireSafeCredentialSubmit(submit, passwordToFill, credentialOrigin);
     await submit.click({ timeout: timeoutMs });
     try {
-      await waitForAuthentication(page, credentials.metadata.origin, timeoutMs);
+      await completion.afterPassword();
     } catch (error) {
       if (!(error instanceof BrowserBoundaryError) || error.code !== "mfa_required") throw error;
       if (!credentials.totp) throw error;
@@ -585,18 +692,18 @@ async function performStandardLogin(
 
       totpInput = await totpElement(page, timeoutMs);
       const totpInputToFill = totpInput;
-      requireApprovedOrigin(page, credentials.metadata.origin);
-      await requireSafeCredentialInput(totpInputToFill, "totp", credentials.metadata.origin);
+      requireApprovedOrigin(page, credentialOrigin);
+      await requireSafeCredentialInput(totpInputToFill, "totp", credentialOrigin);
       const totpSubmit = await submitLocator(page, timeoutMs);
-      await requireSafeCredentialSubmit(totpSubmit, totpInputToFill, credentials.metadata.origin);
+      await requireSafeCredentialSubmit(totpSubmit, totpInputToFill, credentialOrigin);
 
       const currentCode = await credentials.totp.getCurrentCode();
       if (currentCode._tag === "err") throw currentCode.error;
       totpCode = currentCode.value;
       await withRedactedString(totpCode, (value) => totpInputToFill.fill(value));
-      requireApprovedOrigin(page, credentials.metadata.origin);
+      requireApprovedOrigin(page, credentialOrigin);
       await totpSubmit.click({ timeout: timeoutMs });
-      await waitForTotpAuthentication(page, credentials.metadata.origin, timeoutMs);
+      await completion.afterTotp();
     }
     return totpCode;
   } finally {
@@ -780,10 +887,7 @@ export async function sanitizeBrowserAccessibilitySnapshot(
   );
 }
 
-async function installBrowserBoundaries(
-  context: BrowserContext,
-  origin: BrowserOrigin,
-): Promise<void> {
+async function installBrowserRuntimeRestrictions(context: BrowserContext): Promise<void> {
   await context.addInitScript(() => {
     Object.defineProperty(globalThis, "RTCPeerConnection", { value: undefined });
     Object.defineProperty(globalThis, "webkitRTCPeerConnection", { value: undefined });
@@ -791,13 +895,182 @@ async function installBrowserBoundaries(
     Object.defineProperty(globalThis, "WebTransport", { value: undefined });
   });
   await context.routeWebSocket("**/*", (webSocket) => webSocket.close());
+}
+
+function isPrimaryPageNavigation(policy: BrowserLoginRoutePolicy, request: Request): boolean {
+  return (
+    request.isNavigationRequest() &&
+    request.resourceType() === "document" &&
+    request.frame() === policy.page.mainFrame()
+  );
+}
+
+function captureCredentialAuthorizationUrl(
+  policy: BrowserLoginRoutePolicy,
+  requestOrigin: BrowserOrigin,
+  value: string,
+): void {
+  if (requestOrigin === policy.applicationOrigin || policy.credentialAuthorizationUrl) return;
+  try {
+    if (new URL(value).searchParams.getAll("redirect_uri").length === 1) {
+      policy.credentialAuthorizationUrl = value;
+    }
+  } catch {
+    policy.originViolation = true;
+  }
+}
+
+function approveTopLevelLoginNavigation(
+  policy: BrowserLoginRoutePolicy,
+  value: string,
+  requestOrigin: BrowserOrigin,
+  observedRequest: boolean,
+): boolean {
+  if (policy.phase === "discovery") {
+    if (requestOrigin === policy.applicationOrigin) {
+      return (
+        !policy.credentialNavigationObserved || policy.credentialOrigin === policy.applicationOrigin
+      );
+    }
+    if (requestOrigin === policy.credentialOrigin) {
+      policy.credentialNavigationObserved = true;
+      captureCredentialAuthorizationUrl(policy, requestOrigin, value);
+      return true;
+    }
+    if (!policy.credentialOriginLocked && !policy.credentialOrigin) {
+      policy.credentialOrigin = requestOrigin;
+      policy.credentialNavigationObserved = true;
+      captureCredentialAuthorizationUrl(policy, requestOrigin, value);
+      return true;
+    }
+    return false;
+  }
+
+  if (policy.phase === "credential") {
+    if (requestOrigin === policy.credentialOrigin) return true;
+    if (policy.delegatedRoute && isApprovedBrowserLoginCallback(value, policy.delegatedRoute)) {
+      if (observedRequest) {
+        policy.callbackObserved = true;
+        policy.phase = "application";
+      }
+      return true;
+    }
+    return false;
+  }
+
+  return requestOrigin === policy.applicationOrigin;
+}
+
+function escapeRedirectTargetForHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+async function fulfillBrowserRequestWithoutRedirects(
+  route: Route,
+  policy: BrowserLoginRoutePolicy,
+): Promise<void> {
+  const response = await route.fetch({ maxRedirects: 0 });
+  const responseHeaders = response.headers();
+  const location = responseHeaders.location;
+  if (response.status() < 300 || response.status() >= 400 || !location) {
+    await route.fulfill({ response });
+    return;
+  }
+
+  const request = route.request();
+  if (!isPrimaryPageNavigation(policy, request) || ![301, 302, 303].includes(response.status())) {
+    if (isPrimaryPageNavigation(policy, request)) policy.originViolation = true;
+    await route.abort("blockedbyclient");
+    return;
+  }
+
+  let redirectTarget: URL;
+  try {
+    redirectTarget = new URL(location, request.url());
+  } catch {
+    policy.originViolation = true;
+    await route.abort("blockedbyclient");
+    return;
+  }
+  const redirectOrigin = parseBrowserOrigin(redirectTarget.href);
+  if (
+    !redirectOrigin ||
+    !approveTopLevelLoginNavigation(policy, redirectTarget.href, redirectOrigin, false)
+  ) {
+    policy.originViolation = true;
+    await route.abort("blockedbyclient");
+    return;
+  }
+
+  const safeHeaders = { ...responseHeaders };
+  delete safeHeaders.location;
+  delete safeHeaders["content-length"];
+  delete safeHeaders["content-encoding"];
+  delete safeHeaders["transfer-encoding"];
+  safeHeaders["content-type"] = "text/html; charset=utf-8";
+  safeHeaders["content-security-policy"] =
+    "default-src 'none'; base-uri 'none'; form-action 'none'";
+  safeHeaders["referrer-policy"] = "no-referrer";
+  const target = escapeRedirectTargetForHtml(redirectTarget.href);
+  await route.fulfill({
+    status: 200,
+    headers: safeHeaders,
+    body: `<!doctype html><meta http-equiv="refresh" content="0;url=${target}">`,
+  });
+}
+
+async function installLoginRouteBoundaries(
+  context: BrowserContext,
+  policy: BrowserLoginRoutePolicy,
+): Promise<void> {
+  await installBrowserRuntimeRestrictions(context);
+  policy.page.on("request", (request) => {
+    if (!isPrimaryPageNavigation(policy, request)) return;
+    const requestOrigin = parseBrowserOrigin(request.url());
+    if (
+      !requestOrigin ||
+      !approveTopLevelLoginNavigation(policy, request.url(), requestOrigin, true)
+    ) {
+      policy.originViolation = true;
+    }
+  });
   await context.route("**/*", async (route) => {
     try {
-      if (isApprovedBrowserUrl(route.request().url(), origin)) {
-        await route.continue();
-      } else {
+      const request = route.request();
+      const requestOrigin = parseBrowserOrigin(request.url());
+      if (!requestOrigin) {
         await route.abort("blockedbyclient");
+        return;
       }
+      const primaryNavigation = isPrimaryPageNavigation(policy, request);
+      if (primaryNavigation) {
+        if (
+          policy.originViolation ||
+          !approveTopLevelLoginNavigation(policy, request.url(), requestOrigin, true)
+        ) {
+          policy.originViolation = true;
+          await route.abort("blockedbyclient");
+          return;
+        }
+        await fulfillBrowserRequestWithoutRedirects(route, policy);
+        return;
+      }
+
+      const resourceOriginAllowed =
+        policy.phase === "discovery"
+          ? requestOrigin === policy.applicationOrigin || requestOrigin === policy.credentialOrigin
+          : policy.phase === "credential"
+            ? requestOrigin === policy.credentialOrigin
+            : requestOrigin === policy.applicationOrigin;
+      if (!resourceOriginAllowed) {
+        await route.abort("blockedbyclient");
+        return;
+      }
+      await fulfillBrowserRequestWithoutRedirects(route, policy);
     } catch {
       await route.abort("blockedbyclient").catch(() => undefined);
     }
@@ -846,6 +1119,51 @@ async function assertOrdinaryTextControl(locator: Locator): Promise<void> {
   }
 }
 
+function configureRestrictedPage(context: BrowserContext, page: Page, timeoutMs: number): void {
+  page.setDefaultTimeout(timeoutMs);
+  page.on("dialog", (dialog) => void dialog.dismiss().catch(() => undefined));
+  page.on("download", (download) => void download.cancel().catch(() => undefined));
+  page.on("filechooser", (chooser) => void chooser.setFiles([]).catch(() => undefined));
+  context.on("page", (openedPage) => {
+    if (openedPage !== page) void openedPage.close().catch(() => undefined);
+  });
+}
+
+function deriveObservedBrowserLoginRoute(
+  application: BrowserDestination,
+  finalPageUrl: string,
+  credentialAuthorizationUrl: string | undefined,
+): BrowserLoginRoute | undefined {
+  const directRoute = deriveBrowserLoginRoute(application, finalPageUrl);
+  if (directRoute) return directRoute;
+  try {
+    const finalPage = new URL(finalPageUrl);
+    if (
+      finalPage.hash ||
+      finalPage.searchParams.getAll("redirect_uri").length > 0 ||
+      !parseBrowserOrigin(finalPage.href)
+    ) {
+      return undefined;
+    }
+  } catch {
+    return undefined;
+  }
+  return credentialAuthorizationUrl
+    ? deriveBrowserLoginRoute(application, credentialAuthorizationUrl)
+    : undefined;
+}
+
+function browserLoginRoutesMatch(actual: BrowserLoginRoute, planned: BrowserLoginRoute): boolean {
+  return (
+    actual._tag === planned._tag &&
+    actual.application.url === planned.application.url &&
+    actual.application.origin === planned.application.origin &&
+    actual.credentialOrigin === planned.credentialOrigin &&
+    (actual._tag !== "delegated" ||
+      (planned._tag === "delegated" && actual.callbackPath === planned.callbackPath))
+  );
+}
+
 /** Playwright implementation that owns all authenticated browser resources in memory. */
 export class PlaywrightAuthenticatedBrowserSessions implements IAuthenticatedBrowserSessions {
   readonly #executablePath: string;
@@ -855,6 +1173,7 @@ export class PlaywrightAuthenticatedBrowserSessions implements IAuthenticatedBro
   readonly #createId: () => string;
   readonly #scheduler: BrowserSessionScheduler;
   readonly #launchBrowser: () => Promise<Browser>;
+  readonly #ignoreHTTPSErrorsForTesting: boolean;
   readonly #sessions = new Map<BrowserSessionId, ActiveBrowserSession>();
   readonly #ownerSessions = new Map<string, BrowserSessionId>();
   readonly #openingOwners = new Set<string>();
@@ -869,6 +1188,10 @@ export class PlaywrightAuthenticatedBrowserSessions implements IAuthenticatedBro
     this.#scheduler = options.scheduler ?? systemBrowserSessionScheduler;
     this.#launchBrowser =
       options.launchBrowser ?? (() => launchCredentialFreeChromium(this.#executablePath));
+    this.#ignoreHTTPSErrorsForTesting = options.ignoreHTTPSErrorsForTesting ?? false;
+    if (this.#ignoreHTTPSErrorsForTesting && !options.launchBrowser) {
+      throw new Error("TLS bypass requires an injected test browser launcher");
+    }
     if (this.#actionTimeoutMs < 1_000 || this.#idleTimeoutMs < 1_000 || this.#maxSessions < 1) {
       throw new Error("Authenticated browser session options violate minimum bounds");
     }
@@ -934,7 +1257,78 @@ export class PlaywrightAuthenticatedBrowserSessions implements IAuthenticatedBro
     return ok(undefined);
   }
 
-  /** Log in and retain one browser only when the owner and global limits permit it. */
+  /** Discover the one credential origin and callback route without accessing 1Password values. */
+  async discoverLoginRoute(input: {
+    readonly ownerSessionId: string;
+    readonly destination: BrowserDestination;
+  }): Promise<Result<BrowserLoginRoute, BrowserSessionError | BrokerRequestDeniedError>> {
+    if (
+      this.#ownerSessions.has(input.ownerSessionId) ||
+      this.#openingOwners.has(input.ownerSessionId) ||
+      this.#sessions.size + this.#openingOwners.size >= this.#maxSessions
+    ) {
+      return err(new BrokerRequestDeniedError("session_limit_reached"));
+    }
+
+    this.#openingOwners.add(input.ownerSessionId);
+    let browser: Browser | undefined;
+    let context: BrowserContext | undefined;
+    try {
+      browser = await this.#launchBrowser();
+      context = await browser.newContext({
+        acceptDownloads: false,
+        ignoreHTTPSErrors: this.#ignoreHTTPSErrorsForTesting,
+        serviceWorkers: "block",
+      });
+      const page = await context.newPage();
+      configureRestrictedPage(context, page, this.#actionTimeoutMs);
+      const policy: BrowserLoginRoutePolicy = {
+        applicationOrigin: input.destination.origin,
+        page,
+        credentialOrigin: undefined,
+        credentialOriginLocked: false,
+        credentialNavigationObserved: false,
+        credentialAuthorizationUrl: undefined,
+        delegatedRoute: undefined,
+        callbackObserved: false,
+        originViolation: false,
+        phase: "discovery",
+      };
+      await installLoginRouteBoundaries(context, policy);
+      await page.goto(input.destination.url, {
+        waitUntil: "domcontentloaded",
+        timeout: this.#actionTimeoutMs,
+      });
+      await waitForCredentialLoginPage(page, policy, this.#actionTimeoutMs);
+      const discovered = deriveObservedBrowserLoginRoute(
+        input.destination,
+        page.url(),
+        policy.credentialAuthorizationUrl,
+      );
+      if (
+        !discovered ||
+        (discovered._tag === "delegated" && policy.credentialOrigin !== discovered.credentialOrigin)
+      ) {
+        return err(new BrowserSessionError("browser_flow_failed"));
+      }
+      return ok(discovered);
+    } catch (error) {
+      if (error instanceof BrokerRequestDeniedError) return err(error);
+      if (error instanceof BrowserBoundaryError) {
+        return err(new BrowserSessionError(error.code));
+      }
+      return err(
+        new BrowserSessionError(
+          browser === undefined ? "browser_unavailable" : "browser_flow_failed",
+        ),
+      );
+    } finally {
+      await Promise.allSettled([context?.close(), browser?.close()]);
+      this.#openingOwners.delete(input.ownerSessionId);
+    }
+  }
+
+  /** Replay the approved route, inject credentials only at its credential origin, and retain the app. */
   async openAuthenticatedBrowser(
     input: OpenAuthenticatedBrowserInput,
   ): Promise<
@@ -943,7 +1337,7 @@ export class PlaywrightAuthenticatedBrowserSessions implements IAuthenticatedBro
       BrowserSessionError | BrokerRequestDeniedError | OnePasswordAccessError
     >
   > {
-    if (input.destination.origin !== input.credentials.metadata.origin) {
+    if (input.route.credentialOrigin !== input.credentials.metadata.origin) {
       return err(new BrokerRequestDeniedError("origin_not_allowed"));
     }
     if (
@@ -964,28 +1358,82 @@ export class PlaywrightAuthenticatedBrowserSessions implements IAuthenticatedBro
       browser = await this.#launchBrowser();
       context = await browser.newContext({
         acceptDownloads: false,
-        ignoreHTTPSErrors: false,
+        ignoreHTTPSErrors: this.#ignoreHTTPSErrorsForTesting,
         serviceWorkers: "block",
       });
-      await installBrowserBoundaries(context, input.credentials.metadata.origin);
       const page = await context.newPage();
-      page.setDefaultTimeout(this.#actionTimeoutMs);
-      page.on("dialog", (dialog) => void dialog.dismiss().catch(() => undefined));
-      page.on("download", (download) => void download.cancel().catch(() => undefined));
-      page.on("filechooser", (chooser) => void chooser.setFiles([]).catch(() => undefined));
-      context.on("page", (openedPage) => {
-        if (openedPage !== page) void openedPage.close().catch(() => undefined);
+      configureRestrictedPage(context, page, this.#actionTimeoutMs);
+      const policy: BrowserLoginRoutePolicy = {
+        applicationOrigin: input.route.application.origin,
+        page,
+        credentialOrigin: input.route.credentialOrigin,
+        credentialOriginLocked: true,
+        credentialNavigationObserved: false,
+        credentialAuthorizationUrl: undefined,
+        delegatedRoute: input.route._tag === "delegated" ? input.route : undefined,
+        callbackObserved: false,
+        originViolation: false,
+        phase: "discovery",
+      };
+      await installLoginRouteBoundaries(context, policy);
+      const loginEntryUrl =
+        input.route._tag === "same_origin"
+          ? input.credentials.metadata.loginUrl
+          : input.route.application.url;
+      await page.goto(loginEntryUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: this.#actionTimeoutMs,
       });
+      await waitForCredentialLoginPage(page, policy, this.#actionTimeoutMs);
+      const replayedRoute = deriveObservedBrowserLoginRoute(
+        input.route.application,
+        page.url(),
+        policy.credentialAuthorizationUrl,
+      );
+      if (!replayedRoute || !browserLoginRoutesMatch(replayedRoute, input.route)) {
+        throw new BrowserBoundaryError("origin_changed");
+      }
+      requireApprovedOrigin(page, input.route.credentialOrigin);
+      policy.phase = "credential";
 
-      const totpCode = await performStandardLogin(page, input.credentials, this.#actionTimeoutMs);
-      requireApprovedOrigin(page, input.credentials.metadata.origin);
-      if (input.destination.url !== page.url()) {
-        await page.goto(input.destination.url, {
+      const delegatedRoute = input.route._tag === "delegated" ? input.route : undefined;
+      const completion: LoginCompletionWaiters = delegatedRoute
+        ? {
+            afterPassword: () =>
+              waitForDelegatedAuthentication(page, delegatedRoute, policy, this.#actionTimeoutMs),
+            afterTotp: () =>
+              waitForDelegatedAuthentication(page, delegatedRoute, policy, this.#actionTimeoutMs),
+          }
+        : {
+            afterPassword: () =>
+              waitForAuthentication(page, input.route.application.origin, this.#actionTimeoutMs),
+            afterTotp: () =>
+              waitForTotpAuthentication(
+                page,
+                input.route.application.origin,
+                this.#actionTimeoutMs,
+              ),
+          };
+      const totpCode = await performLoginAtCurrentPage(
+        page,
+        input.credentials,
+        input.route.credentialOrigin,
+        this.#actionTimeoutMs,
+        completion,
+      );
+
+      if (input.route._tag === "delegated" && !policy.callbackObserved) {
+        throw new BrowserBoundaryError("authentication_not_confirmed");
+      }
+      policy.phase = "application";
+      requireApprovedOrigin(page, input.route.application.origin);
+      if (input.route.application.url !== page.url()) {
+        await page.goto(input.route.application.url, {
           waitUntil: "domcontentloaded",
           timeout: this.#actionTimeoutMs,
         });
       }
-      await requireAuthenticatedPage(page, input.credentials.metadata.origin);
+      await requireAuthenticatedPage(page, input.route.application.origin);
 
       const id = requireGeneratedId<BrowserSessionId>(this.#createId);
       if (this.#sessions.has(id)) {
@@ -994,7 +1442,7 @@ export class PlaywrightAuthenticatedBrowserSessions implements IAuthenticatedBro
       const session: ActiveBrowserSession = {
         id,
         ownerSessionId: input.ownerSessionId,
-        origin: input.credentials.metadata.origin,
+        origin: input.route.application.origin,
         browser,
         context,
         page,

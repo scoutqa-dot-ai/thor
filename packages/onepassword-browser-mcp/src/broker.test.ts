@@ -9,6 +9,7 @@ import {
   type OpenAuthenticatedBrowserInput,
   type OwnedBrowserSessionInput,
 } from "./authenticated-browser.ts";
+import type { BrowserLoginRoute } from "./browser-login-route.ts";
 import { CredentialBroker, type BrokerAuditEvent, type BrokerAuditSink } from "./broker.ts";
 import {
   parseBrokerEnvironment,
@@ -34,6 +35,7 @@ const PASSWORD = "secret-password-fixture";
 const SESSION_ID = "parent-session";
 const BROWSER_SESSION_ID = "00000000-0000-4000-8000-000000000001";
 const SNAPSHOT_ID = "00000000-0000-4000-8000-000000000002";
+const LOGIN_PLAN_ID = "00000000-0000-4000-8000-000000000003";
 
 function fixtures() {
   const environment = parseBrokerEnvironment(
@@ -112,6 +114,10 @@ class RecordingCredentialReader implements ILoginCredentialReader {
 }
 
 class RecordingBrowserSessions implements IAuthenticatedBrowserSessions {
+  discoverInputs: Array<{
+    ownerSessionId: string;
+    destination: ReturnType<typeof fixtures>["destination"];
+  }> = [];
   openInputs: OpenAuthenticatedBrowserInput[] = [];
   snapshotInputs: OwnedBrowserSessionInput[] = [];
   clickInputs: BrowserRefActionInput[] = [];
@@ -122,6 +128,22 @@ class RecordingBrowserSessions implements IAuthenticatedBrowserSessions {
   closeInputs: OwnedBrowserSessionInput[] = [];
   closeAllCalls = 0;
   result: "ok" | "error" = "ok";
+
+  async discoverLoginRoute(input: {
+    ownerSessionId: string;
+    destination: ReturnType<typeof fixtures>["destination"];
+  }) {
+    this.discoverInputs.push(input);
+    if (this.result === "error") {
+      return err(new BrowserSessionError("browser_flow_failed"));
+    }
+    const route: BrowserLoginRoute = {
+      _tag: "same_origin",
+      application: input.destination,
+      credentialOrigin: input.destination.origin,
+    };
+    return ok(route);
+  }
 
   async openAuthenticatedBrowser(input: OpenAuthenticatedBrowserInput) {
     this.openInputs.push(input);
@@ -180,7 +202,7 @@ class RecordingBrowserSessions implements IAuthenticatedBrowserSessions {
   }
 }
 
-function harness() {
+function harness(options: { now?: () => Date } = {}) {
   const credentialReader = new RecordingCredentialReader();
   const browserSessions = new RecordingBrowserSessions();
   const auditSink = new RecordingAuditSink();
@@ -189,13 +211,29 @@ function harness() {
     credentialReader,
     browserSessions,
     auditSink,
-    now: () => new Date("2026-09-12T00:00:00.000Z"),
+    now: options.now ?? (() => new Date("2026-09-12T00:00:00.000Z")),
+    createLoginPlanId: () => LOGIN_PLAN_ID,
   });
   return { broker, credentialReader, browserSessions, auditSink };
 }
 
+async function prepareLogin(h: ReturnType<typeof harness>) {
+  const found = await h.broker.findLoginItems({
+    url: `${ORIGIN}/dashboard`,
+    sessionId: SESSION_ID,
+  });
+  if (found._tag === "err") throw found.error;
+  const resolved = await h.broker.resolveLoginPlan({
+    loginPlanId: found.value.login_plan_id,
+    itemId: ITEM_ID,
+    sessionId: SESSION_ID,
+  });
+  if (resolved._tag === "err") throw resolved.error;
+  return resolved.value;
+}
+
 describe("CredentialBroker Login discovery and opening", () => {
-  it("returns only safe exact-origin Login metadata", async () => {
+  it("returns only a safe owner-bound login plan and credential-origin metadata", async () => {
     const h = harness();
     const result = await h.broker.findLoginItems({
       url: `${ORIGIN}/dashboard`,
@@ -205,22 +243,27 @@ describe("CredentialBroker Login discovery and opening", () => {
     expect(result).toEqual({
       _tag: "ok",
       value: {
-        origin: ORIGIN,
+        login_plan_id: LOGIN_PLAN_ID,
+        application_origin: ORIGIN,
+        credential_origin: ORIGIN,
+        callback_origin: ORIGIN,
         matches: [{ item_id: ITEM_ID, title: "Example audit", origin: ORIGIN }],
       },
     });
+    expect(h.browserSessions.discoverInputs).toHaveLength(1);
     expect(h.credentialReader.findCalls).toBe(1);
     expect(JSON.stringify({ result, events: h.auditSink.events })).not.toContain(USERNAME);
     expect(JSON.stringify({ result, events: h.auditSink.events })).not.toContain(PASSWORD);
   });
 
-  it("revalidates the approved title/origin before opening and returns only safe handles", async () => {
+  it("binds the selected item, consumes the plan, and returns only safe handles", async () => {
     const h = harness();
+    const approval = await prepareLogin(h);
     const result = await h.broker.openAuthenticatedBrowser({
+      loginPlanId: approval.login_plan_id,
       itemId: ITEM_ID,
-      approvedTitle: "Example audit",
+      approvedTitle: approval.title,
       automateTotp: true,
-      url: `${ORIGIN}/dashboard`,
       sessionId: SESSION_ID,
     });
 
@@ -242,49 +285,102 @@ describe("CredentialBroker Login discovery and opening", () => {
         automateTotp: true,
       },
     ]);
-    expect(h.browserSessions.openInputs).toHaveLength(1);
+    expect(h.browserSessions.openInputs[0]?.route).toMatchObject({
+      _tag: "same_origin",
+      credentialOrigin: ORIGIN,
+    });
+    const replay = await h.broker.openAuthenticatedBrowser({
+      loginPlanId: approval.login_plan_id,
+      itemId: ITEM_ID,
+      approvedTitle: approval.title,
+      automateTotp: true,
+      sessionId: SESSION_ID,
+    });
+    expect(replay).toMatchObject({ _tag: "err", error: { code: "login_plan_not_found" } });
+    expect(h.credentialReader.credentialSelections).toHaveLength(1);
     const serialized = JSON.stringify({ result, events: h.auditSink.events });
     expect(serialized).not.toContain(USERNAME);
     expect(serialized).not.toContain(PASSWORD);
   });
 
-  it.each([
-    ["wrong item ID", "not-an-item", `${ORIGIN}/dashboard`, "item_not_allowed"],
-    ["unsafe destination", ITEM_ID, `${ORIGIN}/dashboard?token=secret`, "invalid_destination"],
-  ])("denies %s before fetching credential-bearing fields", async (_label, itemId, url, code) => {
+  it("rejects malformed, foreign-owner, and unbound plans before credential access", async () => {
     const h = harness();
-    const result = await h.broker.openAuthenticatedBrowser({
-      itemId,
-      approvedTitle: "Example audit",
-      automateTotp: false,
-      url,
+    const found = await h.broker.findLoginItems({
+      url: `${ORIGIN}/dashboard`,
       sessionId: SESSION_ID,
     });
+    if (found._tag === "err") throw found.error;
 
-    expect(result).toMatchObject({ _tag: "err", error: { code } });
+    const malformedItem = await h.broker.resolveLoginPlan({
+      loginPlanId: found.value.login_plan_id,
+      itemId: "not-an-item",
+      sessionId: SESSION_ID,
+    });
+    expect(malformedItem).toMatchObject({ _tag: "err", error: { code: "item_not_allowed" } });
+    const foreignOwner = await h.broker.resolveLoginPlan({
+      loginPlanId: found.value.login_plan_id,
+      itemId: ITEM_ID,
+      sessionId: "different-owner",
+    });
+    expect(foreignOwner).toMatchObject({
+      _tag: "err",
+      error: { code: "login_plan_owner_mismatch" },
+    });
+    const unbound = await h.broker.openAuthenticatedBrowser({
+      loginPlanId: found.value.login_plan_id,
+      itemId: ITEM_ID,
+      approvedTitle: "Example audit",
+      automateTotp: false,
+      sessionId: SESSION_ID,
+    });
+    expect(unbound).toMatchObject({ _tag: "err", error: { code: "item_not_allowed" } });
     expect(h.credentialReader.credentialSelections).toEqual([]);
     expect(h.browserSessions.openInputs).toEqual([]);
   });
 
-  it("returns safe classified credential and browser failures", async () => {
+  it("expires login plans before item binding or credential access", async () => {
+    let now = new Date("2026-09-12T00:00:00.000Z");
+    const h = harness({ now: () => now });
+    const found = await h.broker.findLoginItems({
+      url: `${ORIGIN}/dashboard`,
+      sessionId: SESSION_ID,
+    });
+    if (found._tag === "err") throw found.error;
+    now = new Date("2026-09-12T00:03:00.000Z");
+
+    const expired = await h.broker.resolveLoginPlan({
+      loginPlanId: found.value.login_plan_id,
+      itemId: ITEM_ID,
+      sessionId: SESSION_ID,
+    });
+    expect(expired).toMatchObject({
+      _tag: "err",
+      error: { code: "login_plan_not_found" },
+    });
+    expect(h.credentialReader.credentialSelections).toEqual([]);
+  });
+
+  it("returns safe classified credential and browser failures after plan approval", async () => {
     const credentialFailure = harness();
+    const credentialApproval = await prepareLogin(credentialFailure);
     credentialFailure.credentialReader.result = "error";
     const unavailable = await credentialFailure.broker.openAuthenticatedBrowser({
+      loginPlanId: credentialApproval.login_plan_id,
       itemId: ITEM_ID,
-      approvedTitle: "Example audit",
+      approvedTitle: credentialApproval.title,
       automateTotp: false,
-      url: `${ORIGIN}/dashboard`,
       sessionId: SESSION_ID,
     });
     expect(unavailable).toMatchObject({ _tag: "err", error: { code: "unavailable" } });
 
     const browserFailure = harness();
+    const browserApproval = await prepareLogin(browserFailure);
     browserFailure.browserSessions.result = "error";
     const unconfirmed = await browserFailure.broker.openAuthenticatedBrowser({
+      loginPlanId: browserApproval.login_plan_id,
       itemId: ITEM_ID,
-      approvedTitle: "Example audit",
+      approvedTitle: browserApproval.title,
       automateTotp: false,
-      url: `${ORIGIN}/dashboard`,
       sessionId: SESSION_ID,
     });
     expect(unconfirmed).toMatchObject({

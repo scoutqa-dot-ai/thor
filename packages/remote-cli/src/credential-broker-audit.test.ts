@@ -48,6 +48,7 @@ describe("credential browser worklog sanitization", () => {
   });
 
   it.each([
+    "_resolve_login_plan",
     "find_login_items",
     "browser_open_authenticated",
     "browser_snapshot",

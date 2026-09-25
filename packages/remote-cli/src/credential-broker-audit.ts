@@ -1,6 +1,7 @@
 import type { ToolCallLogEntry } from "@thor/common";
 
 const CREDENTIAL_BOUNDARY_TOOLS = new Set([
+  "_resolve_login_plan",
   "find_login_items",
   "browser_open_authenticated",
   "browser_snapshot",
@@ -48,8 +49,8 @@ function safeBrokerArgs(args: Record<string, unknown> | undefined): Record<strin
 }
 
 /**
- * Strip typed text, item titles, page content, full URLs, upstream errors, and
- * unexpected fields from every credential-browser worklog entry.
+ * Strip login-plan IDs, typed text, item titles, page content, full URLs,
+ * upstream errors, and unexpected fields from every credential-browser worklog entry.
  */
 export function sanitizeCredentialBrokerToolCallLog(entry: ToolCallLogEntry): ToolCallLogEntry {
   if (!CREDENTIAL_BOUNDARY_TOOLS.has(entry.tool)) return entry;

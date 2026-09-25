@@ -16,6 +16,7 @@ import {
   sanitizeBrowserAccessibilitySnapshot,
   type BrowserSessionScheduler,
 } from "./authenticated-browser.ts";
+import type { BrowserLoginRoute } from "./browser-login-route.ts";
 import {
   parseBrokerEnvironment,
   parseBrowserDestinationUrl,
@@ -387,6 +388,11 @@ chromiumIt(
       ) {
         throw new Error("invalid browser integration fixture");
       }
+      const dashboardRoute: BrowserLoginRoute = {
+        _tag: "same_origin",
+        application: dashboardDestination.value,
+        credentialOrigin: dashboardDestination.value.origin,
+      };
       const generatedIds = [
         SESSION_ID,
         SNAPSHOT_ID,
@@ -415,6 +421,7 @@ chromiumIt(
           return id;
         },
         scheduler,
+        ignoreHTTPSErrorsForTesting: true,
         launchBrowser: () =>
           chromium.launch({
             executablePath: "/usr/bin/chromium",
@@ -441,7 +448,7 @@ chromiumIt(
       try {
         const untrustedCertificate = await tlsEnforcedSessions.openAuthenticatedBrowser({
           ownerSessionId: "tls-owner-session",
-          destination: dashboardDestination.value,
+          route: dashboardRoute,
           credentials,
         });
         expect(untrustedCertificate).toMatchObject({
@@ -454,7 +461,7 @@ chromiumIt(
 
       const opened = await sessions.openAuthenticatedBrowser({
         ownerSessionId: "owner-session",
-        destination: dashboardDestination.value,
+        route: dashboardRoute,
         credentials,
       });
       expect(opened).toEqual({
@@ -544,7 +551,7 @@ chromiumIt(
 
       const reopened = await sessions.openAuthenticatedBrowser({
         ownerSessionId: "owner-session",
-        destination: dashboardDestination.value,
+        route: dashboardRoute,
         credentials,
       });
       if (reopened._tag === "err") throw reopened.error;
@@ -562,7 +569,7 @@ chromiumIt(
       if (mfaLoginDestination._tag === "err") throw mfaLoginDestination.error;
       const mfa = await sessions.openAuthenticatedBrowser({
         ownerSessionId: "mfa-owner-session",
-        destination: dashboardDestination.value,
+        route: dashboardRoute,
         credentials: {
           ...credentials,
           metadata: { ...credentials.metadata, loginUrl: mfaLoginDestination.value.url },
@@ -574,7 +581,7 @@ chromiumIt(
       let combinedTotpReads = 0;
       const combinedMfa = await sessions.openAuthenticatedBrowser({
         ownerSessionId: "combined-mfa-owner-session",
-        destination: dashboardDestination.value,
+        route: dashboardRoute,
         credentials: {
           ...credentials,
           metadata: { ...credentials.metadata, loginUrl: combinedMfaDestination.value.url },
@@ -597,7 +604,7 @@ chromiumIt(
       let mismatchedTotpReads = 0;
       const mismatchedMfa = await sessions.openAuthenticatedBrowser({
         ownerSessionId: "mismatched-mfa-owner-session",
-        destination: dashboardDestination.value,
+        route: dashboardRoute,
         credentials: {
           ...credentials,
           metadata: { ...credentials.metadata, loginUrl: mismatchedMfaDestination.value.url },
@@ -620,7 +627,7 @@ chromiumIt(
       let totpReads = 0;
       const failedTotpRead = await sessions.openAuthenticatedBrowser({
         ownerSessionId: "automated-mfa-owner-session",
-        destination: dashboardDestination.value,
+        route: dashboardRoute,
         credentials: {
           ...credentials,
           metadata: { ...credentials.metadata, loginUrl: mfaLoginDestination.value.url },
@@ -640,7 +647,7 @@ chromiumIt(
 
       const automatedMfa = await sessions.openAuthenticatedBrowser({
         ownerSessionId: "automated-mfa-owner-session",
-        destination: dashboardDestination.value,
+        route: dashboardRoute,
         credentials: {
           ...credentials,
           metadata: { ...credentials.metadata, loginUrl: mfaLoginDestination.value.url },
@@ -668,7 +675,7 @@ chromiumIt(
       if (getLoginDestination._tag === "err") throw getLoginDestination.error;
       const unsafeGetForm = await sessions.openAuthenticatedBrowser({
         ownerSessionId: "get-form-owner-session",
-        destination: dashboardDestination.value,
+        route: dashboardRoute,
         credentials: {
           ...credentials,
           metadata: { ...credentials.metadata, loginUrl: getLoginDestination.value.url },
@@ -683,7 +690,7 @@ chromiumIt(
       if (overrideGetDestination._tag === "err") throw overrideGetDestination.error;
       const unsafeSubmitOverride = await sessions.openAuthenticatedBrowser({
         ownerSessionId: "get-submit-owner-session",
-        destination: dashboardDestination.value,
+        route: dashboardRoute,
         credentials: {
           ...credentials,
           metadata: { ...credentials.metadata, loginUrl: overrideGetDestination.value.url },
@@ -699,5 +706,364 @@ chromiumIt(
       rmSync(certificateDirectory, { recursive: true, force: true });
     }
   },
-  20_000,
+  60_000,
+);
+
+chromiumIt(
+  "discovers and enforces an application to credential to exact callback route",
+  async () => {
+    const certificateDirectory = mkdtempSync(join(tmpdir(), "thor-delegated-browser-cert-"));
+    const keyPath = join(certificateDirectory, "key.pem");
+    const certificatePath = join(certificateDirectory, "certificate.pem");
+    execFileSync(
+      "openssl",
+      [
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-keyout",
+        keyPath,
+        "-out",
+        certificatePath,
+        "-subj",
+        "/CN=127.0.0.1",
+        "-addext",
+        "subjectAltName=IP:127.0.0.1",
+        "-days",
+        "1",
+      ],
+      { stdio: "ignore" },
+    );
+    const tls = { key: readFileSync(keyPath), cert: readFileSync(certificatePath) };
+    let applicationOrigin = "";
+    let credentialOrigin = "";
+    let useWrongCallback = false;
+    let useUnsafePostRedirect = false;
+    let useExtraDiscoveryHop = false;
+    let useApplicationBounce = false;
+    let useInternalCredentialRedirect = false;
+    let useChangedRedirectUri = false;
+    let extraDiscoveryOrigin = "";
+    const observed = {
+      username: "",
+      password: "",
+      callbackQuery: "",
+      appCookie: "",
+      wrongCallbackRequests: 0,
+      extraHopRequests: 0,
+      unsafePostRedirectRequests: 0,
+      applicationBounceRequests: 0,
+      credentialSubmissions: 0,
+    };
+
+    const applicationServer = createServer(tls, (request, response) => {
+      const requestUrl = new URL(request.url ?? "/", applicationOrigin);
+      if (requestUrl.pathname === "/dashboard") {
+        observed.appCookie = request.headers.cookie ?? "";
+        if (!observed.appCookie.includes("app_session=approved")) {
+          const callback = `${applicationOrigin}/auth/callback`;
+          response.writeHead(303, {
+            location: `${credentialOrigin}/authorize?client_id=fixture&redirect_uri=${encodeURIComponent(callback)}&state=fixture-state`,
+          });
+          response.end();
+          return;
+        }
+        response.end(
+          "<!doctype html><title>Delegated dashboard</title><h1>Delegated dashboard</h1>",
+        );
+        return;
+      }
+      if (requestUrl.pathname === "/auth/callback") {
+        observed.callbackQuery = requestUrl.search;
+        response.writeHead(303, {
+          location: "/dashboard",
+          "set-cookie": "app_session=approved; Path=/; Secure; HttpOnly; SameSite=Strict",
+        });
+        response.end();
+        return;
+      }
+      if (requestUrl.pathname === "/third-login") {
+        observed.extraHopRequests += 1;
+        response.end(
+          '<!doctype html><form method="post" action="/session"><input autocomplete="username" name="email"><input type="password" name="password"><button type="submit">Sign in</button></form>',
+        );
+        return;
+      }
+      if (requestUrl.pathname === "/wrong/callback") {
+        observed.wrongCallbackRequests += 1;
+        response.end("wrong callback must not arrive");
+        return;
+      }
+      if (requestUrl.pathname === "/capture") {
+        observed.unsafePostRedirectRequests += 1;
+        response.end("credential POST must not arrive");
+        return;
+      }
+      if (requestUrl.pathname === "/bounce") {
+        observed.applicationBounceRequests += 1;
+        response.writeHead(303, { location: `${credentialOrigin}/authorize` });
+        response.end();
+        return;
+      }
+      response.writeHead(404);
+      response.end();
+    });
+    const credentialServer = createServer(tls, async (request, response) => {
+      const requestUrl = new URL(request.url ?? "/", credentialOrigin);
+      let body = "";
+      for await (const chunk of request) body += String(chunk);
+      if (request.method === "GET" && requestUrl.pathname === "/authorize") {
+        if (useExtraDiscoveryHop) {
+          response.writeHead(303, { location: `${extraDiscoveryOrigin}/third-login` });
+          response.end();
+          return;
+        }
+        if (useApplicationBounce) {
+          response.writeHead(303, { location: `${applicationOrigin}/bounce` });
+          response.end();
+          return;
+        }
+        if (useInternalCredentialRedirect) {
+          const loginLocation = useChangedRedirectUri
+            ? `/login?redirect_uri=${encodeURIComponent("https://evil.example/callback")}`
+            : "/login?session=fixture";
+          response.writeHead(303, { location: loginLocation });
+          response.end();
+          return;
+        }
+        const redirectUri = requestUrl.searchParams.get("redirect_uri") ?? "";
+        const state = requestUrl.searchParams.get("state") ?? "";
+        response.end(
+          `<!doctype html><title>Identity login</title><form method="post" action="/session?redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}"><label>Email<input autocomplete="username" name="email"></label><label>Password<input type="password" name="password"></label><button type="submit">Sign in</button></form>`,
+        );
+        return;
+      }
+      if (request.method === "GET" && requestUrl.pathname === "/login") {
+        const callback = `${applicationOrigin}/auth/callback`;
+        response.end(
+          `<!doctype html><form method="post" action="/session?redirect_uri=${encodeURIComponent(callback)}&state=fixture-state"><input autocomplete="username" name="email"><input type="password" name="password"><button type="submit">Sign in</button></form>`,
+        );
+        return;
+      }
+      if (request.method === "POST" && requestUrl.pathname === "/session") {
+        observed.credentialSubmissions += 1;
+        const fields = new URLSearchParams(body);
+        observed.username = fields.get("email") ?? "";
+        observed.password = fields.get("password") ?? "";
+        if (useUnsafePostRedirect) {
+          response.writeHead(307, { location: `${extraDiscoveryOrigin}/capture` });
+          response.end();
+          return;
+        }
+        const callback = new URL(requestUrl.searchParams.get("redirect_uri") ?? applicationOrigin);
+        callback.pathname = useWrongCallback ? "/wrong/callback" : callback.pathname;
+        callback.searchParams.set("code", "fixture-code");
+        callback.searchParams.set("state", requestUrl.searchParams.get("state") ?? "");
+        callback.searchParams.set("session_state", "fixture-session");
+        response.writeHead(303, { location: callback.href });
+        response.end();
+        return;
+      }
+      response.writeHead(404);
+      response.end();
+    });
+
+    let sessions: PlaywrightAuthenticatedBrowserSessions | undefined;
+    try {
+      applicationServer.listen(0, "127.0.0.1");
+      credentialServer.listen(0, "127.0.0.1");
+      await Promise.all([
+        once(applicationServer, "listening"),
+        once(credentialServer, "listening"),
+      ]);
+      const applicationAddress = applicationServer.address();
+      const credentialAddress = credentialServer.address();
+      if (
+        !applicationAddress ||
+        typeof applicationAddress === "string" ||
+        !credentialAddress ||
+        typeof credentialAddress === "string"
+      ) {
+        throw new Error("missing delegated HTTPS test address");
+      }
+      applicationOrigin = `https://127.0.0.1:${applicationAddress.port}`;
+      credentialOrigin = `https://127.0.0.1:${credentialAddress.port}`;
+      extraDiscoveryOrigin = `https://localhost:${applicationAddress.port}`;
+      const application = parseBrowserDestinationUrl(`${applicationOrigin}/dashboard`);
+      const credentialLogin = parseBrowserDestinationUrl(`${credentialOrigin}/authorize`);
+      const environment = parseBrokerEnvironment(
+        {
+          OP_SERVICE_ACCOUNT_TOKEN_FILE: SERVICE_ACCOUNT_TOKEN_FILE,
+          ONEPASSWORD_BROWSER_VAULT_ID: "aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        },
+        () => "ops_fixture_service_account_token",
+      );
+      const itemId = parseOnePasswordItemId("bbbbbbbbbbbbbbbbbbbbbbbbbb");
+      if (
+        application._tag === "err" ||
+        credentialLogin._tag === "err" ||
+        environment._tag === "err" ||
+        !itemId
+      ) {
+        throw new Error("invalid delegated browser fixture");
+      }
+      const generatedIds = [
+        "00000000-0000-4000-8000-000000000011",
+        "00000000-0000-4000-8000-000000000012",
+      ];
+      sessions = new PlaywrightAuthenticatedBrowserSessions({
+        actionTimeoutMs: 5_000,
+        idleTimeoutMs: 5_000,
+        createId: () => {
+          const id = generatedIds.shift();
+          if (!id) throw new Error("delegated browser ID fixture exhausted");
+          return id;
+        },
+        ignoreHTTPSErrorsForTesting: true,
+        launchBrowser: () =>
+          chromium.launch({
+            executablePath: "/usr/bin/chromium",
+            headless: true,
+            env: browserProcessEnvironment(),
+            args: ["--ignore-certificate-errors", "--no-sandbox"],
+          }),
+      });
+      const discovered = await sessions.discoverLoginRoute({
+        ownerSessionId: "delegated-owner",
+        destination: application.value,
+      });
+      if (discovered._tag === "err") throw discovered.error;
+      expect(discovered).toMatchObject({
+        _tag: "ok",
+        value: {
+          _tag: "delegated",
+          application: { origin: applicationOrigin },
+          credentialOrigin,
+          callbackPath: "/auth/callback",
+        },
+      });
+      useInternalCredentialRedirect = true;
+      const internallyRedirectedDiscovery = await sessions.discoverLoginRoute({
+        ownerSessionId: "internal-redirect-owner",
+        destination: application.value,
+      });
+      expect(internallyRedirectedDiscovery).toMatchObject({
+        _tag: "ok",
+        value: {
+          _tag: "delegated",
+          credentialOrigin,
+          callbackPath: "/auth/callback",
+        },
+      });
+      useInternalCredentialRedirect = false;
+      const credentials = {
+        metadata: {
+          vaultId: environment.value.vaultId,
+          itemId,
+          title: "Delegated browser integration",
+          origin: credentialLogin.value.origin,
+          loginUrl: credentialLogin.value.url,
+        },
+        username: RedactedString.make(USERNAME),
+        password: RedactedString.make(PASSWORD),
+      };
+      const submissionsBeforeChangedRedirect = observed.credentialSubmissions;
+      useInternalCredentialRedirect = true;
+      useChangedRedirectUri = true;
+      const rejectedChangedRedirect = await sessions.openAuthenticatedBrowser({
+        ownerSessionId: "changed-redirect-owner",
+        route: discovered.value,
+        credentials,
+      });
+      expect(rejectedChangedRedirect).toMatchObject({
+        _tag: "err",
+        error: { code: "origin_changed" },
+      });
+      expect(observed.credentialSubmissions).toBe(submissionsBeforeChangedRedirect);
+      useChangedRedirectUri = false;
+      useInternalCredentialRedirect = false;
+
+      const opened = await sessions.openAuthenticatedBrowser({
+        ownerSessionId: "delegated-owner",
+        route: discovered.value,
+        credentials,
+      });
+      if (opened._tag === "err") throw opened.error;
+      expect(opened).toMatchObject({ _tag: "ok", value: { origin: applicationOrigin } });
+      expect(observed.username).toBe(USERNAME);
+      expect(observed.password).toBe(PASSWORD);
+      expect(observed.callbackQuery).toContain("code=fixture-code");
+      expect(JSON.stringify(opened)).not.toContain("fixture-code");
+      const crossOriginNavigation = await sessions.navigateBrowser({
+        ownerSessionId: "delegated-owner",
+        browserSessionId: opened.value.browserSessionId,
+        destination: credentialLogin.value,
+      });
+      expect(crossOriginNavigation).toMatchObject({
+        _tag: "err",
+        error: { code: "origin_not_allowed" },
+      });
+      await sessions.closeBrowser({
+        ownerSessionId: "delegated-owner",
+        browserSessionId: opened.value.browserSessionId,
+      });
+      useUnsafePostRedirect = true;
+      const rejectedPostRedirect = await sessions.openAuthenticatedBrowser({
+        ownerSessionId: "delegated-owner",
+        route: discovered.value,
+        credentials,
+      });
+      expect(rejectedPostRedirect).toMatchObject({
+        _tag: "err",
+        error: { code: "origin_changed" },
+      });
+      expect(observed.unsafePostRedirectRequests).toBe(0);
+
+      useUnsafePostRedirect = false;
+
+      useWrongCallback = true;
+      const rejectedCallback = await sessions.openAuthenticatedBrowser({
+        ownerSessionId: "delegated-owner",
+        route: discovered.value,
+        credentials,
+      });
+      expect(rejectedCallback).toMatchObject({
+        _tag: "err",
+        error: { code: "origin_changed" },
+      });
+      expect(observed.wrongCallbackRequests).toBe(0);
+      useWrongCallback = false;
+      useApplicationBounce = true;
+      const rejectedApplicationBounce = await sessions.discoverLoginRoute({
+        ownerSessionId: "application-bounce-owner",
+        destination: application.value,
+      });
+      expect(rejectedApplicationBounce).toMatchObject({
+        _tag: "err",
+        error: { code: "origin_changed" },
+      });
+      expect(observed.applicationBounceRequests).toBe(0);
+      useApplicationBounce = false;
+      useExtraDiscoveryHop = true;
+      const rejectedExtraHop = await sessions.discoverLoginRoute({
+        ownerSessionId: "extra-hop-owner",
+        destination: application.value,
+      });
+      expect(rejectedExtraHop).toMatchObject({
+        _tag: "err",
+        error: { code: "origin_changed" },
+      });
+      expect(observed.extraHopRequests).toBe(0);
+    } finally {
+      await sessions?.closeAllBrowsers();
+      await Promise.all([
+        new Promise<void>((resolve) => applicationServer.close(() => resolve())),
+        new Promise<void>((resolve) => credentialServer.close(() => resolve())),
+      ]);
+      rmSync(certificateDirectory, { recursive: true, force: true });
+    }
+  },
+  30_000,
 );

@@ -24,12 +24,12 @@ For a 1Password-backed SaaS login, use the dedicated MCP integration instead of 
 
 ```bash
 mcp onepassword-browser find_login_items '{"url":"https://approved.example/dashboard"}'
-mcp onepassword-browser browser_open_authenticated '{"item_id":"<matching-item-id>","url":"https://approved.example/dashboard"}'
-mcp onepassword-browser browser_open_authenticated '{"item_id":"<matching-item-id>","url":"https://approved.example/dashboard","automate_totp":true}'
+mcp onepassword-browser browser_open_authenticated '{"login_plan_id":"<login-plan-id-from-find>","item_id":"<matching-item-id>"}'
+mcp onepassword-browser browser_open_authenticated '{"login_plan_id":"<login-plan-id-from-find>","item_id":"<matching-item-id>","automate_totp":true}'
 mcp onepassword-browser browser_snapshot '{"browser_session_id":"<browser-session-id>"}'
 ```
 
-The open call requires human approval. Supply only the non-secret item ID, exact HTTPS destination, and optional `automate_totp` boolean. Set `automate_totp` to true only when the task calls for a Login item containing 1Password TOTP, and verify the approval card says **Automated TOTP: Enabled**. The broker obtains and injects the current code internally after the challenge appears; credential and MFA values stay outside Slack and agent context. Continue with `browser_click`, `browser_type`, `browser_navigate`, and `browser_close`; refresh the snapshot before each ref action because click/type consumes all current refs. The authenticated browser is restricted to its exact approved origin and expires after inactivity.
+`find_login_items` performs credential-free route discovery and returns an opaque short-lived `login_plan_id`, the application/credential/callback origins, and safe matching Login metadata. Pass that plan ID and one returned item ID to the open call; do not invent or alter origins. The open call requires human approval. Set `automate_totp` to true only when the task calls for a Login item containing 1Password TOTP, and verify the approval card shows the expected complete origin chain and **Automated TOTP: Enabled**. The broker obtains and injects credentials only at the approved credential origin, permits only the approved callback, and retains browsing only on the application origin. Credential and MFA values stay outside Slack and agent context. Continue with `browser_click`, `browser_type`, `browser_navigate`, and `browser_close`; refresh the snapshot before each ref action because click/type consumes all current refs. The authenticated browser expires after inactivity.
 
 ---
 

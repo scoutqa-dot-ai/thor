@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import {
   parseBrowserElementRef,
   parseBrowserSessionId,
@@ -5,15 +7,21 @@ import {
   type IAuthenticatedBrowserSessions,
   type SanitizedAccessibilityValue,
 } from "./authenticated-browser.ts";
+import type { BrowserLoginRoute } from "./browser-login-route.ts";
 import {
+  parseBrowserLoginPlanId,
   parseBrowserDestinationUrl,
   parseOnePasswordItemId,
+  type BrowserLoginPlanId,
   type BrowserOrigin,
   type OnePasswordVaultId,
 } from "./config.ts";
 import type { ILoginCredentialReader, LoginItemMetadata } from "./credential-reader.ts";
 import { BrokerRequestDeniedError, type BrokerError } from "./errors.ts";
 import { err, ok, type Result } from "./result.ts";
+
+const DEFAULT_LOGIN_PLAN_TTL_MS = 2 * 60_000;
+const DEFAULT_MAX_LOGIN_PLANS = 64;
 
 /** Safe exact-origin Login choice returned without fetching item fields. */
 export interface LoginItemMetadataOutput {
@@ -24,8 +32,21 @@ export interface LoginItemMetadataOutput {
 
 /** Safe result of matching Login items in the dedicated vault. */
 export interface FindLoginItemsOutput {
-  readonly origin: string;
+  readonly login_plan_id: string;
+  readonly application_origin: string;
+  readonly credential_origin: string;
+  readonly callback_origin: string;
   readonly matches: ReadonlyArray<LoginItemMetadataOutput>;
+}
+
+/** Safe approval context resolved from trusted broker state rather than model-supplied origins. */
+export interface LoginPlanApprovalOutput {
+  readonly login_plan_id: string;
+  readonly item_id: string;
+  readonly title: string;
+  readonly application_origin: string;
+  readonly credential_origin: string;
+  readonly callback_origin: string;
 }
 
 /** Safe handle returned after approved credential injection succeeds. */
@@ -57,6 +78,15 @@ export interface BrowserActionOutput {
 export interface BrowserCloseOutput {
   readonly status: "closed";
   readonly browser_session_id: string;
+}
+
+interface PendingLoginPlan {
+  readonly id: BrowserLoginPlanId;
+  readonly ownerSessionId: string;
+  readonly route: BrowserLoginRoute;
+  readonly expiresAtMs: number;
+  selectedItemId?: string;
+  selectedTitle?: string;
 }
 
 /** Minimal structured event emitted without item values, browser content, or raw causes. */
@@ -92,13 +122,19 @@ export interface ICredentialBroker {
     readonly url: string;
     readonly sessionId: string;
   }): Promise<Result<FindLoginItemsOutput, BrokerError>>;
+  /** Resolve safe, broker-observed approval context and bind one item to the plan. */
+  resolveLoginPlan(input: {
+    readonly loginPlanId: string;
+    readonly itemId: string;
+    readonly sessionId: string;
+  }): Promise<Result<LoginPlanApprovalOutput, BrokerError>>;
 
   /** Revalidate an approved item and open a broker-owned authenticated browser. */
   openAuthenticatedBrowser(input: {
+    readonly loginPlanId: string;
     readonly itemId: string;
     readonly approvedTitle: string;
     readonly automateTotp: boolean;
-    readonly url: string;
     readonly sessionId: string;
   }): Promise<Result<OpenAuthenticatedBrowserOutput, BrokerError>>;
 
@@ -178,6 +214,11 @@ export class CredentialBroker implements ICredentialBroker {
   readonly #browserSessions: IAuthenticatedBrowserSessions;
   readonly #auditSink: BrokerAuditSink;
   readonly #now: () => Date;
+  readonly #createLoginPlanId: () => string;
+  readonly #loginPlanTtlMs: number;
+  readonly #maxLoginPlans: number;
+  readonly #loginPlans = new Map<BrowserLoginPlanId, PendingLoginPlan>();
+  readonly #ownerLoginPlans = new Map<string, BrowserLoginPlanId>();
 
   /** Create the application service from its scoped credential and browser capabilities. */
   constructor(input: {
@@ -186,12 +227,21 @@ export class CredentialBroker implements ICredentialBroker {
     readonly browserSessions: IAuthenticatedBrowserSessions;
     readonly auditSink: BrokerAuditSink;
     readonly now?: () => Date;
+    readonly createLoginPlanId?: () => string;
+    readonly loginPlanTtlMs?: number;
+    readonly maxLoginPlans?: number;
   }) {
     this.#vaultId = input.vaultId;
     this.#credentialReader = input.credentialReader;
     this.#browserSessions = input.browserSessions;
     this.#auditSink = input.auditSink;
     this.#now = input.now ?? (() => new Date());
+    this.#createLoginPlanId = input.createLoginPlanId ?? randomUUID;
+    this.#loginPlanTtlMs = input.loginPlanTtlMs ?? DEFAULT_LOGIN_PLAN_TTL_MS;
+    this.#maxLoginPlans = input.maxLoginPlans ?? DEFAULT_MAX_LOGIN_PLANS;
+    if (this.#loginPlanTtlMs < 1_000 || this.#maxLoginPlans < 1) {
+      throw new Error("Credential broker login plan options violate minimum bounds");
+    }
   }
 
   #record(input: {
@@ -216,7 +266,62 @@ export class CredentialBroker implements ICredentialBroker {
     });
   }
 
-  /** Find only safe overview metadata; this operation never fetches full item fields. */
+  #removeLoginPlan(plan: PendingLoginPlan): void {
+    this.#loginPlans.delete(plan.id);
+    if (this.#ownerLoginPlans.get(plan.ownerSessionId) === plan.id) {
+      this.#ownerLoginPlans.delete(plan.ownerSessionId);
+    }
+  }
+
+  #pruneExpiredLoginPlans(): void {
+    const nowMs = this.#now().getTime();
+    for (const plan of this.#loginPlans.values()) {
+      if (plan.expiresAtMs <= nowMs) this.#removeLoginPlan(plan);
+    }
+  }
+
+  #createLoginPlan(
+    ownerSessionId: string,
+    route: BrowserLoginRoute,
+  ): Result<PendingLoginPlan, BrokerRequestDeniedError> {
+    this.#pruneExpiredLoginPlans();
+    const previousId = this.#ownerLoginPlans.get(ownerSessionId);
+    const previous = previousId ? this.#loginPlans.get(previousId) : undefined;
+    if (previous) this.#removeLoginPlan(previous);
+    if (this.#loginPlans.size >= this.#maxLoginPlans) {
+      return err(new BrokerRequestDeniedError("session_limit_reached"));
+    }
+    const id = parseBrowserLoginPlanId(this.#createLoginPlanId());
+    if (!id || this.#loginPlans.has(id)) {
+      throw new Error("Credential broker login plan ID generator returned an invalid UUID");
+    }
+    const plan: PendingLoginPlan = {
+      id,
+      ownerSessionId,
+      route,
+      expiresAtMs: this.#now().getTime() + this.#loginPlanTtlMs,
+    };
+    this.#loginPlans.set(id, plan);
+    this.#ownerLoginPlans.set(ownerSessionId, id);
+    return ok(plan);
+  }
+
+  #getLoginPlan(
+    loginPlanId: string,
+    ownerSessionId: string,
+  ): Result<PendingLoginPlan, BrokerRequestDeniedError> {
+    const id = parseBrowserLoginPlanId(loginPlanId);
+    if (!id) return err(new BrokerRequestDeniedError("login_plan_not_found"));
+    this.#pruneExpiredLoginPlans();
+    const plan = this.#loginPlans.get(id);
+    if (!plan) return err(new BrokerRequestDeniedError("login_plan_not_found"));
+    if (plan.ownerSessionId !== ownerSessionId) {
+      return err(new BrokerRequestDeniedError("login_plan_owner_mismatch"));
+    }
+    return ok(plan);
+  }
+
+  /** Find only safe overview metadata after credential-free login-route discovery. */
   async findLoginItems(input: {
     readonly url: string;
     readonly sessionId: string;
@@ -232,7 +337,22 @@ export class CredentialBroker implements ICredentialBroker {
       return destination;
     }
 
-    const matches = await this.#credentialReader.findLoginItems(destination.value.origin);
+    const discovered = await this.#browserSessions.discoverLoginRoute({
+      ownerSessionId: input.sessionId,
+      destination: destination.value,
+    });
+    if (discovered._tag === "err") {
+      this.#record({
+        action: "find_login_items",
+        outcome: classifyOutcome(discovered.error),
+        sessionId: input.sessionId,
+        origin: destination.value.origin,
+        errorCode: discovered.error.code,
+      });
+      return discovered;
+    }
+
+    const matches = await this.#credentialReader.findLoginItems(discovered.value.credentialOrigin);
     if (matches._tag === "err") {
       this.#record({
         action: "find_login_items",
@@ -243,6 +363,17 @@ export class CredentialBroker implements ICredentialBroker {
       });
       return matches;
     }
+    const created = this.#createLoginPlan(input.sessionId, discovered.value);
+    if (created._tag === "err") {
+      this.#record({
+        action: "find_login_items",
+        outcome: "denied",
+        sessionId: input.sessionId,
+        origin: destination.value.origin,
+        errorCode: created.error.code,
+      });
+      return created;
+    }
 
     this.#record({
       action: "find_login_items",
@@ -251,26 +382,67 @@ export class CredentialBroker implements ICredentialBroker {
       origin: destination.value.origin,
     });
     return ok({
-      origin: destination.value.origin,
+      login_plan_id: created.value.id,
+      application_origin: discovered.value.application.origin,
+      credential_origin: discovered.value.credentialOrigin,
+      callback_origin: discovered.value.application.origin,
       matches: matches.value.map(projectLoginMetadata),
     });
   }
 
-  /** Load credential-bearing fields only after remote-cli has persisted Slack approval. */
+  /** Resolve a trusted approval projection and bind one selected item to the login plan. */
+  async resolveLoginPlan(input: {
+    readonly loginPlanId: string;
+    readonly itemId: string;
+    readonly sessionId: string;
+  }): Promise<Result<LoginPlanApprovalOutput, BrokerError>> {
+    const planResult = this.#getLoginPlan(input.loginPlanId, input.sessionId);
+    const itemId = parseOnePasswordItemId(input.itemId);
+    if (planResult._tag === "err" || !itemId) {
+      return planResult._tag === "err"
+        ? planResult
+        : err(new BrokerRequestDeniedError("item_not_allowed"));
+    }
+    const plan = planResult.value;
+    if (plan.selectedItemId && plan.selectedItemId !== itemId) {
+      return err(new BrokerRequestDeniedError("item_not_allowed"));
+    }
+    const matches = await this.#credentialReader.findLoginItems(plan.route.credentialOrigin);
+    if (matches._tag === "err") return matches;
+    const selected = matches.value.filter((metadata) => metadata.itemId === itemId);
+    if (selected.length !== 1) return err(new BrokerRequestDeniedError("item_not_allowed"));
+    const metadata = selected[0];
+    if (!metadata) return err(new BrokerRequestDeniedError("item_not_allowed"));
+    if (plan.selectedTitle && plan.selectedTitle !== metadata.title) {
+      return err(new BrokerRequestDeniedError("item_not_allowed"));
+    }
+    plan.selectedItemId = itemId;
+    plan.selectedTitle = metadata.title;
+    return ok({
+      login_plan_id: plan.id,
+      item_id: itemId,
+      title: metadata.title,
+      application_origin: plan.route.application.origin,
+      credential_origin: plan.route.credentialOrigin,
+      callback_origin: plan.route.application.origin,
+    });
+  }
+
+  /** Consume an approved plan before loading credential-bearing fields or dispatching a browser. */
   async openAuthenticatedBrowser(input: {
+    readonly loginPlanId: string;
     readonly itemId: string;
     readonly approvedTitle: string;
     readonly automateTotp: boolean;
-    readonly url: string;
     readonly sessionId: string;
   }): Promise<Result<OpenAuthenticatedBrowserOutput, BrokerError>> {
-    const destination = parseBrowserDestinationUrl(input.url);
+    const planResult = this.#getLoginPlan(input.loginPlanId, input.sessionId);
     const itemId = parseOnePasswordItemId(input.itemId);
     const approvedTitle = input.approvedTitle.trim();
-    if (destination._tag === "err" || !itemId || !approvedTitle || approvedTitle.length > 200) {
+    if (planResult._tag === "err" || !itemId || !approvedTitle || approvedTitle.length > 200) {
       const denied =
-        destination._tag === "err"
-          ? destination.error
+        planResult._tag === "err"
+          ? planResult.error
           : new BrokerRequestDeniedError("item_not_allowed");
       this.#record({
         action: "browser_open_authenticated",
@@ -281,10 +453,24 @@ export class CredentialBroker implements ICredentialBroker {
       });
       return err(denied);
     }
+    const plan = planResult.value;
+    if (plan.selectedItemId !== itemId || plan.selectedTitle !== approvedTitle) {
+      const denied = new BrokerRequestDeniedError("item_not_allowed");
+      this.#record({
+        action: "browser_open_authenticated",
+        outcome: "denied",
+        sessionId: input.sessionId,
+        origin: plan.route.application.origin,
+        itemId,
+        errorCode: denied.code,
+      });
+      return err(denied);
+    }
 
+    this.#removeLoginPlan(plan);
     const credentials = await this.#credentialReader.getLoginCredentials({
       itemId,
-      origin: destination.value.origin,
+      origin: plan.route.credentialOrigin,
       approvedTitle,
       automateTotp: input.automateTotp,
     });
@@ -293,7 +479,7 @@ export class CredentialBroker implements ICredentialBroker {
         action: "browser_open_authenticated",
         outcome: "failed",
         sessionId: input.sessionId,
-        origin: destination.value.origin,
+        origin: plan.route.application.origin,
         itemId,
         errorCode: credentials.error.code,
       });
@@ -302,7 +488,7 @@ export class CredentialBroker implements ICredentialBroker {
 
     const opened = await this.#browserSessions.openAuthenticatedBrowser({
       ownerSessionId: input.sessionId,
-      destination: destination.value,
+      route: plan.route,
       credentials: credentials.value,
     });
     if (opened._tag === "err") {
@@ -310,7 +496,7 @@ export class CredentialBroker implements ICredentialBroker {
         action: "browser_open_authenticated",
         outcome: classifyOutcome(opened.error),
         sessionId: input.sessionId,
-        origin: destination.value.origin,
+        origin: plan.route.application.origin,
         itemId,
         errorCode: opened.error.code,
       });
@@ -551,6 +737,8 @@ export class CredentialBroker implements ICredentialBroker {
 
   /** Delegate process-level browser cleanup to the resource-owning adapter. */
   async closeAllBrowsers(): Promise<void> {
+    this.#loginPlans.clear();
+    this.#ownerLoginPlans.clear();
     await this.#browserSessions.closeAllBrowsers();
   }
 }
