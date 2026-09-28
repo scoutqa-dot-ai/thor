@@ -170,7 +170,6 @@ const POSTHOG_ALLOW = [
   "feature-flags-status-retrieve",
   // Experiments
   "experiment-get",
-  "experiment-get-all",
   "experiment-results-get",
   "experiment-list",
   "experiment-stats",
