@@ -41,6 +41,8 @@ openssl req \
   -days 3650 \
   -nodes \
   -subj "/CN=thor-mitmproxy-ca" \
+  -addext "basicConstraints=critical,CA:TRUE" \
+  -addext "keyUsage=critical,keyCertSign,cRLSign" \
   -keyout "$CA_KEY" \
   -out "$CA_CERT"
 

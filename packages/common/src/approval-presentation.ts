@@ -4,6 +4,7 @@ import {
   CreateFeatureFlagApprovalArgsSchema,
   CreateJiraIssueApprovalArgsSchema,
   EditJiraIssueApprovalArgsSchema,
+  GoogleWorkspaceCommandApprovalArgsSchema,
   TransitionJiraIssueApprovalArgsSchema,
   type ApprovalToolName,
 } from "./approval-events.js";
@@ -181,6 +182,8 @@ export function buildApprovalPresentation(
         return buildCreateFeatureFlagPresentation(args);
       case "browser_open_authenticated":
         return buildBrowserOpenAuthenticatedPresentation(args);
+      case "google_workspace_command":
+        return buildGoogleWorkspaceCommandPresentation(args);
       default:
         return undefined;
     }
@@ -348,6 +351,22 @@ function buildCreateFeatureFlagPresentation(args: Record<string, unknown>): Appr
       bullet("Active", parsed.active),
       bullet("Rollout", parsed.rolloutPercentage),
       bullet("Filters", parsed.filters),
+    ]),
+  };
+}
+
+function buildGoogleWorkspaceCommandPresentation(
+  args: Record<string, unknown>,
+): ApprovalPresentation {
+  const parsed = GoogleWorkspaceCommandApprovalArgsSchema.parse(args);
+  return {
+    title: `Run Google Workspace command: ${parsed.operation}`,
+    markdown: joinMarkdown([
+      bullet("Operation", parsed.operation),
+      bullet("Google account", parsed.google_workspace_email),
+      bullet("Slack user", parsed.slack_user_id),
+      bullet("Arguments", parsed.argument_count),
+      bullet("Command fingerprint", parsed.command_fingerprint),
     ]),
   };
 }

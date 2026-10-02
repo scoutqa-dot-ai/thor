@@ -1,5 +1,10 @@
 # Falcon MCP Integration
 
+> Version follow-up on `local-test`: upgraded to 0.19.0. The obsolete
+> `falcon_list_modules` allowlist entry is replaced with the read-only
+> `falcon_list_enabled_tools` inventory. Investigation modules and write policy
+> are unchanged; see [the runtime upgrade phase](2026090802_local-test-add-mcp-base.md#follow-up-phase--upgrade-opencode-and-mcp-runtimes).
+
 ## Goal
 
 Give Thor controlled, read-only access to CrowdStrike Falcon through the existing `remote-cli` MCP policy gateway without exposing Falcon credentials to the OpenCode agent container.

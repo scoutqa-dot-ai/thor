@@ -129,6 +129,9 @@ function latestQueuedTriggerActor(events: QueuedEvent[]): {
       if (user) return { triggerSlackId: user };
       continue;
     }
+    if (isApprovalEvent(event)) {
+      return { triggerSlackId: event.payload.reviewer };
+    }
     if (isGitHubEvent(event)) {
       const login = event.payload.sender.login;
       if (login) return { triggerGithubLogin: login };
@@ -145,11 +148,13 @@ function summarizeResolutionOutput(
   summary?: string;
   tool?: string;
   upstream?: string;
+  resultCapability?: string;
 } {
   let status: string | undefined;
   let summary: string | undefined;
   let tool: string | undefined;
   let upstream: string | undefined;
+  let resultCapability: string | undefined;
 
   // Avoid echoing raw stdout/stderr — both can contain upstream tool response
   // data, which the approval card must not leak. Only surface structured fields
@@ -159,6 +164,12 @@ function summarizeResolutionOutput(
     if (typeof parsed.status === "string") status = parsed.status;
     if (typeof parsed.tool === "string") tool = parsed.tool;
     if (typeof parsed.upstream === "string") upstream = parsed.upstream;
+    if (
+      typeof parsed.result_capability === "string" &&
+      /^[A-Za-z0-9_-]{32,200}$/.test(parsed.result_capability)
+    ) {
+      resultCapability = parsed.result_capability;
+    }
     if (typeof parsed.error === "string" && parsed.error) {
       summary = parsed.error;
     } else if (typeof parsed.reason === "string" && parsed.reason) {
@@ -172,7 +183,7 @@ function summarizeResolutionOutput(
     summary = extractApprovalFailureCategory(stderr);
   }
 
-  return { status, summary, tool, upstream };
+  return { status, summary, tool, upstream, resultCapability };
 }
 
 const log = createLogger("gateway");
@@ -667,6 +678,7 @@ async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<v
     resolutionStatus: resolutionFailed ? "error" : resolution.status,
     resolutionSummary: resolution.summary,
     resolutionExitCode: resolved.exitCode,
+    resultCapability: resolution.resultCapability,
   };
 
   const rawCorrelationKeys = buildSlackCorrelationKeys(channel, threadTs);

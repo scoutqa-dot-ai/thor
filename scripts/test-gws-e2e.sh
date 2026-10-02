@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Credential-free container contract test. Optional args reuse already-built
+# Credential-free GWS/Drata container contract test. Optional args reuse already-built
 # remote-cli and opencode images, in that order. No production stack is touched.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -26,7 +26,7 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
-# No external network: a fixture/cache mistake must fail, not reach Google.
+# No external network: a fixture/cache mistake must fail, not reach Google/Drata.
 docker network create --internal "$network" >/dev/null
 docker run -d --name "$remote" --network "$network" --network-alias remote-cli \
   -v "$PWD/scripts/fixtures/gws-server.mjs:/opt/gws-server.mjs:ro" \
@@ -42,5 +42,6 @@ done
 [[ "$ready" == true ]] || { echo "gws fixture did not become ready" >&2; exit 1; }
 docker run --rm --name "$client" --network "$network" \
   -e THOR_REMOTE_CLI_URL=http://remote-cli:3004 \
+  -e THOR_OPENCODE_SESSION_ID=fixture-session \
   -v "$PWD/scripts/fixtures/gws-client.mjs:/opt/gws-client.mjs:ro" \
   --workdir /workspace --entrypoint node "$opencode_image" /opt/gws-client.mjs

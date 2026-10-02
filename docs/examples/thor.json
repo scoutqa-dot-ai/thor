@@ -9,7 +9,8 @@
       "email": "alice@example.com",
       "name": "Alice Example",
       "slack": "UABCDEF1",
-      "github": "alice"
+      "github": "alice",
+      "google_workspace_email": "alice@example.com"
     }
   ],
   "slack": {

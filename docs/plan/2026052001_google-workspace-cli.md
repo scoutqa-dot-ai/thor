@@ -1,5 +1,7 @@
 # Google Workspace CLI Integration
 
+> **Superseded authorization model (2026-09-29):** the read-only allowlist and later global upstream-auth design below are retained as implementation history. Current Thor uses per-Slack-user OAuth, same-user approval, encrypted grants, blocks `gws auth`, and has no global fallback. See [the current plan](2026092901_google-workspace-user-oauth.md) and [operator guide](../google-workspace.md).
+
 ## Goal
 
 Give Thor read-only Google Drive, Docs, and Sheets access through `gws`, without putting Google credentials in OpenCode.

@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import {
   appendAlias,
   appendSessionEvent,
+  findActiveSlackTriggerActor,
   findActiveTrigger,
   findSlackTriggerCorrelationKey,
   findTriggerActor,
@@ -488,6 +489,58 @@ describe("session event log", () => {
       sessionId: "parent",
       triggerId: triggerParent,
     });
+  });
+
+  it("resolves only the latest unambiguous active Slack actor", () => {
+    appendAlias({ aliasType: "opencode.session", aliasValue: "slack-active", anchorId: anchorA });
+    appendSessionEvent("slack-active", {
+      ts: "2026-05-14T12:00:00.000Z",
+      type: "trigger_start",
+      triggerId: triggerA,
+      triggerSlackId: "U123",
+    });
+    expect(findActiveSlackTriggerActor("slack-active")).toEqual({
+      ok: true,
+      anchorId: anchorA,
+      sessionId: "slack-active",
+      triggerId: triggerA,
+      slackUserId: "U123",
+    });
+
+    appendAlias({ aliasType: "opencode.session", aliasValue: "github-active", anchorId: anchorA });
+    appendSessionEvent("github-active", {
+      ts: "2026-05-14T12:00:01.000Z",
+      type: "trigger_start",
+      triggerId: triggerB,
+      triggerGithubLogin: "octocat",
+    });
+    expect(findActiveSlackTriggerActor("slack-active")).toEqual({ ok: false, reason: "none" });
+
+    appendSessionEvent("github-active", {
+      ts: "2026-05-14T12:00:02.000Z",
+      type: "trigger_end",
+      triggerId: triggerB,
+      status: "completed",
+    });
+    expect(findActiveSlackTriggerActor("slack-active")).toEqual({ ok: false, reason: "none" });
+
+    appendSessionEvent("slack-active", {
+      type: "trigger_end",
+      triggerId: triggerA,
+      status: "completed",
+    });
+    expect(findActiveSlackTriggerActor("slack-active")).toEqual({ ok: false, reason: "none" });
+  });
+
+  it("rejects an active trigger with both Slack and GitHub identities", () => {
+    appendAlias({ aliasType: "opencode.session", aliasValue: "ambiguous", anchorId: anchorA });
+    appendSessionEvent("ambiguous", {
+      type: "trigger_start",
+      triggerId: triggerA,
+      triggerSlackId: "U123",
+      triggerGithubLogin: "octocat",
+    });
+    expect(findActiveSlackTriggerActor("ambiguous")).toEqual({ ok: false, reason: "none" });
   });
 
   it("treats superseded orphan trigger_start as crashed and surfaces the latest open trigger", () => {

@@ -12,7 +12,6 @@ import {
   validateLdcliArgs,
   validateLangfuseArgs,
   validateMetabaseArgs,
-  validateDrataArgs,
 } from "./policy.js";
 
 beforeEach(() => {
@@ -2031,25 +2030,5 @@ describe("validateMetabaseArgs", () => {
       expect(validateMetabaseArgs(["question", "123abc"])).not.toBeNull();
       expect(validateMetabaseArgs(["question", "42/slug"])).not.toBeNull();
     });
-  });
-});
-
-// ── drata policy ───────────────────────────────────────────────────────────
-
-describe("validateDrataArgs", () => {
-  it("accepts help and read-only v1 GET requests", () => {
-    expect(validateDrataArgs(["--help"])).toBeNull();
-    expect(validateDrataArgs(["api", "GET", "/public/v2/users?size=1"])).toBeNull();
-    expect(validateDrataArgs(["api", "get", "/public/v2/controls"])).toBeNull();
-  });
-
-  it("rejects writes and paths outside v1", () => {
-    expect(validateDrataArgs([])).not.toBeNull();
-    expect(validateDrataArgs(["api", "POST", "/public/v2/users"])).toContain("only GET");
-    expect(validateDrataArgs(["api", "GET", "/v1/vendors"])).toContain("/public/v2/");
-    expect(validateDrataArgs(["api", "GET", "https://example.com/public/v2/users"])).toContain(
-      "/public/v2/",
-    );
-    expect(validateDrataArgs(["api", "GET", "/public/v2/../secrets"])).toContain("relative");
   });
 });

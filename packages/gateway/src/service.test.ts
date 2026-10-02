@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { RunnerDeps } from "./service.js";
+import { buildApprovalOutcomePrompt, type RunnerDeps } from "./service.js";
 import type { SlackDeps } from "./slack-api.js";
 import type { GitHubWebhookEvent } from "./github.js";
 
@@ -673,5 +673,28 @@ describe("triggerRunnerApprovalOutcomes", () => {
     expect(onAccepted).toHaveBeenCalledTimes(1);
 
     await resultPromise;
+  });
+});
+
+describe("Google Workspace approval result capability", () => {
+  it("delivers the private single-use result command only to the re-entered turn", () => {
+    const capability = "a".repeat(43);
+    const prompt = buildApprovalOutcomePrompt([
+      {
+        actionId: "019d0000-0000-7000-8000-000000000001",
+        decision: "approved",
+        reviewer: "U123",
+        channel: "C123",
+        threadTs: "1710000000.001",
+        upstreamName: "gws",
+        tool: "google_workspace_command",
+        resolutionStatus: "completed",
+        resolutionExitCode: 0,
+        resultCapability: capability,
+      },
+    ]);
+
+    expect(prompt).toContain(`approval result 019d0000-0000-7000-8000-000000000001 ${capability}`);
+    expect(prompt).toContain("private and single-use");
   });
 });

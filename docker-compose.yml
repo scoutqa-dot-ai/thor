@@ -13,6 +13,7 @@ services:
     restart: unless-stopped
     security_opt:
       - seccomp=./docker/remote-cli/seccomp-bwrap.json
+      - apparmor=thor-remote-cli
     ports:
       - "127.0.0.1:3004:3004"
     environment:
@@ -46,9 +47,15 @@ services:
       - DRATA_SCOPES=${DRATA_SCOPES:-}
       - DRATA_API_BASE_URL=${DRATA_API_BASE_URL:-}
       - KALI_API_BASE_URL=${KALI_API_BASE_URL:-}
-      - GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=${GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE:-}
       - GOOGLE_WORKSPACE_CLI_CONFIG_DIR=${GOOGLE_WORKSPACE_CLI_CONFIG_DIR:-/var/lib/remote-cli/gws}
       - GOOGLE_WORKSPACE_PROJECT_ID=${GOOGLE_WORKSPACE_PROJECT_ID:-}
+      - GOOGLE_WORKSPACE_OAUTH_CLIENT_ID=${GOOGLE_WORKSPACE_OAUTH_CLIENT_ID:-}
+      - GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET=${GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET:-}
+      - GOOGLE_WORKSPACE_OAUTH_PUBLIC_BASE_URL=${GOOGLE_WORKSPACE_OAUTH_PUBLIC_BASE_URL:-}
+      - GOOGLE_WORKSPACE_OAUTH_SCOPES=${GOOGLE_WORKSPACE_OAUTH_SCOPES:-}
+      - GOOGLE_WORKSPACE_OAUTH_ENCRYPTION_KEY=${GOOGLE_WORKSPACE_OAUTH_ENCRYPTION_KEY:-}
+      - GOOGLE_WORKSPACE_OAUTH_STORAGE_DIR=/var/lib/remote-cli/google-workspace-oauth
+      - SLACK_TEAM_ID=${SLACK_TEAM_ID:-}
       - DAYTONA_API_KEY=${DAYTONA_API_KEY:-}
       - DAYTONA_API_URL=${DAYTONA_API_URL:-https://app.daytona.io/api}
       - DAYTONA_SNAPSHOT=${DAYTONA_SNAPSHOT:-}
@@ -61,7 +68,7 @@ services:
       - ./docker-volumes/home/thor:/home/thor
       - ./docker-volumes/workspace:/workspace
       - ./docker-volumes/github-app:/var/lib/remote-cli/github-app
-      - ./docker-volumes/google-workspace:/etc/thor/google-workspace:ro
+      - google-workspace-oauth-data:/var/lib/remote-cli/google-workspace-oauth
       - shared-tmp:/tmp
     depends_on:
       grafana-mcp:
@@ -76,7 +83,7 @@ services:
       retries: 10
 
   grafana-mcp:
-    image: grafana/mcp-grafana:0.14.0
+    image: grafana/mcp-grafana:1.3.0
     restart: unless-stopped
     entrypoint:
       [
@@ -87,6 +94,8 @@ services:
         "0.0.0.0:8000",
         "-enabled-tools",
         "datasource,prometheus,loki,proxied",
+        "-allowed-hosts",
+        "grafana-mcp:8000,localhost:8000,127.0.0.1:8000",
       ]
     environment:
       - GRAFANA_URL=${GRAFANA_URL:?set GRAFANA_URL}
@@ -101,7 +110,7 @@ services:
       start_interval: 2s
 
   falcon-mcp:
-    image: quay.io/crowdstrike/falcon-mcp:0.10.0
+    image: quay.io/crowdstrike/falcon-mcp:0.19.0
     restart: unless-stopped
     command:
       [
@@ -164,6 +173,50 @@ services:
       timeout: 3s
       retries: 10
 
+  codex-lb:
+    image: ghcr.io/soju06/codex-lb:v1.24.0@sha256:ba5598aaa70f7acf74a958139037604621ec2582a7fb5fe1e870f08bece807d6
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:2455:2455"
+      - "127.0.0.1:1455:1455"
+    environment:
+      - http_proxy=http://mitmproxy:8080
+      - https_proxy=http://mitmproxy:8080
+      - HTTP_PROXY=http://mitmproxy:8080
+      - HTTPS_PROXY=http://mitmproxy:8080
+      - no_proxy=localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,falcon-mcp,codex-lb,opencode,admin,ingress,vouch,cron,mitmproxy
+      - NO_PROXY=localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,falcon-mcp,codex-lb,opencode,admin,ingress,vouch,cron,mitmproxy
+      # Browser auth is owned by ingress/Vouch. Direct host ports stay on loopback.
+      - CODEX_LB_DASHBOARD_AUTH_MODE=disabled
+      # OpenCode uses a non-secret placeholder key from the private Docker network.
+      - CODEX_LB_PROXY_UNAUTHENTICATED_CLIENT_CIDRS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+      - CODEX_LB_UPSTREAM_WEBSOCKET_TRUST_ENV=true
+      # Avoid cross-call stream mixing between OpenCode's concurrent title/build calls.
+      - CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_ENABLED=false
+      # Discover actual per-account model capabilities for newly introduced plan identifiers.
+      - CODEX_LB_MODEL_REGISTRY_ENABLED=true
+      - SSL_CERT_FILE=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
+      - REQUESTS_CA_BUNDLE=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
+      - CURL_CA_BUNDLE=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
+    volumes:
+      - codex-lb-data:/var/lib/codex-lb
+      - ./docker-volumes/mitmproxy/public:/etc/thor/mitmproxy-public:ro
+    depends_on:
+      mitmproxy:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:2455/health/ready')",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
   opencode:
     build:
       context: .
@@ -176,11 +229,13 @@ services:
     environment:
       - http_proxy=http://mitmproxy:8080
       - https_proxy=http://mitmproxy:8080
-      - no_proxy=localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,falcon-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
+      - no_proxy=localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,falcon-mcp,codex-lb,opencode,admin,ingress,vouch,cron,mitmproxy
       - HTTP_PROXY=http://mitmproxy:8080
       - HTTPS_PROXY=http://mitmproxy:8080
-      - NO_PROXY=localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,falcon-mcp,opencode,admin,ingress,vouch,cron,mitmproxy
+      - NO_PROXY=localhost,127.0.0.1,::1,remote-cli,gateway,runner,grafana-mcp,falcon-mcp,codex-lb,opencode,admin,ingress,vouch,cron,mitmproxy
       - NODE_OPTIONS=--use-env-proxy --disable-warning=UNDICI-EHPA
+      - CODEX_LB_BASE_URL=http://codex-lb:2455/v1
+      - CODEX_LB_API_KEY=codex-lb-local
       - NODE_EXTRA_CA_CERTS=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
       - CURL_CA_BUNDLE=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
       - SSL_CERT_FILE=/etc/thor/mitmproxy-public/mitmproxy-ca.pem
@@ -205,6 +260,8 @@ services:
       remote-cli:
         condition: service_healthy
       mitmproxy:
+        condition: service_healthy
+      codex-lb:
         condition: service_healthy
     healthcheck:
       test:
@@ -340,8 +397,12 @@ services:
       - "${INGRESS_PORT:-8080}:8080"
     environment:
       - THOR_ADMIN_EMAILS=${THOR_ADMIN_EMAILS:?set THOR_ADMIN_EMAILS}
+      - THOR_INTERNAL_SECRET=${THOR_INTERNAL_SECRET:?set THOR_INTERNAL_SECRET}
+      - GOOGLE_WORKSPACE_OAUTH_PUBLIC_BASE_URL=${GOOGLE_WORKSPACE_OAUTH_PUBLIC_BASE_URL:-http://localhost:8080}
     depends_on:
       gateway:
+        condition: service_healthy
+      remote-cli:
         condition: service_healthy
       opencode:
         condition: service_healthy
@@ -349,6 +410,10 @@ services:
         condition: service_healthy
       vouch:
         condition: service_healthy
+      codex-lb:
+        condition: service_healthy
 
 volumes:
+  codex-lb-data:
+  google-workspace-oauth-data:
   shared-tmp:

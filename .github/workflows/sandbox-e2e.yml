@@ -66,7 +66,6 @@ jobs:
       DRATA_SCOPES: read:ci
       DRATA_API_BASE_URL: http://localhost
       KALI_API_BASE_URL: http://localhost:5000
-      GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: ""
       GOOGLE_WORKSPACE_CLI_CONFIG_DIR: /var/lib/remote-cli/gws
       GOOGLE_WORKSPACE_PROJECT_ID: ""
       VOUCH_GOOGLE_CLIENT_ID: ci-fake

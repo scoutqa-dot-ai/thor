@@ -8,14 +8,40 @@ const exec = promisify(execFile);
 const baseUrl = process.env.THOR_REMOTE_CLI_URL;
 const state = async () => (await fetch(`${baseUrl}/fixture-state`)).json();
 async function gws(args) {
-  return (await exec("gws", args)).stdout;
+  const pending = await exec("gws", args);
+  const event = JSON.parse(pending.stdout);
+  assert.equal(event.type, "approval_required");
+  assert.equal(event.tool, "google_workspace_command");
+  assert.match(event.args.command_fingerprint, /^[a-f0-9]{64}$/);
+  assert.equal(event.args.google_workspace_email, "person@example.com");
+
+  const response = await fetch(`${baseUrl}/fixture-approve`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ actionId: event.actionId }),
+  });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  if (result.exitCode !== 0) {
+    const error = new Error(result.stderr || result.stdout || "gws fixture command failed");
+    error.code = result.exitCode;
+    error.stdout = result.stdout;
+    error.stderr = result.stderr;
+    throw error;
+  }
+  return result.stdout;
 }
 
 assert.match(await gws(["--version"]), /0\.22\.5/);
 assert.match(await gws(["--help"]), /gws/);
 assert.match(await gws(["docs", "documents", "get", "--help"]), /params/);
 assert.match(await gws(["schema", "docs.documents.get"]), /documentId/);
-assert.equal((await state()).tokenRequests, 0, "discovery must not authenticate");
+assert.match(await gws(["schema", "docs.documents.create"]), /POST/);
+await assert.rejects(
+  exec("gws", ["auth", "--help"]),
+  (error) => error.code === 1 && /auth commands are disabled/.test(error.stderr),
+);
+assert.ok((await state()).tokenRequests > 0, "approved commands must refresh user OAuth");
 
 // Even a repo-local dotenv cannot select credentials/token/cache for the server.
 await writeFile(
@@ -77,49 +103,78 @@ assert.equal(
   "sheet-id",
 );
 
-const pages = (await gws(["drive", "files", "list", "--page-all"]))
+const pages = (await gws(["drive", "files", "list", "--page-all", "--page-limit=12"]))
   .trim()
   .split("\n")
   .map((line) => JSON.parse(line));
-assert.equal(pages.length, 10, "server must bound otherwise endless pagination");
-assert.equal(pages.at(-1).nextPageToken, "10");
+assert.equal(pages.length, 12, "caller pagination must reach upstream without a Thor cap");
+assert.equal(pages.at(-1).nextPageToken, "12");
 assert.equal(
   (await gws(["drive", "files", "list", "--page-all", "--page-limit=2"])).trim().split("\n").length,
   2,
 );
 
-const beforeDenials = await state();
-for (const args of [
-  ["docs", "documents", "create"],
-  ["sheets", "+append", "--help"],
-  ["drive", "files", "export"],
-  ["drive", "files", "get", "--params", '{"fileId":"id","alt":"media"}'],
-  ["drive", "files", "list", "--params", "@/var/lib/remote-cli/gws/fixture-credentials.json"],
-  ["auth", "export", "--unmasked"],
-]) {
-  await assert.rejects(
-    exec("gws", args),
-    (error) => error.code === 1 && /gws policy:/.test(error.stderr),
-  );
-}
+assert.match(await gws(["drive", "files", "list", "--format", "yaml"]), /^files:/m);
 assert.deepEqual(
-  await state(),
-  beforeDenials,
-  "denied commands must not reach auth or Google APIs",
+  JSON.parse(await gws(["docs", "documents", "create", "--json", '{"title":"Fixture write"}'])),
+  {
+    documentId: "created-document",
+    title: "Fixture write",
+  },
 );
 await assert.rejects(
-  exec("gws", ["drive", "files", "get", "--params", '{"fileId":"missing"}']),
+  gws(["docs", "documents", "create", "--json", '{"title":"Denied"}']),
+  (error) =>
+    error.code === 1 && /Fixture write permission denied/.test(error.stdout + error.stderr),
+);
+const invalidArgv = await fetch(`${baseUrl}/exec/gws`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ args: [1] }),
+});
+assert.equal(invalidArgv.status, 400);
+
+assert.deepEqual(
+  JSON.parse(
+    (
+      await exec("drata", [
+        "api",
+        "POST",
+        "/drata-fixture/resources",
+        "--json",
+        '{"name":"Fixture"}',
+      ])
+    ).stdout,
+  ),
+  {
+    method: "POST",
+    data: { name: "Fixture" },
+  },
+);
+assert.equal((await exec("drata", ["api", "DELETE", "/drata-fixture/resources/1"])).stdout, "null");
+await assert.rejects(
+  exec("drata", ["api", "PATCH", "/drata-fixture/denied", "--json", "{}"]),
+  (error) => error.code === 1 && /Drata fixture permission denied/.test(error.stdout),
+);
+await assert.rejects(
+  gws(["drive", "files", "get", "--params", '{"fileId":"missing"}']),
   (error) => error.code === 1 && /Fixture file not found/.test(error.stdout + error.stderr),
 );
 
 const final = await state();
-assert.ok(final.tokenRequests > 0, "real service-account token exchange must run");
+assert.equal(final.authorizationTokenRequests, 1, "one OAuth connection exchange must run");
+assert.ok(final.tokenRequests > 0, "per-command OAuth refresh must run");
 assert.ok(final.requests.some((request) => request.query.includeTabsContent === "true"));
 assert.ok(final.requests.some((request) => request.query.q === "name contains 'report'"));
-assert.ok(
-  final.requests.every(
-    (request) => request.method === "GET" || request.path.endsWith(":getByDataFilter"),
-  ),
+assert.equal(
+  final.requests.filter((request) => request.path === "/v1/documents" && request.method === "POST")
+    .length,
+  2,
+);
+assert.equal(final.drataTokenRequests, 1);
+assert.deepEqual(
+  final.drataRequests.map((request) => request.method),
+  ["POST", "DELETE", "PATCH"],
 );
 for (const path of [
   "/etc/thor/google-workspace",
@@ -129,10 +184,11 @@ for (const path of [
   await assert.rejects(access(path), { code: "ENOENT" });
 }
 assert.equal(process.env.GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE, undefined);
+assert.equal(process.env.DRATA_CLIENT_SECRET, undefined);
 assert.match(
   await readFile("/home/thor/.config/opencode/skills/gws/SKILL.md", "utf8"),
   /includeTabsContent/,
 );
 console.log(
-  "PASS: pinned gws + OpenCode wrapper, Drive/Docs/Sheets, pagination, denials, errors, and credential isolation",
+  "PASS: per-user GWS OAuth/approval, reads/writes, caller formatting/pagination, upstream denials, and private mounts",
 );

@@ -1,4 +1,4 @@
-import { APPROVAL_TOOL_NAMES } from "./approval-events.js";
+import { APPROVAL_TOOL_NAMES, NON_PROXY_APPROVAL_TOOL_NAMES } from "./approval-events.js";
 import type { ProxyConfig } from "./workspace-config.js";
 
 export const PROXY_NAMES = [
@@ -118,7 +118,7 @@ export const PROXY_REGISTRY: Record<ProxyName, ProxyConfig> = {
     allow: [
       "falcon_check_connectivity",
       "falcon_list_enabled_modules",
-      "falcon_list_modules",
+      "falcon_list_enabled_tools",
       "falcon_search_detections",
       "falcon_get_detection_details",
       "falcon_search_hosts",
@@ -154,7 +154,10 @@ export const PROXY_REGISTRY: Record<ProxyName, ProxyConfig> = {
 const configuredApprovedTools = Object.values(PROXY_REGISTRY)
   .flatMap((proxy) => proxy.approve)
   .sort();
-const typedApprovalTools = [...APPROVAL_TOOL_NAMES].sort();
+const nonProxyApprovalTools = new Set<string>(NON_PROXY_APPROVAL_TOOL_NAMES);
+const typedApprovalTools = APPROVAL_TOOL_NAMES.filter(
+  (tool) => !nonProxyApprovalTools.has(tool),
+).sort();
 
 if (
   configuredApprovedTools.length !== typedApprovalTools.length ||

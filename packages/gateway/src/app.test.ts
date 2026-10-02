@@ -3393,6 +3393,7 @@ describe("gateway", () => {
               status: "approved",
               tool: "merge_pull_request",
               upstream: "github",
+              result_capability: "a".repeat(43),
             }),
             stderr: "",
             exitCode: 0,
@@ -3451,6 +3452,8 @@ describe("gateway", () => {
     expect(runnerCall).toBeDefined();
     const runnerBody = JSON.parse(String(runnerCall?.[1]?.body));
     expect(runnerBody.correlationKey).toBe("git:branch:test-repo:feature/from-slack");
+    expect(runnerBody.triggerSlackId).toBe("U123");
+    expect(runnerBody.prompt).toContain(`approval result act-1 ${"a".repeat(43)}`);
   });
 
   it("retries queued approval outcome re-entry when runner is busy", async () => {

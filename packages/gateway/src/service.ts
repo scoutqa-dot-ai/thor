@@ -69,6 +69,7 @@ export interface ApprovalOutcomeEventPayload {
   resolutionStatus?: string;
   resolutionSummary?: string;
   resolutionExitCode?: number;
+  resultCapability?: string;
 }
 
 export interface BatchDispatchInput {
@@ -392,8 +393,11 @@ export function buildApprovalOutcomePrompt(events: ApprovalOutcomeEventPayload[]
     const summary = event.resolutionSummary
       ? `\nResolution summary: ${event.resolutionSummary}`
       : "";
+    const resultCommand = event.resultCapability
+      ? `\nRetrieve the bounded private result now with: approval result ${event.actionId} ${event.resultCapability}\nThis result capability is private and single-use; do not quote it in Slack or other output.`
+      : "";
 
-    return `${index + 1}. ${guidance}.\nReviewer: <@${event.reviewer}>\nTarget: ${target}\nThread: ${event.threadTs}${summary}`;
+    return `${index + 1}. ${guidance}.\nReviewer: <@${event.reviewer}>\nTarget: ${target}\nThread: ${event.threadTs}${summary}${resultCommand}`;
   });
 
   return `Approval outcome event${events.length > 1 ? "s" : ""}:\n\n${lines.join("\n\n")}`;

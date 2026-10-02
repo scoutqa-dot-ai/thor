@@ -88,9 +88,10 @@ CMD ["node", "/app/packages/runner/dist/index.js"]
 
 # --- Install upstream opencode from npm ---
 FROM base AS opencode
-RUN npm install -g opencode-ai@1.15.10 @aikidosec/mcp@1.0.7
+RUN npm install -g opencode-ai@1.18.29 @aikidosec/mcp@1.0.22
+# Aikido's keytar native addon requires libsecret, including in headless images.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl jq python3-pip ripgrep \
+    && apt-get install -y --no-install-recommends ca-certificates curl jq libsecret-1-0 python3-pip ripgrep \
     && npm install -g prettier@3.8.3 \
     && pip3 install --break-system-packages ruff \
     && curl -fsSL "https://github.com/mvdan/sh/releases/download/v3.13.1/shfmt_v3.13.1_linux_$(dpkg --print-architecture)" -o /usr/local/bin/shfmt \
@@ -163,9 +164,9 @@ COPY packages/remote-cli/bin/git /usr/local/lib/thor/bin/git
 COPY packages/remote-cli/bin/gh /usr/local/lib/thor/bin/gh
 COPY packages/remote-cli/bin/git-askpass /usr/local/lib/thor/bin/git-askpass
 RUN chmod +x /usr/local/lib/thor/bin/git /usr/local/lib/thor/bin/gh /usr/local/lib/thor/bin/git-askpass
-RUN mkdir -p /var/lib/remote-cli/github-app/cache /var/lib/remote-cli/gws \
+RUN mkdir -p /var/lib/remote-cli/github-app/cache /var/lib/remote-cli/gws /var/lib/remote-cli/google-workspace-oauth \
     && chown -R thor:thor /var/lib/remote-cli \
-    && chmod 700 /var/lib/remote-cli/gws
+    && chmod 700 /var/lib/remote-cli/gws /var/lib/remote-cli/google-workspace-oauth
 USER thor
 RUN mkdir -p /workspace/repos
 WORKDIR /workspace/repos
