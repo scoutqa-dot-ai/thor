@@ -59,17 +59,25 @@ const OwnerSchema = z.object({
   triggerId: z.string().min(1),
 });
 
-const PendingRequestSchema = z.object({
+const RequestOwnerSchema = OwnerSchema.partial({ expectedGoogleEmail: true });
+
+const PendingRequestBaseSchema = z.object({
   version: z.literal(1),
   requestId: z.string().min(20).max(200),
-  phase: z.enum(["link_issued", "authorization_started", "exchanging", "completed", "failed"]),
-  owner: OwnerSchema,
   createdAtMs: z.number().int().nonnegative(),
   expiresAtMs: z.number().int().positive(),
-  oauthState: z.string().min(20).max(300).optional(),
-  codeVerifier: z.string().min(43).max(128).optional(),
-  browserNonce: z.string().min(20).max(300).optional(),
 });
+const PendingRequestSchema = z.discriminatedUnion("phase", [
+  PendingRequestBaseSchema.extend({ phase: z.literal("link_issued"), owner: RequestOwnerSchema }),
+  PendingRequestBaseSchema.extend({
+    phase: z.enum(["authorization_started", "exchanging"]),
+    owner: OwnerSchema,
+    oauthState: z.string().min(20).max(300),
+    codeVerifier: z.string().min(43).max(128),
+    browserNonce: z.string().min(20).max(300),
+  }),
+  PendingRequestBaseSchema.extend({ phase: z.enum(["completed", "failed"]), owner: OwnerSchema }),
+]);
 
 type PendingRequest = z.infer<typeof PendingRequestSchema>;
 /** Slack turn identity bound to one OAuth request or command approval. */
@@ -131,6 +139,23 @@ const UserInfoSchema = z.object({
   email_verified: z.boolean(),
 });
 
+const OAUTH_SETTING_NAMES = {
+  clientId: "GOOGLE_WORKSPACE_OAUTH_CLIENT_ID",
+  clientSecret: "GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET",
+  publicBaseUrl: "GOOGLE_WORKSPACE_OAUTH_PUBLIC_BASE_URL",
+  scopes: "GOOGLE_WORKSPACE_OAUTH_SCOPES",
+  encryptionKey: "GOOGLE_WORKSPACE_OAUTH_ENCRYPTION_KEY",
+  storageDir: "GOOGLE_WORKSPACE_OAUTH_STORAGE_DIR",
+  slackTeamId: "SLACK_TEAM_ID",
+} as const;
+type OAuthSettingName = (typeof OAUTH_SETTING_NAMES)[keyof typeof OAUTH_SETTING_NAMES];
+/** Operator-safe OAuth setup evidence; names only, never credential or configuration values. */
+export interface GwsOAuthSetupStatus {
+  readonly configured: boolean;
+  readonly missing: readonly OAuthSettingName[];
+  readonly invalid: readonly OAuthSettingName[];
+}
+
 const ConfigInputSchema = z.object({
   clientId: z.string().trim().min(1),
   clientSecret: z.string().trim().min(1),
@@ -178,6 +203,7 @@ export class GwsOAuthError extends Error {
       | "connection_missing"
       | "connection_invalid",
     readonly httpStatus?: number,
+    readonly configurationFields?: readonly OAuthSettingName[],
   ) {
     super(
       `Google Workspace OAuth failed: ${stage}/${code}${httpStatus === undefined ? "" : ` (HTTP ${httpStatus})`}`,
@@ -189,15 +215,17 @@ export type GwsOAuthResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: GwsOAuthError };
 
+/** Private invitation for the trusted Slack requester; optional email restricts choice, otherwise browser confirmation establishes it. */
 export interface GwsConnectionRequestInput {
   readonly slackUserId: string;
-  readonly expectedGoogleEmail: string;
+  readonly expectedGoogleEmail?: string;
   readonly sessionId: string;
   readonly anchorId: string;
   readonly triggerId: string;
 }
 
 export interface GwsPendingCommandInput extends GwsConnectionRequestInput {
+  readonly expectedGoogleEmail: string;
   readonly actionId: string;
   readonly args: readonly string[];
 }
@@ -254,6 +282,7 @@ export interface GwsOAuthServiceDeps {
 /** Owns per-Slack-user Google OAuth state, encrypted grants, and access-token refresh. */
 export class GwsOAuthService {
   readonly #config: GwsOAuthResult<GwsOAuthConfig>;
+  readonly #missingSettings: readonly OAuthSettingName[];
   readonly #fetch: typeof fetch;
   readonly #now: () => number;
   readonly #randomBytes: (size: number) => Buffer;
@@ -263,12 +292,28 @@ export class GwsOAuthService {
 
   constructor(env: NodeJS.ProcessEnv, deps: GwsOAuthServiceDeps = {}) {
     this.#config = parseGwsOAuthConfig(env);
+    this.#missingSettings = Object.values(OAUTH_SETTING_NAMES).filter(
+      (name) => name !== "GOOGLE_WORKSPACE_OAUTH_STORAGE_DIR" && !env[name]?.trim(),
+    );
     this.#fetch = deps.fetch ?? fetch;
     this.#now = deps.now ?? Date.now;
     this.#randomBytes = deps.randomBytes ?? randomBytes;
     this.#authorizationEndpoint = deps.authorizationEndpoint ?? GOOGLE_AUTHORIZATION_ENDPOINT;
     this.#tokenEndpoint = deps.tokenEndpoint ?? GOOGLE_TOKEN_ENDPOINT;
     this.#userInfoEndpoint = deps.userInfoEndpoint ?? GOOGLE_USERINFO_ENDPOINT;
+  }
+
+  /** Report missing and invalid OAuth settings without exposing values, state or credentials. */
+  setupStatus(): GwsOAuthSetupStatus {
+    return {
+      configured: this.#config.ok,
+      missing: this.#config.ok ? [] : this.#missingSettings,
+      invalid: this.#config.ok
+        ? []
+        : (this.#config.error.configurationFields ?? []).filter(
+            (name) => !this.#missingSettings.includes(name),
+          ),
+    };
   }
 
   /** Return the configured Slack workspace without exposing OAuth configuration. */
@@ -282,10 +327,10 @@ export class GwsOAuthService {
     if (!this.#config.ok) return this.#config;
     this.#pruneExpiredTransientRecords();
     const config = this.#config.value;
-    const parsedOwner = OwnerSchema.safeParse({
+    const parsedOwner = RequestOwnerSchema.safeParse({
       slackTeamId: config.slackTeamId,
       slackUserId: input.slackUserId,
-      expectedGoogleEmail: input.expectedGoogleEmail.toLowerCase(),
+      expectedGoogleEmail: input.expectedGoogleEmail?.toLowerCase(),
       sessionId: input.sessionId,
       anchorId: input.anchorId,
       triggerId: input.triggerId,
@@ -316,10 +361,57 @@ export class GwsOAuthService {
     };
   }
 
+  /** Show the signed-in Google identity and exact Slack recipient before an unpinned account can be linked. */
+  previewAuthorization(
+    requestId: string,
+    authenticatedEmail: string,
+  ): GwsOAuthResult<{
+    slackUserId: string;
+    slackTeamId: string;
+    googleEmail: string;
+    confirmationRequired: boolean;
+    confirmationToken: string;
+  }> {
+    if (!this.#config.ok) return this.#config;
+    const result = this.#readRequest(requestId);
+    if (!result.ok) return result;
+    const request = result.value;
+    if (request.phase !== "link_issued") return failure("request", "already_used");
+    if (request.expiresAtMs <= this.#now()) return failure("request", "expired");
+    const email = z.email().safeParse(authenticatedEmail.trim().toLowerCase());
+    if (
+      !email.success ||
+      (request.owner.expectedGoogleEmail && request.owner.expectedGoogleEmail !== email.data)
+    )
+      return failure("identity", "identity_mismatch");
+    const confirmationToken = createHmac("sha256", this.#config.value.encryptionKey.reveal())
+      .update(
+        JSON.stringify([
+          "thor:gws-connect-confirm:v1",
+          requestId,
+          email.data,
+          request.owner.slackUserId,
+          request.expiresAtMs,
+        ]),
+      )
+      .digest("base64url");
+    return {
+      ok: true,
+      value: {
+        slackUserId: request.owner.slackUserId,
+        slackTeamId: request.owner.slackTeamId,
+        googleEmail: email.data,
+        confirmationRequired: !request.owner.expectedGoogleEmail,
+        confirmationToken,
+      },
+    };
+  }
+
   /** Bind a Vouch-authenticated browser to one request and create the Google redirect. */
   beginAuthorization(
     requestId: string,
     authenticatedEmail: string,
+    confirmationToken?: string,
   ): GwsOAuthResult<GwsAuthorizationStart> {
     if (!this.#config.ok) return this.#config;
     const requestResult = this.#readRequest(requestId);
@@ -327,15 +419,21 @@ export class GwsOAuthService {
     const request = requestResult.value;
     if (request.phase !== "link_issued") return failure("request", "already_used");
     if (request.expiresAtMs <= this.#now()) return failure("request", "expired");
-    if (request.owner.expectedGoogleEmail !== authenticatedEmail.trim().toLowerCase()) {
-      return failure("identity", "identity_mismatch");
-    }
+    const preview = this.previewAuthorization(requestId, authenticatedEmail);
+    if (!preview.ok) return preview;
+    if (
+      preview.value.confirmationRequired &&
+      (!confirmationToken ||
+        !timingSafeTextEqual(confirmationToken, preview.value.confirmationToken))
+    )
+      return failure("request", "browser_mismatch");
 
     const oauthState = randomBase64Url(this.#randomBytes, 32);
     const codeVerifier = randomBase64Url(this.#randomBytes, 48);
     const browserNonce = randomBase64Url(this.#randomBytes, 32);
     const started: PendingRequest = {
       ...request,
+      owner: { ...request.owner, expectedGoogleEmail: preview.value.googleEmail },
       phase: "authorization_started",
       oauthState,
       codeVerifier,
@@ -356,7 +454,7 @@ export class GwsOAuthService {
     authorizationUrl.searchParams.set("client_id", config.clientId);
     authorizationUrl.searchParams.set("redirect_uri", config.redirectUri);
     authorizationUrl.searchParams.set("response_type", "code");
-    authorizationUrl.searchParams.set("login_hint", request.owner.expectedGoogleEmail);
+    authorizationUrl.searchParams.set("login_hint", preview.value.googleEmail);
     authorizationUrl.searchParams.set("scope", config.scopes.join(" "));
     authorizationUrl.searchParams.set("access_type", "offline");
     authorizationUrl.searchParams.set("prompt", "consent");
@@ -391,12 +489,7 @@ export class GwsOAuthService {
     const requestResult = this.#readRequest(binding.requestId);
     if (!requestResult.ok) return requestResult;
     const request = requestResult.value;
-    if (
-      request.phase !== "authorization_started" ||
-      request.oauthState !== input.state ||
-      !request.codeVerifier ||
-      !request.browserNonce
-    ) {
+    if (request.phase !== "authorization_started" || request.oauthState !== input.state) {
       return failure("request", "already_used");
     }
     if (!timingSafeTextEqual(request.browserNonce, input.browserNonce)) {
@@ -433,7 +526,7 @@ export class GwsOAuthService {
     const existing = this.#readConnection(request.owner.slackUserId);
     const connection: Connection = {
       version: 1,
-      connectionId: existing.ok ? existing.value.connectionId : randomUUID(),
+      connectionId: randomUUID(),
       slackTeamId: request.owner.slackTeamId,
       slackUserId: request.owner.slackUserId,
       expectedGoogleEmail: request.owner.expectedGoogleEmail,
@@ -476,10 +569,10 @@ export class GwsOAuthService {
     };
   }
 
-  /** Return safe connected-account metadata without refreshing or exposing a token. */
+  /** Load only this Slack owner's grant without refreshing; an optional email pin restricts its verified identity. */
   findConnectedIdentity(
     slackUserId: string,
-    expectedGoogleEmail: string,
+    expectedGoogleEmail?: string,
   ): GwsOAuthResult<GwsConnectedIdentity> {
     if (!this.#config.ok) return this.#config;
     const result = this.#readConnection(slackUserId);
@@ -488,8 +581,9 @@ export class GwsOAuthService {
     if (
       connection.slackTeamId !== this.#config.value.slackTeamId ||
       connection.slackUserId !== slackUserId ||
-      connection.expectedGoogleEmail !== expectedGoogleEmail.toLowerCase() ||
-      connection.googleEmail !== expectedGoogleEmail.toLowerCase()
+      connection.expectedGoogleEmail !== connection.googleEmail ||
+      (expectedGoogleEmail !== undefined &&
+        connection.googleEmail !== expectedGoogleEmail.toLowerCase())
     ) {
       return failure("identity", "identity_mismatch");
     }
@@ -733,7 +827,9 @@ export class GwsOAuthService {
     }
   }
 
-  #markRequestFailed(request: PendingRequest): void {
+  #markRequestFailed(
+    request: Extract<PendingRequest, { phase: "authorization_started" | "exchanging" }>,
+  ): void {
     this.#writeEncrypted(this.#requestPath(request.requestId), {
       version: 1,
       requestId: request.requestId,
@@ -823,7 +919,13 @@ export class GwsOAuthService {
 
   #readRequest(requestId: string): GwsOAuthResult<PendingRequest> {
     if (!/^[A-Za-z0-9_-]{20,200}$/.test(requestId)) return failure("request", "not_found");
-    return this.#readEncrypted(this.#requestPath(requestId), PendingRequestSchema);
+    const request = this.#readEncrypted(this.#requestPath(requestId), PendingRequestSchema);
+    if (
+      request.ok &&
+      (!this.#config.ok || request.value.owner.slackTeamId !== this.#config.value.slackTeamId)
+    )
+      return failure("identity", "identity_mismatch");
+    return request;
   }
 
   #readConnection(slackUserId: string): GwsOAuthResult<Connection> {
@@ -931,12 +1033,14 @@ function parseGwsOAuthConfig(env: NodeJS.ProcessEnv): GwsOAuthResult<GwsOAuthCon
       env.GOOGLE_WORKSPACE_OAUTH_STORAGE_DIR ?? "/var/lib/remote-cli/google-workspace-oauth",
     slackTeamId: env.SLACK_TEAM_ID,
   });
-  if (
-    !parsed.success ||
-    parsed.data.scopes.some((scope) => !GOOGLE_WORKSPACE_ALLOWED_SCOPES.has(scope))
-  ) {
-    return failure("configuration", "unavailable");
+  if (!parsed.success) {
+    const fields = Object.entries(OAUTH_SETTING_NAMES)
+      .filter(([field]) => parsed.error.issues.some((issue) => issue.path[0] === field))
+      .map(([, name]) => name);
+    return configurationFailure(fields);
   }
+  if (parsed.data.scopes.some((scope) => !GOOGLE_WORKSPACE_ALLOWED_SCOPES.has(scope)))
+    return configurationFailure(["GOOGLE_WORKSPACE_OAUTH_SCOPES"]);
 
   let publicBaseUrl: URL;
   let encryptionKey: Buffer;
@@ -944,20 +1048,23 @@ function parseGwsOAuthConfig(env: NodeJS.ProcessEnv): GwsOAuthResult<GwsOAuthCon
     publicBaseUrl = new URL(parsed.data.publicBaseUrl);
     encryptionKey = Buffer.from(parsed.data.encryptionKey, "base64");
   } catch {
-    return failure("configuration", "unavailable");
+    return configurationFailure([
+      "GOOGLE_WORKSPACE_OAUTH_PUBLIC_BASE_URL",
+      "GOOGLE_WORKSPACE_OAUTH_ENCRYPTION_KEY",
+    ]);
   }
+  if (!/^[A-Za-z0-9+/]{43}=$/.test(parsed.data.encryptionKey) || encryptionKey.length !== 32)
+    return configurationFailure(["GOOGLE_WORKSPACE_OAUTH_ENCRYPTION_KEY"]);
   if (
-    !/^[A-Za-z0-9+/]{43}=$/.test(parsed.data.encryptionKey) ||
     parsed.data.publicBaseUrl.endsWith("/") ||
     publicBaseUrl.protocol !== "https:" ||
     publicBaseUrl.username ||
     publicBaseUrl.password ||
     publicBaseUrl.pathname !== "/" ||
     publicBaseUrl.search ||
-    publicBaseUrl.hash ||
-    encryptionKey.length !== 32
+    publicBaseUrl.hash
   ) {
-    return failure("configuration", "unavailable");
+    return configurationFailure(["GOOGLE_WORKSPACE_OAUTH_PUBLIC_BASE_URL"]);
   }
   const normalizedBase = new URL(publicBaseUrl.toString());
   normalizedBase.pathname = normalizedBase.pathname.replace(/\/+$/, "") || "/";
@@ -1039,6 +1146,13 @@ async function readBoundedResponseBody(
   }
   const body = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8");
   return { ok: true, value: body };
+}
+
+function configurationFailure(fields: readonly OAuthSettingName[]): {
+  readonly ok: false;
+  readonly error: GwsOAuthError;
+} {
+  return { ok: false, error: new GwsOAuthError("configuration", "unavailable", undefined, fields) };
 }
 
 function failure(

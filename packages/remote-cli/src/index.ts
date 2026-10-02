@@ -1,3 +1,4 @@
+import { z } from "zod";
 import express, { type Express } from "express";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { access } from "node:fs/promises";
@@ -75,7 +76,7 @@ import {
   validateScoutqaArgs,
 } from "./policy.js";
 import { attributionFields, resolveTriggerUser } from "./attribution.js";
-import { GwsSlackIdentityService } from "./gws-slack-identity.js";
+import { GwsSlackIdentityService, type GwsSlackRequester } from "./gws-slack-identity.js";
 
 export { GwsOAuthService, GwsService };
 
@@ -723,7 +724,11 @@ function timingSafeStringEqual(left: string, right: string): boolean {
   return timingSafeEqual(leftDigest, rightDigest);
 }
 
-function gwsOAuthHtml(title: string, message: string): string {
+function gwsOAuthHtml(
+  title: string,
+  message: string,
+  confirmation?: { csrfToken: string },
+): string {
   const escape = (value: string) =>
     value.replace(/[&<>"']/g, (character) => {
       const escaped: Record<string, string> = {
@@ -735,7 +740,22 @@ function gwsOAuthHtml(title: string, message: string): string {
       };
       return escaped[character] ?? "";
     });
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${escape(title)}</title></head><body><h1>${escape(title)}</h1><p>${escape(message)}</p></body></html>`;
+  const form = confirmation
+    ? `<form method="post" action="/google-workspace/connect/authorize"><input type="hidden" name="csrf" value="${escape(confirmation.csrfToken)}"><button type="submit">Connect this Google account</button></form>`
+    : "";
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escape(title)}</title></head><body><h1>${escape(title)}</h1><p>${escape(message)}</p>${form}</body></html>`;
+}
+
+function gwsIdentityDenialMessage(
+  reason: Extract<GwsSlackRequester, { ok: false }>["reason"],
+): string {
+  switch (reason) {
+    case "missing_session":
+    case "no_active_slack_trigger":
+      return "Google Workspace requires an active Slack-requested turn. No OAuth DM was sent. Retry the request from Slack.\n";
+    default:
+      return "Google Workspace could not verify the configured account restrictions. No OAuth DM was sent. Ask the operator to check Google Workspace account configuration.\n";
+  }
 }
 
 export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliApp {
@@ -750,14 +770,14 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   const drata = new DrataService(process.env);
   const getConfig =
     config.configLoader ?? config.mcp?.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
-  const oauthTeam = gwsOAuth.slackTeamId();
-  const gwsIdentity = new GwsSlackIdentityService({
-    configLoader: getConfig,
-    slackTeamId: oauthTeam.ok ? oauthTeam.value : undefined,
-    botToken: config.mcp?.slack?.botToken ?? envConfig?.slackBotToken,
-    apiBaseUrl: config.mcp?.slack?.apiBaseUrl ?? envConfig?.slackApiBaseUrl,
+  const gwsSlackTransport = {
     fetch: config.mcp?.fetchImpl,
-  });
+    env: {
+      SLACK_BOT_TOKEN: config.mcp?.slack?.botToken ?? envConfig?.slackBotToken,
+      SLACK_API_BASE_URL: config.mcp?.slack?.apiBaseUrl ?? envConfig?.slackApiBaseUrl,
+    },
+  };
+  const gwsIdentity = new GwsSlackIdentityService(getConfig);
   const rawWriteToolCallLog = config.mcp?.writeToolCallLogFn ?? writeToolCallLog;
   const safeWriteToolCallLog = (entry: ToolCallLogEntry): void =>
     rawWriteToolCallLog(sanitizeCredentialBrokerToolCallLog(entry));
@@ -860,10 +880,11 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         "command_binding_mismatch",
       );
     }
-    const currentUser = await gwsIdentity.resolveGoogleEmail(consumed.value.owner.slackUserId);
+    const currentUser = gwsIdentity.resolveGooglePin(consumed.value.owner.slackUserId);
     if (
       !currentUser.ok ||
-      currentUser.googleWorkspaceEmail !== consumed.value.owner.expectedGoogleEmail
+      (currentUser.googleEmailPin !== undefined &&
+        currentUser.googleEmailPin !== consumed.value.owner.expectedGoogleEmail)
     ) {
       return finishConsumedCommand(
         {
@@ -978,17 +999,29 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         exitCode: 0,
       };
     }
-    const activeUser = await gwsIdentity.resolveActiveUser(input.context.sessionId);
+    const activeUser = gwsIdentity.resolveActiveRequester(input.context.sessionId);
     const approvedSummary = GoogleWorkspaceCommandApprovalArgsSchema.safeParse(input.action.args);
     if (
       !activeUser.ok ||
       !approvedSummary.success ||
       activeUser.slackUserId !== approvedSummary.data.slack_user_id ||
-      activeUser.googleWorkspaceEmail !== approvedSummary.data.google_workspace_email
+      (activeUser.googleEmailPin !== undefined &&
+        activeUser.googleEmailPin !== approvedSummary.data.google_workspace_email)
     ) {
       return {
         stdout: "",
         stderr: "Google Workspace command output is unavailable for this active Slack turn.\n",
+        exitCode: 1,
+      };
+    }
+    const connected = gwsOAuth.findConnectedIdentity(
+      activeUser.slackUserId,
+      approvedSummary.data.google_workspace_email,
+    );
+    if (!connected.ok || connected.value.connectionId !== approvedSummary.data.connection_id) {
+      return {
+        stdout: "",
+        stderr: "Google Workspace connection changed; command output is unavailable.\n",
         exitCode: 1,
       };
     }
@@ -1037,7 +1070,33 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       status: "ok",
       service: "remote-cli",
       mcp: mcpService.getHealth(),
-      googleWorkspaceOAuth: { configured: gwsOAuth.slackTeamId().ok },
+      googleWorkspaceOAuth: gwsOAuth.setupStatus(),
+    });
+  });
+
+  app.post("/internal/google-workspace/diagnostics", async (req, res) => {
+    if (!matchesInternalSecret(internalSecret, getInternalSecretHeader(req))) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const target = z
+      .object({ slackUserId: z.string().regex(/^[UW][A-Z0-9]+$/) })
+      .strict()
+      .safeParse(req.body);
+    if (!target.success) {
+      res.status(400).json({ error: "A Slack member ID is required" });
+      return;
+    }
+    const pin = gwsIdentity.resolveGooglePin(target.data.slackUserId);
+    const connected = pin.ok
+      ? gwsOAuth.findConnectedIdentity(target.data.slackUserId, pin.googleEmailPin)
+      : undefined;
+    res.json({
+      oauth: gwsOAuth.setupStatus(),
+      botTokenConfigured: !!gwsSlackTransport.env.SLACK_BOT_TOKEN,
+      identity: pin.ok
+        ? { ok: true, pinned: !!pin.googleEmailPin, connected: connected?.ok ?? false }
+        : pin,
     });
   });
 
@@ -1061,8 +1120,8 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     res.redirect(302, "/google-workspace/connect/authorize");
   });
 
-  app.get("/google-workspace/connect/authorize", (req, res) => {
-    setGwsOAuthBrowserSecurityHeaders(res);
+  const authorizeGoogleConnection: express.RequestHandler = (req, res) => {
+    setGwsOAuthBrowserSecurityHeaders(res, { allowSelfForm: true });
     if (!matchesInternalSecret(internalSecret, getInternalSecretHeader(req))) {
       res.status(401).type("text/plain").send("Unauthorized");
       return;
@@ -1079,7 +1138,25 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         );
       return;
     }
-    const started = gwsOAuth.beginAuthorization(requestId, authenticatedEmail);
+    const preview = gwsOAuth.previewAuthorization(requestId, authenticatedEmail);
+    if (preview.ok && preview.value.confirmationRequired && req.method === "GET") {
+      res
+        .type("html")
+        .send(
+          gwsOAuthHtml(
+            "Confirm Google Workspace connection",
+            `Connect Google account ${preview.value.googleEmail} to Slack member ${preview.value.slackUserId} in workspace ${preview.value.slackTeamId}. Continue only if this is your Slack account and you requested this private connection link. Do not forward the link.`,
+            { csrfToken: preview.value.confirmationToken },
+          ),
+        );
+      return;
+    }
+    const csrf = typeof req.body?.csrf === "string" ? req.body.csrf : undefined;
+    const started = gwsOAuth.beginAuthorization(
+      requestId,
+      authenticatedEmail,
+      req.method === "POST" ? csrf : undefined,
+    );
     if (!started.ok) {
       res.setHeader("Set-Cookie", clearGwsConnectRequestCookie());
       logInfo(log, "gws_oauth_connect_rejected", {
@@ -1102,7 +1179,9 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       gwsOAuthBrowserCookie(started.value.browserNonce, started.value.maxAgeSeconds),
     ]);
     res.redirect(302, started.value.authorizationUrl);
-  });
+  };
+  app.get("/google-workspace/connect/authorize", authorizeGoogleConnection);
+  app.post("/google-workspace/connect/authorize", authorizeGoogleConnection);
 
   app.get("/google-workspace/disconnect", (req, res) => {
     setGwsOAuthBrowserSecurityHeaders(res, { allowSelfForm: true });
@@ -1268,13 +1347,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
           threadTs: retryTarget.threadTs,
           text: "Google Workspace is connected. Retry the original request; Thor will ask you to approve the exact command before execution.",
         },
-        {
-          fetch: config.mcp?.fetchImpl,
-          env: {
-            SLACK_BOT_TOKEN: envConfig?.slackBotToken,
-            SLACK_API_BASE_URL: envConfig?.slackApiBaseUrl,
-          },
-        },
+        gwsSlackTransport,
       );
       if ("error" in notification) {
         logInfo(log, "gws_oauth_retry_notification_failed", {
@@ -1709,13 +1782,22 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       res.status(400).json({ stdout: "", stderr: `${parsed.error.message}\n`, exitCode: 1 });
       return;
     }
-    const activeUser = await gwsIdentity.resolveActiveUser(ids.sessionId);
+    if (!gwsOAuth.setupStatus().configured) {
+      logInfo(log, "exec_gws_oauth_setup_required", { ...gwsOAuth.setupStatus(), ...ids });
+      res.status(503).json({
+        stdout: "",
+        stderr:
+          "Google Workspace OAuth setup is incomplete or invalid. No authorization DM was sent. Ask the operator to check Google Workspace setup diagnostics.\n",
+        exitCode: 2,
+      });
+      return;
+    }
+    const activeUser = gwsIdentity.resolveActiveRequester(ids.sessionId);
     if (!activeUser.ok) {
       logInfo(log, "exec_gws_identity_rejected", { reason: activeUser.reason, ...ids });
       res.status(403).json({
         stdout: "",
-        stderr:
-          "Google Workspace requires an active Slack turn and a verified member identity. Ask an operator to check the bot's email-read permissions and workspace configuration.\n",
+        stderr: gwsIdentityDenialMessage(activeUser.reason),
         exitCode: 1,
       });
       return;
@@ -1723,7 +1805,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
     const connected = gwsOAuth.findConnectedIdentity(
       activeUser.slackUserId,
-      activeUser.googleWorkspaceEmail,
+      activeUser.googleEmailPin,
     );
     if (!connected.ok) {
       if (connected.error.code !== "connection_missing") {
@@ -1743,7 +1825,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       }
       const request = gwsOAuth.createConnectionRequest({
         slackUserId: activeUser.slackUserId,
-        expectedGoogleEmail: activeUser.googleWorkspaceEmail,
+        expectedGoogleEmail: activeUser.googleEmailPin,
         sessionId: activeUser.sessionId,
         anchorId: activeUser.anchorId,
         triggerId: activeUser.triggerId,
@@ -1768,13 +1850,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
           channel: activeUser.slackUserId,
           text: `Connect your Google Workspace account to Thor. This single-use link expires in 10 minutes: <${request.value.connectUrl}|Connect Google Workspace>`,
         },
-        {
-          fetch: config.mcp?.fetchImpl,
-          env: {
-            SLACK_BOT_TOKEN: envConfig?.slackBotToken,
-            SLACK_API_BASE_URL: envConfig?.slackApiBaseUrl,
-          },
-        },
+        gwsSlackTransport,
       );
       if ("error" in slackPost) {
         logInfo(log, "exec_gws_connection_notification_failed", {
@@ -1785,7 +1861,20 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         res.status(503).json({
           stdout: "",
           stderr:
-            "Google Workspace connection is required, but Thor could not send the private link.\n",
+            "Google Workspace connection is required, but private OAuth DM delivery could not be confirmed. Do not assume a link was sent; ask the operator to check Slack DM permissions and the app's Messages tab.\n",
+          exitCode: 2,
+        });
+        return;
+      }
+      if (!slackPost.channel.startsWith("D")) {
+        logInfo(log, "exec_gws_connection_dm_unconfirmed", {
+          slack: activeUser.slackUserId,
+          ...ids,
+        });
+        res.status(502).json({
+          stdout: "",
+          stderr:
+            "Google Workspace could not confirm delivery to a private Slack DM. Do not assume a link was sent; ask the operator to check Slack DM configuration.\n",
           exitCode: 2,
         });
         return;
@@ -1861,7 +1950,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       actionId: action.id,
       args: parsed.args,
       slackUserId: activeUser.slackUserId,
-      expectedGoogleEmail: activeUser.googleWorkspaceEmail,
+      expectedGoogleEmail: connected.value.googleEmail,
       sessionId: activeUser.sessionId,
       anchorId: activeUser.anchorId,
       triggerId: activeUser.triggerId,
@@ -1898,13 +1987,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         text: approvalMessage.text,
         blocks: approvalMessage.blocks,
       },
-      {
-        fetch: config.mcp?.fetchImpl,
-        env: {
-          SLACK_BOT_TOKEN: envConfig?.slackBotToken,
-          SLACK_API_BASE_URL: envConfig?.slackApiBaseUrl,
-        },
-      },
+      gwsSlackTransport,
     );
     if ("error" in slackPost) {
       gwsApprovalStore.rejectLoaded(action, "system", "slack_post_failed");

@@ -153,19 +153,19 @@ not expose the OAuth response body.
 
 Google Workspace configuration (per-Slack-user OAuth):
 
-First use sends the requesting Slack member a private OAuth DM; a Google email config mapping is optional. Set `SLACK_TEAM_ID` and grant the bot `users:read`/`users:read.email` for automatic identity lookup. Google and browser SSO must verify the expected email. See [Google Workspace](docs/google-workspace.md).
+First use sends the trusted requesting Slack user a private OAuth DM. No Google mapping or Slack email-read permission is required. Enable the Slack app's Messages Tab and set `SLACK_TEAM_ID`. The user confirms the Google account/Slack recipient in their browser; Google and browser SSO must verify the same email. The encrypted grant is then used only for that Slack user. See [Google Workspace](docs/google-workspace.md).
 
-| Variable                                 | Required | Service                 | Purpose                                                                     |
-| ---------------------------------------- | -------- | ----------------------- | --------------------------------------------------------------------------- |
-| `GOOGLE_WORKSPACE_OAUTH_CLIENT_ID`       | For GWS  | `remote-cli` only       | Google Web OAuth client ID                                                  |
-| `GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET`   | For GWS  | `remote-cli` only       | Google Web OAuth client secret                                              |
-| `GOOGLE_WORKSPACE_OAUTH_PUBLIC_BASE_URL` | For GWS  | `remote-cli`, `ingress` | Exact external HTTPS origin; callback is `/google-workspace/oauth/callback` |
-| `GOOGLE_WORKSPACE_OAUTH_SCOPES`          | For GWS  | `remote-cli` only       | Comma-separated Drive, Docs, and Sheets allowlisted scopes                  |
-| `GOOGLE_WORKSPACE_OAUTH_ENCRYPTION_KEY`  | For GWS  | `remote-cli` only       | Dedicated 32-byte base64 key for encrypted server-side grants               |
-| `GOOGLE_WORKSPACE_OAUTH_STORAGE_DIR`     | No       | `remote-cli` only       | Encrypted state directory; Compose fixes it to a private named volume       |
-| `GOOGLE_WORKSPACE_CLI_CONFIG_DIR`        | No       | `remote-cli` only       | Parent for fresh private per-execution cwd; never shared with OpenCode      |
-| `GOOGLE_WORKSPACE_PROJECT_ID`            | No       | `remote-cli` only       | Optional upstream GCP quota/billing project override                        |
-| workspace user `google_workspace_email`  | Optional | workspace config        | Operator pin; otherwise use verified same-workspace Slack profile email     |
+| Variable                                 | Required | Service                 | Purpose                                                                       |
+| ---------------------------------------- | -------- | ----------------------- | ----------------------------------------------------------------------------- |
+| `GOOGLE_WORKSPACE_OAUTH_CLIENT_ID`       | For GWS  | `remote-cli` only       | Google Web OAuth client ID                                                    |
+| `GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET`   | For GWS  | `remote-cli` only       | Google Web OAuth client secret                                                |
+| `GOOGLE_WORKSPACE_OAUTH_PUBLIC_BASE_URL` | For GWS  | `remote-cli`, `ingress` | Exact external HTTPS origin; callback is `/google-workspace/oauth/callback`   |
+| `GOOGLE_WORKSPACE_OAUTH_SCOPES`          | For GWS  | `remote-cli` only       | Comma-separated Drive, Docs, and Sheets allowlisted scopes                    |
+| `GOOGLE_WORKSPACE_OAUTH_ENCRYPTION_KEY`  | For GWS  | `remote-cli` only       | Dedicated 32-byte base64 key for encrypted server-side grants                 |
+| `GOOGLE_WORKSPACE_OAUTH_STORAGE_DIR`     | No       | `remote-cli` only       | Encrypted state directory; Compose fixes it to a private named volume         |
+| `GOOGLE_WORKSPACE_CLI_CONFIG_DIR`        | No       | `remote-cli` only       | Parent for fresh private per-execution cwd; never shared with OpenCode        |
+| `GOOGLE_WORKSPACE_PROJECT_ID`            | No       | `remote-cli` only       | Optional upstream GCP quota/billing project override                          |
+| workspace user `google_workspace_email`  | Optional | workspace config        | Restrict Google account choice; otherwise learn identity during private OAuth |
 
 Every GWS call requires the latest active Slack actor, that user's connected Google
 identity, and same-user Slack approval. Thor stores raw argv only in encrypted

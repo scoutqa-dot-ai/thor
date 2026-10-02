@@ -140,6 +140,7 @@ describe("per-user Google Workspace execution", () => {
       });
 
       let currentEmail = googleEmail;
+      let restrictEmailAfterApproval = false;
       const executions: Array<{ args: string[]; token: string }> = [];
       const slackBodies: string[] = [];
       const remoteCli = createRemoteCliApp({
@@ -162,7 +163,9 @@ describe("per-user Google Workspace execution", () => {
               email: googleEmail,
               name: "Fixture Person",
               slack: slackUserId,
-              ...(explicitPin ? { google_workspace_email: currentEmail } : {}),
+              ...(explicitPin || restrictEmailAfterApproval
+                ? { google_workspace_email: currentEmail }
+                : {}),
             },
           ],
         }),
@@ -192,7 +195,12 @@ describe("per-user Google Workspace execution", () => {
                 },
               });
             slackBodies.push(String(init?.body ?? ""));
-            return Response.json({ ok: true, channel: "C123", ts: "1710000000.100" });
+            const message = JSON.parse(String(init?.body ?? "{}"));
+            return Response.json({
+              ok: true,
+              channel: message.channel?.startsWith("U") ? "D123" : "C123",
+              ts: "1710000000.100",
+            });
           }) as typeof fetch,
         },
       });
@@ -345,6 +353,19 @@ describe("per-user Google Workspace execution", () => {
       });
       expect(executions).toHaveLength(1);
 
+      const beforeReconnect = await post("/exec/gws", { args }, { "x-thor-session-id": sessionId });
+      const oldConnectionAction = ApprovalRequiredEventPayloadSchema.parse(
+        JSON.parse(beforeReconnect.result.stdout),
+      );
+      await connect(oauth);
+      const replaced = await post(
+        "/exec/mcp",
+        { args: ["resolve", oldConnectionAction.actionId, "approved", slackUserId] },
+        { "x-thor-internal-secret": internalSecret },
+      );
+      expect(replaced.result.exitCode).toBe(1);
+      expect(executions).toHaveLength(1);
+
       const changedPending = await post(
         "/exec/gws",
         { args: ["drive", "files", "list"] },
@@ -354,6 +375,7 @@ describe("per-user Google Workspace execution", () => {
         JSON.parse(changedPending.result.stdout),
       );
       currentEmail = "changed@example.com";
+      restrictEmailAfterApproval = true;
       await post(
         "/exec/mcp",
         { args: ["resolve", changedEvent.actionId, "approved", slackUserId] },

@@ -215,7 +215,7 @@ describe("remote-cli slack-post-message endpoint", () => {
   });
 
   it("accepts real newlines and literal backslash-n inside code spans or fences", async () => {
-    fetchMock.mockResolvedValue(
+    fetchMock.mockImplementation(() =>
       jsonResponse({ ok: true, channel: "C123", ts: "1777940312.555555" }),
     );
 
@@ -250,7 +250,7 @@ describe("remote-cli slack-post-message endpoint", () => {
   });
 
   it("allows literal double stars and table-looking text inside code spans or fences", async () => {
-    fetchMock.mockResolvedValue(
+    fetchMock.mockImplementation(() =>
       jsonResponse({ ok: true, channel: "C123", ts: "1777940312.444444" }),
     );
 
@@ -497,6 +497,6 @@ describe("remote-cli slack-post-message endpoint", () => {
   }
 
   function jsonResponse(body: unknown): Response {
-    return { json: async () => body } as Response;
+    return Response.json(body);
   }
 });

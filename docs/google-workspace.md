@@ -1,6 +1,6 @@
 # Google Workspace
 
-Thor installs [`@googleworkspace/cli`](https://github.com/googleworkspace/cli), pinned in `Dockerfile`. OpenCode's `gws` wrapper sends argv to trusted `remote-cli`; it never receives Google refresh credentials, OAuth client secrets, or connection storage.
+Thor installs [`@googleworkspace/cli`](https://github.com/googleworkspace/cli), pinned in `Dockerfile`. The agent's `gws` wrapper sends argv to trusted `remote-cli`; Pi and OpenCode never receive Google refresh credentials, OAuth client secrets or connection storage.
 
 ## Security and ownership model
 
@@ -8,7 +8,7 @@ Each command is owned by the human who started the **currently active Slack turn
 
 1. `remote-cli` resolves the latest open trigger bound to the Thor session.
 2. The trigger must be Slack-only. Cron, GitHub, missing, ended, superseded, or ambiguous triggers fail closed.
-3. An explicit `google_workspace_email` is an optional operator pin. Otherwise Thor obtains the current human member's email from bot-authenticated Slack `users.info` in `SLACK_TEAM_ID`; neither a directory entry nor a Google mapping is required. The Jira `email` field is never used for Google authorization. Missing email/permissions, bots, deleted/external users, wrong-workspace responses and conflicting pins fail closed.
+3. The trusted Slack user ID selects the DM recipient and account slot in `SLACK_TEAM_ID`. Neither a directory entry, a Slack profile email nor email-read permissions are required. An explicit `google_workspace_email` is an optional restriction on account choice; conflicting pins fail closed. Jira `email`, agent argv and browser query parameters never choose the credential owner.
 4. Thor loads only that Slack user's encrypted Google grant. There is no global account or service-account fallback.
 5. Thor stores exact argv in encrypted private state and posts a secret-free Slack approval containing the operation, argument count, expected Google account, Slack user, and keyed HMAC-SHA-256 command fingerprint.
 6. Only the same Slack user can approve or reject the action. The private command is consumed before execution, so an uncertain result is never replayed from the same approval.
@@ -43,7 +43,7 @@ Outside those credential and local-filesystem exclusions, Thor does not reinterp
 
    Generate a dedicated encryption key, for example with `openssl rand -base64 32`. Store and back it up as a production credential. Losing or changing it invalidates every stored connection. Do not reuse `THOR_INTERNAL_SECRET`, Vouch secrets, or the Google client secret.
 
-5. Set `SLACK_TEAM_ID` to your workspace ID. Grant the bot `users:read` and `users:read.email` (already present in the example Slack manifest); reinstall the Slack app if its installed scopes lack them. Default onboarding uses the member's Slack profile email. Only when Google uses a different address, optionally pin the expected identity in workspace config:
+5. Set `SLACK_TEAM_ID` to your workspace ID. Enable **App Home → Messages Tab** in the Slack app and allow messages from users (included in the example manifest). The bot needs `chat:write` for the private DM; Google onboarding does not require `users:read.email`. Optionally restrict a user's Google account in workspace config:
 
    ```json
    {
@@ -57,26 +57,32 @@ Outside those credential and local-filesystem exclusions, Thor does not reinterp
 
    Credential selection always starts from the trusted active Slack ID; the agent cannot select an account by supplying an email.
 
-6. Rebuild and recreate the services that own the broker and ingress:
+6. On an existing Pi deployment, preserve `.env`, the Compose project and all data, then rebuild:
 
    ```bash
-   docker compose up -d --build --force-recreate remote-cli ingress opencode
-   docker compose ps remote-cli ingress opencode
+   docker compose build remote-cli runner pi-executor
+   docker compose up -d
+   docker compose ps remote-cli runner pi-executor
    curl -fsS http://127.0.0.1:3004/health | jq
    ```
 
+   For the legacy runtime, rebuild `remote-cli` and `opencode` instead. Initial Google setup also needs the ingress configuration described above.
+
 ## Connect and execute
 
-On the first `gws` request for an unconnected user, Thor sends a private Slack DM containing a random, single-use link that expires after ten minutes. The link is bound to Slack workspace, Slack user, expected Google email, Thor session, anchor, and trigger.
+On the first `gws` request for an unconnected user, Thor sends a private Slack DM containing a random, single-use link that expires after ten minutes. The link is bound to Slack workspace, Slack user, Thor session, anchor and trigger, plus any optional Google pin. Slack must confirm delivery to a DM before the tool reports a link sent. The private link is an invitation capability: do not forward it.
 
 Ingress first moves the private request ID into a scoped `HttpOnly` cookie and redirects to a query-free authorization path, so the capability does not pass through Vouch URLs or normal access/error logs. The browser flow then requires:
 
-- Vouch-authenticated browser email equal to the resolved Slack profile address or explicit Google pin;
+- a Vouch-authenticated browser email, matching any explicit Google pin;
+- for an unpinned connection, a confirmation page displaying that Google email and the exact Slack user/workspace; an explicit CSRF-protected POST confirms the association before Google authorization;
 - exact OAuth state and PKCE verifier;
 - a same-browser `HttpOnly`, `Secure`, `SameSite=Lax` nonce cookie;
-- Google's verified userinfo email equal to that same expected address;
+- Google's verified userinfo email equal to the confirmed browser address, never a Slack profile assumption;
 - the exact registered callback path;
-- no followed OAuth HTTP redirects during token or userinfo calls.
+- no followed HTTP redirects during Slack DM, OAuth token or userinfo calls.
+
+The verified Google grant is encrypted under that Slack user's account slot. Later requests use it directly without another Slack email lookup. Refresh rechecks Google's email and subject. New authorizations get a new connection binding, invalidating approvals/results for a replaced connection.
 
 After the page reports success, return to Slack and retry the original request. Thor then posts the command approval in the originating thread. The command fingerprint binds the card and audit trail to the exact encrypted argv without putting argv or document contents in Slack. After resolution, the trusted gateway gives the re-entered turn a short-lived, single-use result capability. The agent retrieves command output with `approval result <action-id> <capability>`; output remains encrypted until that retrieval and never enters the Slack card or gateway resolution log. The capability is not returned by approval list/status and must never be quoted to Slack or reused.
 
@@ -104,11 +110,19 @@ An operator responding to compromise should revoke the OAuth client or user gran
 
 ## Troubleshooting
 
-- **Verified Slack member required:** the request came from GitHub/cron, its turn ended/superseded, the profile email cannot be verified, the Slack workspace differs, or config pins conflict. Check bot `users:read`/`users:read.email` and `SLACK_TEAM_ID`; a missing Google config pin alone no longer blocks onboarding.
-- **Google Workspace connection required:** use the private DM link, complete both browser identity checks, then retry from Slack.
-- **Connection link rejected:** request expired, was already used, opened under a different Vouch email, or returned without the same-browser cookie. Request a new link; do not reuse callback URLs.
+- **No OAuth DM was sent:** the turn is not an active Slack request, optional pins conflict, or OAuth setup is incomplete. Do not look for a nonexistent link. `/health` → `googleWorkspaceOAuth` reports missing/invalid variable names, never values.
+- **Private OAuth DM delivery unconfirmed:** check `chat:write`, the installed bot token and App Home → Messages Tab. A public-channel response or incomplete Slack response is not accepted as confirmed DM delivery.
+- **Google Workspace connection required / link sent:** open the private DM, verify the displayed Google account and Slack recipient, authorize, then retry from Slack. No Slack email or Google mapping is needed.
+- **Connection link rejected:** request expired, was already used, violates an optional pin, has a mismatched confirmation proof/browser, or returned without the same-browser cookie. Request a new link; do not reuse callback URLs.
 - **Approval rejected:** only the Slack user who owns the connected account can approve.
 - **Account access unavailable:** refresh failed or the stored grant is invalid. Disconnect/revoke, reconnect, and submit a new command.
 - **503 / exit 2:** check OAuth environment, exact public HTTPS origin, fixed scopes, encryption-key length, named-volume permissions, and UID/GID 1001 ownership.
+
+An operator can probe a member's optional pin/connection status without triggering OAuth, reading profile email or revealing credentials:
+
+```bash
+# Replace U01234567 with the requesting Slack member ID; run on the deployment host.
+docker compose exec -T remote-cli node -e 'fetch("http://127.0.0.1:3004/internal/google-workspace/diagnostics", {method:"POST", headers:{"content-type":"application/json","x-thor-internal-secret":process.env.THOR_INTERNAL_SECRET},body:JSON.stringify({slackUserId:"U01234567"})}).then(r=>r.json()).then(r=>console.log(JSON.stringify(r,null,2)))'
+```
 
 Focused tests cover PKCE/state/cookie ownership, replay, expiry, identity mismatch, encrypted storage, redirect rejection, same-user command consumption, blocked auth commands, child environment isolation, approval presentation, and active-trigger fail-closed behavior. Live Google verification remains an operator deployment step; no production OAuth credential belongs in tests, Slack messages, repository files, or agent memory.

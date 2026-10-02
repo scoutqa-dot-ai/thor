@@ -129,6 +129,101 @@ async function readStorageText(directory: string): Promise<string> {
 }
 
 describe("GwsOAuthService", () => {
+  it("binds an unpinned private invitation to confirmed browser and verified Google identity, not Slack email", async () => {
+    const googleEmail = "selected-google@example.com";
+    const provider = createProviderFetch({ userEmail: googleEmail });
+    const service = new GwsOAuthService(oauthEnv(), { fetch: provider.fetch });
+    const request = service.createConnectionRequest({
+      ...ownerInput(),
+      expectedGoogleEmail: undefined,
+    });
+    if (!request.ok) throw request.error;
+    const preview = service.previewAuthorization(request.value.requestId, googleEmail);
+    if (!preview.ok) throw preview.error;
+    expect(preview.value).toMatchObject({ slackUserId, googleEmail, confirmationRequired: true });
+    expect(service.beginAuthorization(request.value.requestId, googleEmail)).toMatchObject({
+      ok: false,
+      error: { code: "browser_mismatch" },
+    });
+    expect(
+      service.beginAuthorization(
+        request.value.requestId,
+        "other@example.com",
+        preview.value.confirmationToken,
+      ),
+    ).toMatchObject({ ok: false, error: { code: "browser_mismatch" } });
+    const started = service.beginAuthorization(
+      request.value.requestId,
+      googleEmail,
+      preview.value.confirmationToken,
+    );
+    if (!started.ok) throw started.error;
+    const state = new URL(started.value.authorizationUrl).searchParams.get("state");
+    if (!state) throw new Error("GWS unpinned fixture state missing");
+    const completed = await service.completeAuthorization({
+      state,
+      code: "fixture-code",
+      browserNonce: started.value.browserNonce,
+    });
+    expect(completed).toMatchObject({ ok: true, value: { googleEmail, slackUserId } });
+    const restarted = new GwsOAuthService(oauthEnv(), { fetch: provider.fetch });
+    expect(restarted.findConnectedIdentity(slackUserId)).toMatchObject({
+      ok: true,
+      value: { googleEmail },
+    });
+    expect((await restarted.getAccessToken(slackUserId, googleEmail)).ok).toBe(true);
+    expect(restarted.findConnectedIdentity("UOTHER")).toMatchObject({
+      ok: false,
+      error: { code: "connection_missing" },
+    });
+    expect(await readStorageText(storageDir)).not.toContain(refreshToken);
+  });
+
+  it("rejects a Google account different from the confirmed browser even without a pin", async () => {
+    const service = new GwsOAuthService(oauthEnv(), {
+      fetch: createProviderFetch({ userEmail: "other@example.com" }).fetch,
+    });
+    const request = service.createConnectionRequest({
+      ...ownerInput(),
+      expectedGoogleEmail: undefined,
+    });
+    if (!request.ok) throw request.error;
+    const preview = service.previewAuthorization(request.value.requestId, expectedGoogleEmail);
+    if (!preview.ok) throw preview.error;
+    const started = service.beginAuthorization(
+      request.value.requestId,
+      expectedGoogleEmail,
+      preview.value.confirmationToken,
+    );
+    if (!started.ok) throw started.error;
+    const state = new URL(started.value.authorizationUrl).searchParams.get("state");
+    if (!state) throw new Error("GWS mismatched fixture state missing");
+    expect(
+      await service.completeAuthorization({
+        state,
+        code: "fixture-code",
+        browserNonce: started.value.browserNonce,
+      }),
+    ).toMatchObject({ ok: false, error: { code: "identity_mismatch" } });
+    expect(service.findConnectedIdentity(slackUserId).ok).toBe(false);
+  });
+
+  it("does not reuse invitations across workspaces and changes connection binding on every new authorization", async () => {
+    const service = new GwsOAuthService(oauthEnv(), { fetch: createProviderFetch().fetch });
+    const old = await connect(service);
+    const renewed = await connect(service);
+    expect(renewed.completed.value.connectionId).not.toBe(old.completed.value.connectionId);
+    const request = service.createConnectionRequest({
+      ...ownerInput(),
+      expectedGoogleEmail: undefined,
+    });
+    if (!request.ok) throw request.error;
+    const otherWorkspace = new GwsOAuthService({ ...oauthEnv(), SLACK_TEAM_ID: "TOTHER" });
+    expect(
+      otherWorkspace.previewAuthorization(request.value.requestId, expectedGoogleEmail),
+    ).toMatchObject({ ok: false, error: { code: "identity_mismatch" } });
+  });
+
   it("rejects ambiguous email grants without revoking either owner", async () => {
     const service = new GwsOAuthService(oauthEnv(), { fetch: createProviderFetch().fetch });
     await connect(service);

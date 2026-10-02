@@ -121,20 +121,18 @@ it("binds actual Pi tool calls to per-user GWS, owner approval and a single-use 
     createServer(async (req, res) => {
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
-      if (req.url?.startsWith("/users.info?")) {
-        expect(req.headers.authorization).toBe("Bearer xoxb-fixture");
-        res.setHeader("content-type", "application/json");
-        res.end(
-          JSON.stringify({
-            ok: true,
-            user: { id: owner, team_id: "T123", deleted: false, is_bot: false, profile: { email } },
-          }),
-        );
-        return;
-      }
+      expect(req.url).toBe("/chat.postMessage");
+      expect(req.headers.authorization).toBe("Bearer xoxb-fixture");
       slackRequests.push(Buffer.concat(chunks).toString());
       res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify({ ok: true, channel: "C123", ts: "1710000000.100" }));
+      const message = JSON.parse(Buffer.concat(chunks).toString());
+      res.end(
+        JSON.stringify({
+          ok: true,
+          channel: message.channel.startsWith("U") ? "D123" : "C123",
+          ts: "1710000000.100",
+        }),
+      );
     }),
   );
   const providerRequests: string[] = [];
@@ -380,14 +378,28 @@ it("binds actual Pi tool calls to per-user GWS, owner approval and a single-use 
   expect(staged.status).toBe(302);
   const requestCookie = staged.headers.get("set-cookie")?.split(";")[0];
   if (!requestCookie) throw new Error("Pi GWS fixture connect cookie missing");
+  const preview = await fetch(`${remoteUrl}/google-workspace/connect/authorize`, {
+    redirect: "manual",
+    headers: { ...browserHeaders, cookie: requestCookie, "x-vouch-user": email },
+  });
+  expect(preview.status).toBe(200);
+  const confirmation = await preview.text();
+  expect(confirmation).toContain(owner);
+  expect(confirmation).toContain(email);
+  const csrf = /name="csrf" value="([^"]+)"/.exec(confirmation)?.[1];
+  if (!csrf) throw new Error("Pi GWS fixture confirmation proof missing");
   const wrongBrowser = await fetch(`${remoteUrl}/google-workspace/connect/authorize`, {
+    method: "POST",
     redirect: "manual",
     headers: { ...browserHeaders, cookie: requestCookie, "x-vouch-user": "another@example.test" },
+    body: new URLSearchParams({ csrf }),
   });
   expect(wrongBrowser.status).toBe(400);
   const authorized = await fetch(`${remoteUrl}/google-workspace/connect/authorize`, {
+    method: "POST",
     redirect: "manual",
     headers: { ...browserHeaders, cookie: requestCookie, "x-vouch-user": email },
+    body: new URLSearchParams({ csrf }),
   });
   expect(authorized.status).toBe(302);
   expect(new URL(authorized.headers.get("location") ?? "").searchParams.get("login_hint")).toBe(
@@ -561,7 +573,7 @@ it("binds actual Pi tool calls to per-user GWS, owner approval and a single-use 
     correlationKey: "cron:gws-fixture",
     sessionId: receipt.sessionId,
   });
-  expect(JSON.stringify(modelRequests.at(-1))).toContain("requires an active Slack turn");
+  expect(JSON.stringify(modelRequests.at(-1))).toContain("requires an active Slack-requested turn");
   expect(remoteRequests.at(-1)?.actor.ok).toBe(false);
   expect(executions).toHaveLength(1);
   expect(JSON.stringify(modelRequests)).not.toContain("dummy-command-token");

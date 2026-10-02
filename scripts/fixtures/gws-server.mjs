@@ -346,20 +346,16 @@ appendSessionEvent(owner.sessionId, {
 });
 
 const slackFetch = async (input, init) => {
-  if (String(input).includes("/users.info")) {
-    assert.equal(new Headers(init?.headers).get("authorization"), "Bearer xoxb-fixture");
-    return Response.json({
-      ok: true,
-      user: {
-        id: owner.slackUserId,
-        team_id: "T123FIXTURE",
-        deleted: false,
-        is_bot: false,
-        profile: { email: owner.expectedGoogleEmail },
-      },
-    });
-  }
-  return Response.json({ ok: true, channel: "C123FIXTURE", ts: "1710000000.100" });
+  assert(
+    !String(input).includes("/users.info"),
+    "GWS onboarding must not require Slack profile/email permissions",
+  );
+  const message = JSON.parse(String(init?.body ?? "{}"));
+  return Response.json({
+    ok: true,
+    channel: message.channel?.startsWith("U") ? "D123FIXTURE" : "C123FIXTURE",
+    ts: "1710000000.100",
+  });
 };
 const workspaceConfig = {
   users: [

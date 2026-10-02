@@ -341,12 +341,14 @@ export async function postSlackMessageApi(
   try {
     const response = await fetchImpl(slackPostMessageUrl(deps.env.SLACK_API_BASE_URL), {
       method: "POST",
+      redirect: "manual",
       headers: {
         Authorization: `Bearer ${deps.env.SLACK_BOT_TOKEN}`,
         "Content-Type": "application/json; charset=utf-8",
       },
       body: JSON.stringify(payload),
     });
+    if (response.status !== 200) return { error: "Slack API response was not HTTP 200" };
     slackJson = await response.json();
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
