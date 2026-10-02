@@ -13,6 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { z } from "zod/v4";
 import {
   createLogger,
@@ -65,12 +66,14 @@ const QueuedEventSchema = z.object({
  * Call `reject(reason)` to move files to the dead-letter directory.
  * If the handler returns without calling ack or reject (e.g. runner busy),
  * files stay on disk and will be retried on the next scan cycle.
- * If the handler throws, files are deleted to prevent infinite retry loops.
+ * If the handler throws, frozen batch membership survives retries and new arrivals.
+ * Call defer() only for an explicit busy response (known not accepted).
  */
 export type EventHandler = (
   events: QueuedEvent[],
   ack: () => void,
   reject: (reason: string) => void,
+  defer: () => void,
 ) => Promise<void>;
 
 export interface EventQueueOptions {
@@ -154,11 +157,11 @@ export class EventQueue {
    */
   async flush(): Promise<void> {
     for (;;) {
+      const acksBefore = this.ackCount;
       this.scan();
 
       if (this.processing.size === 0) break;
 
-      const acksBefore = this.ackCount;
       await Promise.allSettled([...this.processing.values()]);
 
       // If no handler acked in this cycle, remaining files are deferred — stop.
@@ -253,6 +256,27 @@ export class EventQueue {
     for (const [key, entries] of byKey) {
       if (this.processing.has(key)) continue;
       entries.sort((a, b) => compareEvents(a.event, b.event));
+      const batchPath = this.batchPath(key);
+      try {
+        const frozen = z
+          .array(
+            z.object({
+              file: z.string().refine((file) => !/[\/\\]/.test(file) && file.endsWith(".json")),
+              event: QueuedEventSchema,
+            }),
+          )
+          .min(1)
+          .parse(JSON.parse(readFileSync(batchPath, "utf8")));
+        entries.splice(0, entries.length, ...frozen);
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+          logError(log, "event_batch_unavailable", "Frozen batch cannot be read safely", {
+            lockKey: key,
+          });
+          continue;
+        }
+        // A newly selected batch is frozen before any request can become uncertain.
+      }
 
       // When interrupt events exist, readiness is based on interrupt events only
       // (non-interrupt events get swept in but don't delay the batch).
@@ -261,6 +285,17 @@ export class EventQueue {
       const maxReadyAt = Math.max(...readyAtSource.map((e) => e.event.readyAt));
       if (maxReadyAt > now) continue;
 
+      try {
+        const temporaryBatchPath = `${batchPath}.tmp`;
+        writeFileSync(temporaryBatchPath, JSON.stringify(entries), "utf8");
+        renameSync(temporaryBatchPath, batchPath);
+      } catch {
+        logError(log, "event_batch_unavailable", "Frozen batch cannot be persisted", {
+          lockKey: key,
+        });
+        continue;
+      }
+
       // Set processing before calling processBatch to avoid a race where
       // a sync throw in the handler could delete a not-yet-set key.
       const placeholder = Promise.resolve();
@@ -268,6 +303,16 @@ export class EventQueue {
       const work = this.processBatch(key, entries);
       this.processing.set(key, work);
     }
+  }
+
+  private batchPath(lockKey: string): string {
+    return join(this.dir, `.batch-${createHash("sha256").update(lockKey).digest("hex")}.json`);
+  }
+
+  private forgetBatch(lockKey: string): void {
+    try {
+      unlinkSync(this.batchPath(lockKey));
+    } catch {}
   }
 
   private deleteFiles(entries: Array<{ file: string }>): void {
@@ -308,18 +353,21 @@ export class EventQueue {
         settled = true;
         this.ackCount++;
         this.deleteFiles(entries);
+        this.forgetBatch(lockKey);
       };
       const reject = (reason: string) => {
         if (settled) return;
         settled = true;
         this.ackCount++;
         this.moveToDeadLetter(entries, reason);
+        this.forgetBatch(lockKey);
       };
 
       await this.handler(
         entries.map((e) => e.event),
         ack,
         reject,
+        () => this.forgetBatch(lockKey),
       );
 
       if (settled) {
@@ -328,9 +376,7 @@ export class EventQueue {
         logInfo(log, "event_deferred", { lockKey, ...keyMetadata });
       }
     } catch (err) {
-      logError(log, "event_handler_error", err, { lockKey });
-      // Delete on error to prevent infinite retry loops.
-      this.deleteFiles(entries);
+      logError(log, "event_handler_error", "Batch delivery unconfirmed", { lockKey });
     } finally {
       this.processing.delete(lockKey);
     }

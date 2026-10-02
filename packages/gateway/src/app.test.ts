@@ -2322,7 +2322,7 @@ describe("gateway", () => {
   it("accepts a signed app mention and fires a trigger to the runner (fire-and-forget)", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 200 }));
 
     await withServer(fetchImpl, async (baseUrl, queue, _queueDir, slack) => {
       const body = JSON.stringify({
@@ -2415,7 +2415,7 @@ describe("gateway", () => {
   it("allows app mentions in allowlisted private channels", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 200 }));
 
     await withServer(
       fetchImpl,
@@ -2450,7 +2450,7 @@ describe("gateway", () => {
   it("gates DMs (im) behind the allowlist", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 200 }));
 
     await withServer(
       fetchImpl,
@@ -2580,7 +2580,7 @@ describe("gateway", () => {
   it("defers privacy resolution for missing channel_type without calling conversations.info from the webhook", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 200 }));
 
     await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
       slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_private: false } });
@@ -2623,7 +2623,9 @@ describe("gateway", () => {
   it("uses a fresh public-channel cache hit to accept app mentions without pending privacy", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValue(new Response(JSON.stringify({ busy: false }), { status: 200 }));
+      .mockImplementation(
+        async () => new Response(JSON.stringify({ accepted: true }), { status: 200 }),
+      );
 
     await withServer(fetchImpl, async (baseUrl, queue, queueDir, slack) => {
       slack.conversationsInfo.mockResolvedValueOnce({ ok: true, channel: { is_private: false } });
@@ -2895,7 +2897,7 @@ describe("gateway", () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       // POST /trigger → 200 (fire-and-forget)
-      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 200 }));
     sessionKeys.add("slack:thread:1710000000.001");
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
@@ -3010,7 +3012,7 @@ describe("gateway", () => {
   it("batches 3 rapid app_mention events into a single runner trigger with combined prompt", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 200 }));
 
     await withServer(fetchImpl, async (baseUrl, queue, _queueDir, slack) => {
       const timestamp = `${Math.floor(Date.now() / 1000)}`;
@@ -3067,8 +3069,8 @@ describe("gateway", () => {
   it("app_mention fires immediately ignoring shortDelayMs (interrupt shouldn't wait)", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 200 }));
 
     // Use a large shortDelayMs — mention should still fire immediately.
     await withServer(
@@ -3111,7 +3113,11 @@ describe("gateway", () => {
   });
 
   it("processes two messages sent at different times as separate triggers", async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockImplementation(
+        async () => new Response(JSON.stringify({ accepted: true }), { status: 200 }),
+      );
 
     await withServer(fetchImpl, async (baseUrl, queue) => {
       const timestamp = `${Math.floor(Date.now() / 1000)}`;
@@ -3175,7 +3181,7 @@ describe("gateway", () => {
   it("routes Slack events to the default repo when no override file is present", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 200 }));
 
     await withServer(
       fetchImpl,
@@ -3223,7 +3229,7 @@ describe("gateway", () => {
     writeFileSync(join(memoryRoot, "C_OVERRIDE.txt"), "thor\n");
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 200 }));
 
     try {
       await withServer(
@@ -3281,7 +3287,7 @@ describe("gateway", () => {
     writeFileSync(join(memoryRoot, "C_BAD.txt"), "unknown-repo\n");
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 200 }));
 
     try {
       await withServer(
@@ -3399,8 +3405,8 @@ describe("gateway", () => {
           }),
         ),
       )
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 200 }));
 
     await withServer(
       fetchImpl,
@@ -3476,7 +3482,7 @@ describe("gateway", () => {
           headers: { "content-type": "application/json" },
         }),
       )
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 200 }));
 
     await withServer(
       fetchImpl,
@@ -3546,8 +3552,8 @@ describe("gateway", () => {
           }),
         ),
       )
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 200 }));
 
     let capturedSlack: MockSlackClient | undefined;
     await withServer(

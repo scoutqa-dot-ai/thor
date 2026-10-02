@@ -25,6 +25,7 @@ export const ALIAS_TYPES = [
   "github.issue",
   "opencode.session",
   "opencode.subsession",
+  "pi.conversation",
 ] as const;
 export const AliasTypeSchema = z.enum(ALIAS_TYPES);
 

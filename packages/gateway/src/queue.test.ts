@@ -268,7 +268,7 @@ describe("EventQueue", () => {
 
     expect(handler).toHaveBeenCalledTimes(1);
     const remaining = readdirSync(queueDir).filter((f) => f.endsWith(".json"));
-    expect(remaining).toHaveLength(1);
+    expect(remaining.filter((file) => !file.startsWith("."))).toHaveLength(1);
   });
 
   it("deferred events are retried on next flush", async () => {
@@ -388,27 +388,25 @@ describe("EventQueue", () => {
     expect((handler.mock.calls[0][0][0].payload as { text: string }).text).toBe("retry");
   });
 
-  it("handler errors delete files to prevent infinite retry", async () => {
+  it("handler errors retain frozen membership across restart and new arrivals", async () => {
     let callCount = 0;
-    const handler = vi.fn<EventHandler>().mockImplementation(async () => {
+    const batches: string[][] = [];
+    const handler = vi.fn<EventHandler>().mockImplementation(async (events, ack) => {
+      batches.push(events.map((event) => (event.payload as { text: string }).text));
       callCount++;
       if (callCount === 1) throw new Error("handler failed");
+      ack();
     });
-
     queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
-
     await queue.enqueue(makeEvent("key-1", "will-fail"));
     await queue.flush();
-
-    // Files deleted on error
-    const remaining = readdirSync(queueDir).filter((f) => f.endsWith(".json"));
-    expect(remaining).toHaveLength(0);
-
-    // Subsequent events still process
+    expect(queue.snapshotPending().pendingCount).toBe(1);
+    queue.close();
+    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
     await queue.enqueue(makeEvent("key-1", "will-succeed"));
     await queue.flush();
-
-    expect(handler).toHaveBeenCalledTimes(2);
+    expect(handler).toHaveBeenCalledTimes(3);
+    expect(batches).toEqual([["will-fail"], ["will-fail"], ["will-succeed"]]);
   });
 
   // ---------------------------------------------------------------------------

@@ -46,6 +46,8 @@ export type BatchSource = "slack" | "cron" | "github" | "approval";
 export type BatchLogPrefix = BatchSource | "mixed";
 
 export interface RunnerTriggerOptions {
+  /** Stable queued batch identity, retained across uncertain delivery. */
+  requestId?: string;
   prompt: string;
   correlationKey: string;
   triggerSlackId?: string;
@@ -72,6 +74,7 @@ export interface ApprovalOutcomeEventPayload {
 }
 
 export interface BatchDispatchInput {
+  requestId?: string;
   slackEvents: SlackThreadEvent[];
   cronEvents: CronPayload[];
   githubEvents: GitHubWebhookEvent[];
@@ -546,6 +549,7 @@ async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<Trigg
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       prompt: options.prompt,
+      ...(options.requestId ? { requestId: options.requestId } : {}),
       correlationKey: options.correlationKey,
       interrupt: options.interrupt,
       directory: options.directory,
@@ -568,6 +572,7 @@ async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<Trigg
   if (json.busy === true) {
     return { busy: true };
   }
+  if (json.accepted !== true) throw new Error("Runner acceptance unconfirmed");
   options.onAccepted?.();
   return { busy: false };
 }
@@ -732,6 +737,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     kind: "dispatch",
     logPrefix,
     options: {
+      ...(input.requestId ? { requestId: input.requestId } : {}),
       prompt,
       correlationKey: input.correlationKey,
       ...(input.triggerSlackId ? { triggerSlackId: input.triggerSlackId } : {}),

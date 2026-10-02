@@ -2476,7 +2476,51 @@ function renderSlicePage(
 
 // --- Startup ---
 
-export function startRunner(): void {
+export async function startRunner(): Promise<void> {
+  if (process.env.THOR_RUNTIME === "pi") {
+    const { parsePiRunnerConfig } = await import("./pi-runner-config.js");
+    const parsed = parsePiRunnerConfig(process.env);
+    if (!parsed.ok) {
+      logError(log, "pi_startup_failed", parsed.error);
+      process.exitCode = 1;
+      return;
+    }
+    const { createPiRunnerApp } = await import("./pi-runner.js");
+    const runner = await createPiRunnerApp(parsed.value, {
+      legacyViewerApp: createRunnerApp(),
+      progressTransport: createSlackProgressTransport({
+        token: config.slackBotToken,
+        slackApiUrl: config.slackApiBaseUrl,
+      }),
+    });
+    if (!runner.ok) {
+      logError(log, "pi_startup_failed", runner.error);
+      process.exitCode = 1;
+      return;
+    }
+    const server = runner.app.listen(PORT, () =>
+      logInfo(log, "runner_started", { port: PORT, runtime: "pi" }),
+    );
+    let shuttingDown = false;
+    const shutdown = async () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      server.close();
+      await runner.close();
+      server.closeAllConnections();
+    };
+    const stopPiRunner = () => {
+      void shutdown().catch(() => logError(log, "pi_shutdown_failed", "Pi storage close failed"));
+    };
+    process.on("SIGTERM", stopPiRunner);
+    process.on("SIGINT", stopPiRunner);
+    return;
+  }
+  if (process.env.THOR_RUNTIME && process.env.THOR_RUNTIME !== "opencode") {
+    logError(log, "runner_startup_failed", "Unsupported runtime");
+    process.exitCode = 1;
+    return;
+  }
   const app = createRunnerApp();
   const server = app.listen(PORT, () => {
     logInfo(log, "runner_started", {
@@ -2497,5 +2541,8 @@ export function startRunner(): void {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  startRunner();
+  void startRunner().catch(() => {
+    logError(log, "runner_startup_failed", "Runner startup unavailable");
+    process.exitCode = 1;
+  });
 }

@@ -24,6 +24,7 @@ import {
 } from "@thor/common";
 import { z } from "zod/v4";
 import { EventQueue, type QueuedEvent } from "./queue.js";
+import { persistBatchRunnerRequest, queuedBatchRequestId } from "./batch-request.js";
 import {
   addSlackReaction,
   buildDispatchLogContext,
@@ -1053,7 +1054,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   const queue = new EventQueue({
     dir: config.queueDir ?? "data/queue",
     disableInterval: config.disableQueueInterval === true,
-    handler: async (events: QueuedEvent[], ack: () => void, reject: (reason: string) => void) => {
+    handler: async (
+      events: QueuedEvent[],
+      ack: () => void,
+      reject: (reason: string) => void,
+      defer: () => void,
+    ) => {
       const slackEvents = events.filter(isSlackEvent);
       const cronEvents = events.filter(isCronEvent);
       const githubEvents = events.filter(isGitHubEvent);
@@ -1083,6 +1089,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
 
       try {
         const plan = await planBatchDispatch({
+          requestId: queuedBatchRequestId(events),
           slackEvents: slackEvents.map((event) => event.payload),
           cronEvents: cronEvents.map((event) => event.payload),
           githubEvents: githubEvents.map((event) => event.payload),
@@ -1151,8 +1158,14 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           return;
         }
 
-        const result = await executeBatchDispatchPlan(plan);
+        const requestId = queuedBatchRequestId(events);
+        const options = persistBatchRunnerRequest(config.queueDir ?? "data/queue", {
+          ...plan.options,
+          requestId,
+        });
+        const result = await executeBatchDispatchPlan({ ...plan, options });
         if (result.busy) {
+          defer();
           logTrigger(plan.logPrefix, "busy");
         } else if (result.rejected) {
           logTrigger(plan.logPrefix, "dropped", result.reason);
