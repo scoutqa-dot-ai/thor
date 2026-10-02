@@ -1,31 +1,26 @@
 {
-  "name": "@thor/runner",
+  "name": "@thor/pi-executor",
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "exports": {
+    "./protocol": "./src/execution-protocol.ts",
+    "./service": "./src/executor-service.ts"
+  },
   "scripts": {
     "build": "tsup --config ../../tsup.config.ts",
-    "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@earendil-works/chord": "1.0.0",
-    "@earendil-works/pi-ai": "1.0.0",
     "@earendil-works/pi-durable": "1.0.0",
-    "@thor/pi-executor": "workspace:*",
-    "@opencode-ai/sdk": "^1.15.10",
-    "@slack/types": "2.21.1",
-    "@slack/web-api": "^7.15.1",
-    "@thor/common": "workspace:*",
-    "express": "^5.1.0",
+    "@earendil-works/pi-ai": "1.0.0",
+    "@earendil-works/chord": "1.0.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/express": "^5.0.2",
     "@types/node": "^24.0.0",
-    "tsx": "^4.21.0",
     "typescript": "^6.0.0"
   }
 }
