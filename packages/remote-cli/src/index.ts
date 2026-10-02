@@ -702,14 +702,14 @@ function clearGwsOAuthBrowserCookie(): string {
 
 function setGwsOAuthBrowserSecurityHeaders(
   res: express.Response,
-  options: { allowSelfForm?: boolean } = {},
+  options: { allowSelfForm?: boolean; authorizationOrigin?: string } = {},
 ): void {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Referrer-Policy", "no-referrer");
   res.setHeader(
     "Content-Security-Policy",
-    `default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action ${options.allowSelfForm ? "'self'" : "'none'"}`,
+    `default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action ${options.allowSelfForm ? "'self'" + (options.authorizationOrigin ? ` ${options.authorizationOrigin}` : "") : "'none'"}`,
   );
   res.setHeader("X-Content-Type-Options", "nosniff");
 }
@@ -1124,7 +1124,10 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   });
 
   const authorizeGoogleConnection: express.RequestHandler = (req, res) => {
-    setGwsOAuthBrowserSecurityHeaders(res, { allowSelfForm: true });
+    setGwsOAuthBrowserSecurityHeaders(res, {
+      allowSelfForm: true,
+      authorizationOrigin: gwsOAuth.authorizationOrigin(),
+    });
     if (!matchesInternalSecret(internalSecret, getInternalSecretHeader(req))) {
       res.status(401).type("text/plain").send("Unauthorized");
       return;

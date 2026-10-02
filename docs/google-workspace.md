@@ -84,6 +84,8 @@ Ingress first moves the private request ID into a scoped `HttpOnly` cookie and r
 
 The verified Google grant is encrypted under that Slack user's account slot. Later requests use it directly without another Slack email lookup. Refresh rechecks Google's email and subject. New authorizations get a new connection binding, invalidating approvals/results for a replaced connection.
 
+For an unpinned account, the expected sequence is browser SSO → confirm the displayed Google/Slack association → Google's account picker and consent → **Google Workspace connected**. The authorization request explicitly uses `prompt=select_account consent`. The confirmation page's CSP permits only same-origin form submission and the trusted Google authorization origin for its redirect. A Resume/error page is not completed authorization; connection-required tool responses remain authoritative.
+
 After the page reports success, return to Slack and retry the original request. Thor then posts the command approval in the originating thread. The command fingerprint binds the card and audit trail to the exact encrypted argv without putting argv or document contents in Slack. After resolution, the trusted gateway gives the re-entered turn a short-lived, single-use result capability. The agent retrieves command output with `approval result <action-id> <capability>`; output remains encrypted until that retrieval and never enters the Slack card or gateway resolution log. The capability is not returned by approval list/status and must never be quoted to Slack or reused.
 
 ## Disconnect and revoke
@@ -133,3 +135,11 @@ Real browser cookie regression (requires Chromium and `openssl`, uses only local
 ```bash
 node --import ./packages/runner/node_modules/tsx/dist/loader.mjs scripts/test-gws-browser-cookie.mjs /path/to/chromium
 ```
+
+Full ingress/browser regression (Linux Docker, Chromium and `openssl`; uses the shipped Nginx template and local fake SSO/Google providers, not live accounts):
+
+```bash
+node --import ./packages/runner/node_modules/tsx/dist/loader.mjs scripts/test-gws-ingress-browser.mjs /path/to/chromium
+```
+
+If the real browser still loses the invitation cookie while the local flow passes, try a fresh DM link in an incognito window. For diagnosis inspect Chrome DevTools → Network → the initial `/google-workspace/connect` response → Cookies for a blocked-cookie reason, and Application → Cookies for the presence of `thor_gws_connect_request`. Share only names/presence/reasons, never link or cookie values. The old browser profile, a browser switch or a deployment-specific proxy can differ from the isolated regression; local success does not establish live account readiness.

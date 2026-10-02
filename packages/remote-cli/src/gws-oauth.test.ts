@@ -103,6 +103,7 @@ async function connect(service: GwsOAuthService) {
   if (!started.ok) throw started.error;
   const authorizationUrl = new URL(started.value.authorizationUrl);
   expect(authorizationUrl.searchParams.get("code_challenge_method")).toBe("S256");
+  expect(authorizationUrl.searchParams.get("prompt")).toBe("select_account consent");
   expect(authorizationUrl.searchParams.get("scope")).toContain("openid");
 
   const state = authorizationUrl.searchParams.get("state");

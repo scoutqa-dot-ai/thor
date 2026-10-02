@@ -361,6 +361,11 @@ export class GwsOAuthService {
     };
   }
 
+  /** Trusted provider origin for the browser's form-redirect CSP; never derived from request input. */
+  authorizationOrigin(): string {
+    return new URL(this.#authorizationEndpoint).origin;
+  }
+
   /** Show the signed-in Google identity and exact Slack recipient before an unpinned account can be linked. */
   previewAuthorization(
     requestId: string,
@@ -457,7 +462,7 @@ export class GwsOAuthService {
     authorizationUrl.searchParams.set("login_hint", preview.value.googleEmail);
     authorizationUrl.searchParams.set("scope", config.scopes.join(" "));
     authorizationUrl.searchParams.set("access_type", "offline");
-    authorizationUrl.searchParams.set("prompt", "consent");
+    authorizationUrl.searchParams.set("prompt", "select_account consent");
     authorizationUrl.searchParams.set("include_granted_scopes", "false");
     authorizationUrl.searchParams.set("state", oauthState);
     authorizationUrl.searchParams.set("code_challenge_method", "S256");
