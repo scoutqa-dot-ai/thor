@@ -149,7 +149,10 @@ ENTRYPOINT ["node", "/app/packages/pi-executor/dist/index.js"]
 FROM workspace-tools AS opencode
 USER root
 # The workspace npm shim redirects to sandbox; invoke the untouched npm entrypoint for image installation.
-RUN node /usr/local/lib/node_modules/npm/bin/npm-cli.js install -g opencode-ai@1.15.10 @aikidosec/mcp@1.0.7
+# Aikido's keytar native addon requires libsecret only in the legacy harness.
+RUN apt-get update && apt-get install -y --no-install-recommends libsecret-1-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && node /usr/local/lib/node_modules/npm/bin/npm-cli.js install -g opencode-ai@1.18.29 @aikidosec/mcp@1.0.22
 USER thor
 COPY --chown=thor:thor docker/opencode/config/ /home/thor/.config/opencode/
 ENTRYPOINT ["opencode"]
@@ -188,9 +191,9 @@ COPY packages/remote-cli/bin/git /usr/local/lib/thor/bin/git
 COPY packages/remote-cli/bin/gh /usr/local/lib/thor/bin/gh
 COPY packages/remote-cli/bin/git-askpass /usr/local/lib/thor/bin/git-askpass
 RUN chmod +x /usr/local/lib/thor/bin/git /usr/local/lib/thor/bin/gh /usr/local/lib/thor/bin/git-askpass
-RUN mkdir -p /var/lib/remote-cli/github-app/cache /var/lib/remote-cli/gws \
+RUN mkdir -p /var/lib/remote-cli/github-app/cache /var/lib/remote-cli/gws /var/lib/remote-cli/google-workspace-oauth \
     && chown -R thor:thor /var/lib/remote-cli \
-    && chmod 700 /var/lib/remote-cli/gws
+    && chmod 700 /var/lib/remote-cli/gws /var/lib/remote-cli/google-workspace-oauth
 USER thor
 RUN mkdir -p /workspace/repos
 WORKDIR /workspace/repos

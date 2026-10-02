@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { APPROVAL_TOOL_NAMES } from "./approval-events.js";
+import { APPROVAL_TOOL_NAMES, NON_PROXY_APPROVAL_TOOL_NAMES } from "./approval-events.js";
 import { getProxyConfig, PROXY_NAMES, PROXY_REGISTRY } from "./proxies.js";
 import { interpolateHeaders } from "./workspace-config.js";
 
@@ -76,6 +76,9 @@ describe("proxy registry", () => {
       .flatMap((proxy) => proxy.approve)
       .sort();
 
-    expect(approvedTools).toEqual([...APPROVAL_TOOL_NAMES].sort());
+    const nonProxyApprovalTools = new Set<string>(NON_PROXY_APPROVAL_TOOL_NAMES);
+    expect(approvedTools).toEqual(
+      APPROVAL_TOOL_NAMES.filter((tool) => !nonProxyApprovalTools.has(tool)).sort(),
+    );
   });
 });

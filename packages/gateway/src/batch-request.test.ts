@@ -26,6 +26,50 @@ function event(id: string): QueuedEvent {
 }
 
 describe("gateway durable batch delivery over real HTTP", () => {
+  it.each(["delivery", "delivery:resolved"])(
+    "keeps %s identity through persisted reroutes and redelivery",
+    async (sourceEventId) => {
+      const directory = await mkdtemp(join(tmpdir(), "thor-reroute-fixture-"));
+      const received: Record<string, unknown>[] = [];
+      const server = createServer(async (req, res) => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(Buffer.from(chunk));
+        received.push(JSON.parse(Buffer.concat(chunks).toString()));
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ accepted: true }));
+      });
+      const url = await serverUrl(server);
+      const queue = new EventQueue({
+        dir: directory,
+        disableInterval: true,
+        handler: async (events, ack) => {
+          const options = persistBatchRunnerRequest(directory, {
+            requestId: queuedBatchRequestId(events),
+            prompt: `render-${events[0].id}`,
+            correlationKey: "cron:batch-fixture",
+            directory: "/workspace/repos/fixture",
+            deps: { runnerUrl: url },
+            onAccepted: ack,
+          });
+          await executeBatchDispatchPlan({ kind: "dispatch", logPrefix: "cron", options });
+        },
+      });
+      try {
+        await queue.enqueue({ ...event(`${sourceEventId}:resolved:resolved`), sourceEventId });
+        await queue.flush();
+        await queue.enqueue(event(sourceEventId));
+        await queue.flush();
+        expect(received).toHaveLength(2);
+        expect(received[1]).toEqual(received[0]);
+        expect(queue.snapshotPending().pendingCount).toBe(0);
+      } finally {
+        queue.close();
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
   it("retains accepted-but-lost identity and exact payload across restart and new arrivals", async () => {
     const directory = await mkdtemp(join(tmpdir(), "thor-batch-fixture-"));
     const received: Record<string, unknown>[] = [];

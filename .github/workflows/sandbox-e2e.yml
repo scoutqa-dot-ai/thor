@@ -6,6 +6,8 @@ on:
       - "docker/sandbox/**"
       - "scripts/test-sandbox-e2e.sh"
       - ".github/workflows/sandbox-e2e.yml"
+      - docker-compose.ci.yml
+      - scripts/fixtures/falcon-mcp.mjs
   workflow_dispatch:
 
 permissions:
@@ -22,6 +24,7 @@ jobs:
     timeout-minutes: 60
     env:
       THOR_RUNTIME: opencode
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       GITHUB_APP_ID: ${{ vars.THOR_GITHUB_APP_ID }}
       GITHUB_APP_PRIVATE_KEY_FILE: /var/lib/remote-cli/github-app/private-key.pem
@@ -67,7 +70,6 @@ jobs:
       DRATA_SCOPES: read:ci
       DRATA_API_BASE_URL: http://localhost
       KALI_API_BASE_URL: http://localhost:5000
-      GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: ""
       GOOGLE_WORKSPACE_CLI_CONFIG_DIR: /var/lib/remote-cli/gws
       GOOGLE_WORKSPACE_PROJECT_ID: ""
       VOUCH_GOOGLE_CLIENT_ID: ci-fake

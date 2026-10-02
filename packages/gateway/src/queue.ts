@@ -35,6 +35,8 @@ function compareEvents(
 export interface QueuedEvent<T = unknown> {
   /** Unique event ID for dedup (e.g. Slack event_id). Retries with the same ID overwrite the file. */
   id: string;
+  /** Original delivery identity, retained when internal reroutes change the queue file ID. */
+  sourceEventId?: string;
   source: string;
   correlationKey: string;
   payload: T;
@@ -51,6 +53,7 @@ export interface QueuedEvent<T = unknown> {
 
 const QueuedEventSchema = z.object({
   id: z.string(),
+  sourceEventId: z.string().optional(),
   source: z.string(),
   correlationKey: z.string(),
   payload: z.unknown(),

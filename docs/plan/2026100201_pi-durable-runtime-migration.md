@@ -4,7 +4,7 @@
 
 The user selected the simpler architecture and requested a local-test implementation. This revision supersedes the separate Pi service/runtime-adapter proposal below: runner directly embeds Pi Durable; a credential-free `pi-executor` container supplies its remote `ExecutionEnv`; remote-cli retains all external authorization and credentials. OpenCode remains an opt-in rollback path during testing, not a shared runtime abstraction.
 
-Initial implementation uses the committed local-test baseline already rebased into this branch. Dirty local-test files will not be copied or committed without explicit selection. Per-user Google OAuth is therefore not included in this initial test delivery.
+Initial delivery `d984839` used only the committed local-test baseline. The user subsequently authorized committing/importing the complete working-tree code; snapshot `f15cacc` now supplies per-user Google OAuth, updated deployment and intentional agent deletions. Private deployment files/volumes remain outside Git and this import.
 
 Implementation phases (one validated commit each):
 
@@ -20,6 +20,28 @@ The first test delivery does not claim full OpenCode browser SPA parity, lossles
 | Remote executor is an `ExecutionEnv`, not another agent       | Keep file/process work away from runner credentials while reusing Durable tools                            |
 | Opt-in compose override during testing                        | Leave default OpenCode deployment recoverable; avoid silently switching production                         |
 | Keep legacy OpenCode viewer and compatibility session aliases | Preserve existing attribution/approval readers and historical links while marking Pi provenance explicitly |
+
+## Authorized local-test import and Slack validation
+
+Phases for the follow-up request:
+
+1. Commit the full local-test source snapshot after preserving private index/working/untracked recovery material and offline secret scanning. Completed as `f15cacc`; 831 tests, typechecks/builds and frozen install passed. The local-test worktree is clean.
+2. Merge that commit into Pi without rewriting published history. Retain Pi's isolated executor, authenticated admission, durable batches, private state and legacy viewer compatibility; adopt OAuth routes/volume, new runtime/MCP pins and readiness. Validate full source, real Pi→GWS owner approval/reviewer reentry, current container fixtures and safe deployment topology. Commit as one integration phase.
+3. Push the integrated branch and inspect scope-relevant GitHub gates before PR. Extend operator docs with host-policy/account-volume migration and Slack deployment/acceptance steps. Do not claim a live Slack/model/Google smoke unless explicitly run with an authorized target.
+
+| Follow-up decision                                                                             | Rationale                                                                                                                                     |
+| ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Merge rather than rebase already-pushed Pi                                                     | Preserve source snapshot ancestry and published history without force-push                                                                    |
+| Per-user GWS policy over older staged unrestricted transport                                   | Final local-test working tree is the user-selected authority; credentials/approvals remain outside Pi                                         |
+| Blank Google secrets, internal secret and Pi model key in mitmproxy's broad env-file import    | Those credentials have explicit owners and are not proxy-injection configuration                                                              |
+| Preserve the named AppArmor policy; add explicit no-AppArmor platform override                 | Unsupported hosts cannot load that label; the override retains custom seccomp and is not automatic or a privileged/unconfined deployment      |
+| Inert Falcon fixture and Docker-default profile only for legacy CI without browser credentials | CI does not test live Falcon or provision the production host policy; do not send dummy credentials to a real API or relax production Compose |
+| Explicit Slack reply instructions after legacy agent deletion                                  | Final transcript text is not automatically a Slack reply; keep the skill pointer valid and supply the active thread target                    |
+
+### Integration findings
+
+- Preserve `sourceEventId` across privacy/branch reroutes. Queue filenames still change to keep ACK from deleting a requeued item, but runner idempotency uses the original delivery identity. The real signed-Slack container test initially exposed two turns for one delivery; retaining the parsed field fixed it. This is batch admission deduplication, not a general exactly-once inbox/effect guarantee.
+- Isolated GWS fixtures load source-only common helpers via the image's tsx loader. Scoped production builds intentionally have no common/dist entrypoint; tests must not depend on ignored host artifacts.
 
 ## Status and goal
 
@@ -38,11 +60,9 @@ Recommendation: proceed with a gated PoC, not an immediate replacement. Pi Durab
 - Conflict resolution retained local Drata/Kali/1Password/GWS documentation, both browser and codex-lb security sections, integration environment entries, and Falcon in NO_PROXY. Daytona's newer OpenTelemetry dependency graph was retained.
 - Frozen installation exposed a missing broker `@types/node` lock entry after replay. Regenerating the lock repaired it and applied local-test's existing patched protobufjs@8 override (resolved to 8.8.0); no manifest/override change was needed.
 - Validated locally under Node 24.21.0 and Corepack-managed pnpm 10.33.4: frozen install with lifecycle scripts disabled, 57 test files / 858 tests, and recursive workspace typechecks.
-- No push, GitHub integration run, deployment, or PR performed. Local unit verification is not the final integration gate.
+- At initial review no push, integration run, deployment or PR had been performed. Initial Pi Unit/Runtime GitHub gates later passed; Core/Sandbox were blocked by live Falcon rejecting dummy CI credentials. Follow-up CI now uses an inert local fixture; no production Falcon policy changes.
 
-**Important:** local-test has 63 staged/unstaged/untracked paths as inspected. A rebase brings committed history, not those files. That worktree was not stashed, committed, copied, or modified. Several files have different staged and working versions. The current pi checkout therefore does **not** yet contain the latest per-user GWS OAuth, revised codex-lb deployment, or agent deletions present in local-test's working tree.
-
-Before implementation, obtain approval to snapshot/import the intended working-tree state. Preserve index and working layers separately in a private recovery location, review for secrets, and never commit `.env`, credentials, encrypted runtime stores, or mounted deployment data. Then establish an explicit feature baseline; do not import all paths blindly.
+**Historical baseline:** the initial 63 dirty paths were not imported by the rebase. After explicit authorization, they were reviewed, scanned offline, committed as `f15cacc`, and imported with the final working versions taking precedence over the index. The private recovery copy retains the original layers; no `.env`, credentials, runtime stores or mounted deployment data enter the commit.
 
 ## Evidence and suitability review
 
@@ -85,9 +105,9 @@ Verified constraints:
 
 Before any event/projection change, read `docs/plan/2026051601_opencode-event-view-schema.md`. Preserve the reader-not-write-gate contract and event-size exceptions. Read the runner-owned Slack progress and user-aware-attribution plans before touching those paths.
 
-The dirty Google OAuth implementation currently resolves active users through OpenCode alias namespaces. A Pi alias rename without adapting all readers would break authorization. Runtime headers are correlation inputs, not authorization on their own.
+The imported Google OAuth implementation resolves active users through compatibility alias namespaces; Pi intentionally retains those aliases. A rename without adapting all readers would break authorization. Runtime headers are correlation inputs, not authorization on their own.
 
-## Proposed architecture
+## Superseded proposal — separate Pi service
 
 ```text
 gateway -> runner -> runtime adapter -> pi-runtime (Harness + restricted tools)
@@ -113,7 +133,7 @@ Storage state is canonical inside Pi. Thor's shared JSONL remains the historical
 
 Default cutover proposal: drain/explicitly cancel legacy work, keep old OpenCode sessions read-only, attach a new Pi conversation to the existing Thor anchor with an approved handoff and link to history. Full lossless transcript import is optional later, not a prerequisite to browsing old runs. Never import foreign in-flight tools or automatically repeat pending writes.
 
-## Phases and exit criteria
+## Superseded proposal phases and exit criteria
 
 ### Phase 0 — Establish the intended local-test baseline
 
@@ -179,7 +199,7 @@ Default cutover proposal: drain/explicitly cancel legacy work, keep old OpenCode
 
 **Exit:** relevant GitHub integration gates green; deployment smoke and backup/reopen demonstrated; agreed features/UI preserved; documented rollback works; OpenCode removal has no dangling references except intentional legacy readers/history.
 
-## Decision log
+## Superseded proposal decision log
 
 | Decision                                                    | Status                                      | Rationale / alternative                                                                                      |
 | ----------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -219,3 +239,12 @@ Default cutover proposal: drain/explicitly cancel legacy work, keep old OpenCode
 - Phase 3 local container E2E exercised real images, standard Responses/Slack/SSO fixtures, wrappers, read-only mounts, private storage separation, ingress/admin/viewers and SIGKILL recovery. Independent review found and prompted fixes for gateway-authenticated actor admission, terminal stream reconnect, trusted runner Slack proxy bypass, and legacy image installation through the untouched npm entrypoint. Regressions cover forged requests and terminal replay while Slack delivery blocks. Live account/provider behavior remains an operator smoke gate, not inferred from fixtures.
 - Final local validation: 61 test files / 899 tests passed; recursive workspace typechecks/builds, frozen installation, changed-file formatting and diff checks passed. Container E2E passed after admission-auth/reconnect fixes. Legacy OpenCode image built and reports 1.15.10. Compose override topology validated without reading deployment env files. Dirty local-test still has its original 63 paths untouched. No live provider/accounts were exercised. GitHub push verification follows this commit.
 - Scoped compatibility choices: shared Thor anchor/trigger APIs remain existing validated UUIDv7 strings rather than retyping unrelated legacy consumers; Pi SDK identity types stay vendor-owned. Existing runner compiler settings remain strict legacy settings while executor's new package enables the additional strict flags. Pi config retains plain credential strings at the existing composition boundary rather than introducing a shared redacted-value migration; it must never be serialized/logged in production or sent to tools, and startup failures expose safe codes only. Initial mode omits image reads, background subagents, per-trigger spend accounting and lossless legacy context import as documented in `docs/pi-runtime.md`.
+
+### Authorized import — local integration validation
+
+- Full local-test source snapshot committed as `f15cacc` (63 paths) after private recovery/secret scanning; source worktree clean. The Pi merge preserves all intended final source versions plus Pi boundary fixes, not private deployment data.
+- Current combined source: 66 files / 877 tests; frozen install, recursive typechecks/builds, formatting and diff checks. Pi-driven GWS integration uses real Durable/SQLite, HTTP executor, wrapper source and remote-cli/gateway approval dispatch; validates owner-only approval, reviewer reentry, execute-once/one-use result and stale/cron/cross-user denials. Signed Slack intake is separately covered by actual container gateway/queue/runner, not merely direct dispatch helpers.
+- Current Pi container E2E: authenticated ingress/viewers and OAuth route/header behavior; signed mention, bad-signature rejection, privacy-reroute redelivery dedup, trusted actor, non-mention same-conversation continuation, correctly targeted progress/replies, credential/mount isolation and SIGKILL recovery. Synthetic model/Slack/SSO/policy endpoints only.
+- Isolated Google/Drata container E2E passed with actual pinned gws 0.22.5 and current wrapper images, including private OAuth/approval and hostile workspace dotenv isolation. Legacy OpenCode image built and reports 1.18.29, aligned with SDK; Aikido 1.0.22 native libsecret dependency retained only in legacy image.
+- Pi/CI/no-AppArmor Compose projections verified with dummy environment and no deployment env file. Inert Falcon fixture verified through the real MCP client on an internal Docker network; exposes zero operational tools and makes no external requests.
+- Current GitHub gates are not yet run: this request follows commit-only guidance, with no push or PR. Earlier green Pi/Unit gates apply only to `d984839`, not this merge. Real Slack/model/Google/Falcon and production host policy remain operator acceptance gates; no live accounts or existing deployment containers/data were exercised.

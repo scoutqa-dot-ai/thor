@@ -1,0 +1,83 @@
+import { z } from "zod";
+
+const MAX_GWS_ARGS = 256;
+const MAX_GWS_ARG_BYTES = 64 * 1024;
+const MAX_GWS_ARGV_BYTES = 256 * 1024;
+
+const LOCAL_FILE_FLAG_RE =
+  /^--(?:[^=]*-)?(?:file|upload|output|credential|credentials|token|key|secret|oauth|auth|config|attachment|input)(?:[=-]|$)/i;
+const LOCAL_FILE_HELPER_RE = /^\+(?:upload|download|export|import|send)$/i;
+
+const ArgsSchema = z
+  .array(
+    z
+      .string()
+      .refine((arg) => !arg.includes("\0"))
+      .refine((arg) => Buffer.byteLength(arg, "utf8") <= MAX_GWS_ARG_BYTES),
+  )
+  .max(MAX_GWS_ARGS)
+  .refine(
+    (args) =>
+      args.reduce((total, arg) => total + Buffer.byteLength(arg, "utf8"), 0) <= MAX_GWS_ARGV_BYTES,
+  );
+
+/** Malformed process arguments, not an upstream operation permission denial. */
+export class GwsArgsError extends Error {
+  /** Stable classification for invalid argv. */
+  readonly _tag = "GwsArgsError" as const;
+
+  constructor() {
+    super("gws args must be a bounded string array without NUL bytes");
+  }
+}
+
+/** Agent-facing authentication commands are owned by Thor's OAuth broker. */
+export class GwsAuthCommandDenied extends Error {
+  readonly _tag = "GwsAuthCommandDenied" as const;
+
+  constructor() {
+    super(
+      "gws auth commands are disabled; connect Google Workspace through the private Slack link",
+    );
+  }
+}
+
+/** Local file access is excluded from the credential-bearing gws boundary. */
+export class GwsLocalFileCommandDenied extends Error {
+  readonly _tag = "GwsLocalFileCommandDenied" as const;
+
+  constructor() {
+    super("gws local file input/output commands are disabled; use API JSON arguments only");
+  }
+}
+
+/** Preserve API argv while rejecting malformed, auth, and local-file input. */
+export function parseGwsArgs(input: unknown):
+  | { readonly ok: true; readonly args: string[] }
+  | {
+      readonly ok: false;
+      readonly error: GwsArgsError | GwsAuthCommandDenied | GwsLocalFileCommandDenied;
+    } {
+  const parsed = ArgsSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: new GwsArgsError() };
+  if (parsed.data[0] === "auth") {
+    return { ok: false, error: new GwsAuthCommandDenied() };
+  }
+  if (
+    parsed.data.some(
+      (arg) =>
+        LOCAL_FILE_FLAG_RE.test(arg) ||
+        LOCAL_FILE_HELPER_RE.test(arg) ||
+        arg.startsWith("/") ||
+        arg.startsWith("./") ||
+        arg.startsWith("../") ||
+        arg.startsWith("~") ||
+        arg.includes("/../") ||
+        arg.startsWith("file://") ||
+        arg.startsWith("@"),
+    )
+  ) {
+    return { ok: false, error: new GwsLocalFileCommandDenied() };
+  }
+  return { ok: true, args: parsed.data };
+}

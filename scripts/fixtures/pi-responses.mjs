@@ -5,7 +5,10 @@ let heldOnce = false;
 let calls = 0;
 let wrapperCalls = 0;
 let slackPosts = 0;
+let lastProgressTarget;
 let lastWrapper;
+let slackReplies = 0;
+let lastReply;
 
 function respond(res, content, toolName = "bash", callId = "call_fixture") {
   res.writeHead(200, { "content-type": "text/event-stream" });
@@ -78,7 +81,15 @@ async function handle(req, res) {
     return;
   }
   if (req.url === "/probe") {
-    json(res, { calls, wrapperCalls, slackPosts, lastWrapper });
+    json(res, {
+      calls,
+      wrapperCalls,
+      slackPosts,
+      lastProgressTarget,
+      lastWrapper,
+      slackReplies,
+      lastReply,
+    });
     return;
   }
   if (req.url === "/dashboard") {
@@ -86,16 +97,40 @@ async function handle(req, res) {
     return;
   }
   if (req.url?.startsWith("/slack/")) {
-    for await (const _chunk of req) {
-      /* Consume the Slack form payload without recording it. */
+    const chunks = [];
+    for await (const chunk of req) chunks.push(Buffer.from(chunk));
+    if (req.url.includes("chat.postMessage")) {
+      slackPosts++;
+      const form = new URLSearchParams(Buffer.concat(chunks).toString());
+      lastProgressTarget = { channel: form.get("channel"), threadTs: form.get("thread_ts") };
     }
-    if (req.url.includes("chat.postMessage")) slackPosts++;
-    json(res, { ok: true, ts: "1710000000.001" });
+    json(res, {
+      ok: true,
+      ts: "1710000000.001",
+      channel: { id: "C_SIGNED", is_private: false, is_shared: false },
+    });
+    return;
+  }
+  if (req.url?.startsWith("/google-workspace/")) {
+    json(res, {
+      trustedInternalHeader: req.headers["x-thor-internal-secret"] === "runner-internal-sentinel",
+      vouchUser: req.headers["x-vouch-user"] ?? null,
+    });
     return;
   }
   const chunks = [];
   for await (const chunk of req) chunks.push(Buffer.from(chunk));
   const payload = JSON.parse(Buffer.concat(chunks).toString() || "{}");
+  if (req.url === "/exec/slack-post-message") {
+    slackReplies++;
+    lastReply = {
+      args: payload.args,
+      text: payload.stdin,
+      sessionId: req.headers["x-thor-session-id"],
+    };
+    json(res, { stdout: "fixture reply posted", stderr: "", exitCode: 0 });
+    return;
+  }
   if (req.url === "/exec/gh") {
     wrapperCalls++;
     lastWrapper = {
@@ -114,6 +149,28 @@ async function handle(req, res) {
   const input = JSON.stringify(payload.input);
   if (input.includes("fixture-hold") && !heldOnce) {
     heldOnce = true;
+    return;
+  }
+  if (input.includes("fixture-slack-intake")) {
+    const latestUser = payload.input.findLastIndex((item) => item.role === "user");
+    const replied = payload.input
+      .slice(latestUser + 1)
+      .some(
+        (item) =>
+          item.type === "function_call_output" && item.call_id.startsWith("call_signed_reply_"),
+      );
+    if (!replied) {
+      respond(
+        res,
+        {
+          command:
+            "printf 'fixture signed reply\\n' | slack-post-message --channel C_SIGNED --thread-ts 1710000000.010",
+          timeout: 10,
+        },
+        "bash",
+        `call_signed_reply_${calls}`,
+      );
+    } else respond(res, "fixture signed completed");
     return;
   }
   const toolOutput = payload.input?.findLast(
@@ -146,12 +203,21 @@ async function handle(req, res) {
       (item) => item.type === "function_call_output" && item.call_id === "call_extra",
     )
   ) {
-    respond(res, { command: "printf checked", timeout: 10 }, "bash", "call_extra");
+    respond(
+      res,
+      {
+        command:
+          "slack-post-message --channel C_FIXTURE --thread-ts 1710000000.001 <<'REPLY'\nfixture thread reply\nREPLY",
+        timeout: 10,
+      },
+      "bash",
+      "call_extra",
+    );
     return;
   }
   respond(res, input.includes("fixture-hold") ? "fixture recovered" : "fixture completed");
 }
-for (const port of [8000, 9090, 2455, 3002]) {
+for (const port of [8000, 9090, 2455, 3002, 3004]) {
   createServer((req, res) => {
     void handle(req, res).catch(() => json(res, { error: "invalid fixture request" }, 400));
   }).listen(port, "0.0.0.0");

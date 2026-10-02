@@ -12,6 +12,7 @@ import {
   findUserBySlack,
   findUserByGithub,
   findUserByEmail,
+  findUserByGoogleWorkspaceEmail,
   resolveSafeRepoDirectory,
   resolveSlackChannelRepoDirectory,
   getSlackPrivateChannelAllowlist,
@@ -95,7 +96,13 @@ describe("loadWorkspaceConfig", () => {
   it("loads users and resolves identities case-insensitively where appropriate", () => {
     const path = writeConfig("config.json", {
       users: [
-        { email: "alice@example.com", name: "Alice", slack: "UABCDEF1", github: "Alice-Dev" },
+        {
+          email: "alice@example.com",
+          name: "Alice",
+          slack: "UABCDEF1",
+          github: "Alice-Dev",
+          google_workspace_email: "alice.google@example.com",
+        },
         { email: "bob@example.com", name: "Bob" },
       ],
     });
@@ -103,7 +110,30 @@ describe("loadWorkspaceConfig", () => {
     expect(findUserBySlack(config, "UABCDEF1")?.email).toBe("alice@example.com");
     expect(findUserByGithub(config, "alice-dev")?.slack).toBe("UABCDEF1");
     expect(findUserByEmail(config, "BOB@example.com")?.name).toBe("Bob");
+    expect(findUserByGoogleWorkspaceEmail(config, "ALICE.GOOGLE@example.com")?.name).toBe("Alice");
     expect(findUserBySlack(config, "UNOMATCH")).toBeUndefined();
+  });
+
+  it("fails Google Workspace reverse lookup closed when an email is ambiguous", () => {
+    const path = writeConfig("ambiguous-google.json", {
+      users: [
+        {
+          email: "alice@example.com",
+          name: "Alice",
+          slack: "U1",
+          google_workspace_email: "shared@example.com",
+        },
+        {
+          email: "bob@example.com",
+          name: "Bob",
+          slack: "U2",
+          google_workspace_email: "SHARED@example.com",
+        },
+      ],
+    });
+    expect(
+      findUserByGoogleWorkspaceEmail(loadWorkspaceConfig(path), "shared@example.com"),
+    ).toBeUndefined();
   });
 
   it("accepts Slack private channel allowlist and exposes it through the helper", () => {

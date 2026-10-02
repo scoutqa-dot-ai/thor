@@ -15,7 +15,7 @@
     "@earendil-works/pi-ai": "1.0.0",
     "@earendil-works/pi-durable": "1.0.0",
     "@thor/pi-executor": "workspace:*",
-    "@opencode-ai/sdk": "^1.15.10",
+    "@opencode-ai/sdk": "1.18.29",
     "@slack/types": "2.21.1",
     "@slack/web-api": "^7.15.1",
     "@thor/common": "workspace:*",

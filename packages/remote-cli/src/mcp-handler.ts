@@ -160,6 +160,39 @@ export interface McpCommandContext {
   callId?: string;
 }
 
+export interface CustomApprovalExecutorInput {
+  readonly action: ApprovalAction;
+  readonly reviewer: string;
+  readonly reason?: string;
+}
+
+export interface CustomApprovalExecution {
+  /** Secret-free resolution envelope safe for durable approval storage and gateway logs. */
+  readonly result: McpExecResult;
+  /** True once the private action payload was durably consumed before dispatch. */
+  readonly consumed: boolean;
+}
+
+export type CustomApprovalExecutor = (
+  input: CustomApprovalExecutorInput,
+) => Promise<CustomApprovalExecution>;
+
+export interface CustomApprovalStatusReaderInput {
+  readonly action: ApprovalAction;
+  readonly context: McpCommandContext;
+  readonly mode: "status" | "result";
+  readonly capability?: string;
+}
+
+export type CustomApprovalStatusReader = (
+  input: CustomApprovalStatusReaderInput,
+) => Promise<McpExecResult>;
+
+export type CustomApprovalReviewerAuthorizer = (input: {
+  readonly action: ApprovalAction;
+  readonly reviewer: string;
+}) => boolean;
+
 export interface McpServiceDeps {
   approvalsDir?: string;
   isProduction?: boolean;
@@ -168,6 +201,9 @@ export interface McpServiceDeps {
   configLoader?: ConfigLoader;
   fetchImpl?: typeof fetch;
   slack?: { botToken?: string; apiBaseUrl?: string };
+  customApprovalExecutors?: Readonly<Record<string, CustomApprovalExecutor>>;
+  customApprovalStatusReaders?: Readonly<Record<string, CustomApprovalStatusReader>>;
+  customApprovalReviewerAuthorizers?: Readonly<Record<string, CustomApprovalReviewerAuthorizer>>;
 }
 
 interface ToolInfo {
@@ -189,6 +225,20 @@ function ok(stdout = ""): McpExecResult {
 
 function fail(stderr: string, stdout = ""): McpExecResult {
   return { stdout, stderr, exitCode: 1 };
+}
+
+function safeCustomApprovalAction(action: ApprovalAction): Record<string, unknown> {
+  return {
+    id: action.id,
+    upstream: action.upstream,
+    status: action.status,
+    tool: action.tool,
+    args: action.args,
+    createdAt: action.createdAt,
+    ...(action.resolvedAt ? { resolvedAt: action.resolvedAt } : {}),
+    ...(action.reviewer ? { reviewer: action.reviewer } : {}),
+    ...(action.reason ? { reason: action.reason } : {}),
+  };
 }
 
 function isExecResult(value: unknown): value is McpExecResult {
@@ -226,7 +276,7 @@ export interface McpService {
   warmUpstreams(): Promise<void>;
   closeAll(): Promise<void>;
   executeMcp(args: string[], context: McpCommandContext): Promise<McpExecResult>;
-  executeApproval(args: string[]): Promise<McpExecResult>;
+  executeApproval(args: string[], context?: McpCommandContext): Promise<McpExecResult>;
 }
 
 export function createMcpService(deps: McpServiceDeps): McpService {
@@ -822,7 +872,13 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   }
 
   function findApproval(actionId: string): ApprovalLookup | undefined {
-    for (const upstreamName of PROXY_NAMES) {
+    const approvalNames = new Set([
+      ...PROXY_NAMES,
+      ...Object.keys(deps.customApprovalExecutors ?? {}),
+      ...Object.keys(deps.customApprovalStatusReaders ?? {}),
+      ...Object.keys(deps.customApprovalReviewerAuthorizers ?? {}),
+    ]);
+    for (const upstreamName of approvalNames) {
       const store = getApprovalStore(upstreamName);
       const action = store.get(actionId);
       if (action) {
@@ -888,6 +944,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     if (!lookup) {
       return fail(`No approval action found with ID: ${actionId}`);
     }
+    const reviewerAuthorizer = deps.customApprovalReviewerAuthorizers?.[lookup.upstreamName];
+    if (reviewerAuthorizer && !reviewerAuthorizer({ action: lookup.action, reviewer })) {
+      return fail(`Approval action ${actionId} is not owned by this reviewer`);
+    }
 
     if (lookup.action.status !== "pending") {
       if (lookup.action.status !== decision) {
@@ -896,6 +956,12 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         );
       }
       if (lookup.action.status === "approved") {
+        if (
+          deps.customApprovalExecutors?.[lookup.upstreamName] &&
+          lookup.action.reviewer !== reviewer
+        ) {
+          return fail(`Approval action ${actionId} was approved by a different reviewer`);
+        }
         return storedApprovedResult(lookup.action);
       }
       return ok(stringify(lookup.action));
@@ -913,12 +979,38 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return ok(stringify(rejected));
     }
 
+    const pendingAction = lookup.action;
+    const customExecutor = deps.customApprovalExecutors?.[lookup.upstreamName];
+    if (customExecutor) {
+      const execution = await customExecutor({ action: pendingAction, reviewer, reason });
+      if (execution.consumed) {
+        try {
+          lookup.store.approveLoaded(pendingAction, execution.result, reviewer, reason);
+        } catch {
+          return fail("Approval was consumed but its durable status could not be updated");
+        }
+        logInfo(log, "tool_call_approved", {
+          upstream: lookup.upstreamName,
+          tool: pendingAction.tool,
+          actionId: pendingAction.id,
+          reviewer,
+          sessionId: pendingAction.origin?.sessionId,
+          exitCode: execution.result.exitCode,
+        });
+        writeToolCallLogFn({
+          tool: pendingAction.tool,
+          decision: "approved",
+          args: pendingAction.args,
+        });
+      }
+      return execution.result;
+    }
+
     const instance = await getInstance(lookup.upstreamName);
     if (!instance) {
       return fail(`Unknown upstream "${lookup.upstreamName}".`);
     }
 
-    const pendingAction = lookup.action;
     let upstreamArgs: Record<string, unknown>;
     try {
       upstreamArgs = buildUpstreamArgs(pendingAction);
@@ -1110,9 +1202,11 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return callTool(upstreamName, resolvedTool, parsedArgs, context);
     },
 
-    async executeApproval(args: string[]): Promise<McpExecResult> {
+    async executeApproval(args: string[], context: McpCommandContext = {}): Promise<McpExecResult> {
       if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
-        return fail("Usage:\n  approval status <action-id>\n  approval list\n");
+        return fail(
+          "Usage:\n  approval status <action-id>\n  approval result <action-id> <capability>\n  approval list\n",
+        );
       }
 
       if (args[0] === "status") {
@@ -1129,18 +1223,56 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         if (!lookup) {
           return fail(`No approval action found with ID: ${args[1]}\n`);
         }
+        const customStatusReader = deps.customApprovalStatusReaders?.[lookup.upstreamName];
+        if (customStatusReader) {
+          return customStatusReader({ action: lookup.action, context, mode: "status" });
+        }
         return ok(stringify(lookup.action));
       }
 
+      if (args[0] === "result") {
+        if (!args[1] || !args[2]) {
+          return fail("Usage: approval result <action-id> <capability>\n");
+        }
+        let lookup: ApprovalLookup | undefined;
+        try {
+          lookup = findApproval(args[1]);
+        } catch {
+          return fail("Approval result is unavailable\n");
+        }
+        const customStatusReader = lookup
+          ? deps.customApprovalStatusReaders?.[lookup.upstreamName]
+          : undefined;
+        if (!lookup || lookup.action.status !== "approved" || !customStatusReader) {
+          return fail("Approval result is unavailable\n");
+        }
+        return customStatusReader({
+          action: lookup.action,
+          context,
+          mode: "result",
+          capability: args[2],
+        });
+      }
+
       if (args[0] === "list") {
-        const approvals = PROXY_NAMES.flatMap((upstreamName) =>
-          getApprovalStore(upstreamName).listPending(),
-        );
+        const approvalNames = new Set([
+          ...PROXY_NAMES,
+          ...Object.keys(deps.customApprovalExecutors ?? {}),
+          ...Object.keys(deps.customApprovalStatusReaders ?? {}),
+          ...Object.keys(deps.customApprovalReviewerAuthorizers ?? {}),
+        ]);
+        const approvals = [...approvalNames].flatMap((upstreamName) => {
+          const actions = getApprovalStore(upstreamName).listPending();
+          if (!deps.customApprovalStatusReaders?.[upstreamName]) return actions;
+          return actions
+            .filter((action) => action.origin?.sessionId === context.sessionId)
+            .map(safeCustomApprovalAction);
+        });
         return ok(stringify({ approvals }));
       }
 
       return fail(
-        `Unknown subcommand: ${args[0]}\nUsage:\n  approval status <action-id>\n  approval list\n`,
+        `Unknown subcommand: ${args[0]}\nUsage:\n  approval status <action-id>\n  approval result <action-id> <capability>\n  approval list\n`,
       );
     },
   };

@@ -10,14 +10,16 @@ Three things are assumed untrusted:
 - **OpenCode-side wrappers.** Skill scripts and CLI shims inside the OpenCode container are reachable by the agent and can be coerced. They are convenience, not enforcement.
 - **External webhook senders.** Inbound HTTP requests are hostile until a signature proves otherwise.
 
-The docker network — gateway, runner, remote-cli, mitmproxy — is the trust boundary. Everything inside it is treated as equally trusted; everything outside must authenticate.
+The Docker network carries trusted services and the untrusted OpenCode runtime. Internal services authenticate or constrain OpenCode at their own boundary; external callers must authenticate at ingress.
 
 ## Layer 1: Network boundary
 
 - **Ingress + Vouch.** `ingress` terminates TLS and delegates auth to Vouch. Vouch admits Google-authenticated users whose email domain matches `VOUCH_ALLOWED_EMAIL_DOMAINS`. The OpenCode SPA root and `/admin/` additionally require membership in `THOR_ADMIN_EMAILS`; `/runner/` viewer routes remain open to any allowed-domain user. Static OpenCode assets bypass Vouch for performance.
-- **Egress through mitmproxy.** All outbound HTTP(S) from OpenCode traverses mitmproxy. See Layer 1a for the routing path, built-in defaults, and custom rule format.
+- **Egress through mitmproxy.** External HTTP(S) initiated by OpenCode and codex-lb traverses mitmproxy. OpenCode's internal model request to codex-lb is explicitly bypassed; codex-lb then reaches ChatGPT through the proxy. See Layer 1a for the routing path, built-in defaults, and custom rule format.
 - **Credentialed browser isolation.** The 1Password browser MCP runs as a `remote-cli`-owned stdio child inside `bwrap`; its local Chromium and service-account token are not present in OpenCode or Daytona. The child has no workspace or remote-cli state mounts. See [`../onepassword-browser.md`](../onepassword-browser.md).
-- **Host port hardening.** `remote-cli` binds `127.0.0.1:3004:3004` so it is unreachable from outside the host.
+- **Google Workspace user-grant isolation.** `remote-cli` binds encrypted refresh grants to verified Slack users, requires the same user to approve each exact command fingerprint, and injects only a refreshed short-lived access token into a fresh `gws` child. Agent-authored session headers cannot execute with a grant without the out-of-band owner approval; there is no global fallback. See [`../google-workspace.md`](../google-workspace.md).
+- **Model credential isolation.** codex-lb owns the pooled ChatGPT/Codex OAuth tokens and routes model requests. OpenCode receives only the non-secret `codex-lb-local` placeholder accepted from private Docker CIDRs; it receives no subscription token. See [`../codex-lb.md`](../codex-lb.md).
+- **Host port hardening.** `remote-cli` and codex-lb's direct dashboard/API and OAuth callback ports bind to host loopback. Office dashboard access goes through the Vouch/admin-email-protected ingress on port 8080.
 
 ## Layer 1a: Outbound proxy (mitmproxy)
 
@@ -40,7 +42,13 @@ Built-in defaults are intentionally narrow:
 - Atlassian media redirects: `api.media.atlassian.com` passthrough.
 - Slack API: injected auth only for thread/history reads, `reactions.add`, `files.info`, and the upload setup/complete endpoints on `slack.com/api/...`; message writes must use `slack-post-message`.
 - Slack files: read-only downloads on `files.slack.com/files-pri/...` and upload flow support on `files.slack.com/upload/v1/...`.
-- OpenAI and ChatGPT domains: passthrough only (no injected credentials). In practice only `codex-lb` reaches these upstreams; opencode talks to `codex-lb` over the docker network instead of holding ChatGPT credentials itself.
+- OpenAI and ChatGPT domains: passthrough only (no injected credentials). codex-lb uses this path and trusts the mounted mitmproxy public CA.
+
+OpenCode's configured model provider does not use those public passthroughs: it
+connects directly to `http://codex-lb:2455`, which is listed in `NO_PROXY`.
+codex-lb then makes its upstream ChatGPT connection through mitmproxy; the
+public OpenAI/ChatGPT rules are also available for ordinary agent-initiated
+HTTP reads.
 
 The shared upstream registry and allow/approve policy are checked into [`packages/common/src/proxies.ts`](../../packages/common/src/proxies.ts).
 
@@ -110,8 +118,16 @@ Approval creation **fails closed** when remote-cli cannot resolve or post to the
 - `git` uses GitHub App installation tokens minted on demand through `GIT_ASKPASS` when the target owner resolves from the command or repo remote.
 - `gh` resolves GitHub App auth before execution and exports `GH_TOKEN` only with the short-lived installation token for the resolved owner.
 - OpenCode never receives direct API credentials for MCP upstreams.
+- **Model credentials are brokered separately.** OpenCode holds only the non-secret `codex-lb-local` placeholder. codex-lb admits it by source CIDR on the private network and retains subscription OAuth tokens in `codex-lb-data`. Direct OpenAI credentials must be removed from OpenCode's persistent `auth.json` after migration. The dashboard's application auth is disabled in this topology; Vouch and `THOR_ADMIN_EMAILS` protect its office-facing ingress route, while direct port 2455 remains host-loopback-only.
+
+This copied topology does not isolate codex-lb's dashboard API from OpenCode on
+the shared Docker network: dashboard application auth is disabled so the
+ingress can own browser auth, while OpenCode must reach the same port for model
+requests. Treat that as an explicit trust-boundary limitation, not as protection
+from a compromised agent. Pi's override places its executor on a separate
+internal network without codex-lb, while the trusted runner retains model access.
+
 - **1Password browser credentials stay in the broker.** `OP_SERVICE_ACCOUNT_TOKEN` exists only in `remote-cli`; a dedicated stdio transport sends it to the sandbox over anonymous fd 3, where broker startup consumes and unlinks a private tmpfs file before accepting MCP requests. The broker lists only safe exact-origin Login metadata from one dedicated vault and reads credential-bearing fields only after Slack approval. If the approval explicitly enables automated TOTP, the broker re-reads one fresh SDK-computed code only after validating one same-origin MFA challenge and attempts it once. Authenticated Chromium remains broker-owned, credential-free in its process environment, exact-origin, Thor-session-bound, ref-controlled, and limited by a ten-minute inactivity lease. No credential, TOTP secret/code, cookie/storage value, full browser handle, or raw Playwright snapshot crosses the boundary.
-- **ChatGPT subscription credentials live in `codex-lb`, not OpenCode.** opencode points its `openai` provider at `http://codex-lb:2455/v1` with a literal in-network token (`codex-lb-local`) that has no value outside the docker network. The OAuth refresh tokens and account cookies for ChatGPT are persisted under `codex-lb`'s own SQLite store at `/var/lib/codex-lb`, which is never mounted into OpenCode. An agent that reads opencode's auth/config files finds no ChatGPT credential it can replay.
 
 ## Layer 5: Blast radius limits
 
@@ -122,7 +138,7 @@ If a policy layer fails, these limit what damage is reachable:
 - **Per-owner installation tokens.** GitHub installation tokens are scoped to a single owner and expire within an hour.
 - **Daytona sandbox isolation.** Project builds and test runs execute in per-worktree Daytona sandboxes; `git` is blocked inside the sandbox so the agent cannot push from there.
 - **Credential broker allowlist.** The 1Password integration reaches one configured dedicated vault. A credential-free browser may discover one application → credential → exact application callback route and freeze it in an owner-bound, short-lived approval plan. Credentials are injected only at the approved credential origin; after callback, continued access is restricted to the application origin and sanitized accessibility snapshots, latest-snapshot click/type refs, same-origin navigation, and close. It exposes no generic vault/secret reads, redirect parameters, arbitrary references/selectors/JavaScript, cross-origin continued browsing, persistent profile, CDP, cookie/storage, screenshot, trace, or download surface.
-- **codex-lb browser dashboard protection.** The public dashboard (`/dashboard`, `/accounts`, `/settings`, `/api/*`) is behind Vouch + `THOR_ADMIN_EMAILS`, and host ports bind to loopback. This does not isolate unauthenticated dashboard APIs from services on the same Docker network; default OpenCode shares that network. Pi's override puts its executor on a separate internal network without codex-lb, while the trusted runner retains model access.
+- **Model pool scope.** codex-lb dashboard policy controls eligible accounts and models. Fresh sessions may fail over; account-bound continuation state fails closed when its owning account is unavailable. The persistent `codex-lb-data` volume contains OAuth tokens, the default encryption key, configuration, and request metadata and is handled as secret state.
 
 ## Layer 6: Audit trail
 

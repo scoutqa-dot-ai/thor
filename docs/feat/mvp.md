@@ -11,6 +11,7 @@ flowchart LR
     B[Runner<br/>Session Orchestrator]
     C[Gateway<br/>Slack + Cron Intake]
     D[Remote CLI<br/>Exec + MCP Policy]
+    L[codex-lb<br/>Subscription Pool]
 
     F[Atlassian MCP]
     G[PostHog MCP]
@@ -22,6 +23,8 @@ flowchart LR
     C --> B
     B --> A
     A --> D
+    A --> L
+    L --> M[ChatGPT / Codex]
     C --> J
     A --> J
     D --> F
@@ -35,6 +38,7 @@ flowchart LR
 
 | Integration      | Path                                               | Auth                    | Notes                                                   |
 | ---------------- | -------------------------------------------------- | ----------------------- | ------------------------------------------------------- |
+| Model inference  | `opencode -> codex-lb`                             | Private Docker network  | Multi-subscription routing; codex-lb owns OAuth tokens  |
 | Git / GitHub CLI | `remote-cli /exec/git`, `/exec/gh`                 | GitHub App token        | Repo-scoped worktree edits                              |
 | Atlassian MCP    | `remote-cli /exec/mcp`                             | `ATLASSIAN_AUTH` header | Read + approved writes                                  |
 | PostHog MCP      | `remote-cli /exec/mcp`                             | API key                 | Read + approved writes                                  |
@@ -44,7 +48,7 @@ flowchart LR
 | Langfuse         | `remote-cli /exec/langfuse`                        | API key pair            | Read-only trace queries                                 |
 | LaunchDarkly     | `remote-cli /exec/ldcli`                           | Access token            | Read-only feature flag inspection                       |
 | Metabase         | `remote-cli /exec/metabase`                        | API key                 | Read-only warehouse access                              |
-| Google Workspace | `remote-cli /exec/gws`                             | Service identity        | Read-only Drive/Docs/Sheets/Calendar/Gmail access       |
+| Google Workspace | `remote-cli /exec/gws`                             | Per-Slack-user OAuth    | Approval-gated Drive/Docs/Sheets access                 |
 
 ## MCP Policy Layer
 
@@ -71,6 +75,7 @@ The runner batches events by correlation key, resumes prior OpenCode sessions wh
 ## Security
 
 - Least privilege: each service keeps only the credentials it needs.
+- Model isolation: codex-lb holds subscription OAuth tokens; OpenCode holds only a non-secret private-network placeholder.
 - Server-side policy: MCP allow/approve enforcement happens in `remote-cli`, not in the agent.
 - Secret-gated internal routes: agents never receive `THOR_INTERNAL_SECRET`, which authorizes approval resolution and internal exec on gateway↔remote-cli routes.
 - Read-only repo mounts in OpenCode; modifications happen through worktrees.

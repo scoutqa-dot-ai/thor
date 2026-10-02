@@ -1,14 +1,20 @@
 import express, { type Express } from "express";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { access } from "node:fs/promises";
 import { dirname, normalize as normalizePosix } from "node:path/posix";
 import { fileURLToPath } from "node:url";
 import {
   appendCorrelationAlias,
+  ApprovalRequiredEventPayloadSchema,
+  buildApprovalSlackMessage,
   buildThorDisclaimerForSession,
   computeGitCorrelationKey,
   createConfigLoader,
   createLogger,
+  findUserByGoogleWorkspaceEmail,
+  findUserBySlack,
   getRunnerBaseUrl,
+  GoogleWorkspaceCommandApprovalArgsSchema,
   logError,
   logInfo,
   loadRemoteCliAppEnv,
@@ -16,6 +22,7 @@ import {
   loadRemoteCliGitHubEnv,
   loadRemoteCliInternalEnv,
   matchesInternalSecret,
+  resolveSlackThreadTargetFromTrigger,
   writeToolCallLog,
   WORKSPACE_CONFIG_PATH,
   type ExecStreamEvent,
@@ -23,18 +30,26 @@ import {
   type ToolCallLogEntry,
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.js";
-import { GwsService } from "./gws.js";
-import { parseGwsArgs } from "./policy-gws.js";
+import { GwsService, type IGwsService } from "./gws.js";
+import { parseGwsArgs } from "./gws-args.js";
+import {
+  GWS_OAUTH_BROWSER_COOKIE,
+  GwsOAuthService,
+  type GwsOAuthServiceDeps,
+} from "./gws-oauth.js";
 import { resolveOwnerRepoFromRemote } from "./github-app-auth.js";
-import { createMcpService, type McpServiceDeps } from "./mcp-handler.js";
+import { createMcpService, type McpExecResult, type McpServiceDeps } from "./mcp-handler.js";
+import { ApprovalStore, type ApprovalAction } from "./approval-store.js";
 import { sanitizeCredentialBrokerToolCallLog } from "./credential-broker-audit.js";
 import {
   handleSlackPostMessage,
   parseSlackPostMessageArgs,
+  postSlackMessageApi,
   type SlackPostMessageDeps,
 } from "./slack-post-message.js";
 import { listSchemas, listTables, getColumns, executeQuery, getQuestion } from "./metabase.js";
-import { drataApiGet } from "./drata.js";
+import { DrataService } from "./drata.js";
+import { parseDrataArgs } from "./drata-args.js";
 import {
   createSandbox,
   deleteSandbox,
@@ -60,9 +75,10 @@ import {
   validateLangfuseArgs,
   validateMetabaseArgs,
   validateScoutqaArgs,
-  validateDrataArgs,
 } from "./policy.js";
-import { attributionFields, resolveTriggerUser } from "./attribution.js";
+import { attributionFields, resolveActiveSlackUser, resolveTriggerUser } from "./attribution.js";
+
+export { GwsOAuthService, GwsService };
 
 const log = createLogger("remote-cli");
 
@@ -71,6 +87,10 @@ const WORKTREE_ROOT = "/workspace/worktrees";
 const WORKTREE_PREFIX = `${WORKTREE_ROOT}/`;
 const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 const INTERNAL_EXEC_MAX_OUTPUT = 1024 * 1024;
+const APPROVALS_DIR = "/workspace/data/approvals";
+const GWS_CONNECT_REQUEST_COOKIE = "thor_gws_connect_request";
+const GWS_DISCONNECT_COOKIE = "thor_gws_disconnect";
+const GWS_DISCONNECT_TTL_MS = 5 * 60 * 1000;
 const GITHUB_ISSUE_URL_RE =
   /https:\/\/github\.com\/([^\s/]+)\/([^\s/]+)\/issues\/(\d+)(?:\b|[/?#])/;
 
@@ -96,6 +116,9 @@ export interface RemoteCliAppConfig {
   mcp?: McpServiceDeps;
   slackPostMessage?: SlackPostMessageDeps;
   configLoader?: ConfigLoader;
+  gws?: IGwsService;
+  gwsOAuth?: GwsOAuthService;
+  gwsOAuthDeps?: GwsOAuthServiceDeps;
 }
 
 export interface RemoteCliApp {
@@ -634,15 +657,348 @@ async function ensureSandbox(cwd: string, currentSha: string) {
   return createSandbox(buildSandboxName(cwd), cwd, currentSha, labels);
 }
 
+function summarizeGwsOperation(args: readonly string[]): string {
+  const tokenCount = args[1]?.startsWith("+") ? 2 : 3;
+  const tokens = args.slice(0, tokenCount);
+  if (
+    tokens.length === 0 ||
+    tokens.some((arg) => arg.startsWith("-") || !/^[A-Za-z0-9_+]{1,80}$/.test(arg))
+  ) {
+    return "gws command";
+  }
+  return tokens.join(".");
+}
+
+function parseCookieHeader(header: string | undefined, name: string): string | undefined {
+  if (!header) return undefined;
+  for (const part of header.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator <= 0) continue;
+    if (part.slice(0, separator).trim() !== name) continue;
+    try {
+      return decodeURIComponent(part.slice(separator + 1).trim());
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function gwsConnectRequestCookie(value: string): string {
+  return `${GWS_CONNECT_REQUEST_COOKIE}=${encodeURIComponent(value)}; Path=/google-workspace/connect/authorize; Max-Age=600; HttpOnly; Secure; SameSite=Lax`;
+}
+
+function clearGwsConnectRequestCookie(): string {
+  return `${GWS_CONNECT_REQUEST_COOKIE}=; Path=/google-workspace/connect/authorize; Max-Age=0; HttpOnly; Secure; SameSite=Lax`;
+}
+
+function gwsOAuthBrowserCookie(value: string, maxAgeSeconds: number): string {
+  return `${GWS_OAUTH_BROWSER_COOKIE}=${encodeURIComponent(value)}; Path=/google-workspace/oauth/callback; Max-Age=${maxAgeSeconds}; HttpOnly; Secure; SameSite=Lax`;
+}
+
+function clearGwsOAuthBrowserCookie(): string {
+  return `${GWS_OAUTH_BROWSER_COOKIE}=; Path=/google-workspace/oauth/callback; Max-Age=0; HttpOnly; Secure; SameSite=Lax`;
+}
+
+function setGwsOAuthBrowserSecurityHeaders(
+  res: express.Response,
+  options: { allowSelfForm?: boolean } = {},
+): void {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader(
+    "Content-Security-Policy",
+    `default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action ${options.allowSelfForm ? "'self'" : "'none'"}`,
+  );
+  res.setHeader("X-Content-Type-Options", "nosniff");
+}
+
+function gwsDisconnectConfirmationHtml(csrfToken: string): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Disconnect Google Workspace</title></head><body><h1>Disconnect Google Workspace</h1><p>This removes Thor's local grant. You should also revoke Thor in Google Account security settings.</p><form method="post" action="/google-workspace/disconnect"><input type="hidden" name="csrf" value="${csrfToken}"><button type="submit">Disconnect Google Workspace</button></form></body></html>`;
+}
+
+function timingSafeStringEqual(left: string, right: string): boolean {
+  const leftDigest = createHash("sha256").update(left, "utf8").digest();
+  const rightDigest = createHash("sha256").update(right, "utf8").digest();
+  return timingSafeEqual(leftDigest, rightDigest);
+}
+
+function gwsOAuthHtml(title: string, message: string): string {
+  const escape = (value: string) =>
+    value.replace(/[&<>"']/g, (character) => {
+      const escaped: Record<string, string> = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      };
+      return escaped[character] ?? "";
+    });
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escape(title)}</title></head><body><h1>${escape(title)}</h1><p>${escape(message)}</p></body></html>`;
+}
+
 export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliApp {
   const appEnv = config.appEnv ?? loadRemoteCliAppEnv();
   const envConfig = config.env;
   const internalSecret = appEnv.thorInternalSecret;
-  const gws = new GwsService(process.env);
-  const getConfig = config.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
+  const gws = config.gws ?? new GwsService(process.env);
+  const gwsOAuth = config.gwsOAuth ?? new GwsOAuthService(process.env, config.gwsOAuthDeps);
+  const approvalsDir = config.mcp?.approvalsDir ?? APPROVALS_DIR;
+  const pendingDisconnects = new Map<string, { token: string; expiresAtMs: number }>();
+  const gwsApprovalStore = new ApprovalStore(`${approvalsDir}/gws`, "gws");
+  const drata = new DrataService(process.env);
+  const getConfig =
+    config.configLoader ?? config.mcp?.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
   const rawWriteToolCallLog = config.mcp?.writeToolCallLogFn ?? writeToolCallLog;
   const safeWriteToolCallLog = (entry: ToolCallLogEntry): void =>
     rawWriteToolCallLog(sanitizeCredentialBrokerToolCallLog(entry));
+  const executeApprovedGwsCommand = async (input: {
+    action: ApprovalAction;
+    reviewer: string;
+  }): Promise<{ result: McpExecResult; consumed: boolean }> => {
+    const approvedSummary = GoogleWorkspaceCommandApprovalArgsSchema.safeParse(input.action.args);
+    if (!approvedSummary.success || input.action.tool !== "google_workspace_command") {
+      return {
+        consumed: false,
+        result: {
+          stdout: "",
+          stderr: "Google Workspace approval metadata is invalid.\n",
+          exitCode: 1,
+        },
+      };
+    }
+    const consumed = gwsOAuth.consumePendingCommand(input.action.id, input.reviewer);
+    if (!consumed.ok) {
+      const alreadyConsumed = consumed.error.code === "already_used";
+      return {
+        consumed: alreadyConsumed,
+        result: {
+          stdout: "",
+          stderr: alreadyConsumed
+            ? 'Error calling "google_workspace_command": approval_already_consumed'
+            : "Google Workspace approval is not valid for this Slack user.\n",
+          exitCode: 1,
+        },
+      };
+    }
+    const finishConsumedCommand = (
+      actualResult: McpExecResult,
+      failureCategory?: string,
+    ): { result: McpExecResult; consumed: true } => {
+      const stored = gwsOAuth.storeCommandResult(input.action.id, actualResult);
+      if (!stored.ok) {
+        return {
+          consumed: true,
+          result: {
+            stdout: JSON.stringify({
+              status: "error",
+              tool: "google_workspace_command",
+              upstream: "gws",
+              result_available: false,
+            }),
+            stderr: 'Error calling "google_workspace_command": result_storage_failed',
+            exitCode: 1,
+          },
+        };
+      }
+      return {
+        consumed: true,
+        result: {
+          stdout: JSON.stringify({
+            status: failureCategory ? "error" : "completed",
+            tool: "google_workspace_command",
+            upstream: "gws",
+            result_available: true,
+            result_capability: stored.value,
+          }),
+          stderr: failureCategory
+            ? `Error calling "google_workspace_command": ${failureCategory}`
+            : "",
+          exitCode: failureCategory ? 1 : 0,
+        },
+      };
+    };
+    const privateFingerprint = gwsOAuth.fingerprintCommand(consumed.value.args);
+    if (!privateFingerprint.ok) {
+      return finishConsumedCommand(
+        {
+          stdout: "",
+          stderr: "Google Workspace command binding is unavailable; submit a new command.\n",
+          exitCode: 1,
+        },
+        "command_binding_unavailable",
+      );
+    }
+    const privateSummary = {
+      operation: summarizeGwsOperation(consumed.value.args),
+      argumentCount: consumed.value.args.length,
+      commandFingerprint: privateFingerprint.value,
+    };
+    if (
+      approvedSummary.data.slack_user_id !== consumed.value.owner.slackUserId ||
+      approvedSummary.data.google_workspace_email !== consumed.value.owner.expectedGoogleEmail ||
+      approvedSummary.data.operation !== privateSummary.operation ||
+      approvedSummary.data.argument_count !== privateSummary.argumentCount ||
+      approvedSummary.data.command_fingerprint !== privateSummary.commandFingerprint
+    ) {
+      return finishConsumedCommand(
+        {
+          stdout: "",
+          stderr:
+            "Google Workspace approval did not match the private command; submit a new command.\n",
+          exitCode: 1,
+        },
+        "command_binding_mismatch",
+      );
+    }
+    let currentUser: ReturnType<typeof findUserBySlack>;
+    try {
+      currentUser = findUserBySlack(getConfig(), consumed.value.owner.slackUserId);
+    } catch {
+      currentUser = undefined;
+    }
+    if (
+      currentUser?.google_workspace_email?.toLowerCase() !==
+      consumed.value.owner.expectedGoogleEmail
+    ) {
+      return finishConsumedCommand(
+        {
+          stdout: "",
+          stderr:
+            "Google Workspace account mapping changed after approval was requested; submit a new command.\n",
+          exitCode: 1,
+        },
+        "account_mapping_changed",
+      );
+    }
+    const token = await gwsOAuth.getAccessToken(
+      consumed.value.owner.slackUserId,
+      consumed.value.owner.expectedGoogleEmail,
+    );
+    if (!token.ok) {
+      const reconnectRequired =
+        token.error.stage === "token" ||
+        token.error.stage === "oauth" ||
+        token.error.stage === "identity";
+      if (reconnectRequired) gwsOAuth.disconnect(consumed.value.owner.slackUserId);
+      logInfo(log, "exec_gws_oauth_failed", {
+        stage: token.error.stage,
+        code: token.error.code,
+        actionId: input.action.id,
+        slack: consumed.value.owner.slackUserId,
+      });
+      return finishConsumedCommand(
+        {
+          stdout: "",
+          stderr: reconnectRequired
+            ? "Google Workspace account access is unavailable. Retry to receive a new private connection link, then submit a new command.\n"
+            : "Google Workspace account storage is unavailable; ask an operator to check configuration.\n",
+          exitCode: 1,
+        },
+        reconnectRequired ? "account_reconnect_required" : "account_storage_unavailable",
+      );
+    }
+    if (token.value.connectionId !== approvedSummary.data.connection_id) {
+      return finishConsumedCommand(
+        {
+          stdout: "",
+          stderr:
+            "Google Workspace connection changed after approval was requested; submit a new command.\n",
+          exitCode: 1,
+        },
+        "connection_changed",
+      );
+    }
+    let response: Awaited<ReturnType<IGwsService["execute"]>>;
+    try {
+      response = await gws.execute([...consumed.value.args], token.value);
+    } catch {
+      logError(log, "exec_gws_dispatch_failed", "Unexpected Google Workspace execution failure", {
+        actionId: input.action.id,
+        reviewer: input.reviewer,
+        slack: consumed.value.owner.slackUserId,
+        operation: summarizeGwsOperation(consumed.value.args),
+        argc: consumed.value.args.length,
+        commandFingerprint: privateFingerprint.value,
+      });
+      return finishConsumedCommand(
+        {
+          stdout: "",
+          stderr: "Google Workspace execution failed after approval; do not retry this approval.\n",
+          exitCode: 1,
+        },
+        "execution_failed",
+      );
+    }
+    logInfo(log, "exec_gws_approved", {
+      actionId: input.action.id,
+      reviewer: input.reviewer,
+      slack: consumed.value.owner.slackUserId,
+      googleEmail: token.value.googleEmail,
+      googleSubject: token.value.googleSubject,
+      connectionId: token.value.connectionId,
+      operation: summarizeGwsOperation(consumed.value.args),
+      argc: consumed.value.args.length,
+      commandFingerprint: privateFingerprint.value,
+      status: response.status,
+      exitCode: response.result.exitCode,
+    });
+    return finishConsumedCommand(
+      response.result,
+      response.result.exitCode === 0 ? undefined : "provider_command_failed",
+    );
+  };
+  const readGwsApprovalStatus = async (input: {
+    action: ApprovalAction;
+    mode: "status" | "result";
+    capability?: string;
+    context: { sessionId?: string };
+  }): Promise<McpExecResult> => {
+    if (input.mode === "status") {
+      return {
+        stdout: `${JSON.stringify(
+          {
+            id: input.action.id,
+            upstream: input.action.upstream,
+            status: input.action.status,
+            tool: input.action.tool,
+            args: input.action.args,
+            createdAt: input.action.createdAt,
+            ...(input.action.resolvedAt ? { resolvedAt: input.action.resolvedAt } : {}),
+            ...(input.action.reviewer ? { reviewer: input.action.reviewer } : {}),
+          },
+          null,
+          2,
+        )}\n`,
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+    const activeUser = resolveActiveSlackUser(input.context.sessionId, getConfig);
+    const approvedSummary = GoogleWorkspaceCommandApprovalArgsSchema.safeParse(input.action.args);
+    if (
+      !activeUser.ok ||
+      !approvedSummary.success ||
+      activeUser.slackUserId !== approvedSummary.data.slack_user_id
+    ) {
+      return {
+        stdout: "",
+        stderr: "Google Workspace command output is unavailable for this active Slack turn.\n",
+        exitCode: 1,
+      };
+    }
+    const result = gwsOAuth.readCommandResult(input.action.id, input.capability);
+    if (!result.ok) {
+      return {
+        stdout: "",
+        stderr: "Google Workspace command output is unavailable for this approval capability.\n",
+        exitCode: 1,
+      };
+    }
+    return result.value;
+  };
   const mcpService = createMcpService({
     isProduction: appEnv.isProduction,
     ...config.mcp,
@@ -652,13 +1008,292 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       botToken: envConfig?.slackBotToken,
       apiBaseUrl: envConfig?.slackApiBaseUrl,
     },
+    customApprovalExecutors: {
+      ...config.mcp?.customApprovalExecutors,
+      gws: executeApprovedGwsCommand,
+    },
+    customApprovalStatusReaders: {
+      ...config.mcp?.customApprovalStatusReaders,
+      gws: readGwsApprovalStatus,
+    },
+    customApprovalReviewerAuthorizers: {
+      ...config.mcp?.customApprovalReviewerAuthorizers,
+      gws: ({ action, reviewer }) => {
+        const summary = GoogleWorkspaceCommandApprovalArgsSchema.safeParse(action.args);
+        return summary.success && summary.data.slack_user_id === reviewer;
+      },
+    },
   });
 
   const app = express();
   app.use(express.json());
+  app.use(express.urlencoded({ extended: false, limit: "4kb" }));
 
   app.get("/health", (_req, res) => {
-    res.json({ status: "ok", service: "remote-cli", mcp: mcpService.getHealth() });
+    res.json({
+      status: "ok",
+      service: "remote-cli",
+      mcp: mcpService.getHealth(),
+      googleWorkspaceOAuth: { configured: gwsOAuth.slackTeamId().ok },
+    });
+  });
+
+  app.get("/google-workspace/connect", (req, res) => {
+    setGwsOAuthBrowserSecurityHeaders(res);
+    if (!matchesInternalSecret(internalSecret, getInternalSecretHeader(req))) {
+      res.status(401).type("text/plain").send("Unauthorized");
+      return;
+    }
+    const requestId = typeof req.query.request === "string" ? req.query.request : "";
+    if (!/^[A-Za-z0-9_-]{20,200}$/.test(requestId)) {
+      res
+        .status(400)
+        .type("html")
+        .send(
+          gwsOAuthHtml("Google Workspace connection failed", "The connection link is invalid."),
+        );
+      return;
+    }
+    res.setHeader("Set-Cookie", gwsConnectRequestCookie(requestId));
+    res.redirect(302, "/google-workspace/connect/authorize");
+  });
+
+  app.get("/google-workspace/connect/authorize", (req, res) => {
+    setGwsOAuthBrowserSecurityHeaders(res);
+    if (!matchesInternalSecret(internalSecret, getInternalSecretHeader(req))) {
+      res.status(401).type("text/plain").send("Unauthorized");
+      return;
+    }
+    const requestId = parseCookieHeader(req.get("cookie"), GWS_CONNECT_REQUEST_COOKIE) ?? "";
+    const authenticatedEmail = req.get("x-vouch-user")?.trim().toLowerCase() ?? "";
+    if (!requestId || !authenticatedEmail) {
+      res.setHeader("Set-Cookie", clearGwsConnectRequestCookie());
+      res
+        .status(400)
+        .type("html")
+        .send(
+          gwsOAuthHtml("Google Workspace connection failed", "The connection link is invalid."),
+        );
+      return;
+    }
+    const started = gwsOAuth.beginAuthorization(requestId, authenticatedEmail);
+    if (!started.ok) {
+      res.setHeader("Set-Cookie", clearGwsConnectRequestCookie());
+      logInfo(log, "gws_oauth_connect_rejected", {
+        stage: started.error.stage,
+        code: started.error.code,
+      });
+      res
+        .status(400)
+        .type("html")
+        .send(
+          gwsOAuthHtml(
+            "Google Workspace connection failed",
+            "The link is expired, already used, or does not belong to this signed-in user.",
+          ),
+        );
+      return;
+    }
+    res.setHeader("Set-Cookie", [
+      clearGwsConnectRequestCookie(),
+      gwsOAuthBrowserCookie(started.value.browserNonce, started.value.maxAgeSeconds),
+    ]);
+    res.redirect(302, started.value.authorizationUrl);
+  });
+
+  app.get("/google-workspace/disconnect", (req, res) => {
+    setGwsOAuthBrowserSecurityHeaders(res, { allowSelfForm: true });
+    if (!matchesInternalSecret(internalSecret, getInternalSecretHeader(req))) {
+      res.status(401).type("text/plain").send("Unauthorized");
+      return;
+    }
+    const authenticatedEmail = req.get("x-vouch-user")?.trim().toLowerCase() ?? "";
+    let user: ReturnType<typeof findUserByGoogleWorkspaceEmail>;
+    try {
+      user = findUserByGoogleWorkspaceEmail(getConfig(), authenticatedEmail);
+    } catch {
+      user = undefined;
+    }
+    if (!authenticatedEmail || !user?.slack) {
+      res
+        .status(403)
+        .type("html")
+        .send(
+          gwsOAuthHtml(
+            "Google Workspace disconnect failed",
+            "This signed-in identity does not have a mapped Google Workspace connection.",
+          ),
+        );
+      return;
+    }
+    const token = randomBytes(32).toString("base64url");
+    pendingDisconnects.set(authenticatedEmail, {
+      token,
+      expiresAtMs: Date.now() + GWS_DISCONNECT_TTL_MS,
+    });
+    res.setHeader(
+      "Set-Cookie",
+      `${GWS_DISCONNECT_COOKIE}=${token}; Path=/google-workspace/disconnect; Max-Age=300; HttpOnly; Secure; SameSite=Strict`,
+    );
+    res.status(200).type("html").send(gwsDisconnectConfirmationHtml(token));
+  });
+
+  app.post("/google-workspace/disconnect", (req, res) => {
+    setGwsOAuthBrowserSecurityHeaders(res);
+    if (!matchesInternalSecret(internalSecret, getInternalSecretHeader(req))) {
+      res.status(401).type("text/plain").send("Unauthorized");
+      return;
+    }
+    const authenticatedEmail = req.get("x-vouch-user")?.trim().toLowerCase() ?? "";
+    const cookieToken = parseCookieHeader(req.get("cookie"), GWS_DISCONNECT_COOKIE) ?? "";
+    const formToken = typeof req.body?.csrf === "string" ? req.body.csrf : "";
+    const pending = pendingDisconnects.get(authenticatedEmail);
+    pendingDisconnects.delete(authenticatedEmail);
+    res.setHeader(
+      "Set-Cookie",
+      `${GWS_DISCONNECT_COOKIE}=; Path=/google-workspace/disconnect; Max-Age=0; HttpOnly; Secure; SameSite=Strict`,
+    );
+    if (
+      !authenticatedEmail ||
+      !pending ||
+      pending.expiresAtMs <= Date.now() ||
+      !cookieToken ||
+      !formToken ||
+      !timingSafeStringEqual(pending.token, cookieToken) ||
+      !timingSafeStringEqual(pending.token, formToken)
+    ) {
+      res
+        .status(403)
+        .type("html")
+        .send(
+          gwsOAuthHtml(
+            "Google Workspace disconnect failed",
+            "The confirmation expired or did not come from the same signed-in browser.",
+          ),
+        );
+      return;
+    }
+    let user: ReturnType<typeof findUserByGoogleWorkspaceEmail>;
+    try {
+      user = findUserByGoogleWorkspaceEmail(getConfig(), authenticatedEmail);
+    } catch {
+      user = undefined;
+    }
+    if (!user?.slack) {
+      res
+        .status(403)
+        .type("html")
+        .send(gwsOAuthHtml("Google Workspace disconnect failed", "This identity is not mapped."));
+      return;
+    }
+    const disconnected = gwsOAuth.disconnect(user.slack);
+    if (!disconnected.ok) {
+      logInfo(log, "gws_oauth_disconnect_rejected", {
+        stage: disconnected.error.stage,
+        code: disconnected.error.code,
+      });
+      res
+        .status(503)
+        .type("html")
+        .send(
+          gwsOAuthHtml(
+            "Google Workspace disconnect failed",
+            "Thor could not remove the local grant. Ask an operator to check configuration.",
+          ),
+        );
+      return;
+    }
+    logInfo(log, "gws_oauth_disconnected", {
+      slack: user.slack,
+      googleEmail: authenticatedEmail,
+    });
+    res
+      .status(200)
+      .type("html")
+      .send(
+        gwsOAuthHtml(
+          "Google Workspace disconnected",
+          "Thor removed the local grant. Revoke Thor in your Google Account security settings to invalidate the provider grant immediately.",
+        ),
+      );
+  });
+
+  app.get("/google-workspace/oauth/callback", async (req, res) => {
+    setGwsOAuthBrowserSecurityHeaders(res);
+    if (!matchesInternalSecret(internalSecret, getInternalSecretHeader(req))) {
+      res.status(401).type("text/plain").send("Unauthorized");
+      return;
+    }
+    const code = typeof req.query.code === "string" ? req.query.code : "";
+    const state = typeof req.query.state === "string" ? req.query.state : "";
+    const browserNonce = parseCookieHeader(req.get("cookie"), GWS_OAUTH_BROWSER_COOKIE) ?? "";
+    res.setHeader("Set-Cookie", clearGwsOAuthBrowserCookie());
+    if (!code || !state || !browserNonce || code.length > 4096 || state.length > 512) {
+      res
+        .status(400)
+        .type("html")
+        .send(gwsOAuthHtml("Google Workspace connection failed", "The OAuth callback is invalid."));
+      return;
+    }
+    const completed = await gwsOAuth.completeAuthorization({ code, state, browserNonce });
+    if (!completed.ok) {
+      logInfo(log, "gws_oauth_callback_rejected", {
+        stage: completed.error.stage,
+        code: completed.error.code,
+        httpStatus: completed.error.httpStatus,
+      });
+      res
+        .status(400)
+        .type("html")
+        .send(
+          gwsOAuthHtml(
+            "Google Workspace connection failed",
+            "Authorization could not be completed. Return to Slack and request a new link.",
+          ),
+        );
+      return;
+    }
+    logInfo(log, "gws_oauth_connected", {
+      connectionId: completed.value.connectionId,
+      slack: completed.value.slackUserId,
+      googleEmail: completed.value.googleEmail,
+      googleSubject: completed.value.googleSubject,
+      sessionId: completed.value.sessionId,
+      anchorId: completed.value.anchorId,
+      triggerId: completed.value.triggerId,
+    });
+    const retryTarget = resolveSlackThreadTargetFromTrigger(completed.value.sessionId);
+    if (!("error" in retryTarget)) {
+      const notification = await postSlackMessageApi(
+        {
+          channel: retryTarget.channel,
+          threadTs: retryTarget.threadTs,
+          text: "Google Workspace is connected. Retry the original request; Thor will ask you to approve the exact command before execution.",
+        },
+        {
+          fetch: config.mcp?.fetchImpl,
+          env: {
+            SLACK_BOT_TOKEN: envConfig?.slackBotToken,
+            SLACK_API_BASE_URL: envConfig?.slackApiBaseUrl,
+          },
+        },
+      );
+      if ("error" in notification) {
+        logInfo(log, "gws_oauth_retry_notification_failed", {
+          connectionId: completed.value.connectionId,
+          slack: completed.value.slackUserId,
+        });
+      }
+    }
+    res
+      .status(200)
+      .type("html")
+      .send(
+        gwsOAuthHtml(
+          "Google Workspace connected",
+          "Return to Slack and submit the command again. Thor will ask you to approve it before execution.",
+        ),
+      );
   });
 
   app.post("/exec/git", async (req, res) => {
@@ -1070,24 +1705,257 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
 
   app.post("/exec/gws", async (req, res) => {
     const parsed = parseGwsArgs(req.body?.args);
+    const ids = thorIds(req);
     if (!parsed.ok) {
-      logInfo(log, "exec_gws_denied", thorIds(req));
-      res.status(400).json({ stdout: "", stderr: parsed.error.message, exitCode: 1 });
+      logInfo(log, "exec_gws_invalid_args", { reason: parsed.error._tag, ...ids });
+      res.status(400).json({ stdout: "", stderr: `${parsed.error.message}\n`, exitCode: 1 });
       return;
     }
-    const fields = { operation: parsed.command.operation, ...thorIds(req) };
-    try {
-      const response = await gws.execute(parsed.command);
-      logInfo(log, "exec_gws", {
-        ...fields,
-        status: response.status,
-        exitCode: response.result.exitCode,
+    const activeUser = resolveActiveSlackUser(ids.sessionId, getConfig);
+    if (!activeUser.ok) {
+      logInfo(log, "exec_gws_identity_rejected", { reason: activeUser.reason, ...ids });
+      res.status(403).json({
+        stdout: "",
+        stderr:
+          "Google Workspace requires an active Slack turn from a mapped user with google_workspace_email configured.\n",
+        exitCode: 1,
       });
-      res.status(response.status).json(response.result);
-    } catch {
-      logError(log, "exec_gws_error", "Unexpected Google Workspace execution failure", fields);
-      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
+      return;
     }
+
+    const connected = gwsOAuth.findConnectedIdentity(
+      activeUser.slackUserId,
+      activeUser.googleWorkspaceEmail,
+    );
+    if (!connected.ok) {
+      if (connected.error.code !== "connection_missing") {
+        logInfo(log, "exec_gws_connection_rejected", {
+          stage: connected.error.stage,
+          code: connected.error.code,
+          slack: activeUser.slackUserId,
+          ...ids,
+        });
+        res.status(503).json({
+          stdout: "",
+          stderr:
+            "Google Workspace user OAuth is unavailable; ask an operator to check configuration.\n",
+          exitCode: 2,
+        });
+        return;
+      }
+      const request = gwsOAuth.createConnectionRequest({
+        slackUserId: activeUser.slackUserId,
+        expectedGoogleEmail: activeUser.googleWorkspaceEmail,
+        sessionId: activeUser.sessionId,
+        anchorId: activeUser.anchorId,
+        triggerId: activeUser.triggerId,
+      });
+      if (!request.ok) {
+        logInfo(log, "exec_gws_connection_request_failed", {
+          stage: request.error.stage,
+          code: request.error.code,
+          slack: activeUser.slackUserId,
+          ...ids,
+        });
+        res.status(503).json({
+          stdout: "",
+          stderr:
+            "Google Workspace user OAuth is unavailable; ask an operator to check configuration.\n",
+          exitCode: 2,
+        });
+        return;
+      }
+      const slackPost = await postSlackMessageApi(
+        {
+          channel: activeUser.slackUserId,
+          text: `Connect your Google Workspace account to Thor. This single-use link expires in 10 minutes: <${request.value.connectUrl}|Connect Google Workspace>`,
+        },
+        {
+          fetch: config.mcp?.fetchImpl,
+          env: {
+            SLACK_BOT_TOKEN: envConfig?.slackBotToken,
+            SLACK_API_BASE_URL: envConfig?.slackApiBaseUrl,
+          },
+        },
+      );
+      if ("error" in slackPost) {
+        logInfo(log, "exec_gws_connection_notification_failed", {
+          slack: activeUser.slackUserId,
+          reason: "slack_post_failed",
+          ...ids,
+        });
+        res.status(503).json({
+          stdout: "",
+          stderr:
+            "Google Workspace connection is required, but Thor could not send the private link.\n",
+          exitCode: 2,
+        });
+        return;
+      }
+      logInfo(log, "exec_gws_connection_requested", {
+        slack: activeUser.slackUserId,
+        ...ids,
+      });
+      res.status(428).json({
+        stdout: "",
+        stderr:
+          "Google Workspace connection is required. A private authorization link was sent to the requesting Slack user; retry after connecting.\n",
+        exitCode: 2,
+      });
+      return;
+    }
+
+    const commandFingerprint = gwsOAuth.fingerprintCommand(parsed.args);
+    if (!commandFingerprint.ok) {
+      res.status(503).json({
+        stdout: "",
+        stderr: "Google Workspace command binding is unavailable.\n",
+        exitCode: 1,
+      });
+      return;
+    }
+    const approvalArgs = {
+      operation: summarizeGwsOperation(parsed.args),
+      argument_count: parsed.args.length,
+      command_fingerprint: commandFingerprint.value,
+      google_workspace_email: connected.value.googleEmail,
+      slack_user_id: activeUser.slackUserId,
+      connection_id: connected.value.connectionId,
+    };
+    const approvalEvent = ApprovalRequiredEventPayloadSchema.safeParse({
+      type: "approval_required",
+      actionId: "_pending",
+      proxyName: "gws",
+      tool: "google_workspace_command",
+      args: approvalArgs,
+    });
+    if (!approvalEvent.success || !ids.sessionId) {
+      res.status(400).json({
+        stdout: "",
+        stderr: "Google Workspace approval request is invalid.\n",
+        exitCode: 1,
+      });
+      return;
+    }
+    const slackTarget = resolveSlackThreadTargetFromTrigger(ids.sessionId);
+    if ("error" in slackTarget) {
+      res.status(403).json({
+        stdout: "",
+        stderr: "Google Workspace approval requires an active Slack thread.\n",
+        exitCode: 1,
+      });
+      return;
+    }
+    const action = gwsApprovalStore.buildPending(
+      "google_workspace_command",
+      approvalArgs,
+      {
+        sessionId: ids.sessionId,
+        trigger: { anchorId: activeUser.anchorId, triggerId: activeUser.triggerId },
+      },
+      {
+        provider: "slack",
+        channel: slackTarget.channel,
+        threadTs: slackTarget.threadTs,
+      },
+    );
+    const storedCommand = gwsOAuth.storePendingCommand({
+      actionId: action.id,
+      args: parsed.args,
+      slackUserId: activeUser.slackUserId,
+      expectedGoogleEmail: activeUser.googleWorkspaceEmail,
+      sessionId: activeUser.sessionId,
+      anchorId: activeUser.anchorId,
+      triggerId: activeUser.triggerId,
+    });
+    if (!storedCommand.ok) {
+      res.status(503).json({
+        stdout: "",
+        stderr: "Google Workspace approval could not be stored.\n",
+        exitCode: 1,
+      });
+      return;
+    }
+    try {
+      gwsApprovalStore.update(action);
+    } catch {
+      res.status(503).json({
+        stdout: "",
+        stderr: "Google Workspace approval could not be stored.\n",
+        exitCode: 1,
+      });
+      return;
+    }
+    const approvalMessage = buildApprovalSlackMessage({
+      actionId: action.id,
+      tool: "google_workspace_command",
+      args: approvalArgs,
+      upstreamName: "gws",
+      threadTs: slackTarget.threadTs,
+    });
+    const slackPost = await postSlackMessageApi(
+      {
+        channel: slackTarget.channel,
+        threadTs: slackTarget.threadTs,
+        text: approvalMessage.text,
+        blocks: approvalMessage.blocks,
+      },
+      {
+        fetch: config.mcp?.fetchImpl,
+        env: {
+          SLACK_BOT_TOKEN: envConfig?.slackBotToken,
+          SLACK_API_BASE_URL: envConfig?.slackApiBaseUrl,
+        },
+      },
+    );
+    if ("error" in slackPost) {
+      gwsApprovalStore.rejectLoaded(action, "system", "slack_post_failed");
+      res.status(503).json({
+        stdout: "",
+        stderr: "Google Workspace approval could not be posted to Slack.\n",
+        exitCode: 1,
+      });
+      return;
+    }
+    action.notification = {
+      provider: "slack",
+      channel: slackTarget.channel,
+      threadTs: slackTarget.threadTs,
+      messageTs: slackPost.ts,
+      postedAt: new Date().toISOString(),
+    };
+    try {
+      gwsApprovalStore.update(action);
+    } catch {
+      logInfo(log, "exec_gws_notification_metadata_failed", {
+        actionId: action.id,
+        slack: activeUser.slackUserId,
+        ...ids,
+      });
+    }
+    logInfo(log, "exec_gws_pending_approval", {
+      actionId: action.id,
+      operation: approvalArgs.operation,
+      argc: approvalArgs.argument_count,
+      commandFingerprint: approvalArgs.command_fingerprint,
+      slack: activeUser.slackUserId,
+      googleEmail: connected.value.googleEmail,
+      connectionId: connected.value.connectionId,
+      ...ids,
+    });
+    res.json({
+      stdout: `${JSON.stringify(
+        {
+          ...approvalEvent.data,
+          actionId: action.id,
+          command: `approval status ${action.id}`,
+        },
+        null,
+        2,
+      )}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   app.post("/exec/metabase", async (req, res) => {
@@ -1136,33 +2004,51 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   });
 
   app.post("/exec/drata", async (req, res) => {
+    const parsed = parseDrataArgs(req.body?.args);
+    if (!parsed.ok) {
+      res.status(400).json({ stdout: "", stderr: parsed.error.message, exitCode: 1 });
+      return;
+    }
+    if (parsed.command.kind === "help") {
+      res.json({
+        stdout:
+          "Usage: drata api METHOD /path [--json JSON]\nPermissions are enforced by the Drata API identity.\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      return;
+    }
+    const request = parsed.command.request;
+    const method = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"].includes(
+      request.method,
+    )
+      ? request.method
+      : "custom";
+    const fields = { method, ...thorIds(req) };
     try {
-      const { args } = req.body ?? {};
-
-      const argsError = validateDrataArgs(args);
-      if (argsError) {
-        res.status(400).json({ stdout: "", stderr: argsError, exitCode: 1 });
-        return;
-      }
-
-      if (args[0] === "--help" || args[0] === "-h") {
-        res.json({
-          stdout:
-            "Usage: drata api GET /public/v2/<path>\nOnly read-only GET requests under /public/v2/ are permitted.\n",
-          stderr: "",
-          exitCode: 0,
+      const result = await drata.execute(request);
+      if (!result.ok) {
+        logInfo(log, "exec_drata_error", {
+          ...fields,
+          errorTag: result.error._tag,
+          stage: result.error.stage,
+          status: result.error.httpStatus,
         });
+        res
+          .status(result.error.stage === "configuration" ? 503 : 502)
+          .json({ stdout: "", stderr: result.error.message, exitCode: 1 });
         return;
       }
-
-      const path = args[2];
-      logInfo(log, "exec_drata", { method: "GET", path, ...thorIds(req) });
-      const result = await drataApiGet(path);
-      res.json({ stdout: JSON.stringify(result, null, 2), stderr: "", exitCode: 0 });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      logError(log, "exec_drata_error", message, thorIds(req));
-      res.status(500).json({ stdout: "", stderr: message, exitCode: 1 });
+      const succeeded = result.value.status >= 200 && result.value.status < 300;
+      logInfo(log, "exec_drata", { ...fields, status: result.value.status });
+      res.json({
+        stdout: JSON.stringify(result.value.body, null, 2),
+        stderr: succeeded ? "" : `Drata API returned HTTP ${result.value.status}`,
+        exitCode: succeeded ? 0 : 1,
+      });
+    } catch {
+      logError(log, "exec_drata_error", "Unexpected Drata execution failure", fields);
+      res.status(500).json({ stdout: "", stderr: "Internal server error", exitCode: 1 });
     }
   });
 
@@ -1254,7 +2140,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         return;
       }
 
-      const result = await mcpService.executeApproval(args);
+      const result = await mcpService.executeApproval(args, thorIds(req));
       res.json(result);
     } catch (err) {
       logError(

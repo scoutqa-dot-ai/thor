@@ -125,6 +125,17 @@ export type ActiveTriggerResult =
   | { ok: true; anchorId: string; sessionId: string; triggerId: string }
   | { ok: false; reason: "none" };
 
+/** Active Slack actor bound to one currently open trigger. */
+export type ActiveSlackTriggerActorResult =
+  | {
+      ok: true;
+      anchorId: string;
+      sessionId: string;
+      triggerId: string;
+      slackUserId: string;
+    }
+  | { ok: false; reason: "none" };
+
 export type AnchorContextResult =
   | {
       ok: true;
@@ -1005,6 +1016,52 @@ export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult
   }
   if (!best) return { ok: false, reason: "none" };
   return { ok: true, anchorId, sessionId: best.sessionId, triggerId: best.triggerId };
+}
+
+/** Resolve only a currently open Slack turn; never reuse an ended or non-Slack actor. */
+export function findActiveSlackTriggerActor(
+  requestSessionId: string,
+): ActiveSlackTriggerActorResult {
+  const anchorId =
+    resolveAlias({ aliasType: "opencode.session", aliasValue: requestSessionId }) ??
+    resolveAlias({ aliasType: "opencode.subsession", aliasValue: requestSessionId });
+  if (!anchorId) return { ok: false, reason: "none" };
+
+  const reverse = reverseLookupAnchor(anchorId);
+  let best:
+    | {
+        sessionId: string;
+        triggerId: string;
+        slackUserId?: string;
+        githubLogin?: string;
+        ts: string;
+        open: boolean;
+      }
+    | undefined;
+  for (const sessionId of reverse.sessionIds) {
+    const { open, latest } = scanTriggers(sessionId);
+    if (!latest) continue;
+    if (!best || latest.ts > best.ts) {
+      best = {
+        sessionId,
+        triggerId: latest.triggerId,
+        slackUserId: latest.triggerSlackId,
+        githubLogin: latest.triggerGithubLogin,
+        ts: latest.ts,
+        open: open?.triggerId === latest.triggerId,
+      };
+    }
+  }
+  if (!best?.open || !best.slackUserId || best.githubLogin) {
+    return { ok: false, reason: "none" };
+  }
+  return {
+    ok: true,
+    anchorId,
+    sessionId: best.sessionId,
+    triggerId: best.triggerId,
+    slackUserId: best.slackUserId,
+  };
 }
 
 function findBestTriggerForSession(

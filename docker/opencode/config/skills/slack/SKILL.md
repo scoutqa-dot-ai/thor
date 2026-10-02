@@ -14,9 +14,6 @@ Use this skill when:
 - you need to fetch a Slack file mentioned in a thread
 - you need to create a longer Slack artifact or report as a channel canvas
 
-General reply policy lives in `build.md`. This skill only covers how to read
-and write Slack through the proxy.
-
 ## Transport
 
 Talk to Slack through real upstream URLs:

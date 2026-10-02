@@ -46,6 +46,8 @@ const MitmproxyPassthroughHostSchema = z.string().refine((value) => {
 const UserRecordSchema = z.object({
   /** Jira account email; this is also used for visible commit co-author trailers. */
   email: z.email(),
+  /** Verified Google account allowed to own this user's Workspace OAuth grant. */
+  google_workspace_email: z.email().optional(),
   name: z.string().min(1),
   slack: z.string().min(1).optional(),
   github: z.string().min(1).optional(),
@@ -224,6 +226,16 @@ export function findUserByGithub(config: WorkspaceConfig, github: string): UserR
 export function findUserByEmail(config: WorkspaceConfig, email: string): UserRecord | undefined {
   const normalized = email.toLowerCase();
   return config.users?.find((user) => user.email.toLowerCase() === normalized);
+}
+
+export function findUserByGoogleWorkspaceEmail(
+  config: WorkspaceConfig,
+  email: string,
+): UserRecord | undefined {
+  const normalized = email.toLowerCase();
+  const matches =
+    config.users?.filter((user) => user.google_workspace_email?.toLowerCase() === normalized) ?? [];
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 export function getSlackPrivateChannelAllowlist(config: WorkspaceConfig): string[] {

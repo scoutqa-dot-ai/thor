@@ -1,5 +1,10 @@
 # Drata OAuth CLI Integration
 
+> Follow-up: the GET-only `/public/v2/` surface below is superseded on `local-test`
+> by [API-managed authorization](2026090802_local-test-add-mcp-base.md#follow-up-phase--delegate-gws-and-drata-authorization-to-upstream-apis).
+> Use `drata api METHOD /path [--json JSON]`; API scopes/roles govern reads/writes.
+> The configured-origin and OAuth-secret boundaries remain in place.
+
 ## Goal
 
 Give Thor controlled read-only access to the Drata API through OAuth client credentials, without exposing Drata credentials or access tokens to the OpenCode agent container.
@@ -46,11 +51,11 @@ Exit: targeted tests pass.
 
 ## Decision Log
 
-| Decision | Choice | Rationale |
-| --- | --- | --- |
-| Transport | remote-cli REST wrapper, not MCP | User explicitly asked to put MCP aside; repo already uses this pattern for read-heavy integrations. |
-| Initial access | `GET` only under `/public/v2/` | Matches Drata's public API v2 path while keeping the wrapper read-only. |
-| Token handling | Cache access tokens in remote-cli with a refresh buffer | Drata OAuth access tokens are short-lived; agent must not mint or hold them. |
+| Decision       | Choice                                                  | Rationale                                                                                           |
+| -------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Transport      | remote-cli REST wrapper, not MCP                        | User explicitly asked to put MCP aside; repo already uses this pattern for read-heavy integrations. |
+| Initial access | `GET` only under `/public/v2/`                          | Matches Drata's public API v2 path while keeping the wrapper read-only.                             |
+| Token handling | Cache access tokens in remote-cli with a refresh buffer | Drata OAuth access tokens are short-lived; agent must not mint or hold them.                        |
 
 ## Exit Criteria
 

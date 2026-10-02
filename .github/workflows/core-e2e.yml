@@ -8,12 +8,15 @@ on:
       - "scripts/test-gws-e2e.sh"
       - "scripts/fixtures/gws-*.mjs"
       - "Dockerfile"
+      - "docker/opencode/config/opencode.json"
       - "scripts/test-create-jira-approval-e2e.sh"
       - "scripts/test-opencode-e2e.sh"
       - "packages/**"
       - "docker/**"
       - pnpm-lock.yaml
       - docker-compose.yml
+      - docker-compose.ci.yml
+      - scripts/fixtures/falcon-mcp.mjs
   workflow_dispatch:
 
 permissions:
@@ -29,6 +32,7 @@ jobs:
     timeout-minutes: 30
     env:
       THOR_RUNTIME: opencode
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
       OPENCODE_AUTH_JSON: ${{ secrets.OPENCODE_AUTH_JSON }}
       SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
       SLACK_BOT_USER_ID: ${{ vars.SLACK_BOT_USER_ID }}
@@ -77,8 +81,7 @@ jobs:
       DRATA_SCOPES: read:ci
       DRATA_API_BASE_URL: http://localhost
       KALI_API_BASE_URL: http://localhost:5000
-      # GWS is tested with local fixtures, never live Google credentials.
-      GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: ""
+      # GWS user OAuth is tested with local fixtures, never live Google credentials.
       GOOGLE_WORKSPACE_CLI_CONFIG_DIR: /var/lib/remote-cli/gws
       GOOGLE_WORKSPACE_PROJECT_ID: ""
       RUNNER_BASE_URL: http://localhost:3000
@@ -127,7 +130,7 @@ jobs:
           printf '%s' "$THOR_GITHUB_APP_PRIVATE_KEY" > docker-volumes/github-app/private-key.pem
           chmod 600 docker-volumes/github-app/private-key.pem
 
-          # data service requires env_file: .env — create an empty one.
+          # mitmproxy requires env_file: .env — create an empty one.
           : > .env
 
           export CRON_SECRET="$(openssl rand -hex 32)"
@@ -158,6 +161,12 @@ jobs:
           printf '%s' "$OPENCODE_AUTH_JSON" > docker-volumes/opencode/auth.json
           chmod 600 docker-volumes/opencode/auth.json
 
+          # CI's optional smoke uses its native OpenAI auth fixture, not the
+          # production subscription-only custom models/agent overrides.
+          jq 'del(.provider, .agent) | .model = "openai/gpt-5.4" | .small_model = "openai/gpt-5.4-mini"' docker/opencode/config/opencode.json \
+            > docker/opencode/config/opencode.json.tmp
+          mv docker/opencode/config/opencode.json.tmp docker/opencode/config/opencode.json
+
           alias_repo_dir="docker-volumes/workspace/repos/acme-multi-hyphen-repo"
           mkdir -p "$alias_repo_dir"
           git init -b main "$alias_repo_dir"
@@ -166,12 +175,6 @@ jobs:
           git -C "$alias_repo_dir" -c user.name='Thor CI' -c user.email='thor-ci@localhost' commit -m 'chore: seed alias repo fixture'
 
           ./scripts/mitmproxy-ca-init.sh
-
-          # CI has no codex-lb upstream accounts; strip the codex-lb provider
-          # override so opencode talks to OpenAI directly via auth.json.
-          jq 'del(.provider)' docker/opencode/config/opencode.json \
-            > docker/opencode/config/opencode.json.tmp \
-            && mv docker/opencode/config/opencode.json.tmp docker/opencode/config/opencode.json
 
           docker compose up --build --wait -d
 
@@ -193,7 +196,7 @@ jobs:
         run: pnpm test:create-jira-approval-e2e
 
       - name: Run OpenCode LLM smoke test
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/slack-channel-repo-routing'
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
         env:
           CI: "true"
         run: pnpm test:opencode-e2e

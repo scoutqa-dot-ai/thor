@@ -23,7 +23,7 @@ services:
       pi-executor:
         condition: service_healthy
       codex-lb:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -85,6 +85,8 @@ services:
     environment:
       THOR_RUNTIME: pi
     depends_on: !override
+      remote-cli:
+        condition: service_healthy
       gateway:
         condition: service_healthy
       runner:
@@ -94,7 +96,7 @@ services:
       vouch:
         condition: service_healthy
       codex-lb:
-        condition: service_started
+        condition: service_healthy
 
 networks:
   # Tools cannot directly reach the model/account dashboard or the public internet.

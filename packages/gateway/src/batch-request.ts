@@ -17,7 +17,7 @@ const batchRequestPayloadSchema = z.object({
 /** Deterministic request identity uses event IDs, not arrival time or rendered prompts. */
 export function queuedBatchRequestId(events: QueuedEvent[]): string {
   const identity = events
-    .map((event) => [event.source, event.id])
+    .map((event) => [event.source, event.sourceEventId ?? event.id])
     .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
   return `gateway:${createHash("sha256").update(JSON.stringify(identity)).digest("hex")}`;
 }

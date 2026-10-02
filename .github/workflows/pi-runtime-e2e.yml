@@ -7,6 +7,8 @@ on:
       - Dockerfile
       - .dockerignore
       - docker-compose.pi.yml
+      - docker-compose.yml
+      - docker-compose.no-apparmor.yml
       - docker/pi-test/**
       - docker/ingress/**
       - docker/opencode/bin/**

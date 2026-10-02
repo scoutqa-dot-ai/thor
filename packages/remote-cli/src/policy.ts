@@ -307,37 +307,3 @@ function getMetabaseAllowedSchemas(): Set<string> {
       .filter(Boolean),
   );
 }
-
-// ── drata policy ───────────────────────────────────────────────────────────
-
-export function validateDrataArgs(args: string[]): string | null {
-  if (!Array.isArray(args) || args.length === 0) {
-    return "args must be a non-empty array";
-  }
-
-  if (args[0] === "--help" || args[0] === "-h") return null;
-
-  if (args[0] !== "api") {
-    return `"drata ${args[0]}" is not allowed — only "drata api GET /public/v2/..." is permitted`;
-  }
-
-  if (args.length !== 3) {
-    return '"drata api" usage: drata api GET /public/v2/<path>';
-  }
-
-  const method = args[1].toUpperCase();
-  if (method !== "GET") {
-    return `"drata api ${args[1]}" is not allowed — only GET is permitted`;
-  }
-
-  const path = args[2];
-  if (!path.startsWith("/public/v2/")) {
-    return 'Drata API path must start with "/public/v2/"';
-  }
-
-  if (path.includes("..") || path.includes("#") || /^https?:\/\//i.test(path)) {
-    return "Drata API path must be a relative /public/v2/ path";
-  }
-
-  return null;
-}

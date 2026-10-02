@@ -7,7 +7,13 @@ export const APPROVAL_TOOL_NAMES = [
   "transitionJiraIssue",
   "create-feature-flag",
   "browser_open_authenticated",
+  "google_workspace_command",
 ] as const;
+
+/** Approval actions resolved by trusted services rather than an MCP proxy registry entry. */
+export const NON_PROXY_APPROVAL_TOOL_NAMES = [
+  "google_workspace_command",
+] as const satisfies readonly (typeof APPROVAL_TOOL_NAMES)[number][];
 
 export const CreateJiraIssueApprovalArgsSchema = z
   .object({
@@ -104,6 +110,18 @@ export const BrowserOpenAuthenticatedApprovalArgsSchema =
     callback_origin: BrowserOriginSchema,
   }).strict();
 
+/** Secret-free approval summary for a privately stored Google Workspace command. */
+export const GoogleWorkspaceCommandApprovalArgsSchema = z
+  .object({
+    operation: z.string().min(1).max(200),
+    argument_count: z.number().int().nonnegative(),
+    command_fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    google_workspace_email: z.string().email(),
+    slack_user_id: z.string().min(1).max(100),
+    connection_id: z.uuid(),
+  })
+  .strict();
+
 export const ApprovalArgsSchema = z.union([
   CreateJiraIssueApprovalArgsSchema,
   AddCommentToJiraIssueApprovalArgsSchema,
@@ -111,6 +129,7 @@ export const ApprovalArgsSchema = z.union([
   TransitionJiraIssueApprovalArgsSchema,
   CreateFeatureFlagApprovalArgsSchema,
   BrowserOpenAuthenticatedApprovalArgsSchema,
+  GoogleWorkspaceCommandApprovalArgsSchema,
 ]);
 
 const ApprovalRequiredEventBaseSchema = z.object({
@@ -143,6 +162,10 @@ export const ApprovalRequiredEventPayloadSchema = z.discriminatedUnion("tool", [
   ApprovalRequiredEventBaseSchema.extend({
     tool: z.literal("browser_open_authenticated"),
     args: BrowserOpenAuthenticatedApprovalArgsSchema,
+  }),
+  ApprovalRequiredEventBaseSchema.extend({
+    tool: z.literal("google_workspace_command"),
+    args: GoogleWorkspaceCommandApprovalArgsSchema,
   }),
 ]);
 
@@ -204,6 +227,7 @@ export function injectApprovalDisclaimer(
     case "editJiraIssue":
     case "transitionJiraIssue":
     case "browser_open_authenticated":
+    case "google_workspace_command":
       return parsed.data.args;
   }
 }

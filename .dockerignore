@@ -13,3 +13,5 @@ test.sh
 docs/
 scripts/
 !docker/opencode/config/**/*.md
+docker-volumes/
+.pi/

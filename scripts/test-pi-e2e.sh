@@ -17,6 +17,8 @@ trap cleanup EXIT
 "${compose[@]}" exec -T runner node --input-type=module <<'JS'
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
+import { createHmac } from 'node:crypto';
 const trigger = async (body) => fetch('http://127.0.0.1:3000/trigger', {
   method:'POST', headers:{'content-type':'application/json','x-thor-internal-secret':process.env.THOR_INTERNAL_SECRET},
   body:JSON.stringify({directory:'/workspace/repos/pi-fixture', ...body}),
@@ -37,9 +39,13 @@ assert.equal((await trigger({...body,prompt:'different'})).status,409);
 await writeFile('/var/lib/runner/e2e-receipt.json',JSON.stringify(receipt));
 const probe=await (await fetch('http://model-fixture:8000/probe')).json();
 assert.equal(probe.calls,4);assert.equal(probe.wrapperCalls,1);assert(probe.slackPosts>0);
+assert.deepEqual(probe.lastProgressTarget,{channel:'C_FIXTURE',threadTs:'1710000000.001'});
 assert.equal(probe.lastWrapper.sessionId,receipt.sessionId);
 assert.equal(probe.lastWrapper.directory,'/workspace/repos/pi-fixture');
 assert(probe.lastWrapper.callId.includes('call_fixture'));
+assert.equal(probe.slackReplies,1); assert.equal(probe.lastReply.sessionId,receipt.sessionId);
+assert.deepEqual(probe.lastReply.args,['--channel','C_FIXTURE','--thread-ts','1710000000.001']);
+assert.equal(probe.lastReply.text,'fixture thread reply\n');
 const denied=await (await fetch('http://pi-executor:3002/execute',{
   method:'POST',headers:{'content-type':'application/json'},
   body:JSON.stringify({sessionId:'00000000-0000-4000-8000-000000000001',cwd:'/workspace/repos/pi-fixture',operation:{type:'writeFile',path:'/workspace/repos/pi-fixture/README.md',content:{encoding:'text',data:'must fail'}}}),
@@ -51,6 +57,48 @@ const headers={cookie:'fixture-auth=1'};
 const home=await fetch('http://ingress:8080/',{headers,redirect:'manual'});assert.equal(home.status,302);assert.equal(home.headers.get('location'),'/admin/sessions');
 const viewer=await fetch(`http://ingress:8080/runner/v/${receipt.anchorId}/${receipt.triggerId}`,{headers});assert.equal(viewer.status,200);assert((await viewer.text()).includes('fixture completed'));
 const admin=await fetch('http://ingress:8080/admin/sessions',{headers});assert.equal(admin.status,200);assert((await admin.text()).includes(receipt.anchorId));
+const unauthorizedConnect=await fetch('http://ingress:8080/google-workspace/connect/authorize',{redirect:'manual',headers:{'x-vouch-user':'forged'}});assert.equal(unauthorizedConnect.status,302);assert(unauthorizedConnect.headers.get('location').includes('/vouch/login'));
+const connect=await fetch('http://ingress:8080/google-workspace/connect/authorize',{headers:{...headers,'x-vouch-user':'forged','x-thor-internal-secret':'forged'}});
+assert.deepEqual(await connect.json(),{trustedInternalHeader:true,vouchUser:'fixture@example.com'});
+const callback=await fetch('http://ingress:8080/google-workspace/oauth/callback?code=fixture-code&state=fixture-state',{headers:{'x-thor-internal-secret':'forged'}});assert.equal((await callback.json()).trustedInternalHeader,true);
+// Actual signed HTTP intake, disk queue, gateway admission and embedded Pi response.
+const signedEvent={type:'event_callback',team_id:'T_FIXTURE',event_id:'Ev_signed_first',event:{type:'app_mention',user:'U_SIGNED',channel:'C_SIGNED',ts:'1710000000.010',text:'<@U_BOT> fixture-slack-intake'}};
+const slackRequest=async(payload,valid=true)=>{
+  const raw=JSON.stringify(payload), timestamp=String(Math.floor(Date.now()/1000));
+  const signature='v0='+createHmac('sha256','fixture-signing-secret').update(`v0:${timestamp}:${raw}`).digest('hex');
+  return fetch('http://ingress:8080/slack/events',{method:'POST',headers:{'content-type':'application/json','x-slack-request-timestamp':timestamp,'x-slack-signature':valid?signature:'v0=forged'},body:raw});
+};
+assert.equal((await slackRequest(signedEvent,false)).status,401);
+assert.equal((await slackRequest(signedEvent)).status,200);
+const signedRuns=async()=>{
+  const runs=[];
+  for(const name of await readdir('/workspace/worklog/sessions')) {
+    if(!name.endsWith('.jsonl'))continue;
+    const records=(await readFile('/workspace/worklog/sessions/'+name,'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
+    const starts=records.filter(r=>r.type==='trigger_start'&&r.correlationKey==='slack:thread:C_SIGNED/1710000000.010');
+    const ends=records.filter(r=>r.type==='trigger_end'&&starts.some(s=>s.triggerId===r.triggerId));
+    if(starts.length)runs.push({sessionId:name.slice(0,-6),starts,ends});
+  }
+  return runs;
+};
+const waitSigned=async(count)=>{
+  for(let attempt=0;attempt<100;attempt++){
+    const runs=await signedRuns();
+    if(runs.reduce((n,r)=>n+r.ends.length,0)>=count)return runs;
+    await new Promise(resolve=>setTimeout(resolve,200));
+  }
+  throw new Error('Signed Slack intake did not complete in Pi');
+};
+const first=await waitSigned(1);assert.equal(first.length,1);assert(first[0].sessionId.startsWith('pi-'));assert.equal(first[0].starts[0].triggerSlackId,'U_SIGNED');
+assert.equal((await slackRequest(signedEvent)).status,200);
+await new Promise(resolve=>setTimeout(resolve,4000));
+assert.equal((await signedRuns())[0].starts.length,1);
+assert.equal((await slackRequest({...signedEvent,event_id:'Ev_signed_followup',event:{type:'message',user:'U_SIGNED',channel:'C_SIGNED',channel_type:'channel',ts:'1710000000.011',thread_ts:'1710000000.010',text:'fixture-slack-followup'}})).status,200);
+const followup=await waitSigned(2);assert.equal(followup.length,1);assert.equal(followup[0].sessionId,first[0].sessionId);assert.equal(followup[0].starts.length,2);
+assert(followup[0].starts.every(start=>start.triggerSlackId==='U_SIGNED'));
+const slackProbe=await (await fetch('http://model-fixture:8000/probe')).json();assert.equal(slackProbe.slackReplies,3);
+assert.deepEqual(slackProbe.lastReply.args,['--channel','C_SIGNED','--thread-ts','1710000000.010']);assert.equal(slackProbe.lastReply.sessionId,first[0].sessionId);
+console.log('PASS: signed Slack mention, disk queue, actor attribution, duplicate suppression, in-thread reply and non-mention continuation through real gateway/Pi');
 const pending={prompt:'fixture-hold',requestId:'container-recovery',correlationKey:'cron:container-recovery'};
 const accepted=await (await trigger(pending)).json();assert.equal(accepted.accepted,true);
 await writeFile('/var/lib/runner/e2e-pending.json',JSON.stringify(accepted));

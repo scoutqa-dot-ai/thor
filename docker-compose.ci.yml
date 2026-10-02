@@ -1,0 +1,31 @@
+# Test-only legacy CI overrides. Never use this file for a deployment.
+services:
+  falcon-mcp:
+    image: node:24-slim
+    entrypoint: !reset null
+    command: !override [node, /fixture/falcon-mcp.mjs]
+    environment: !override {}
+    volumes:
+      - ./scripts/fixtures/falcon-mcp.mjs:/fixture/falcon-mcp.mjs:ro
+    healthcheck:
+      test:
+        !override [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:8000/health').then(r=>{if(!r.ok)throw 1})",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 0s
+
+  remote-cli:
+    # These suites never start the credential browser broker; credentials remain disabled.
+    # Docker's default CI profile is not a substitute for the production thor-remote-cli policy.
+    security_opt: !override
+      - seccomp=./docker/remote-cli/seccomp-bwrap.json
+      - apparmor=docker-default
+    environment:
+      OP_SERVICE_ACCOUNT_TOKEN: ""
+      ONEPASSWORD_BROWSER_VAULT_ID: ""

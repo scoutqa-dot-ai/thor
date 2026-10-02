@@ -48,6 +48,70 @@ server {
         return 302 http://$http_host/vouch/login?url=$scheme://$http_host$uri;
     }
 
+    # Google Workspace account connection. The link is private and single-use;
+    # Vouch independently verifies the browser email before Google authorization.
+    location = /google-workspace/connect {
+        access_log off;
+        error_log /dev/null emerg;
+        proxy_set_header X-Thor-Internal-Secret "${THOR_INTERNAL_SECRET}";
+
+        set $remote_cli http://remote-cli:3004;
+        proxy_pass $remote_cli;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+    }
+
+    location = /google-workspace/connect/authorize {
+        access_log off;
+        error_log /dev/null emerg;
+        auth_request /vouch/validate;
+        error_page 401 = @google_workspace_connect_login;
+
+        auth_request_set $auth_user $upstream_http_x_vouch_user;
+        proxy_set_header X-Vouch-User $auth_user;
+        proxy_set_header X-Thor-Internal-Secret "${THOR_INTERNAL_SECRET}";
+
+        set $remote_cli http://remote-cli:3004;
+        proxy_pass $remote_cli;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+    }
+
+    location = /google-workspace/disconnect {
+        access_log off;
+        error_log /dev/null emerg;
+        auth_request /vouch/validate;
+        error_page 401 = @google_workspace_connect_login;
+
+        auth_request_set $auth_user $upstream_http_x_vouch_user;
+        proxy_set_header X-Vouch-User $auth_user;
+        proxy_set_header X-Thor-Internal-Secret "${THOR_INTERNAL_SECRET}";
+
+        set $remote_cli http://remote-cli:3004;
+        proxy_pass $remote_cli;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+    }
+
+    location @google_workspace_connect_login {
+        access_log off;
+        error_log /dev/null emerg;
+        return 302 ${GOOGLE_WORKSPACE_OAUTH_PUBLIC_BASE_URL}/vouch/login?url=${GOOGLE_WORKSPACE_OAUTH_PUBLIC_BASE_URL}$request_uri;
+    }
+
+    # Google returns through a public exact path. Remote-cli requires the
+    # single-use state plus same-browser cookie and ingress-owned internal header.
+    location = /google-workspace/oauth/callback {
+        access_log off;
+        error_log /dev/null emerg;
+        proxy_set_header X-Thor-Internal-Secret "${THOR_INTERNAL_SECRET}";
+
+        set $remote_cli http://remote-cli:3004;
+        proxy_pass $remote_cli;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+    }
+
     # Slack webhooks — no auth required
     location /slack/ {
         set $gateway http://gateway:3002;
@@ -72,13 +136,8 @@ server {
         proxy_set_header Connection "";
     }
 
-    # Static assets — no auth required, bypass vouch for performance.
-    # opencode and codex-lb both ship Vite-style /assets/<hash> bundles. The
-    # fallback order is asymmetric: codex-lb's spa_fallback returns a real
-    # 404 for unknown /assets/<hash>, while opencode's SPA returns 200 +
-    # index.html for the same. So we try codex-lb first and fall back to
-    # opencode on 404; the reverse order would silently land on opencode's
-    # SPA fallback and never reach codex-lb.
+    # OpenCode and codex-lb both serve Vite assets. Try codex-lb first because
+    # it returns a real 404 for unknown assets; OpenCode's SPA fallback does not.
     location /assets/ {
         set $codex_lb http://codex-lb:2455;
         proxy_pass $codex_lb;
@@ -139,8 +198,9 @@ server {
         proxy_set_header Connection "";
     }
 
-    # codex-lb dashboard — protected by Google SSO and admin email.
-    location ~ ^/(dashboard|accounts|settings|api)(/|$) {
+    # codex-lb dashboard — protected by Google SSO and admin email. Match only
+    # codex-lb's dashboard API prefixes; OpenCode also owns routes under /api/.
+    location ~ ^/(dashboard|accounts|settings|api/(accounts|api-keys|automations|conversation-archive|dashboard|dashboard-auth|firewall|model-sources|models|oauth|quota-planner|reports|request-logs|runtime|settings|sticky-sessions))(/|$) {
         auth_request /vouch/validate;
 
         auth_request_set $auth_user $upstream_http_x_vouch_user;

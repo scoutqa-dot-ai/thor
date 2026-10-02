@@ -23,7 +23,7 @@ services:
     command: [node, /fixture.mjs]
     networks:
       default:
-        aliases: [vouch, codex-lb, gateway]
+        aliases: [vouch, codex-lb, remote-cli]
     healthcheck:
       test: [CMD, node, -e, "fetch('http://127.0.0.1:8000/health').then(r=>{if(!r.ok)throw 1})"]
       interval: 1s
@@ -96,6 +96,38 @@ services:
       timeout: 3s
       retries: 30
 
+  gateway:
+    build:
+      context: ../..
+      target: gateway
+    environment:
+      RUNNER_URL: http://runner:3000
+      THOR_INTERNAL_SECRET: runner-internal-sentinel
+      SLACK_BOT_TOKEN: gateway-secret-sentinel
+      SLACK_SIGNING_SECRET: fixture-signing-secret
+      SLACK_BOT_USER_ID: U_BOT
+      SLACK_DEFAULT_REPO: pi-fixture
+      SLACK_API_BASE_URL: http://model-fixture:8000/slack/
+      GITHUB_APP_SLUG: fixture
+      GITHUB_APP_BOT_ID: "1"
+      GITHUB_WEBHOOK_SECRET: fixture-webhook-secret
+      REMOTE_CLI_HOST: model-fixture
+      REMOTE_CLI_PORT: "8000"
+      QUEUE_DIR: /workspace/worklog/gateway-queue
+    volumes:
+      - repos:/workspace/repos:ro
+      - worklog:/workspace/worklog
+      - memory:/workspace/memory:ro
+      - config:/workspace/config:ro
+    depends_on:
+      runner:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3002/health').then(r=>{if(!r.ok)throw 1})"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
   admin:
     build:
       context: ../..
@@ -118,12 +150,17 @@ services:
     environment:
       THOR_RUNTIME: pi
       THOR_ADMIN_EMAILS: fixture@example.com
+      THOR_INTERNAL_SECRET: runner-internal-sentinel
+      GOOGLE_WORKSPACE_OAUTH_PUBLIC_BASE_URL: http://ingress:8080
     depends_on:
       runner:
         condition: service_healthy
       admin:
         condition: service_healthy
       model-fixture:
+        condition: service_healthy
+
+      gateway:
         condition: service_healthy
 
 volumes:

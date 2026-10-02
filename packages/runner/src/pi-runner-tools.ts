@@ -116,6 +116,21 @@ export function installPiRunnerTools(registry: Registry, config: PiRunnerConfig)
           )?.request;
           return request?.correlationKey ?? metadata?.correlationKey;
         }),
+        section("slack-reply", async (input, context) => {
+          const metadata = await input.read.snapshot(
+            piConversationMetadataDoc,
+            input.conversationId,
+            context,
+          );
+          const request = metadata?.receipts.find(
+            (item) => item.requestId === metadata.activeRequestId,
+          )?.request;
+          const target = /^slack:thread:([^/]+)\/(.+)$/.exec(
+            request?.correlationKey ?? metadata?.correlationKey ?? "",
+          );
+          if (!target) return undefined;
+          return `Slack reply target: channel ${target[1]}, thread_ts ${target[2]}. Read the Slack skill and use its posting workflow for the substantive user-facing reply before ending. Final assistant text stays in the conversation and is not automatically posted to Slack.`;
+        }),
         section("triggering-user", async (input, context) => {
           const metadata = await input.read.snapshot(
             piConversationMetadataDoc,
