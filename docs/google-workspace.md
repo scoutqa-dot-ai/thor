@@ -114,6 +114,7 @@ An operator responding to compromise should revoke the OAuth client or user gran
 - **Private OAuth DM delivery unconfirmed:** check `chat:write`, the installed bot token and App Home → Messages Tab. A public-channel response or incomplete Slack response is not accepted as confirmed DM delivery.
 - **Google Workspace connection required / link sent:** open the private DM, verify the displayed Google account and Slack recipient, authorize, then retry from Slack. No Slack email or Google mapping is needed.
 - **Connection link rejected:** request expired, was already used, violates an optional pin, has a mismatched confirmation proof/browser, or returned without the same-browser cookie. Request a new link; do not reuse callback URLs.
+- **Connection cookie missing / browser sign-in identity not forwarded:** open a fresh original DM link in the same browser. If it repeats, inspect `gws_oauth_browser_context_missing` in remote-cli logs: only cookie/SSO presence booleans are logged. A missing SSO identity needs ingress/Vouch investigation; it does not mean Google rejected consent. Never share the link or cookie values.
 - **Approval rejected:** only the Slack user who owns the connected account can approve.
 - **Account access unavailable:** refresh failed or the stored grant is invalid. Disconnect/revoke, reconnect, and submit a new command.
 - **503 / exit 2:** check OAuth environment, exact public HTTPS origin, fixed scopes, encryption-key length, named-volume permissions, and UID/GID 1001 ownership.

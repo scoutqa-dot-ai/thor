@@ -241,3 +241,31 @@ it("does not forward private connection links or the bot credential through Slac
   expect(forwarded).toBe(0);
   expect(reply.result.stderr).not.toContain("private authorization link was sent");
 });
+
+it("distinguishes a lost browser cookie from missing SSO identity without exposing either value", async () => {
+  await start();
+  const headers = { "x-thor-internal-secret": secret, "x-vouch-user": "person@example.com" };
+  const lost = await fetch(`${baseUrl}/google-workspace/connect/authorize`, { headers });
+  expect(lost.status).toBe(400);
+  expect(await lost.text()).toContain("connection cookie is missing or expired");
+  await request();
+  const link = /<(https:\/\/[^|]+)\|Connect Google Workspace>/.exec(messages[0].text)?.[1];
+  if (!link) throw new Error("GWS browser context fixture link missing");
+  const staged = await fetch(link.replace("https://thor.example.test", baseUrl), {
+    redirect: "manual",
+    headers,
+  });
+  const cookie = staged.headers.get("set-cookie")?.split(";")[0];
+  if (!cookie) throw new Error("GWS browser context fixture cookie missing");
+  const unsigned = await fetch(`${baseUrl}/google-workspace/connect/authorize`, {
+    headers: { "x-thor-internal-secret": secret, cookie },
+  });
+  expect(unsigned.status).toBe(400);
+  expect(await unsigned.text()).toContain("Browser sign-in identity was not forwarded");
+  expect(unsigned.headers.get("set-cookie")).toBeNull();
+  const retry = await fetch(`${baseUrl}/google-workspace/connect/authorize`, {
+    headers: { ...headers, cookie },
+  });
+  expect(retry.status).toBe(200);
+  expect(await retry.text()).toContain("Confirm Google Workspace connection");
+});

@@ -1129,12 +1129,21 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     const requestId = parseCookieHeader(req.get("cookie"), GWS_CONNECT_REQUEST_COOKIE) ?? "";
     const authenticatedEmail = req.get("x-vouch-user")?.trim().toLowerCase() ?? "";
     if (!requestId || !authenticatedEmail) {
-      res.setHeader("Set-Cookie", clearGwsConnectRequestCookie());
+      logInfo(log, "gws_oauth_browser_context_missing", {
+        requestCookiePresent: Boolean(requestId),
+        authenticatedEmailPresent: Boolean(authenticatedEmail),
+      });
+      if (!requestId) res.setHeader("Set-Cookie", clearGwsConnectRequestCookie());
       res
         .status(400)
         .type("html")
         .send(
-          gwsOAuthHtml("Google Workspace connection failed", "The connection link is invalid."),
+          gwsOAuthHtml(
+            "Google Workspace connection failed",
+            !requestId
+              ? "The private connection cookie is missing or expired. Open a fresh original Slack DM link in this same browser; this authorization page cannot be opened directly. If the problem repeats, check whether browser cookies are blocked."
+              : "Browser sign-in identity was not forwarded. Ask the operator to check the Google SSO ingress configuration. The connection cookie has been preserved; no Google authorization was started.",
+          ),
         );
       return;
     }
