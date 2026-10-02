@@ -245,7 +245,7 @@ it("does not forward private connection links or the bot credential through Slac
 it("distinguishes a lost browser cookie from missing SSO identity without exposing either value", async () => {
   await start();
   const headers = { "x-thor-internal-secret": secret, "x-vouch-user": "person@example.com" };
-  const lost = await fetch(`${baseUrl}/google-workspace/connect/authorize`, { headers });
+  const lost = await fetch(`${baseUrl}/google-workspace/connect/authorize?resume=1`, { headers });
   expect(lost.status).toBe(400);
   expect(await lost.text()).toContain("connection cookie is missing or expired");
   await request();
@@ -268,4 +268,34 @@ it("distinguishes a lost browser cookie from missing SSO identity without exposi
   });
   expect(retry.status).toBe(200);
   expect(await retry.text()).toContain("Confirm Google Workspace connection");
+});
+
+it("preserves a temporarily withheld connection cookie and safely resumes on a fresh same-site request", async () => {
+  await start();
+  await request();
+  const link = /<(https:\/\/[^|]+)\|Connect Google Workspace>/.exec(messages[0].text)?.[1];
+  if (!link) throw new Error("GWS cookie resume fixture link missing");
+  const headers = { "x-thor-internal-secret": secret, "x-vouch-user": "person@example.com" };
+  const staged = await fetch(link.replace("https://thor.example.test", baseUrl), {
+    redirect: "manual",
+    headers,
+  });
+  const cookie = staged.headers.get("set-cookie")?.split(";")[0];
+  if (!cookie) throw new Error("GWS cookie resume fixture cookie missing");
+  const returned = await fetch(`${baseUrl}/google-workspace/connect/authorize`, { headers });
+  expect(returned.status).toBe(400);
+  expect(returned.headers.get("set-cookie")).toBeNull();
+  expect(await returned.text()).toContain("/google-workspace/connect/authorize?resume=1");
+  const resumed = await fetch(`${baseUrl}/google-workspace/connect/authorize?resume=1`, {
+    headers: { ...headers, cookie },
+  });
+  expect(resumed.status).toBe(200);
+  expect(await resumed.text()).toContain("Confirm Google Workspace connection");
+  const noProof = await fetch(`${baseUrl}/google-workspace/connect/authorize?resume=1`, {
+    method: "POST",
+    redirect: "manual",
+    headers: { ...headers, cookie },
+  });
+  expect(noProof.status).toBe(400);
+  expect(noProof.headers.get("location")).toBeNull();
 });

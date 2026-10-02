@@ -727,7 +727,7 @@ function timingSafeStringEqual(left: string, right: string): boolean {
 function gwsOAuthHtml(
   title: string,
   message: string,
-  confirmation?: { csrfToken: string },
+  confirmation?: { csrfToken: string } | { resume: true },
 ): string {
   const escape = (value: string) =>
     value.replace(/[&<>"']/g, (character) => {
@@ -740,9 +740,12 @@ function gwsOAuthHtml(
       };
       return escaped[character] ?? "";
     });
-  const form = confirmation
-    ? `<form method="post" action="/google-workspace/connect/authorize"><input type="hidden" name="csrf" value="${escape(confirmation.csrfToken)}"><button type="submit">Connect this Google account</button></form>`
-    : "";
+  const form =
+    confirmation && "csrfToken" in confirmation
+      ? `<form method="post" action="/google-workspace/connect/authorize"><input type="hidden" name="csrf" value="${escape(confirmation.csrfToken)}"><button type="submit">Connect this Google account</button></form>`
+      : confirmation
+        ? `<p><a href="/google-workspace/connect/authorize?resume=1">Continue securely in this browser</a></p>`
+        : "";
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escape(title)}</title></head><body><h1>${escape(title)}</h1><p>${escape(message)}</p>${form}</body></html>`;
 }
 
@@ -1133,7 +1136,20 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         requestCookiePresent: Boolean(requestId),
         authenticatedEmailPresent: Boolean(authenticatedEmail),
       });
-      if (!requestId) res.setHeader("Set-Cookie", clearGwsConnectRequestCookie());
+      // A cross-site login return can withhold a stored Lax cookie. Never delete it on absence.
+      if (!requestId && authenticatedEmail && req.query.resume !== "1") {
+        res
+          .status(400)
+          .type("html")
+          .send(
+            gwsOAuthHtml(
+              "Resume Google Workspace connection",
+              "Sign-in succeeded, but the connection cookie was not available on this login return. Continue from this page to retry as a same-site navigation. No Google authorization has started.",
+              { resume: true },
+            ),
+          );
+        return;
+      }
       res
         .status(400)
         .type("html")
