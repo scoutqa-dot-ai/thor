@@ -345,18 +345,28 @@ appendSessionEvent(owner.sessionId, {
   correlationKey: "slack:thread:C123FIXTURE/1710000000.001",
 });
 
-const slackFetch = async () =>
-  new Response(JSON.stringify({ ok: true, channel: "C123FIXTURE", ts: "1710000000.100" }), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
+const slackFetch = async (input, init) => {
+  if (String(input).includes("/users.info")) {
+    assert.equal(new Headers(init?.headers).get("authorization"), "Bearer xoxb-fixture");
+    return Response.json({
+      ok: true,
+      user: {
+        id: owner.slackUserId,
+        team_id: "T123FIXTURE",
+        deleted: false,
+        is_bot: false,
+        profile: { email: owner.expectedGoogleEmail },
+      },
+    });
+  }
+  return Response.json({ ok: true, channel: "C123FIXTURE", ts: "1710000000.100" });
+};
 const workspaceConfig = {
   users: [
     {
-      email: "person@example.com",
+      email: "jira-only@example.com",
       name: "Fixture Person",
       slack: owner.slackUserId,
-      google_workspace_email: owner.expectedGoogleEmail,
     },
   ],
 };

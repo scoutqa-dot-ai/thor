@@ -8,7 +8,7 @@ Each command is owned by the human who started the **currently active Slack turn
 
 1. `remote-cli` resolves the latest open trigger bound to the Thor session.
 2. The trigger must be Slack-only. Cron, GitHub, missing, ended, superseded, or ambiguous triggers fail closed.
-3. The verified Slack ID must map to a workspace user with `google_workspace_email`.
+3. An explicit `google_workspace_email` is an optional operator pin. Otherwise Thor obtains the current human member's email from bot-authenticated Slack `users.info` in `SLACK_TEAM_ID`; neither a directory entry nor a Google mapping is required. The Jira `email` field is never used for Google authorization. Missing email/permissions, bots, deleted/external users, wrong-workspace responses and conflicting pins fail closed.
 4. Thor loads only that Slack user's encrypted Google grant. There is no global account or service-account fallback.
 5. Thor stores exact argv in encrypted private state and posts a secret-free Slack approval containing the operation, argument count, expected Google account, Slack user, and keyed HMAC-SHA-256 command fingerprint.
 6. Only the same Slack user can approve or reject the action. The private command is consumed before execution, so an uncertain result is never replayed from the same approval.
@@ -43,7 +43,7 @@ Outside those credential and local-filesystem exclusions, Thor does not reinterp
 
    Generate a dedicated encryption key, for example with `openssl rand -base64 32`. Store and back it up as a production credential. Losing or changing it invalidates every stored connection. Do not reuse `THOR_INTERNAL_SECRET`, Vouch secrets, or the Google client secret.
 
-5. Add the expected Google identity to each allowed workspace user:
+5. Set `SLACK_TEAM_ID` to your workspace ID. Grant the bot `users:read` and `users:read.email` (already present in the example Slack manifest); reinstall the Slack app if its installed scopes lack them. Default onboarding uses the member's Slack profile email. Only when Google uses a different address, optionally pin the expected identity in workspace config:
 
    ```json
    {
@@ -71,10 +71,10 @@ On the first `gws` request for an unconnected user, Thor sends a private Slack D
 
 Ingress first moves the private request ID into a scoped `HttpOnly` cookie and redirects to a query-free authorization path, so the capability does not pass through Vouch URLs or normal access/error logs. The browser flow then requires:
 
-- Vouch-authenticated browser email equal to `google_workspace_email`;
+- Vouch-authenticated browser email equal to the resolved Slack profile address or explicit Google pin;
 - exact OAuth state and PKCE verifier;
 - a same-browser `HttpOnly`, `Secure`, `SameSite=Lax` nonce cookie;
-- Google's verified userinfo email equal to the configured address;
+- Google's verified userinfo email equal to that same expected address;
 - the exact registered callback path;
 - no followed OAuth HTTP redirects during token or userinfo calls.
 
@@ -88,7 +88,7 @@ A connected user can open:
 https://<thor-host>/google-workspace/disconnect
 ```
 
-Vouch must authenticate the configured Google email. The page then requires an explicit same-browser POST confirmation protected by a five-minute CSRF nonce; merely opening the URL does not mutate state. Thor then deletes the local encrypted grant for the mapped Slack user. The user should also revoke Thor from Google Account security settings; local deletion alone does not revoke the provider-side grant.
+Vouch must authenticate the connected Google email. Thor finds its unique encrypted grant, including accounts connected without a config pin. The page requires an explicit same-browser POST confirmation protected by a five-minute CSRF nonce; merely opening the URL does not mutate state. Thor deletes only that grant. The user should also revoke Thor from Google Account security settings; local deletion alone does not revoke the provider-side grant.
 
 An operator responding to compromise should revoke the OAuth client or user grant at Google, stop `remote-cli`, preserve only the secret-free audit trail required by policy, delete the `google-workspace-oauth-data` volume, rotate `GOOGLE_WORKSPACE_OAUTH_ENCRYPTION_KEY` and the client secret, then recreate `remote-cli`.
 
@@ -104,7 +104,7 @@ An operator responding to compromise should revoke the OAuth client or user gran
 
 ## Troubleshooting
 
-- **Active Slack turn required:** the request came from GitHub/cron, the trigger ended or was superseded, the session header was untrusted/stale, or the Slack user is not mapped.
+- **Verified Slack member required:** the request came from GitHub/cron, its turn ended/superseded, the profile email cannot be verified, the Slack workspace differs, or config pins conflict. Check bot `users:read`/`users:read.email` and `SLACK_TEAM_ID`; a missing Google config pin alone no longer blocks onboarding.
 - **Google Workspace connection required:** use the private DM link, complete both browser identity checks, then retry from Slack.
 - **Connection link rejected:** request expired, was already used, opened under a different Vouch email, or returned without the same-browser cookie. Request a new link; do not reuse callback URLs.
 - **Approval rejected:** only the Slack user who owns the connected account can approve.

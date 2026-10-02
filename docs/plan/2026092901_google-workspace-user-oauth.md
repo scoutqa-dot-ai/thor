@@ -8,8 +8,8 @@ The design follows Junior's connected-account model: long-lived credentials stay
 
 ## Security invariants
 
-- Only an active Slack-triggered turn may request Google Workspace access. GitHub, cron, stale, unknown, and unmapped actors fail closed.
-- A workspace user must have an explicit `google_workspace_email`; the OAuth userinfo email must be verified and match it exactly.
+- Only an active Slack-triggered turn may request Google Workspace access. GitHub, cron, stale and unverified actors fail closed. Verified same-workspace Slack members can onboard without a directory entry.
+- Google email comes from an optional explicit `google_workspace_email` pin or the trusted Slack profile, never Jira identity or agent input; Vouch and verified Google userinfo must match it exactly.
 - OAuth connection links are sent privately to the resolved Slack user. They are short-lived, single-use, and bound to the Slack workspace/user, Thor session/trigger, expected Google email, PKCE verifier, browser nonce, and fixed redirect URI.
 - Refresh tokens are encrypted at rest in remote-cli-only storage. OpenCode receives no OAuth client secret, refresh token, credential file, or encrypted store access.
 - `gws` receives one short-lived access token through `GOOGLE_WORKSPACE_CLI_TOKEN` for one approved execution. It receives no credential file, OAuth client secret, refresh token, or shared authenticated config directory.
@@ -86,3 +86,15 @@ Exit criteria:
 - Gmail, Calendar, or arbitrary scopes beyond the operator-configured fixed scope set.
 - Automatically retrying an uncertain Google mutation.
 - Treating the upstream gws binary as a filesystem sandbox.
+
+## 2026-10-02 — Pi Slack DM onboarding fix
+
+Observed on the Ubuntu deployment: Pi works, but missing `google_workspace_email` prevents the first GWS request from reaching the existing private OAuth DM flow.
+
+Implementation phase: resolve missing pins from the bot-authenticated Slack `users.info` response for the active user in the configured workspace. Existing explicit pins remain authoritative; never infer Google identity from the Jira `email`, agent argv, or browser query. Verified same-workspace human members can onboard without a workspace directory entry; ambiguous/conflicting directory pins, missing profile email, deleted/bot/external users and Slack API failures deny access. Revalidate active turn after lookup and account identity at approval execution. Keep Vouch/Google verified-email equality, encrypted state, PKCE, browser nonce and owner approval/one-use results. Disconnect must resolve the verified Google identity from encrypted grants even without a configured pin.
+
+Exit criteria: real Pi request with no Google mapping gets a private DM and no execution; wrong Vouch/Google identity and profile/turn failures deny; connecting then retrying requires owner approval and executes once; disconnect/reconnect works without mapping; existing pinned-user paths still pass. Run focused/full tests, typechecks/builds and isolated container checks. No live credentials or Ubuntu security-policy changes.
+
+Decision: Slack's verified membership/email directory is the default identity authority (existing manifest already includes `users:read`/`users:read.email`); optional explicit Google pins support intentional differences. This supersedes the original explicit-pin-only/unmapped-user rejection policy, not OAuth or approval ownership. New identity service consolidates lookup/revalidation shared by submission, resolution and private results; attribution for unrelated integrations remains unchanged. No new application environment variables.
+
+Validation: 67 test files / 895 tests passed under Node 24, all recursive workspace typechecks/builds passed. Real embedded Pi→HTTP executor→wrapper→remote-cli test now requests GWS without a Google pin, receives its private DM, denies a wrong Vouch browser, completes the cookie/PKCE callback, retries for owner-only approval and one-use results. Real HTTP Slack profile tests reject missing email/scopes, mismatched user/workspace, bot/deleted/external users, redirect and pin conflicts, and turns ending during lookup. Both pinned and self-service approval/disconnect paths pass, including account changes before execution. Encrypted disconnect lookup tests preserve duplicate, corrupt/unreadable and owner/path-mismatched evidence. Rebuilt isolated GWS/Drata container contract passed with no Google pin and a Jira-only directory email. Independent read-only review found no confirmed new regression; its disconnect failure-coverage gap was closed. No live Google credentials, Slack messages or Ubuntu deployment changes; commit-only delivery, integrated GitHub gates remain pending.

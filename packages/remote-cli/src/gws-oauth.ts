@@ -356,6 +356,7 @@ export class GwsOAuthService {
     authorizationUrl.searchParams.set("client_id", config.clientId);
     authorizationUrl.searchParams.set("redirect_uri", config.redirectUri);
     authorizationUrl.searchParams.set("response_type", "code");
+    authorizationUrl.searchParams.set("login_hint", request.owner.expectedGoogleEmail);
     authorizationUrl.searchParams.set("scope", config.scopes.join(" "));
     authorizationUrl.searchParams.set("access_type", "offline");
     authorizationUrl.searchParams.set("prompt", "consent");
@@ -502,6 +503,43 @@ export class GwsOAuthService {
     };
   }
 
+  /** Select a unique encrypted grant for a verified browser email; directory pins are not required for revocation. */
+  findConnectedIdentityByEmail(authenticatedEmail: string): GwsOAuthResult<GwsConnectedIdentity> {
+    if (!this.#config.ok) return this.#config;
+    const directory = join(this.#config.value.storageDir, "connections");
+    let names: string[];
+    try {
+      names = readdirSync(directory).filter((name) => /^[a-f0-9]{64}\.json$/.test(name));
+    } catch (error) {
+      return failure(
+        "storage",
+        error instanceof Error && "code" in error && error.code === "ENOENT"
+          ? "connection_missing"
+          : "unavailable",
+      );
+    }
+    let match: GwsConnectedIdentity | undefined;
+    for (const name of names) {
+      const record = this.#readEncrypted(join(directory, name), ConnectionSchema);
+      if (!record.ok) return record;
+      const connection = record.value;
+      if (
+        connection.slackTeamId !== this.#config.value.slackTeamId ||
+        connection.googleEmail !== connection.expectedGoogleEmail ||
+        join(directory, name) !== this.#connectionPath(connection.slackUserId)
+      )
+        return failure("storage", "connection_invalid");
+      if (connection.googleEmail.toLowerCase() !== authenticatedEmail.trim().toLowerCase())
+        continue;
+      if (match) return failure("identity", "identity_mismatch");
+      match = {
+        connectionId: connection.connectionId,
+        googleEmail: connection.googleEmail,
+        slackUserId: connection.slackUserId,
+      };
+    }
+    return match ? { ok: true, value: match } : failure("identity", "connection_missing");
+  }
   /** Create a keyed, non-reversible audit binding for exact argv. */
   fingerprintCommand(args: readonly string[]): GwsOAuthResult<string> {
     if (!this.#config.ok) return this.#config;

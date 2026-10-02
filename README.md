@@ -153,6 +153,8 @@ not expose the OAuth response body.
 
 Google Workspace configuration (per-Slack-user OAuth):
 
+First use sends the requesting Slack member a private OAuth DM; a Google email config mapping is optional. Set `SLACK_TEAM_ID` and grant the bot `users:read`/`users:read.email` for automatic identity lookup. Google and browser SSO must verify the expected email. See [Google Workspace](docs/google-workspace.md).
+
 | Variable                                 | Required | Service                 | Purpose                                                                     |
 | ---------------------------------------- | -------- | ----------------------- | --------------------------------------------------------------------------- |
 | `GOOGLE_WORKSPACE_OAUTH_CLIENT_ID`       | For GWS  | `remote-cli` only       | Google Web OAuth client ID                                                  |
@@ -163,7 +165,7 @@ Google Workspace configuration (per-Slack-user OAuth):
 | `GOOGLE_WORKSPACE_OAUTH_STORAGE_DIR`     | No       | `remote-cli` only       | Encrypted state directory; Compose fixes it to a private named volume       |
 | `GOOGLE_WORKSPACE_CLI_CONFIG_DIR`        | No       | `remote-cli` only       | Parent for fresh private per-execution cwd; never shared with OpenCode      |
 | `GOOGLE_WORKSPACE_PROJECT_ID`            | No       | `remote-cli` only       | Optional upstream GCP quota/billing project override                        |
-| workspace user `google_workspace_email`  | Per user | workspace config        | Google identity expected for the verified active Slack user                 |
+| workspace user `google_workspace_email`  | Optional | workspace config        | Operator pin; otherwise use verified same-workspace Slack profile email     |
 
 Every GWS call requires the latest active Slack actor, that user's connected Google
 identity, and same-user Slack approval. Thor stores raw argv only in encrypted

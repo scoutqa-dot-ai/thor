@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   appendAlias,
   appendSessionEvent,
+  ApprovalRequiredEventPayloadSchema,
   ExecResultSchema,
   type ApprovalRequiredEventPayload,
 } from "@thor/common";
@@ -114,273 +115,311 @@ async function post(path: string, body: unknown, headers: Record<string, string>
 }
 
 describe("per-user Google Workspace execution", () => {
-  it("requires owner approval, binds the exact private command, and executes once", async () => {
-    const oauth = new GwsOAuthService(oauthEnv(), {
-      fetch: providerFetch(),
-      authorizationEndpoint: "https://provider.example.test/auth",
-      tokenEndpoint: "https://provider.example.test/token",
-      userInfoEndpoint: "https://provider.example.test/userinfo",
-    });
-    await connect(oauth);
+  it.each([true, false])(
+    "requires owner approval, executes once and disconnects (explicit pin: %s)",
+    async (explicitPin) => {
+      const oauth = new GwsOAuthService(oauthEnv(), {
+        fetch: providerFetch(),
+        authorizationEndpoint: "https://provider.example.test/auth",
+        tokenEndpoint: "https://provider.example.test/token",
+        userInfoEndpoint: "https://provider.example.test/userinfo",
+      });
+      await connect(oauth);
 
-    appendAlias({ aliasType: "opencode.session", aliasValue: sessionId, anchorId });
-    appendAlias({
-      aliasType: "slack.thread",
-      aliasValue: "C123/1710000000.001",
-      anchorId,
-    });
-    appendSessionEvent(sessionId, {
-      type: "trigger_start",
-      triggerId,
-      triggerSlackId: slackUserId,
-      correlationKey: "slack:thread:C123/1710000000.001",
-    });
+      appendAlias({ aliasType: "opencode.session", aliasValue: sessionId, anchorId });
+      appendAlias({
+        aliasType: "slack.thread",
+        aliasValue: "C123/1710000000.001",
+        anchorId,
+      });
+      appendSessionEvent(sessionId, {
+        type: "trigger_start",
+        triggerId,
+        triggerSlackId: slackUserId,
+        correlationKey: "slack:thread:C123/1710000000.001",
+      });
 
-    const executions: Array<{ args: string[]; token: string }> = [];
-    const slackBodies: string[] = [];
-    const remoteCli = createRemoteCliApp({
-      env: {
-        port: 3004,
-        nodeEnv: "test",
-        slackBotToken: "xoxb-test",
-        slackApiBaseUrl: "https://slack.example.test/api",
-        thorInternalSecret: internalSecret,
-        githubAppId: "app-id",
-        githubAppSlug: "thor-github-app",
-        githubAppBotId: "12345",
-        githubAppPrivateKeyFile: "/tmp/private-key.pem",
-        gitIdentityName: "thor[bot]",
-        gitIdentityEmail: "thor@example.com",
-      },
-      configLoader: () => ({
-        users: [
-          {
-            email: googleEmail,
-            name: "Fixture Person",
-            slack: slackUserId,
-            google_workspace_email: googleEmail,
-          },
-        ],
-      }),
-      gwsOAuth: oauth,
-      gws: {
-        execute: async (args: string[], token: GwsAccessToken) => {
-          executions.push({ args, token: token.reveal() });
-          return {
-            status: 200 as const,
-            result: { stdout: "fixture command output", stderr: "", exitCode: 0 },
-          };
+      let currentEmail = googleEmail;
+      const executions: Array<{ args: string[]; token: string }> = [];
+      const slackBodies: string[] = [];
+      const remoteCli = createRemoteCliApp({
+        env: {
+          port: 3004,
+          nodeEnv: "test",
+          slackBotToken: "xoxb-test",
+          slackApiBaseUrl: "https://slack.example.test/api",
+          thorInternalSecret: internalSecret,
+          githubAppId: "app-id",
+          githubAppSlug: "thor-github-app",
+          githubAppBotId: "12345",
+          githubAppPrivateKeyFile: "/tmp/private-key.pem",
+          gitIdentityName: "thor[bot]",
+          gitIdentityEmail: "thor@example.com",
         },
-      },
-      mcp: {
-        approvalsDir: join(root, "approvals"),
-        writeToolCallLogFn: () => {},
-        fetchImpl: (async (_input: string | URL | Request, init?: RequestInit) => {
-          slackBodies.push(String(init?.body ?? ""));
-          return Response.json({ ok: true, channel: "C123", ts: "1710000000.100" });
-        }) as typeof fetch,
-      },
-    });
-    closeApp = remoteCli.close;
-    server = createServer(remoteCli.app);
-    server.listen(0, "127.0.0.1");
-    await once(server, "listening");
-    const address = server.address();
-    if (!address || typeof address === "string") throw new Error("fixture listener missing");
-    baseUrl = `http://127.0.0.1:${address.port}`;
+        configLoader: () => ({
+          users: [
+            {
+              email: googleEmail,
+              name: "Fixture Person",
+              slack: slackUserId,
+              ...(explicitPin ? { google_workspace_email: currentEmail } : {}),
+            },
+          ],
+        }),
+        gwsOAuth: oauth,
+        gws: {
+          execute: async (args: string[], token: GwsAccessToken) => {
+            executions.push({ args, token: token.reveal() });
+            return {
+              status: 200 as const,
+              result: { stdout: "fixture command output", stderr: "", exitCode: 0 },
+            };
+          },
+        },
+        mcp: {
+          approvalsDir: join(root, "approvals"),
+          writeToolCallLogFn: () => {},
+          fetchImpl: (async (_input: string | URL | Request, init?: RequestInit) => {
+            if (String(_input).includes("/users.info"))
+              return Response.json({
+                ok: true,
+                user: {
+                  id: slackUserId,
+                  team_id: "T123",
+                  deleted: false,
+                  is_bot: false,
+                  profile: { email: currentEmail },
+                },
+              });
+            slackBodies.push(String(init?.body ?? ""));
+            return Response.json({ ok: true, channel: "C123", ts: "1710000000.100" });
+          }) as typeof fetch,
+        },
+      });
+      closeApp = remoteCli.close;
+      server = createServer(remoteCli.app);
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("fixture listener missing");
+      baseUrl = `http://127.0.0.1:${address.port}`;
 
-    const browserRequest = oauth.createConnectionRequest({
-      slackUserId,
-      expectedGoogleEmail: googleEmail,
-      sessionId,
-      anchorId,
-      triggerId,
-    });
-    if (!browserRequest.ok) throw browserRequest.error;
-    const staged = await fetch(
-      browserRequest.value.connectUrl.replace("https://thor.example.test", baseUrl),
-      {
+      const browserRequest = oauth.createConnectionRequest({
+        slackUserId,
+        expectedGoogleEmail: googleEmail,
+        sessionId,
+        anchorId,
+        triggerId,
+      });
+      if (!browserRequest.ok) throw browserRequest.error;
+      const staged = await fetch(
+        browserRequest.value.connectUrl.replace("https://thor.example.test", baseUrl),
+        {
+          redirect: "manual",
+          headers: { "x-thor-internal-secret": internalSecret },
+        },
+      );
+      expect(staged.status).toBe(302);
+      expect(staged.headers.get("location")).toBe("/google-workspace/connect/authorize");
+      const requestCookie = staged.headers.get("set-cookie")?.split(";")[0];
+      if (!requestCookie) throw new Error("connection request cookie missing");
+      const authorized = await fetch(`${baseUrl}/google-workspace/connect/authorize`, {
         redirect: "manual",
-        headers: { "x-thor-internal-secret": internalSecret },
-      },
-    );
-    expect(staged.status).toBe(302);
-    expect(staged.headers.get("location")).toBe("/google-workspace/connect/authorize");
-    const requestCookie = staged.headers.get("set-cookie")?.split(";")[0];
-    if (!requestCookie) throw new Error("connection request cookie missing");
-    const authorized = await fetch(`${baseUrl}/google-workspace/connect/authorize`, {
-      redirect: "manual",
-      headers: {
-        cookie: requestCookie,
-        "x-thor-internal-secret": internalSecret,
-        "x-vouch-user": googleEmail,
-      },
-    });
-    expect(authorized.status).toBe(302);
-    expect(authorized.headers.get("location")).toContain("https://provider.example.test/auth");
-    expect(authorized.headers.get("location")).not.toContain(browserRequest.value.requestId);
+        headers: {
+          cookie: requestCookie,
+          "x-thor-internal-secret": internalSecret,
+          "x-vouch-user": googleEmail,
+        },
+      });
+      expect(authorized.status).toBe(302);
+      expect(authorized.headers.get("location")).toContain("https://provider.example.test/auth");
+      expect(authorized.headers.get("location")).not.toContain(browserRequest.value.requestId);
 
-    const args = ["drive", "files", "update", "--json", '{"name":"private title"}'];
-    const pending = await post(
-      "/exec/gws",
-      { args },
-      { "x-thor-session-id": sessionId, "x-thor-call-id": "call-1" },
-    );
-    expect(pending.status).toBe(200);
-    expect(executions).toHaveLength(0);
-    const event = JSON.parse(pending.result.stdout) as ApprovalRequiredEventPayload;
-    expect(event).toMatchObject({
-      type: "approval_required",
-      tool: "google_workspace_command",
-      args: {
-        operation: "drive.files.update",
-        argument_count: args.length,
-        google_workspace_email: googleEmail,
-        slack_user_id: slackUserId,
-      },
-    });
-    expect(event.args).not.toHaveProperty("argv");
-    expect(slackBodies.join("\n")).not.toContain("private title");
+      const args = ["drive", "files", "update", "--json", '{"name":"private title"}'];
+      const pending = await post(
+        "/exec/gws",
+        { args },
+        { "x-thor-session-id": sessionId, "x-thor-call-id": "call-1" },
+      );
+      expect(pending.status).toBe(200);
+      expect(executions).toHaveLength(0);
+      const event = JSON.parse(pending.result.stdout) as ApprovalRequiredEventPayload;
+      expect(event).toMatchObject({
+        type: "approval_required",
+        tool: "google_workspace_command",
+        args: {
+          operation: "drive.files.update",
+          argument_count: args.length,
+          google_workspace_email: googleEmail,
+          slack_user_id: slackUserId,
+        },
+      });
+      expect(event.args).not.toHaveProperty("argv");
+      expect(slackBodies.join("\n")).not.toContain("private title");
 
-    const wrongRejector = await post(
-      "/exec/mcp",
-      { args: ["resolve", event.actionId, "rejected", "U999"] },
-      { "x-thor-internal-secret": internalSecret },
-    );
-    expect(wrongRejector.result.exitCode).toBe(1);
+      const wrongRejector = await post(
+        "/exec/mcp",
+        { args: ["resolve", event.actionId, "rejected", "U999"] },
+        { "x-thor-internal-secret": internalSecret },
+      );
+      expect(wrongRejector.result.exitCode).toBe(1);
 
-    const wrongReviewer = await post(
-      "/exec/mcp",
-      { args: ["resolve", event.actionId, "approved", "U999"] },
-      { "x-thor-internal-secret": internalSecret },
-    );
-    expect(wrongReviewer.result.exitCode).toBe(1);
-    expect(executions).toHaveLength(0);
+      const wrongReviewer = await post(
+        "/exec/mcp",
+        { args: ["resolve", event.actionId, "approved", "U999"] },
+        { "x-thor-internal-secret": internalSecret },
+      );
+      expect(wrongReviewer.result.exitCode).toBe(1);
+      expect(executions).toHaveLength(0);
 
-    const approved = await post(
-      "/exec/mcp",
-      { args: ["resolve", event.actionId, "approved", slackUserId] },
-      { "x-thor-internal-secret": internalSecret },
-    );
-    const resolution = JSON.parse(approved.result.stdout) as {
-      status: string;
-      tool: string;
-      upstream: string;
-      result_available: boolean;
-      result_capability: string;
-    };
-    expect(resolution).toMatchObject({
-      status: "completed",
-      tool: "google_workspace_command",
-      upstream: "gws",
-      result_available: true,
-    });
-    expect(resolution.result_capability).toMatch(/^[A-Za-z0-9_-]{32,200}$/);
-    expect(approved.result.exitCode).toBe(0);
-    expect(executions).toEqual([{ args, token: "fixture-command-token" }]);
+      const approved = await post(
+        "/exec/mcp",
+        { args: ["resolve", event.actionId, "approved", slackUserId] },
+        { "x-thor-internal-secret": internalSecret },
+      );
+      const resolution = JSON.parse(approved.result.stdout) as {
+        status: string;
+        tool: string;
+        upstream: string;
+        result_available: boolean;
+        result_capability: string;
+      };
+      expect(resolution).toMatchObject({
+        status: "completed",
+        tool: "google_workspace_command",
+        upstream: "gws",
+        result_available: true,
+      });
+      expect(resolution.result_capability).toMatch(/^[A-Za-z0-9_-]{32,200}$/);
+      expect(approved.result.exitCode).toBe(0);
+      expect(executions).toEqual([{ args, token: "fixture-command-token" }]);
 
-    const wrongReviewerReplay = await post(
-      "/exec/mcp",
-      { args: ["resolve", event.actionId, "approved", "U999"] },
-      { "x-thor-internal-secret": internalSecret },
-    );
-    expect(wrongReviewerReplay.result.exitCode).toBe(1);
-    expect(wrongReviewerReplay.result.stdout).not.toContain("result_capability");
+      const wrongReviewerReplay = await post(
+        "/exec/mcp",
+        { args: ["resolve", event.actionId, "approved", "U999"] },
+        { "x-thor-internal-secret": internalSecret },
+      );
+      expect(wrongReviewerReplay.result.exitCode).toBe(1);
+      expect(wrongReviewerReplay.result.stdout).not.toContain("result_capability");
 
-    const status = await post("/exec/approval", { args: ["status", event.actionId] });
-    expect(status.result.exitCode).toBe(0);
-    expect(status.result.stdout).not.toContain("result_capability");
-    expect(status.result.stdout).not.toContain("fixture command output");
+      const status = await post("/exec/approval", { args: ["status", event.actionId] });
+      expect(status.result.exitCode).toBe(0);
+      expect(status.result.stdout).not.toContain("result_capability");
+      expect(status.result.stdout).not.toContain("fixture command output");
 
-    const wrongCapability = await post(
-      "/exec/approval",
-      { args: ["result", event.actionId, "wrong-capability-value-that-is-long-enough"] },
-      { "x-thor-session-id": sessionId },
-    );
-    expect(wrongCapability.result.exitCode).toBe(1);
-    expect(wrongCapability.result.stdout).toBe("");
+      const wrongCapability = await post(
+        "/exec/approval",
+        { args: ["result", event.actionId, "wrong-capability-value-that-is-long-enough"] },
+        { "x-thor-session-id": sessionId },
+      );
+      expect(wrongCapability.result.exitCode).toBe(1);
+      expect(wrongCapability.result.stdout).toBe("");
 
-    const result = await post(
-      "/exec/approval",
-      { args: ["result", event.actionId, resolution.result_capability] },
-      { "x-thor-session-id": sessionId },
-    );
-    expect(result.result).toEqual({
-      stdout: "fixture command output",
-      stderr: "",
-      exitCode: 0,
-    });
+      const result = await post(
+        "/exec/approval",
+        { args: ["result", event.actionId, resolution.result_capability] },
+        { "x-thor-session-id": sessionId },
+      );
+      expect(result.result).toEqual({
+        stdout: "fixture command output",
+        stderr: "",
+        exitCode: 0,
+      });
 
-    const resultReplay = await post(
-      "/exec/approval",
-      { args: ["result", event.actionId, resolution.result_capability] },
-      { "x-thor-session-id": sessionId },
-    );
-    expect(resultReplay.result.exitCode).toBe(1);
+      const resultReplay = await post(
+        "/exec/approval",
+        { args: ["result", event.actionId, resolution.result_capability] },
+        { "x-thor-session-id": sessionId },
+      );
+      expect(resultReplay.result.exitCode).toBe(1);
 
-    const replay = await post(
-      "/exec/mcp",
-      { args: ["resolve", event.actionId, "approved", slackUserId] },
-      { "x-thor-internal-secret": internalSecret },
-    );
-    expect(replay.result.exitCode).toBe(0);
-    expect(JSON.parse(replay.result.stdout)).toMatchObject({
-      status: "completed",
-      result_available: true,
-    });
-    expect(executions).toHaveLength(1);
+      const replay = await post(
+        "/exec/mcp",
+        { args: ["resolve", event.actionId, "approved", slackUserId] },
+        { "x-thor-internal-secret": internalSecret },
+      );
+      expect(replay.result.exitCode).toBe(0);
+      expect(JSON.parse(replay.result.stdout)).toMatchObject({
+        status: "completed",
+        result_available: true,
+      });
+      expect(executions).toHaveLength(1);
 
-    const disconnectPage = await fetch(`${baseUrl}/google-workspace/disconnect`, {
-      headers: {
-        "x-thor-internal-secret": internalSecret,
-        "x-vouch-user": googleEmail,
-      },
-    });
-    expect(disconnectPage.status).toBe(200);
-    expect(disconnectPage.headers.get("content-security-policy")).toContain("form-action 'self'");
-    const disconnectHtml = await disconnectPage.text();
-    const csrf = disconnectHtml.match(/name="csrf" value="([A-Za-z0-9_-]+)"/)?.[1];
-    expect(csrf).toBeTruthy();
-    const disconnectCookie = disconnectPage.headers.get("set-cookie")?.split(";")[0];
-    expect(disconnectCookie).toBeTruthy();
-    if (!csrf || !disconnectCookie) throw new Error("disconnect fixture tokens missing");
+      const changedPending = await post(
+        "/exec/gws",
+        { args: ["drive", "files", "list"] },
+        { "x-thor-session-id": sessionId },
+      );
+      const changedEvent = ApprovalRequiredEventPayloadSchema.parse(
+        JSON.parse(changedPending.result.stdout),
+      );
+      currentEmail = "changed@example.com";
+      await post(
+        "/exec/mcp",
+        { args: ["resolve", changedEvent.actionId, "approved", slackUserId] },
+        { "x-thor-internal-secret": internalSecret },
+      );
+      expect(executions).toHaveLength(1);
+      currentEmail = googleEmail;
+      const wrongDisconnect = await fetch(`${baseUrl}/google-workspace/disconnect`, {
+        headers: {
+          "x-thor-internal-secret": internalSecret,
+          "x-vouch-user": "another@example.com",
+        },
+      });
+      expect(wrongDisconnect.status).toBe(403);
+      const disconnectPage = await fetch(`${baseUrl}/google-workspace/disconnect`, {
+        headers: {
+          "x-thor-internal-secret": internalSecret,
+          "x-vouch-user": googleEmail,
+        },
+      });
+      expect(disconnectPage.status).toBe(200);
+      expect(disconnectPage.headers.get("content-security-policy")).toContain("form-action 'self'");
+      const disconnectHtml = await disconnectPage.text();
+      const csrf = disconnectHtml.match(/name="csrf" value="([A-Za-z0-9_-]+)"/)?.[1];
+      expect(csrf).toBeTruthy();
+      const disconnectCookie = disconnectPage.headers.get("set-cookie")?.split(";")[0];
+      expect(disconnectCookie).toBeTruthy();
+      if (!csrf || !disconnectCookie) throw new Error("disconnect fixture tokens missing");
 
-    const csrfRejected = await fetch(`${baseUrl}/google-workspace/disconnect`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        "x-thor-internal-secret": internalSecret,
-        "x-vouch-user": googleEmail,
-      },
-      body: new URLSearchParams({ csrf }),
-    });
-    expect(csrfRejected.status).toBe(403);
-    expect(oauth.findConnectedIdentity(slackUserId, googleEmail).ok).toBe(true);
+      const csrfRejected = await fetch(`${baseUrl}/google-workspace/disconnect`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          "x-thor-internal-secret": internalSecret,
+          "x-vouch-user": googleEmail,
+        },
+        body: new URLSearchParams({ csrf }),
+      });
+      expect(csrfRejected.status).toBe(403);
+      expect(oauth.findConnectedIdentity(slackUserId, googleEmail).ok).toBe(true);
 
-    const freshDisconnectPage = await fetch(`${baseUrl}/google-workspace/disconnect`, {
-      headers: {
-        "x-thor-internal-secret": internalSecret,
-        "x-vouch-user": googleEmail,
-      },
-    });
-    const freshHtml = await freshDisconnectPage.text();
-    const freshCsrf = freshHtml.match(/name="csrf" value="([A-Za-z0-9_-]+)"/)?.[1];
-    const freshCookie = freshDisconnectPage.headers.get("set-cookie")?.split(";")[0];
-    if (!freshCsrf || !freshCookie) throw new Error("disconnect fixture tokens missing");
-    const disconnected = await fetch(`${baseUrl}/google-workspace/disconnect`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        cookie: freshCookie,
-        "x-thor-internal-secret": internalSecret,
-        "x-vouch-user": googleEmail,
-      },
-      body: new URLSearchParams({ csrf: freshCsrf }),
-    });
-    expect(disconnected.status).toBe(200);
-    expect(oauth.findConnectedIdentity(slackUserId, googleEmail)).toMatchObject({
-      ok: false,
-      error: { code: "connection_missing" },
-    });
-  });
+      const freshDisconnectPage = await fetch(`${baseUrl}/google-workspace/disconnect`, {
+        headers: {
+          "x-thor-internal-secret": internalSecret,
+          "x-vouch-user": googleEmail,
+        },
+      });
+      const freshHtml = await freshDisconnectPage.text();
+      const freshCsrf = freshHtml.match(/name="csrf" value="([A-Za-z0-9_-]+)"/)?.[1];
+      const freshCookie = freshDisconnectPage.headers.get("set-cookie")?.split(";")[0];
+      if (!freshCsrf || !freshCookie) throw new Error("disconnect fixture tokens missing");
+      const disconnected = await fetch(`${baseUrl}/google-workspace/disconnect`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie: freshCookie,
+          "x-thor-internal-secret": internalSecret,
+          "x-vouch-user": googleEmail,
+        },
+        body: new URLSearchParams({ csrf: freshCsrf }),
+      });
+      expect(disconnected.status).toBe(200);
+      expect(oauth.findConnectedIdentity(slackUserId, googleEmail)).toMatchObject({
+        ok: false,
+        error: { code: "connection_missing" },
+      });
+    },
+  );
 });

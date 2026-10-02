@@ -11,8 +11,6 @@ import {
   computeGitCorrelationKey,
   createConfigLoader,
   createLogger,
-  findUserByGoogleWorkspaceEmail,
-  findUserBySlack,
   getRunnerBaseUrl,
   GoogleWorkspaceCommandApprovalArgsSchema,
   logError,
@@ -76,7 +74,8 @@ import {
   validateMetabaseArgs,
   validateScoutqaArgs,
 } from "./policy.js";
-import { attributionFields, resolveActiveSlackUser, resolveTriggerUser } from "./attribution.js";
+import { attributionFields, resolveTriggerUser } from "./attribution.js";
+import { GwsSlackIdentityService } from "./gws-slack-identity.js";
 
 export { GwsOAuthService, GwsService };
 
@@ -751,6 +750,14 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   const drata = new DrataService(process.env);
   const getConfig =
     config.configLoader ?? config.mcp?.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
+  const oauthTeam = gwsOAuth.slackTeamId();
+  const gwsIdentity = new GwsSlackIdentityService({
+    configLoader: getConfig,
+    slackTeamId: oauthTeam.ok ? oauthTeam.value : undefined,
+    botToken: config.mcp?.slack?.botToken ?? envConfig?.slackBotToken,
+    apiBaseUrl: config.mcp?.slack?.apiBaseUrl ?? envConfig?.slackApiBaseUrl,
+    fetch: config.mcp?.fetchImpl,
+  });
   const rawWriteToolCallLog = config.mcp?.writeToolCallLogFn ?? writeToolCallLog;
   const safeWriteToolCallLog = (entry: ToolCallLogEntry): void =>
     rawWriteToolCallLog(sanitizeCredentialBrokerToolCallLog(entry));
@@ -853,15 +860,10 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         "command_binding_mismatch",
       );
     }
-    let currentUser: ReturnType<typeof findUserBySlack>;
-    try {
-      currentUser = findUserBySlack(getConfig(), consumed.value.owner.slackUserId);
-    } catch {
-      currentUser = undefined;
-    }
+    const currentUser = await gwsIdentity.resolveGoogleEmail(consumed.value.owner.slackUserId);
     if (
-      currentUser?.google_workspace_email?.toLowerCase() !==
-      consumed.value.owner.expectedGoogleEmail
+      !currentUser.ok ||
+      currentUser.googleWorkspaceEmail !== consumed.value.owner.expectedGoogleEmail
     ) {
       return finishConsumedCommand(
         {
@@ -976,12 +978,13 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         exitCode: 0,
       };
     }
-    const activeUser = resolveActiveSlackUser(input.context.sessionId, getConfig);
+    const activeUser = await gwsIdentity.resolveActiveUser(input.context.sessionId);
     const approvedSummary = GoogleWorkspaceCommandApprovalArgsSchema.safeParse(input.action.args);
     if (
       !activeUser.ok ||
       !approvedSummary.success ||
-      activeUser.slackUserId !== approvedSummary.data.slack_user_id
+      activeUser.slackUserId !== approvedSummary.data.slack_user_id ||
+      activeUser.googleWorkspaceEmail !== approvedSummary.data.google_workspace_email
     ) {
       return {
         stdout: "",
@@ -1108,20 +1111,15 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       return;
     }
     const authenticatedEmail = req.get("x-vouch-user")?.trim().toLowerCase() ?? "";
-    let user: ReturnType<typeof findUserByGoogleWorkspaceEmail>;
-    try {
-      user = findUserByGoogleWorkspaceEmail(getConfig(), authenticatedEmail);
-    } catch {
-      user = undefined;
-    }
-    if (!authenticatedEmail || !user?.slack) {
+    const connection = gwsOAuth.findConnectedIdentityByEmail(authenticatedEmail);
+    if (!authenticatedEmail || !connection.ok) {
       res
         .status(403)
         .type("html")
         .send(
           gwsOAuthHtml(
             "Google Workspace disconnect failed",
-            "This signed-in identity does not have a mapped Google Workspace connection.",
+            "This signed-in identity does not have a unique connected Google Workspace account.",
           ),
         );
       return;
@@ -1173,20 +1171,20 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         );
       return;
     }
-    let user: ReturnType<typeof findUserByGoogleWorkspaceEmail>;
-    try {
-      user = findUserByGoogleWorkspaceEmail(getConfig(), authenticatedEmail);
-    } catch {
-      user = undefined;
-    }
-    if (!user?.slack) {
+    const connection = gwsOAuth.findConnectedIdentityByEmail(authenticatedEmail);
+    if (!connection.ok) {
       res
         .status(403)
         .type("html")
-        .send(gwsOAuthHtml("Google Workspace disconnect failed", "This identity is not mapped."));
+        .send(
+          gwsOAuthHtml(
+            "Google Workspace disconnect failed",
+            "This identity has no unique connected account.",
+          ),
+        );
       return;
     }
-    const disconnected = gwsOAuth.disconnect(user.slack);
+    const disconnected = gwsOAuth.disconnect(connection.value.slackUserId);
     if (!disconnected.ok) {
       logInfo(log, "gws_oauth_disconnect_rejected", {
         stage: disconnected.error.stage,
@@ -1204,7 +1202,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       return;
     }
     logInfo(log, "gws_oauth_disconnected", {
-      slack: user.slack,
+      slack: connection.value.slackUserId,
       googleEmail: authenticatedEmail,
     });
     res
@@ -1711,13 +1709,13 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       res.status(400).json({ stdout: "", stderr: `${parsed.error.message}\n`, exitCode: 1 });
       return;
     }
-    const activeUser = resolveActiveSlackUser(ids.sessionId, getConfig);
+    const activeUser = await gwsIdentity.resolveActiveUser(ids.sessionId);
     if (!activeUser.ok) {
       logInfo(log, "exec_gws_identity_rejected", { reason: activeUser.reason, ...ids });
       res.status(403).json({
         stdout: "",
         stderr:
-          "Google Workspace requires an active Slack turn from a mapped user with google_workspace_email configured.\n",
+          "Google Workspace requires an active Slack turn and a verified member identity. Ask an operator to check the bot's email-read permissions and workspace configuration.\n",
         exitCode: 1,
       });
       return;

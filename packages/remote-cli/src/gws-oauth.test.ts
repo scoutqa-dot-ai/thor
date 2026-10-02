@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, mkdir, writeFile } from "node:fs/promises";
+import { createCipheriv } from "node:crypto";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -128,6 +129,89 @@ async function readStorageText(directory: string): Promise<string> {
 }
 
 describe("GwsOAuthService", () => {
+  it("rejects ambiguous email grants without revoking either owner", async () => {
+    const service = new GwsOAuthService(oauthEnv(), { fetch: createProviderFetch().fetch });
+    await connect(service);
+    const request = service.createConnectionRequest({ ...ownerInput(), slackUserId: "UOTHER" });
+    if (!request.ok) throw request.error;
+    const started = service.beginAuthorization(request.value.requestId, expectedGoogleEmail);
+    if (!started.ok) throw started.error;
+    const state = new URL(started.value.authorizationUrl).searchParams.get("state");
+    if (!state) throw new Error("GWS duplicate grant fixture state missing");
+    expect(
+      (
+        await service.completeAuthorization({
+          state,
+          code: "fixture-code",
+          browserNonce: started.value.browserNonce,
+        })
+      ).ok,
+    ).toBe(true);
+    expect(service.findConnectedIdentityByEmail(expectedGoogleEmail)).toMatchObject({
+      ok: false,
+      error: { stage: "identity", code: "identity_mismatch" },
+    });
+    expect(service.findConnectedIdentity(slackUserId, expectedGoogleEmail).ok).toBe(true);
+    expect(service.findConnectedIdentity("UOTHER", expectedGoogleEmail).ok).toBe(true);
+  });
+
+  it.each(["corrupt", "unreadable", "owner/path mismatch"])(
+    "preserves %s grant evidence instead of skipping it during disconnect lookup",
+    async (kind) => {
+      const service = new GwsOAuthService(oauthEnv(), { fetch: createProviderFetch().fetch });
+      const connected = await connect(service);
+      const directory = join(storageDir, "connections");
+      const name = (await readdir(directory))[0];
+      if (!name) throw new Error("GWS encrypted grant fixture missing");
+      const originalPath = join(directory, name);
+      const original = await readFile(originalPath, "utf8");
+      let evidencePath = originalPath;
+      if (kind === "unreadable") {
+        evidencePath = join(directory, `${"a".repeat(64)}.json`);
+        await mkdir(evidencePath);
+      } else if (kind === "corrupt") {
+        evidencePath = join(directory, `${"a".repeat(64)}.json`);
+        await writeFile(evidencePath, '{"version":1,"ciphertext":"invalid"}');
+      } else {
+        const iv = Buffer.alloc(12, 9);
+        const cipher = createCipheriv("aes-256-gcm", Buffer.alloc(32, 7), iv, {
+          authTagLength: 16,
+        });
+        cipher.setAAD(Buffer.from(`thor:gws-user-oauth:v1\0${originalPath}`));
+        const record = {
+          version: 1,
+          connectionId: connected.completed.value.connectionId,
+          slackTeamId: "T123",
+          slackUserId: "UOTHER",
+          expectedGoogleEmail,
+          googleEmail: expectedGoogleEmail,
+          googleSubject: "google-subject-123",
+          refreshToken,
+          createdAtMs: nowMs,
+          updatedAtMs: nowMs,
+        };
+        const ciphertext = Buffer.concat([cipher.update(JSON.stringify(record)), cipher.final()]);
+        await writeFile(
+          originalPath,
+          JSON.stringify({
+            version: 1,
+            iv: iv.toString("base64"),
+            ciphertext: ciphertext.toString("base64"),
+            tag: cipher.getAuthTag().toString("base64"),
+          }),
+        );
+      }
+      const evidence = kind === "unreadable" ? undefined : await readFile(evidencePath, "utf8");
+      expect(service.findConnectedIdentityByEmail(expectedGoogleEmail)).toMatchObject({
+        ok: false,
+        error: { stage: "storage" },
+      });
+      if (kind !== "unreadable") expect(await readFile(evidencePath, "utf8")).toBe(evidence);
+      else expect(await readdir(evidencePath)).toEqual([]);
+      if (kind !== "owner/path mismatch")
+        expect(await readFile(originalPath, "utf8")).toBe(original);
+    },
+  );
   it("binds one Google identity and injects only a refreshed short-lived token", async () => {
     const provider = createProviderFetch();
     const service = new GwsOAuthService(oauthEnv(), {

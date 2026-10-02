@@ -16,7 +16,7 @@ import {
 } from "@thor/common";
 import { createPiRunnerApp } from "./pi-runner.js";
 import { createRemoteCliApp } from "../../remote-cli/src/index.js";
-import { GwsOAuthService } from "../../remote-cli/src/gws-oauth.js";
+import { GWS_OAUTH_BROWSER_COOKIE, GwsOAuthService } from "../../remote-cli/src/gws-oauth.js";
 import {
   executeBatchDispatchPlan,
   planBatchDispatch,
@@ -121,6 +121,17 @@ it("binds actual Pi tool calls to per-user GWS, owner approval and a single-use 
     createServer(async (req, res) => {
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      if (req.url?.startsWith("/users.info?")) {
+        expect(req.headers.authorization).toBe("Bearer xoxb-fixture");
+        res.setHeader("content-type", "application/json");
+        res.end(
+          JSON.stringify({
+            ok: true,
+            user: { id: owner, team_id: "T123", deleted: false, is_bot: false, profile: { email } },
+          }),
+        );
+        return;
+      }
       slackRequests.push(Buffer.concat(chunks).toString());
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({ ok: true, channel: "C123", ts: "1710000000.100" }));
@@ -187,7 +198,7 @@ it("binds actual Pi tool calls to per-user GWS, owner approval and a single-use 
     },
     configLoader: () => ({
       users: [
-        { email, name: "Owner", slack: owner, google_workspace_email: email },
+        { email: "jira-only@example.test", name: "Owner", slack: owner },
         {
           email: "other@example.test",
           name: "Other",
@@ -343,7 +354,8 @@ it("binds actual Pi tool calls to per-user GWS, owner approval and a single-use 
     expect(frames.at(-1)).toMatchObject({ type: "done", status: "completed" });
     return frames;
   };
-  // Warmup produces genuine Pi aliases and trigger IDs for trusted dummy grant provisioning.
+  // A real Pi GWS tool call with no Google pin must initiate private OAuth onboarding.
+  nextCommand = command("gws", ["drive", "files", "list"]);
   await stream({ prompt: "warmup", requestId: "warmup", triggerSlackId: owner });
   const receipt = await (
     await trigger({ prompt: "warmup", requestId: "warmup", triggerSlackId: owner })
@@ -351,24 +363,48 @@ it("binds actual Pi tool calls to per-user GWS, owner approval and a single-use 
   for (const aliasType of ["opencode.session", "pi.conversation"]) {
     expect(resolveAlias({ aliasType, aliasValue: receipt.sessionId })).toBe(receipt.anchorId);
   }
-  const connection = oauth.createConnectionRequest({
-    slackUserId: owner,
-    expectedGoogleEmail: email,
-    sessionId: receipt.sessionId,
-    anchorId: receipt.anchorId,
-    triggerId: receipt.triggerId,
+  const privateDm = slackRequests
+    .map((body) => JSON.parse(body))
+    .find((body) => body.channel === owner && body.text.includes("Connect Google Workspace"));
+  expect(privateDm).toBeDefined();
+  expect(privateDm.thread_ts).toBeUndefined();
+  const privateLink = /<(https:\/\/[^|]+)\|Connect Google Workspace>/.exec(privateDm.text)?.[1];
+  if (!privateLink) throw new Error("Pi GWS fixture DM link missing");
+  expect(JSON.stringify(modelRequests)).not.toContain(privateLink);
+  expect(executions).toHaveLength(0);
+  const browserHeaders = { "x-thor-internal-secret": internalSecret };
+  const staged = await fetch(privateLink.replace("https://thor.example.test", remoteUrl), {
+    redirect: "manual",
+    headers: browserHeaders,
   });
-  if (!connection.ok) throw connection.error;
-  const authorization = oauth.beginAuthorization(connection.value.requestId, email);
-  if (!authorization.ok) throw authorization.error;
-  const state = new URL(authorization.value.authorizationUrl).searchParams.get("state");
-  if (!state) throw new Error("Pi GWS fixture OAuth state missing");
-  const connected = await oauth.completeAuthorization({
-    state,
-    code: "dummy-code",
-    browserNonce: authorization.value.browserNonce,
+  expect(staged.status).toBe(302);
+  const requestCookie = staged.headers.get("set-cookie")?.split(";")[0];
+  if (!requestCookie) throw new Error("Pi GWS fixture connect cookie missing");
+  const wrongBrowser = await fetch(`${remoteUrl}/google-workspace/connect/authorize`, {
+    redirect: "manual",
+    headers: { ...browserHeaders, cookie: requestCookie, "x-vouch-user": "another@example.test" },
   });
-  expect(connected.ok).toBe(true);
+  expect(wrongBrowser.status).toBe(400);
+  const authorized = await fetch(`${remoteUrl}/google-workspace/connect/authorize`, {
+    redirect: "manual",
+    headers: { ...browserHeaders, cookie: requestCookie, "x-vouch-user": email },
+  });
+  expect(authorized.status).toBe(302);
+  expect(new URL(authorized.headers.get("location") ?? "").searchParams.get("login_hint")).toBe(
+    email,
+  );
+  const state = new URL(authorized.headers.get("location") ?? "").searchParams.get("state");
+  const browserCookie = authorized.headers
+    .getSetCookie()
+    .find((cookie) => cookie.startsWith(`${GWS_OAUTH_BROWSER_COOKIE}=`))
+    ?.split(";")[0];
+  if (!state || !browserCookie) throw new Error("Pi GWS fixture authorization evidence missing");
+  const connected = await fetch(
+    `${remoteUrl}/google-workspace/oauth/callback?state=${state}&code=dummy-code`,
+    { headers: { ...browserHeaders, cookie: browserCookie } },
+  );
+  expect(connected.status).toBe(200);
+  expect(oauth.findConnectedIdentity(owner, email).ok).toBe(true);
 
   const args = ["drive", "files", "update", "--json", '{"name":"private title"}'];
   nextCommand = command("gws", args);
@@ -394,7 +430,11 @@ it("binds actual Pi tool calls to per-user GWS, owner approval and a single-use 
   const approvalCard = slackRequests.find((body) => body.includes(event.actionId));
   if (!approvalCard) throw new Error("Pi GWS fixture Slack approval card missing");
   expect(JSON.parse(approvalCard)).toMatchObject({ channel: "C123", thread_ts: "1710000000.001" });
-  expect(remoteRequests[0]).toMatchObject({
+  expect(
+    remoteRequests.find(
+      (request) => request.actor.ok && request.actor.triggerId === gwsReceipt.triggerId,
+    ),
+  ).toMatchObject({
     session: receipt.sessionId,
     call: expect.stringContaining("call_gws_"),
     actor: { ok: true, slackUserId: owner, triggerId: gwsReceipt.triggerId },
