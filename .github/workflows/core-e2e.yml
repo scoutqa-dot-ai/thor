@@ -28,6 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      THOR_RUNTIME: opencode
       OPENCODE_AUTH_JSON: ${{ secrets.OPENCODE_AUTH_JSON }}
       SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
       SLACK_BOT_USER_ID: ${{ vars.SLACK_BOT_USER_ID }}

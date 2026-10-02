@@ -5,6 +5,7 @@ const httpUrlSchema = z.url().refine((value) => {
   return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password;
 });
 const piRunnerConfigSchema = z.object({
+  internalSecret: z.string().min(1),
   executorUrl: httpUrlSchema.refine((value) => {
     const url = new URL(value);
     return url.pathname === "/" && !url.search && !url.hash;
@@ -26,6 +27,7 @@ export function parsePiRunnerConfig(
   env: NodeJS.ProcessEnv,
 ): { ok: true; value: PiRunnerConfig } | { ok: false; error: "pi_configuration_invalid" } {
   const result = piRunnerConfigSchema.safeParse({
+    internalSecret: env.THOR_INTERNAL_SECRET,
     executorUrl: env.PI_EXECUTOR_URL ?? "http://pi-executor:3002",
     storagePath: env.PI_STORAGE_PATH ?? "/var/lib/runner/pi.sqlite",
     modelBaseUrl: env.PI_MODEL_BASE_URL ?? "http://codex-lb:2455/v1",

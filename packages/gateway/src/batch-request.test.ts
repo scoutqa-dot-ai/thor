@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -30,10 +30,16 @@ describe("gateway durable batch delivery over real HTTP", () => {
     const directory = await mkdtemp(join(tmpdir(), "thor-batch-fixture-"));
     const received: Record<string, unknown>[] = [];
     const accepted = new Set<string>();
+    const internalSecret = "gateway-transport-secret";
     const server = createServer(async (req, res) => {
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
       const payload = JSON.parse(Buffer.concat(chunks).toString());
+      if (req.headers["x-thor-internal-secret"] !== internalSecret) {
+        res.writeHead(401);
+        res.end();
+        return;
+      }
       received.push(payload);
       accepted.add(payload.requestId);
       if (received.length === 1) {
@@ -56,7 +62,7 @@ describe("gateway durable batch delivery over real HTTP", () => {
             prompt: `render-${++attempt}-${events.map((item) => item.id).join(",")}`,
             correlationKey: "cron:batch-fixture",
             directory: "/workspace/repos/fixture",
-            deps: { runnerUrl: url },
+            deps: { runnerUrl: url, internalSecret },
             onAccepted: ack,
             onRejected: reject,
           });
@@ -81,6 +87,11 @@ describe("gateway durable batch delivery over real HTTP", () => {
       expect(received[1]).toEqual(received[0]);
       expect(received[2]?.requestId).not.toBe(received[0]?.requestId);
       expect(accepted.size).toBe(2);
+      for (const file of await readdir(join(directory, ".runner-requests"))) {
+        expect(await readFile(join(directory, ".runner-requests", file), "utf8")).not.toContain(
+          internalSecret,
+        );
+      }
       expect(queue.snapshotPending().pendingCount).toBe(0);
     } finally {
       queue.close();

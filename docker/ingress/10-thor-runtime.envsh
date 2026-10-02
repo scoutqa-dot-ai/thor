@@ -1,0 +1,8 @@
+#!/bin/sh
+
+# Only fixed upstreams may enter the nginx template; this is not a user-supplied URL.
+case "${THOR_RUNTIME:-opencode}" in
+  opencode) export THOR_AGENT_UPSTREAM=http://opencode:4096 ;;
+  pi) export THOR_AGENT_UPSTREAM=http://runner:3000 ;;
+  *) echo >&2 "Unsupported Thor runtime"; exit 1 ;;
+esac

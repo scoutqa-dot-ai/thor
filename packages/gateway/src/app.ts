@@ -997,6 +997,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
   }
 
   const runnerDeps: RunnerDeps = {
+    internalSecret: config.internalSecret,
     runnerUrl: config.runnerUrl,
     fetchImpl: config.fetchImpl,
   };

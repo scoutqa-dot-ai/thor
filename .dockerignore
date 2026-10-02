@@ -12,3 +12,4 @@ test.sh
 *.md
 docs/
 scripts/
+!docker/opencode/config/**/*.md

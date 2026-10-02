@@ -2,6 +2,8 @@
 
 An event-driven AI team member that watches Slack and scheduled jobs, resumes OpenCode sessions through the runner, and reaches external systems through `remote-cli`.
 
+An opt-in [Pi Durable mode](docs/pi-runtime.md) embeds the harness in runner and executes tools in an isolated container. Try it without credentials or deployment data using `./scripts/test-pi-e2e.sh`; the default stack remains OpenCode.
+
 ## Architecture
 
 ```text
@@ -105,41 +107,41 @@ Common usage patterns:
 
 Integration-specific env vars live in each integration's doc. Cross-cutting vars:
 
-| Variable                        | Required | Service                   | Purpose                                                                                              |
-| ------------------------------- | -------- | ------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `CRON_SECRET`                   | Yes      | `gateway`, `cron`         | Shared secret for cron endpoint auth                                                                 |
-| `THOR_ADMIN_EMAILS`             | Yes      | `ingress`                 | Comma-separated authenticated Google emails allowed for OpenCode-backed and `/admin/` ingress routes |
-| `THOR_INTERNAL_SECRET`          | Yes      | `remote-cli`, `gateway`   | Secret-gates gateway↔remote-cli internal APIs                                                        |
-| `THOR_E2E_TEST_HELPERS`         | No       | `runner`                  | Enables secret-gated deterministic runner e2e helpers                                                |
-| `RUNNER_BASE_URL`               | Yes      | `remote-cli`              | Public base URL for Thor trigger viewer links in PR/Jira content                                     |
-| `INGRESS_PORT`                  | No       | `ingress`                 | Host port for the reverse proxy                                                                      |
-| `ATLASSIAN_AUTH`                | Yes      | `remote-cli`, `mitmproxy` | Atlassian MCP auth header and mitmproxy default injection                                            |
-| `POSTHOG_API_KEY`               | Yes      | `remote-cli`              | PostHog MCP auth                                                                                     |
-| `GRAFANA_URL`                   | Yes      | `grafana-mcp`             | Grafana instance URL                                                                                 |
-| `GRAFANA_SERVICE_ACCOUNT_TOKEN` | Yes      | `grafana-mcp`             | Grafana service account token                                                                        |
-| `GRAFANA_ORG_ID`                | No       | `grafana-mcp`             | Grafana org ID (defaults to `1`)                                                                     |
-| `LANGFUSE_HOST`                 | No       | `remote-cli`              | Langfuse host URL                                                                                    |
-| `LANGFUSE_PUBLIC_KEY`           | No       | `remote-cli`              | Langfuse public key                                                                                  |
-| `LANGFUSE_SECRET_KEY`           | No       | `remote-cli`              | Langfuse secret key                                                                                  |
-| `METABASE_URL`                  | No       | `remote-cli`              | Metabase instance URL                                                                                |
-| `METABASE_API_KEY`              | No       | `remote-cli`              | Metabase API key                                                                                     |
-| `METABASE_DATABASE_ID`          | No       | `remote-cli`              | Metabase database ID                                                                                 |
-| `METABASE_ALLOWED_SCHEMAS`      | No       | `remote-cli`              | Comma-separated schema allowlist                                                                     |
-| `DRATA_OAUTH_TOKEN_URL`         | No       | `remote-cli`              | Drata OAuth token endpoint                                                                           |
-| `DRATA_CLIENT_ID`               | No       | `remote-cli`              | Drata OAuth application client ID                                                                    |
-| `DRATA_CLIENT_SECRET`           | No       | `remote-cli`              | Drata OAuth application client secret                                                                |
-| `DRATA_AUDIENCE`                | No       | `remote-cli`              | Drata API audience value from the OAuth app token request details                                    |
-| `DRATA_SCOPES`                  | No       | `remote-cli`              | Space-separated Drata OAuth scopes                                                                   |
-| `DRATA_API_BASE_URL`            | No       | `remote-cli`              | Drata API base URL                                                                                   |
-| `KALI_API_BASE_URL`             | No       | `remote-cli`              | EC2-hosted Kali API server URL for the `mcp kali` tools                                              |
-| `OP_SERVICE_ACCOUNT_TOKEN`      | No       | `remote-cli`              | Read-only token for the browser broker; service-scoped injection only                                |
-| `ONEPASSWORD_BROWSER_VAULT_ID`  | No       | `remote-cli`              | Dedicated Login vault ID; required with `OP_SERVICE_ACCOUNT_TOKEN`                                   |
-| `VOUCH_GOOGLE_CLIENT_ID`        | Yes      | `vouch`                   | Google OAuth client ID                                                                               |
-| `VOUCH_GOOGLE_CLIENT_SECRET`    | Yes      | `vouch`                   | Google OAuth client secret                                                                           |
-| `VOUCH_JWT_SECRET`              | Yes      | `vouch`                   | Session JWT signing secret                                                                           |
-| `VOUCH_ALLOWED_EMAIL_DOMAINS`   | No       | `compose -> vouch`        | Rendered into Vouch's `VOUCH_DOMAINS`; comma-separated email domains, default `scoutqa.cc`           |
-| `VOUCH_CALLBACK_URL`            | No       | `vouch`                   | OAuth callback URL                                                                                   |
-| `VOUCH_COOKIE_DOMAIN`           | No       | `vouch`                   | Cookie domain                                                                                        |
+| Variable                        | Required | Service                              | Purpose                                                                                              |
+| ------------------------------- | -------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `CRON_SECRET`                   | Yes      | `gateway`, `cron`                    | Shared secret for cron endpoint auth                                                                 |
+| `THOR_ADMIN_EMAILS`             | Yes      | `ingress`                            | Comma-separated authenticated Google emails allowed for OpenCode-backed and `/admin/` ingress routes |
+| `THOR_INTERNAL_SECRET`          | Yes      | `remote-cli`, `gateway`, Pi `runner` | Secret-gates internal APIs and authenticates Pi trigger admission                                    |
+| `THOR_E2E_TEST_HELPERS`         | No       | `runner`                             | Enables secret-gated deterministic runner e2e helpers                                                |
+| `RUNNER_BASE_URL`               | Yes      | `remote-cli`                         | Public base URL for Thor trigger viewer links in PR/Jira content                                     |
+| `INGRESS_PORT`                  | No       | `ingress`                            | Host port for the reverse proxy                                                                      |
+| `ATLASSIAN_AUTH`                | Yes      | `remote-cli`, `mitmproxy`            | Atlassian MCP auth header and mitmproxy default injection                                            |
+| `POSTHOG_API_KEY`               | Yes      | `remote-cli`                         | PostHog MCP auth                                                                                     |
+| `GRAFANA_URL`                   | Yes      | `grafana-mcp`                        | Grafana instance URL                                                                                 |
+| `GRAFANA_SERVICE_ACCOUNT_TOKEN` | Yes      | `grafana-mcp`                        | Grafana service account token                                                                        |
+| `GRAFANA_ORG_ID`                | No       | `grafana-mcp`                        | Grafana org ID (defaults to `1`)                                                                     |
+| `LANGFUSE_HOST`                 | No       | `remote-cli`                         | Langfuse host URL                                                                                    |
+| `LANGFUSE_PUBLIC_KEY`           | No       | `remote-cli`                         | Langfuse public key                                                                                  |
+| `LANGFUSE_SECRET_KEY`           | No       | `remote-cli`                         | Langfuse secret key                                                                                  |
+| `METABASE_URL`                  | No       | `remote-cli`                         | Metabase instance URL                                                                                |
+| `METABASE_API_KEY`              | No       | `remote-cli`                         | Metabase API key                                                                                     |
+| `METABASE_DATABASE_ID`          | No       | `remote-cli`                         | Metabase database ID                                                                                 |
+| `METABASE_ALLOWED_SCHEMAS`      | No       | `remote-cli`                         | Comma-separated schema allowlist                                                                     |
+| `DRATA_OAUTH_TOKEN_URL`         | No       | `remote-cli`                         | Drata OAuth token endpoint                                                                           |
+| `DRATA_CLIENT_ID`               | No       | `remote-cli`                         | Drata OAuth application client ID                                                                    |
+| `DRATA_CLIENT_SECRET`           | No       | `remote-cli`                         | Drata OAuth application client secret                                                                |
+| `DRATA_AUDIENCE`                | No       | `remote-cli`                         | Drata API audience value from the OAuth app token request details                                    |
+| `DRATA_SCOPES`                  | No       | `remote-cli`                         | Space-separated Drata OAuth scopes                                                                   |
+| `DRATA_API_BASE_URL`            | No       | `remote-cli`                         | Drata API base URL                                                                                   |
+| `KALI_API_BASE_URL`             | No       | `remote-cli`                         | EC2-hosted Kali API server URL for the `mcp kali` tools                                              |
+| `OP_SERVICE_ACCOUNT_TOKEN`      | No       | `remote-cli`                         | Read-only token for the browser broker; service-scoped injection only                                |
+| `ONEPASSWORD_BROWSER_VAULT_ID`  | No       | `remote-cli`                         | Dedicated Login vault ID; required with `OP_SERVICE_ACCOUNT_TOKEN`                                   |
+| `VOUCH_GOOGLE_CLIENT_ID`        | Yes      | `vouch`                              | Google OAuth client ID                                                                               |
+| `VOUCH_GOOGLE_CLIENT_SECRET`    | Yes      | `vouch`                              | Google OAuth client secret                                                                           |
+| `VOUCH_JWT_SECRET`              | Yes      | `vouch`                              | Session JWT signing secret                                                                           |
+| `VOUCH_ALLOWED_EMAIL_DOMAINS`   | No       | `compose -> vouch`                   | Rendered into Vouch's `VOUCH_DOMAINS`; comma-separated email domains, default `scoutqa.cc`           |
+| `VOUCH_CALLBACK_URL`            | No       | `vouch`                              | OAuth callback URL                                                                                   |
+| `VOUCH_COOKIE_DOMAIN`           | No       | `vouch`                              | Cookie domain                                                                                        |
 
 Google Workspace configuration (one global service identity):
 
@@ -148,6 +150,22 @@ Google Workspace configuration (one global service identity):
 | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` | For Workspace reads | `remote-cli` only | Container key path under `/etc/thor/google-workspace`; unset disables reads               |
 | `GOOGLE_WORKSPACE_CLI_CONFIG_DIR`       | No                  | `remote-cli` only | Private writable cache/cwd; default `/var/lib/remote-cli/gws`, never shared with OpenCode |
 | `GOOGLE_WORKSPACE_PROJECT_ID`           | No                  | `remote-cli` only | Optional upstream GCP quota/billing project override                                      |
+
+### Optional Pi Durable runtime
+
+Use `docker compose -f docker-compose.yml -f docker-compose.pi.yml up --build -d --remove-orphans` after configuring the stack. See [Pi testing, persistence and rollback](docs/pi-runtime.md); do not run two stacks on the same ports/webhook stream. The override selects Pi and routes the authenticated home page to the Thor sessions dashboard, not an interactive OpenCode UI.
+
+| Variable                  | Default                     | Service             | Purpose                                                  |
+| ------------------------- | --------------------------- | ------------------- | -------------------------------------------------------- |
+| `THOR_RUNTIME`            | `opencode`                  | `runner`, `ingress` | Override selects `pi`; default deployment stays OpenCode |
+| `PI_EXECUTOR_URL`         | `http://pi-executor:3002`   | `runner`            | Private remote file/process execution origin             |
+| `PI_STORAGE_PATH`         | `/var/lib/runner/pi.sqlite` | `runner`            | Runner-only durable state, never mounted in executor     |
+| `PI_MODEL_BASE_URL`       | `http://codex-lb:2455/v1`   | `runner`            | Standard Responses provider endpoint                     |
+| `PI_MODEL_ID`             | `gpt-5.4`                   | `runner`            | Provider model ID                                        |
+| `PI_MODEL_API_KEY`        | `codex-lb-local`            | `runner`            | Model auth; never forwarded to tools                     |
+| `PI_MODEL_CONTEXT_WINDOW` | `272000`                    | `runner`            | Context limit for compaction and progress                |
+| `PI_SKILLS_DIR`           | `/etc/thor/skills`          | `runner`            | Remote skill catalog path inside executor                |
+| `PI_MEMORY_DIR`           | `/workspace/memory`         | `runner`            | Shared root/repo memory location                         |
 
 ### Workspace config (`thor.json`)
 

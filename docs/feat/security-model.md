@@ -122,7 +122,7 @@ If a policy layer fails, these limit what damage is reachable:
 - **Per-owner installation tokens.** GitHub installation tokens are scoped to a single owner and expire within an hour.
 - **Daytona sandbox isolation.** Project builds and test runs execute in per-worktree Daytona sandboxes; `git` is blocked inside the sandbox so the agent cannot push from there.
 - **Credential broker allowlist.** The 1Password integration reaches one configured dedicated vault. A credential-free browser may discover one application → credential → exact application callback route and freeze it in an owner-bound, short-lived approval plan. Credentials are injected only at the approved credential origin; after callback, continued access is restricted to the application origin and sanitized accessibility snapshots, latest-snapshot click/type refs, same-origin navigation, and close. It exposes no generic vault/secret reads, redirect parameters, arbitrary references/selectors/JavaScript, cross-origin continued browsing, persistent profile, CDP, cookie/storage, screenshot, trace, or download surface.
-- **codex-lb account/quota dashboard isolation.** The codex-lb dashboard (`/dashboard`, `/accounts`, `/settings`, `/api/*`) sits behind the same Vouch + `THOR_ADMIN_EMAILS` gate as `/admin/`, and its host ports bind to `127.0.0.1` only. Adding or rotating ChatGPT accounts requires an admin browser session — neither OpenCode nor an external attacker can reach those routes.
+- **codex-lb browser dashboard protection.** The public dashboard (`/dashboard`, `/accounts`, `/settings`, `/api/*`) is behind Vouch + `THOR_ADMIN_EMAILS`, and host ports bind to loopback. This does not isolate unauthenticated dashboard APIs from services on the same Docker network; default OpenCode shares that network. Pi's override puts its executor on a separate internal network without codex-lb, while the trusted runner retains model access.
 
 ## Layer 6: Audit trail
 
@@ -134,3 +134,9 @@ If a policy layer fails, these limit what damage is reachable:
 
 - **Rate limiting / DDoS protection.** Application code does not implement Express rate limiters. Enforcement is expected at the ingress / WAF layer. See `AGENTS.md` §8.
 - **OpenCode harness boundaries.** Thor-side wrappers do not re-enforce timeouts, output caps, or transformations already handled by the OpenCode harness. See `AGENTS.md` §9.
+
+## Opt-in Pi execution boundary
+
+In [Pi mode](../pi-runtime.md), runner owns Durable conversations and private SQLite state; tools execute only through the credential-free `pi-executor` container. Its filesystem mounts preserve read-only repos/config and writable worktrees/memory. It has no runner private-state mount, credential env file or published port; the internal tools network reaches remote-cli and mitmproxy but not codex-lb or direct public egress.
+
+Pi trigger admission requires the existing internal secret, supplied by gateway and never sent to executor. Actor fields from an unauthenticated executor-origin request cannot become trusted approval/attribution context. Remote-cli remains the authorization owner; wrapper IDs still provide correlation, not standalone authority. Unsafe tool calls are not automatically replayed after an uncertain outcome. Trusted runner Slack progress bypasses the agent-tool proxy policy, without granting that bypass to executor.

@@ -1,0 +1,54 @@
+name: Pi Runtime E2E
+
+on:
+  push:
+    paths:
+      - .github/workflows/pi-runtime-e2e.yml
+      - Dockerfile
+      - .dockerignore
+      - docker-compose.pi.yml
+      - docker/pi-test/**
+      - docker/ingress/**
+      - docker/opencode/bin/**
+      - docker/opencode/config/skills/**
+      - packages/**
+      - pnpm-lock.yaml
+      - scripts/test-pi-e2e.sh
+      - scripts/fixtures/pi-responses.mjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pi-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pi-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # The standalone test compose pins these dummy values too; no live secret is required.
+    env:
+      THOR_RUNTIME: pi
+      PI_EXECUTOR_URL: http://pi-executor:3002
+      PI_STORAGE_PATH: /var/lib/runner/pi.sqlite
+      PI_MODEL_BASE_URL: http://model-fixture:8000/v1
+      PI_MODEL_ID: fixture-model
+      PI_MODEL_API_KEY: fixture-only
+      PI_MODEL_CONTEXT_WINDOW: "65536"
+      PI_SKILLS_DIR: /etc/thor/skills
+      PI_MEMORY_DIR: /workspace/memory
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install pinned dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck workspace
+        run: pnpm typecheck
+      - name: Test Pi runtime with isolated containers
+        run: pnpm test:pi-e2e

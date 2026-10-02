@@ -260,6 +260,15 @@ services:
     environment:
       - NODE_ENV=production
       - OPENCODE_URL=http://opencode:4096
+      - THOR_RUNTIME=${THOR_RUNTIME:-opencode}
+      - PI_EXECUTOR_URL=${PI_EXECUTOR_URL:-http://pi-executor:3002}
+      - PI_STORAGE_PATH=${PI_STORAGE_PATH:-/var/lib/runner/pi.sqlite}
+      - PI_MODEL_BASE_URL=${PI_MODEL_BASE_URL:-http://codex-lb:2455/v1}
+      - PI_MODEL_ID=${PI_MODEL_ID:-gpt-5.4}
+      - PI_MODEL_API_KEY=${PI_MODEL_API_KEY:-codex-lb-local}
+      - PI_MODEL_CONTEXT_WINDOW=${PI_MODEL_CONTEXT_WINDOW:-272000}
+      - PI_SKILLS_DIR=${PI_SKILLS_DIR:-/etc/thor/skills}
+      - PI_MEMORY_DIR=${PI_MEMORY_DIR:-/workspace/memory}
       - THOR_INTERNAL_SECRET=${THOR_INTERNAL_SECRET:?set THOR_INTERNAL_SECRET}
       - THOR_E2E_TEST_HELPERS=${THOR_E2E_TEST_HELPERS:-}
       - SLACK_TEAM_ID=${SLACK_TEAM_ID:-}
@@ -372,6 +381,7 @@ services:
       - "${INGRESS_PORT:-8080}:8080"
     environment:
       - THOR_ADMIN_EMAILS=${THOR_ADMIN_EMAILS:?set THOR_ADMIN_EMAILS}
+      - THOR_RUNTIME=${THOR_RUNTIME:-opencode}
     depends_on:
       gateway:
         condition: service_healthy

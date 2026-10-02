@@ -21,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
+      THOR_RUNTIME: opencode
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       GITHUB_APP_ID: ${{ vars.THOR_GITHUB_APP_ID }}
       GITHUB_APP_PRIVATE_KEY_FILE: /var/lib/remote-cli/github-app/private-key.pem

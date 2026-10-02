@@ -26,6 +26,7 @@ import {
   resolveAlias,
   resolveAnchorForCorrelationKey,
   handleProgressEvent,
+  matchesInternalSecret,
   type ProgressEvent,
 } from "@thor/common";
 import { PiExecutionEnv } from "./pi-execution-env.js";
@@ -167,7 +168,11 @@ export async function createPiRunnerApp(
     const requests = new Map<string, ConversationOwner>();
     const monitors = new Map<
       string,
-      { completion: Promise<void>; listeners: Set<(frame: StreamFrame) => void> }
+      {
+        completion: Promise<void>;
+        listeners: Set<(frame: StreamFrame) => void>;
+        terminal?: StreamFrame;
+      }
     >();
     const slackTransport = options.progressTransport;
     let closing = false;
@@ -319,8 +324,14 @@ export async function createPiRunnerApp(
       const stream = await watchEvents(runtime, owner.conversation.id, context);
       let emittedText = "";
       const emit = async (event: StreamFrame) => {
+        if (event.type === "done" || event.type === "error") {
+          const monitorState = monitors.get(receipt.requestId);
+          if (monitorState) monitorState.terminal = event;
+        }
         for (const listener of listeners) listener(event);
-        if (event.type !== "text") await progress(event, receipt.request.correlationKey);
+        // NDJSON includes both tool states; Slack counts one completed call, not start + end twice.
+        if (event.type !== "text" && !(event.type === "tool" && event.status === "running"))
+          await progress(event, receipt.request.correlationKey);
       };
       const project = async (event: AgentEvent) => {
         if (event.type === "snapshot") {
@@ -469,6 +480,14 @@ export async function createPiRunnerApp(
     runtime.resume();
 
     const app = express();
+    // Actor identity may enter only through the trusted gateway, never from agent shell tools.
+    app.use("/trigger", (req, res, next) => {
+      if (!matchesInternalSecret(config.internalSecret, req.get("x-thor-internal-secret"))) {
+        res.status(401).json({ error: "unauthorized_trigger" });
+        return;
+      }
+      next();
+    });
     app.use(express.json());
     app.use(
       (
@@ -486,6 +505,10 @@ export async function createPiRunnerApp(
     app.get("/healthz", (_req, res) =>
       res.json({ status: closing ? "closing" : "ok", runtime: "pi" }),
     );
+    app.get("/global/health", (_req, res) =>
+      res.json({ status: closing ? "closing" : "ok", runtime: "pi" }),
+    );
+    app.get("/", (_req, res) => res.redirect("/admin/sessions"));
     app.post("/trigger", async (req, res) => {
       const parsed = piTriggerRequestSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -641,7 +664,11 @@ export async function createPiRunnerApp(
           resumed: receipt.resumed,
         });
         const pending = monitors.get(receipt.requestId);
-        if (pending) {
+        if (receipt.status !== "accepted") {
+          write(await doneFrame(owner, receipt));
+        } else if (pending?.terminal) {
+          write(pending.terminal);
+        } else if (pending) {
           pending.listeners.add(write);
           res.once("close", () => pending.listeners.delete(write));
         } else {

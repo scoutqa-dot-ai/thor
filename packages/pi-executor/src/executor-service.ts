@@ -22,6 +22,7 @@ const shellEnvironmentNames = [
   "all_proxy",
   "no_proxy",
   "NODE_EXTRA_CA_CERTS",
+  "NODE_USE_ENV_PROXY",
   "SSL_CERT_FILE",
   "SSL_CERT_DIR",
   "CURL_CA_BUNDLE",

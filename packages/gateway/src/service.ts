@@ -38,6 +38,8 @@ const INTERNAL_EXEC_TIMEOUT_MS = 5000;
 // --- Runner deps (internal HTTP, testable via fetchImpl) ---
 
 export interface RunnerDeps {
+  /** Trusted gateway credential; never supplied to the agent executor. */
+  internalSecret?: string;
   runnerUrl: string;
   fetchImpl?: typeof fetch;
 }
@@ -546,7 +548,12 @@ function resolveApprovalBatchDirectory(
 async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<TriggerResult> {
   const response = await getFetch(options.deps.fetchImpl)(`${options.deps.runnerUrl}/trigger`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.deps.internalSecret
+        ? { "x-thor-internal-secret": options.deps.internalSecret }
+        : {}),
+    },
     body: JSON.stringify({
       prompt: options.prompt,
       ...(options.requestId ? { requestId: options.requestId } : {}),

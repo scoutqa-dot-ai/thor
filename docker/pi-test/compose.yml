@@ -1,0 +1,135 @@
+# Isolated, deterministic Pi E2E. No production env file, credentials, host ports or bind-mounted workspace.
+services:
+  init:
+    image: node:24-slim
+    user: "0:0"
+    volumes:
+      - repos:/workspace/repos
+      - worktrees:/workspace/worktrees
+      - memory:/workspace/memory
+      - worklog:/workspace/worklog
+      - config:/workspace/config
+    command:
+      [
+        node,
+        -e,
+        "const fs=require('fs'); fs.mkdirSync('/workspace/repos/pi-fixture',{recursive:true}); fs.writeFileSync('/workspace/repos/pi-fixture/README.md','fixture repo'); fs.chownSync('/workspace/repos/pi-fixture',1001,1001); fs.chownSync('/workspace/repos/pi-fixture/README.md',1001,1001); fs.writeFileSync('/workspace/config/thor.json',JSON.stringify({owners:{},users:[]})); for(const p of ['repos','worktrees','memory','worklog','config'])fs.chownSync('/workspace/'+p,1001,1001);",
+      ]
+
+  model-fixture:
+    image: node:24-slim
+    volumes:
+      - ../../scripts/fixtures/pi-responses.mjs:/fixture.mjs:ro
+    command: [node, /fixture.mjs]
+    networks:
+      default:
+        aliases: [vouch, codex-lb, gateway]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8000/health').then(r=>{if(!r.ok)throw 1})"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  pi-executor:
+    build:
+      context: ../..
+      target: pi-executor
+    environment:
+      PORT: "3002"
+      THOR_REMOTE_CLI_URL: http://model-fixture:8000
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - repos:/workspace/repos:ro
+      - worktrees:/workspace/worktrees
+      - memory:/workspace/memory
+      - worklog:/workspace/worklog:ro
+      - config:/workspace/config:ro
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      model-fixture:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3002/health').then(r=>{if(!r.ok)throw 1})"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  runner:
+    build:
+      context: ../..
+      target: runner
+    environment:
+      THOR_RUNTIME: pi
+      PI_EXECUTOR_URL: http://pi-executor:3002
+      PI_STORAGE_PATH: /var/lib/runner/pi.sqlite
+      PI_MODEL_BASE_URL: http://model-fixture:8000/v1
+      PI_MODEL_ID: fixture-model
+      PI_MODEL_API_KEY: fixture-only
+      PI_MODEL_CONTEXT_WINDOW: "65536"
+      PI_SKILLS_DIR: /etc/thor/skills
+      PI_MEMORY_DIR: /workspace/memory
+      # Sentinels must never reach tools. These are not real credentials.
+      SLACK_BOT_TOKEN: runner-secret-sentinel
+      THOR_INTERNAL_SECRET: runner-internal-sentinel
+      SLACK_API_BASE_URL: http://model-fixture:8000/slack/
+    volumes:
+      - state:/var/lib/runner
+      - repos:/workspace/repos:ro
+      - worktrees:/workspace/worktrees:ro
+      - memory:/workspace/memory:ro
+      - worklog:/workspace/worklog
+      - config:/workspace/config:ro
+    depends_on:
+      pi-executor:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:3000/health').then(r=>r.json()).then(r=>{if(r.runtime!=='pi')throw 1})",
+        ]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  admin:
+    build:
+      context: ../..
+      target: admin
+    volumes:
+      - worklog:/workspace/worklog
+      - config:/workspace/config:ro
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3005/health').then(r=>{if(!r.ok)throw 1})"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  ingress:
+    build:
+      context: ../ingress
+    environment:
+      THOR_RUNTIME: pi
+      THOR_ADMIN_EMAILS: fixture@example.com
+    depends_on:
+      runner:
+        condition: service_healthy
+      admin:
+        condition: service_healthy
+      model-fixture:
+        condition: service_healthy
+
+volumes:
+  repos:
+  worktrees:
+  memory:
+  worklog:
+  config:
+  state:

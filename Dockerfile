@@ -24,6 +24,7 @@ COPY packages/remote-cli/package.json packages/remote-cli/
 COPY packages/opencode-cli/package.json packages/opencode-cli/
 COPY packages/admin/package.json packages/admin/
 COPY packages/onepassword-browser-mcp/package.json packages/onepassword-browser-mcp/
+COPY packages/pi-executor/package.json packages/pi-executor/
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --offline --store-dir /pnpm/store
 
@@ -41,8 +42,13 @@ COPY packages/admin/ packages/admin/
 RUN pnpm --filter @thor/admin build
 
 FROM common-source AS runner-build
+COPY packages/pi-executor/src/execution-protocol.ts packages/pi-executor/src/
 COPY packages/runner/ packages/runner/
 RUN pnpm --filter @thor/runner build
+
+FROM common-source AS pi-executor-build
+COPY packages/pi-executor/ packages/pi-executor/
+RUN pnpm --filter @thor/pi-executor build
 
 FROM common-source AS remote-cli-build
 COPY packages/remote-cli/ packages/remote-cli/
@@ -80,15 +86,18 @@ EXPOSE 3005
 CMD ["node", "/app/packages/admin/dist/index.js"]
 
 FROM runner-build AS runner
+# Durable storage ownership uses a kernel lock; tools never run in this container.
+RUN apt-get update && apt-get install -y --no-install-recommends util-linux ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/lib/runner && chown thor:thor /var/lib/runner
 USER thor
 WORKDIR /workspace
 ENV PORT=3000
 EXPOSE 3000
 CMD ["node", "/app/packages/runner/dist/index.js"]
 
-# --- Install upstream opencode from npm ---
-FROM base AS opencode
-RUN npm install -g opencode-ai@1.15.10 @aikidosec/mcp@1.0.7
+# --- Credential-free workspace tools, shared by OpenCode and the Pi executor ---
+FROM base AS workspace-tools
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl jq python3-pip ripgrep \
     && npm install -g prettier@3.8.3 \
@@ -108,6 +117,8 @@ COPY --chmod=755 docker/opencode/bin/gws /usr/local/bin/gws
 COPY docker/opencode/bin/drata /usr/local/bin/drata
 COPY docker/opencode/bin/sandbox /usr/local/bin/sandbox
 COPY docker/opencode/bin/rg /usr/local/bin/rg
+# Remove upstream symlinks before COPY; otherwise Docker writes through them and overwrites npm/corepack source.
+RUN rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/pnpm /usr/local/bin/pnpx /usr/local/bin/corepack
 # npm/npx/pnpm wrappers — redirect to sandbox so code runs in the cloud
 COPY docker/opencode/bin/npm /usr/local/bin/npm
 COPY docker/opencode/bin/npx /usr/local/bin/npx
@@ -126,6 +137,20 @@ ENV THOR_REMOTE_CLI_URL=http://remote-cli:3004
 # OpenCode only registers QuestionTool when OPENCODE_CLIENT is "app", "cli", or "desktop".
 # https://github.com/sst/opencode/blob/main/packages/opencode/src/tool/registry.ts
 ENV OPENCODE_CLIENT=thor
+
+FROM workspace-tools AS pi-executor
+COPY --from=pi-executor-build /app /app
+COPY --chown=thor:thor docker/opencode/config/skills/ /etc/thor/skills/
+ENV PORT=3002 NODE_USE_ENV_PROXY=1
+EXPOSE 3002
+ENTRYPOINT ["node", "/app/packages/pi-executor/dist/index.js"]
+
+# --- Legacy harness retained for default deployment and rollback ---
+FROM workspace-tools AS opencode
+USER root
+# The workspace npm shim redirects to sandbox; invoke the untouched npm entrypoint for image installation.
+RUN node /usr/local/lib/node_modules/npm/bin/npm-cli.js install -g opencode-ai@1.15.10 @aikidosec/mcp@1.0.7
+USER thor
 COPY --chown=thor:thor docker/opencode/config/ /home/thor/.config/opencode/
 ENTRYPOINT ["opencode"]
 

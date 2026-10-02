@@ -1,0 +1,107 @@
+# Opt-in embedded Pi mode. Use together with docker-compose.yml; requires Compose 2.24.4+.
+services:
+  opencode:
+    profiles: [legacy-opencode]
+
+  runner:
+    environment:
+      THOR_RUNTIME: pi
+      # Model transport uses Node's proxy support; internal services bypass it.
+      HTTP_PROXY: http://mitmproxy:8080
+      HTTPS_PROXY: http://mitmproxy:8080
+      # Trusted Slack progress carries runner's bot token and must not use the agent-tool proxy policy.
+      NO_PROXY: localhost,127.0.0.1,::1,pi-executor,remote-cli,mitmproxy,codex-lb,slack.com
+      NODE_OPTIONS: --use-env-proxy --disable-warning=UNDICI-EHPA
+      NODE_EXTRA_CA_CERTS: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
+    volumes: !override
+      - ./docker-volumes/workspace:/workspace:ro
+      - ./docker-volumes/workspace/worklog:/workspace/worklog
+      - ./docker-volumes/mitmproxy/public:/etc/thor/mitmproxy-public:ro
+      - pi-state:/var/lib/runner
+    networks: [default, pi-tools]
+    depends_on: !override
+      pi-executor:
+        condition: service_healthy
+      codex-lb:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:3000/health').then(r=>r.json()).then(r=>{if(r.runtime!=='pi'||r.status!=='ok')throw 1})",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pi-executor:
+    build:
+      context: .
+      target: pi-executor
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      PORT: "3002"
+      THOR_REMOTE_CLI_URL: http://remote-cli:3004
+      HTTP_PROXY: http://mitmproxy:8080
+      HTTPS_PROXY: http://mitmproxy:8080
+      NO_PROXY: localhost,127.0.0.1,::1,remote-cli,mitmproxy
+      NODE_USE_ENV_PROXY: "1"
+      NODE_EXTRA_CA_CERTS: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
+      CURL_CA_BUNDLE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
+      SSL_CERT_FILE: /etc/thor/mitmproxy-public/mitmproxy-ca.pem
+    volumes:
+      - ./docker-volumes/workspace/memory:/workspace/memory
+      - ./docker-volumes/workspace/config:/workspace/config:ro
+      - ./docker-volumes/workspace/repos:/workspace/repos:ro
+      - ./docker-volumes/workspace/worklog:/workspace/worklog:ro
+      - ./docker-volumes/workspace/cron:/workspace/cron
+      - ./docker-volumes/workspace/runs:/workspace/runs
+      - ./docker-volumes/workspace/worktrees:/workspace/worktrees
+      - ./docker-volumes/mitmproxy/public:/etc/thor/mitmproxy-public:ro
+      - shared-tmp:/tmp
+    networks: [pi-tools]
+    depends_on:
+      remote-cli:
+        condition: service_healthy
+      mitmproxy:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3002/health').then(r=>{if(!r.ok)throw 1})"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  remote-cli:
+    networks: [default, pi-tools]
+
+  mitmproxy:
+    networks: [default, pi-tools]
+
+  ingress:
+    environment:
+      THOR_RUNTIME: pi
+    depends_on: !override
+      gateway:
+        condition: service_healthy
+      runner:
+        condition: service_healthy
+      admin:
+        condition: service_healthy
+      vouch:
+        condition: service_healthy
+      codex-lb:
+        condition: service_started
+
+networks:
+  # Tools cannot directly reach the model/account dashboard or the public internet.
+  # Outbound HTTP(S) uses the explicit mitmproxy on this network.
+  pi-tools:
+    internal: true
+
+volumes:
+  # Runner-only state, never mounted in the tool executor.
+  pi-state:

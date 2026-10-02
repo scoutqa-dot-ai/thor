@@ -111,7 +111,10 @@ async function openRunner(options?: Parameters<typeof createPiRunnerApp>[1]) {
 async function trigger(body: object) {
   return fetch(`${runnerUrl}/trigger`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "x-thor-internal-secret": config.internalSecret,
+    },
     body: JSON.stringify({ directory: triggerDirectory, ...body }),
   });
 }
@@ -209,6 +212,7 @@ beforeEach(async () => {
     } else respond(res, { text: '<answer> & "fixture"' });
   });
   config = {
+    internalSecret: "fixture-gateway-secret",
     executorUrl,
     modelBaseUrl: `${await listen(modelServer)}/v1`,
     modelId: "fixture-model",
@@ -485,7 +489,10 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
       };
       const response = await fetch(`${childUrl}/trigger`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "x-thor-internal-secret": config.internalSecret,
+        },
         body: JSON.stringify(body),
       });
       const accepted = await response.json();
@@ -564,11 +571,78 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
     expect(JSON.stringify(requests[1])).toContain(triggerDirectory);
   });
 
+  it("refuses forged actors from callers without the gateway credential", async () => {
+    for (const secret of [undefined, "forged"]) {
+      const response = await fetch(`${runnerUrl}/trigger`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(secret ? { "x-thor-internal-secret": secret } : {}),
+        },
+        body: JSON.stringify({
+          directory: triggerDirectory,
+          prompt: "spoof",
+          triggerSlackId: "U_ADMIN",
+        }),
+      });
+      expect(response.status).toBe(401);
+    }
+    expect(requests).toHaveLength(0);
+  });
+
+  it("replays terminal state to reconnecting streams while Slack delivery is still blocked", async () => {
+    await closeServer(runnerServer);
+    await runner.close();
+    let releaseDelivery: () => void = () => undefined;
+    let signalBlocked: () => void = () => undefined;
+    const delivery = new Promise<void>((resolve) => {
+      releaseDelivery = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      signalBlocked = resolve;
+    });
+    await openRunner({
+      progressTransport: {
+        async post() {
+          return { ts: "fixture-ts" };
+        },
+        async update() {},
+        async delete() {},
+        async addReaction() {
+          signalBlocked();
+          await delivery;
+        },
+      },
+    });
+    modelFailure = true;
+    const body = {
+      prompt: "failed",
+      requestId: "terminal-reconnect",
+      correlationKey: "slack:thread:C_RECONNECT/1710000000.009",
+    };
+    try {
+      expect((await stream(body)).at(-1)).toMatchObject({ type: "done", status: "error" });
+      await blocked;
+      const repeated = await Promise.race([
+        stream(body),
+        new Promise<never>((_resolve, reject) => {
+          setTimeout(() => reject(new Error("Terminal stream did not settle")), 1000).unref();
+        }),
+      ]);
+      expect(repeated.at(-1)).toMatchObject({ type: "done", status: "error" });
+    } finally {
+      releaseDelivery();
+    }
+  });
+
   it("fails safely for invalid directories and provider errors without exposing provider secrets", async () => {
     expect((await trigger({ prompt: "test", directory: "/etc" })).status).toBe(400);
     const malformed = await fetch(`${runnerUrl}/trigger`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "x-thor-internal-secret": config.internalSecret,
+      },
       body: '{"secret":"must-not-echo", invalid}',
     });
     expect(malformed.status).toBe(400);

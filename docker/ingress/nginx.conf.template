@@ -1,5 +1,5 @@
-map $auth_user $opencode_admin_upstream {
-    ~^(${THOR_ADMIN_EMAILS_REGEX})$ "http://opencode:4096";
+map $auth_user $agent_runtime_admin_upstream {
+    ~^(${THOR_ADMIN_EMAILS_REGEX})$ "${THOR_AGENT_UPSTREAM}";
     default "http://127.0.0.1:8080/__opencode_admin_forbidden";
 }
 
@@ -90,7 +90,7 @@ server {
 
     location @opencode_assets {
         internal;
-        set $opencode http://opencode:4096;
+        set $opencode ${THOR_AGENT_UPSTREAM};
         proxy_pass $opencode;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -113,7 +113,7 @@ server {
     }
 
     location = /oc-theme-preload.js {
-        set $opencode http://opencode:4096;
+        set $opencode ${THOR_AGENT_UPSTREAM};
         proxy_pass $opencode;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -121,7 +121,7 @@ server {
 
     # Health check — no auth required
     location = /global/health {
-        set $opencode http://opencode:4096;
+        set $opencode ${THOR_AGENT_UPSTREAM};
         proxy_pass $opencode;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -171,7 +171,7 @@ server {
         auth_request_set $auth_user $upstream_http_x_vouch_user;
         proxy_set_header X-Vouch-User $auth_user;
 
-        proxy_pass $opencode_admin_upstream;
+        proxy_pass $agent_runtime_admin_upstream;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
 
