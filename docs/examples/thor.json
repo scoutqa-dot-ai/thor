@@ -1,4 +1,16 @@
 {
+  "pi": {
+    "modelRouting": {
+      "profiles": {
+        "fast": { "thinkingLevel": "low" },
+        "balanced": { "thinkingLevel": "medium" },
+        "strong": { "thinkingLevel": "high" }
+      },
+      "autoSelect": true,
+      "defaultProfile": "balanced",
+      "allowEscalation": true
+    }
+  },
   "owners": {
     "scoutqa-dot-ai": {
       "github_app_installation_id": 126669985

@@ -91,7 +91,7 @@ function classifyPiRoutingTask(task: string): { profile: PiModelProfile; reason:
   )
     return { profile: "balanced", reason: "coding_work" };
   if (
-    /\b(summari[sz]\w*|summary|summaries|lookup|look up|list|find|fetch|retrieve|read|status|digest|jira|slack|calendar|drive|sheets|integration)\b/i.test(
+    /\b(summari[sz]\w*|summary|summaries|lookup|look up|list|find|fetch|retrieve|read|status|digest|jira|slack|calendar|drive|sheets|integration|google doc(?:ument)?s?|document|file|link)\b|docs\.google\.com\//i.test(
       task,
     )
   )
@@ -140,7 +140,7 @@ export function selectPiTaskModel(input: {
     thinkingLevel: overrides.thinkingLevel ?? pool.profiles[profile].thinkingLevel,
     source,
     reason,
-    escalationLocked: source.startsWith("explicit_") || !pool.allowEscalation,
+    escalationLocked: source !== "automatic" || !pool.allowEscalation,
     promotions: 0,
     history: [],
   });
@@ -158,7 +158,8 @@ export function decidePiModelEscalation(
   selection: PiModelSelection,
   request: { profile: unknown; reason: string },
 ): PiModelRoutingResult<PiModelSelection> {
-  if (selection.escalationLocked) return rejected("escalation_locked");
+  if (selection.escalationLocked || selection.source !== "automatic")
+    return rejected("escalation_locked");
   if (selection.promotions >= 2 || selection.profile === "strong")
     return rejected("escalation_limit");
   const profile = PiModelProfileSchema.safeParse(request.profile);

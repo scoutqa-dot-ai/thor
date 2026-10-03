@@ -235,7 +235,7 @@ Use `docker compose -f docker-compose.yml -f docker-compose.pi.yml up --build -d
 
 ### Workspace config (`thor.json`)
 
-Lives at `/workspace/config/thor.json` inside containers, `docker-volumes/workspace/config/thor.json` on the host. Hot-reloaded — no restart needed after edits. Use [`docs/examples/thor.json`](docs/examples/thor.json) as a starting point and [`packages/common/src/proxies.ts`](packages/common/src/proxies.ts) as the reference for the built-in upstream catalog.
+Lives at `/workspace/config/thor.json` inside containers, `docker-volumes/workspace/config/thor.json` on the host. Most fields are hot-reloaded; **Pi model routing is read once at runner startup and requires a runner restart**. Use [`docs/examples/thor.json`](docs/examples/thor.json) as a starting point and [`packages/common/src/proxies.ts`](packages/common/src/proxies.ts) as the reference for the built-in upstream catalog.
 
 The file carries four operator-maintained registries:
 
@@ -243,6 +243,28 @@ The file carries four operator-maintained registries:
 - `slack.private_channel_allowlist` — conversation ids Neo may act in for private channels, DMs, group DMs, and Slack Connect. See [`docs/slack.md`](docs/slack.md) §5.
 - `mitmproxy[]` / `mitmproxy_passthrough[]` — outbound credential rules and passthrough hosts. See [`docs/feat/security-model.md`](docs/feat/security-model.md) Layer 1a.
 - `users[]` — human attribution (see below).
+- Optional `pi.modelRouting` — per-task Pi model/thinking profiles. Absent routing uses `PI_MODEL_ID` for all profiles with low/medium/high thinking. Distinct models require operator-configured, actually served IDs; no model catalog is probed. All profiles share the existing provider, credentials, context and image declarations. See [Pi routing and overrides](docs/pi-runtime.md#task-model-routing).
+
+Single-model-compatible workspace example (replace the sample ID with your served model, or omit `modelId` to inherit `PI_MODEL_ID`):
+
+```json
+{
+  "pi": {
+    "modelRouting": {
+      "profiles": {
+        "fast": { "modelId": "gpt-5.4", "thinkingLevel": "low" },
+        "balanced": { "modelId": "gpt-5.4", "thinkingLevel": "medium" },
+        "strong": { "modelId": "gpt-5.4", "thinkingLevel": "high" }
+      },
+      "autoSelect": true,
+      "defaultProfile": "balanced",
+      "allowEscalation": true
+    }
+  }
+}
+```
+
+Fresh Slack requests may start with `[profile:strong thinking:high]`, `[model:configured-id thinking:low]` or `[thinking:high]` after the bot mention. HTTP uses `modelProfile` or `modelId`, plus optional `thinkingLevel` and current-task `routingTask`. Explicit overrides lock escalation. Invalid declared config fails startup safely; unavailable frozen task choices fail closed instead of guessing another model. Existing task retries and Google OAuth continuations retain their original final selection, even after escalation.
 
 ### Human attribution (`users[]`)
 

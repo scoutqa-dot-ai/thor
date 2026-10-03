@@ -102,7 +102,7 @@ const escalationEntrySchema = z
   .readonly();
 const profileRank: Record<PiModelProfile, number> = { fast: 0, balanced: 1, strong: 2 };
 
-/** Frozen selection parser enforces pool membership, explicit locks and bounded upward history. */
+/** Frozen selection parser enforces pool membership, non-automatic locks and bounded upward history. */
 export const PiModelSelectionSchema = z
   .strictObject({
     version: z.literal(1),
@@ -125,8 +125,8 @@ export const PiModelSelectionSchema = z
       issue("Pi automatic selection requires automatic routing");
     if (value.source === "default" && value.pool.autoSelect)
       issue("Pi default selection requires disabled automatic routing");
-    if ((explicit || !value.pool.allowEscalation) && !value.escalationLocked)
-      issue("Pi model selection must lock explicit or disabled escalation");
+    if ((value.source !== "automatic" || !value.pool.allowEscalation) && !value.escalationLocked)
+      issue("Pi model selection must lock non-automatic or disabled escalation");
     if (value.promotions !== value.history.length)
       issue("Pi model selection promotion count must match history");
     if (value.escalationLocked && value.promotions !== 0)

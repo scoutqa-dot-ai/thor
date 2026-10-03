@@ -6,6 +6,7 @@ import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.l
 import {
   Harness,
   LiveDoc,
+  AgentDoc,
   createRegistry,
   watchEvents,
   type Conversation,
@@ -28,8 +29,11 @@ import {
   handleProgressEvent,
   matchesInternalSecret,
   type ProgressEvent,
+  type ConfigLoader,
 } from "@thor/common";
 import { PiExecutionEnv } from "./pi-execution-env.js";
+import { loadPiModelRoutingPool, PiModelRoutingRuntime } from "./pi-model-routing-runtime.js";
+import { selectPiTaskModel } from "./pi-model-routing-policy.js";
 import { acquirePiStorageOwner } from "./pi-storage-owner.js";
 import { installPiRunnerTools } from "./pi-runner-tools.js";
 import {
@@ -85,6 +89,10 @@ function fingerprintPiRequest(request: PiTriggerRequest): string {
         triggerSlackId: request.triggerSlackId,
         triggerGithubLogin: request.triggerGithubLogin,
         interrupt: request.interrupt,
+        modelProfile: request.modelProfile,
+        modelId: request.modelId,
+        thinkingLevel: request.thinkingLevel,
+        routingTask: request.routingTask,
       }),
     )
     .digest("hex");
@@ -99,6 +107,8 @@ export async function createPiRunnerApp(
     progressTransport?: ProgressTransport<SlackProgressTransportTarget>;
     /** Existing internal broker service; override only for embedded integration tests/custom topology. */
     remoteCliUrl?: string;
+    /** Read operator workspace routing once at startup through the production config interface. */
+    configLoader?: ConfigLoader;
   } = {},
 ): Promise<
   | { ok: false; error: "pi_storage_owned_or_unavailable" | "pi_startup_failed" }
@@ -109,6 +119,9 @@ export async function createPiRunnerApp(
   let harness: Harness | undefined;
   try {
     const models = createModels();
+    const pool = loadPiModelRoutingPool(config, options.configLoader);
+    if (!pool.ok) throw new Error("Pi model routing configuration invalid");
+    const routing = new PiModelRoutingRuntime(pool.value, config.modelId);
     models.setProvider(
       createProvider({
         id: "codex-lb",
@@ -120,27 +133,25 @@ export async function createPiRunnerApp(
           },
         },
         api: openAIResponsesApi(),
-        models: [
-          {
-            id: config.modelId,
-            name: config.modelId,
-            provider: "codex-lb",
-            api: "openai-responses",
-            baseUrl: config.modelBaseUrl,
-            input: config.modelSupportsImages ? ["text", "image"] : ["text"],
-            reasoning: true,
-            thinkingLevelMap: {
-              minimal: "minimal",
-              low: "low",
-              medium: "medium",
-              high: "high",
-              xhigh: null,
-            },
-            contextWindow: config.modelContextWindow,
-            maxTokens: Math.min(32768, Math.floor(config.modelContextWindow / 4)),
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        models: routing.modelIds().map((modelId) => ({
+          id: modelId,
+          name: modelId,
+          provider: "codex-lb",
+          api: "openai-responses",
+          baseUrl: config.modelBaseUrl,
+          input: config.modelSupportsImages ? ["text", "image"] : ["text"],
+          reasoning: true,
+          thinkingLevelMap: {
+            minimal: "minimal",
+            low: "low",
+            medium: "medium",
+            high: "high",
+            xhigh: null,
           },
-        ],
+          contextWindow: config.modelContextWindow,
+          maxTokens: Math.min(32768, Math.floor(config.modelContextWindow / 4)),
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        })),
       }),
     );
     const registry = createRegistry();
@@ -151,6 +162,7 @@ export async function createPiRunnerApp(
         remoteCliUrl: options.remoteCliUrl ?? "http://remote-cli:3004",
         internalSecret: config.internalSecret,
       }),
+      routing,
     );
     const storage = await openNodeSqliteStorage(ownerLock.path);
     try {
@@ -481,6 +493,10 @@ export async function createPiRunnerApp(
       owner: ConversationOwner,
       receipt: PiAdmissionReceipt,
     ): Promise<"started" | "deferred" | "retired"> => {
+      // Validate frozen support and exact native admission choice before ack, scheduling or tool execution.
+      const agent = await runtime.snapshot(AgentDoc, owner.conversation.id, context);
+      if (!routing.nativeMatches(receipt, agent))
+        throw new Error("Pi saved native model unavailable");
       if (receipt.googleAuthSource) {
         if (
           receipt.googleAuthSource.expiresAtMs <= Date.now() ||
@@ -522,6 +538,23 @@ export async function createPiRunnerApp(
         const persisted = await runtime.snapshot(piConversationMetadataDoc, record.id, context);
         if (!conversation || !persisted) continue;
         const owner = { conversation, metadata: piConversationMetadataSchema.parse(persisted) };
+        // Only executable admissions require current resources. Completed history is
+        // immutable evidence, not a requirement to keep every retired model configured.
+        for (const receipt of owner.metadata.receipts)
+          if (
+            receipt.status === "accepted" &&
+            receipt.modelSelection &&
+            !routing.supported(receipt.modelSelection).ok
+          )
+            throw new Error("Pi saved model pool unavailable");
+        const active = owner.metadata.receipts.find(
+          (receipt) => receipt.requestId === owner.metadata.activeRequestId,
+        );
+        if (
+          active &&
+          !routing.nativeMatches(active, await runtime.snapshot(AgentDoc, record.id, context))
+        )
+          throw new Error("Pi saved native model unavailable");
         remember(owner);
         reconcileLogs(owner);
       }
@@ -549,6 +582,7 @@ export async function createPiRunnerApp(
       reconcileLogs,
       startAccepted,
       fingerprintRequest: fingerprintPiRequest,
+      configureReceipt: (tx, id, receipt) => routing.configureReceipt(tx, id, receipt),
       now: Date.now,
     });
 
@@ -606,10 +640,28 @@ export async function createPiRunnerApp(
             );
             if (!receipt || receipt.fingerprint !== fingerprint)
               return { kind: "error", status: 409, error: "request_id_payload_mismatch" } as const;
+            if (
+              receipt.status === "accepted" &&
+              receipt.modelSelection &&
+              !routing.supported(receipt.modelSelection).ok
+            )
+              return { kind: "error", status: 409, error: "pi_saved_model_unavailable" } as const;
             if (receipt.status === "accepted" && !monitors.has(requestId))
               await startAccepted(duplicate, receipt);
             return { kind: "accepted", owner: duplicate, receipt, duplicate: true } as const;
           }
+          const selection = selectPiTaskModel({
+            pool: routing.pool,
+            routingTask: request.routingTask ?? request.prompt,
+            overrides: {
+              modelProfile: request.modelProfile,
+              modelId: request.modelId,
+              thinkingLevel: request.thinkingLevel,
+              routingTask: request.routingTask,
+            },
+          });
+          if (!selection.ok)
+            return { kind: "error", status: 400, error: selection.error.code } as const;
           let owner = request.sessionId ? owners.get(request.sessionId) : undefined;
           if (request.sessionId && !owner)
             return { kind: "error", status: 404, error: "pi_session_not_found" } as const;
@@ -661,6 +713,7 @@ export async function createPiRunnerApp(
             }
           }
           const receipt: PiAdmissionReceipt = {
+            modelSelection: { ...selection.value, history: [...selection.value.history] },
             requestId,
             fingerprint,
             triggerId: mintTriggerId(),
@@ -685,8 +738,8 @@ export async function createPiRunnerApp(
               {
                 ownership: { kind: "ownerless" },
                 agent: {
-                  model: { provider: "codex-lb", modelId: config.modelId },
-                  thinkingLevel: "medium",
+                  model: { provider: "codex-lb", modelId: selection.value.modelId },
+                  thinkingLevel: selection.value.thinkingLevel,
                   cwd: request.directory,
                 },
                 init: async (tx, id) => {
@@ -705,6 +758,8 @@ export async function createPiRunnerApp(
               );
               metadata.receipts.push(receipt);
               metadata.activeRequestId = requestId;
+              if (!(await routing.configureReceipt(tx, existingOwner.conversation.id, receipt)))
+                throw new Error("Pi model admission unavailable");
             }, context);
             await reload(owner);
           }
@@ -821,6 +876,17 @@ export async function createPiRunnerApp(
         const continuation = owner.metadata.receipts.find(
           (item) => item.googleAuthSource?.originalRequestId === receipt.requestId,
         );
+        const selection = current?.modelSelection;
+        const lastEntry = entries.at(-1);
+        const native = lastEntry
+          ? await runtime.snapshotAsOf(AgentDoc, owner.conversation.id, lastEntry.id, context)
+          : await runtime.snapshot(AgentDoc, owner.conversation.id, context);
+        const modelIdentity = selection
+          ? `${selection.modelId} · thinking ${selection.thinkingLevel} · profile ${selection.profile} · ${selection.source}`
+          : `${native?.model?.modelId ?? "unavailable"} · thinking ${native?.thinkingLevel ?? "unavailable"} · legacy native choice`;
+        const routingHistory = selection
+          ? `<h3>Task model routing</h3><pre>${escapePiHtml(JSON.stringify({ profile: selection.profile, modelId: selection.modelId, thinkingLevel: selection.thinkingLevel, source: selection.source, reason: selection.reason, escalationLocked: selection.escalationLocked, promotions: selection.promotions, history: selection.history }, null, 2))}</pre>`
+          : "";
         let displayStatus =
           (current?.status ?? receipt.status) === "completed"
             ? "Model turn completed"
@@ -841,7 +907,7 @@ export async function createPiRunnerApp(
         res
           .type("html")
           .send(
-            `<!doctype html><html><head><meta charset="utf-8"><link rel="icon" type="image/svg+xml" href="/favicon-v4.svg"><link rel="manifest" href="/site.webmanifest"><title>Neo Pi trigger</title></head><body><h1>Neo Pi trigger</h1><p>${escapePiHtml(displayStatus)} · ${escapePiHtml(sessionId(owner))} · ${escapePiHtml(config.modelId)}</p>${body}${liveTools}<h3>Conversation usage</h3><pre>${escapePiHtml(usage)}</pre></body></html>`,
+            `<!doctype html><html><head><meta charset="utf-8"><link rel="icon" type="image/svg+xml" href="/favicon-v4.svg"><link rel="manifest" href="/site.webmanifest"><title>Neo Pi trigger</title></head><body><h1>Neo Pi trigger</h1><p>${escapePiHtml(displayStatus)} · ${escapePiHtml(sessionId(owner))} · ${escapePiHtml(modelIdentity)}</p>${routingHistory}${body}${liveTools}<h3>Conversation usage</h3><pre>${escapePiHtml(usage)}</pre></body></html>`,
           );
       } catch {
         res.status(503).send("Pi history unavailable");

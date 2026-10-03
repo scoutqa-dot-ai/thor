@@ -15,12 +15,14 @@ import { buildToolInstructions } from "./tool-instructions.js";
 import type { PiRunnerConfig } from "./pi-runner-config.js";
 import type { IGoogleWorkspaceConnectionStatusClient } from "./google-workspace-connection-status.js";
 import { createPiReadImageTool } from "./pi-read-image.js";
+import type { PiModelRoutingRuntime } from "./pi-model-routing-runtime.js";
 
 /** Install remote coding tools, explicitly discovered skills, memory and active actor instructions. */
 export function installPiRunnerTools(
   registry: Registry,
   config: PiRunnerConfig,
   googleWorkspaceStatus: IGoogleWorkspaceConnectionStatusClient,
+  routing: PiModelRoutingRuntime,
 ): void {
   const loader = createConfigLoader(WORKSPACE_CONFIG_PATH);
   const bash = createBashTool({
@@ -35,6 +37,7 @@ export function installPiRunnerTools(
     defineExtension({
       name: "thor-pi",
       tools: [
+        routing.escalationTool(),
         createPiReadImageTool(config.modelSupportsImages),
         defineTool({
           ...bash,
@@ -74,6 +77,7 @@ export function installPiRunnerTools(
         }),
       ],
       sections: [
+        routing.modelSection(),
         section(
           "neo",
           () =>

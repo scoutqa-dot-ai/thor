@@ -22,6 +22,21 @@ import { createRunnerApp } from "./index.js";
 import sharp from "sharp";
 import { truncate } from "node:fs/promises";
 import { crc32 } from "node:zlib";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import {
+  Harness,
+  AgentDoc,
+  configure,
+  createRegistry,
+  type Tx,
+  type ConversationId,
+} from "@earendil-works/pi-durable";
+import { createModels } from "@earendil-works/pi-ai/models";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { piConversationMetadataDoc } from "./pi-runner-state.js";
+import { executeBatchDispatchPlan, planBatchDispatch } from "../../gateway/src/service.js";
+import { persistBatchRunnerRequest } from "../../gateway/src/batch-request.js";
+import { createConfigLoader } from "@thor/common";
 
 async function listen(server: Server): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -102,6 +117,7 @@ let requests: Record<string, unknown>[];
 let hold: ServerResponse | undefined;
 let toolRound: boolean;
 let modelFailure: boolean;
+let modelActions: Array<{ text: string } | { tool: string; args: object }>;
 let imagePath: string;
 let holdImageRead: boolean;
 let failImageRead: boolean;
@@ -139,6 +155,7 @@ beforeEach(async () => {
   hold = undefined;
   toolRound = false;
   modelFailure = false;
+  modelActions = [];
   imagePath = "remote-image.bin";
   holdImageRead = false;
   failImageRead = false;
@@ -194,6 +211,11 @@ beforeEach(async () => {
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const payload: Record<string, unknown> = JSON.parse(Buffer.concat(chunks).toString());
     requests.push(payload);
+    const action = modelActions.shift();
+    if (action) {
+      respond(res, action);
+      return;
+    }
     if (modelFailure) {
       res.writeHead(500);
       res.end("provider secret=DO_NOT_EXPOSE");
@@ -1130,5 +1152,636 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
     const frames = await stream({ prompt: "fail", requestId: "failure" });
     expect(frames.at(-1)).toMatchObject({ type: "done", status: "error", error: "Pi run failed" });
     expect(JSON.stringify(frames)).not.toContain("DO_NOT_EXPOSE");
+  });
+});
+
+async function editPiNativeDocuments(change: (tx: Tx, id: ConversationId) => Promise<void>) {
+  await closeServer(runnerServer);
+  await runner.close();
+  const storage = await openNodeSqliteStorage(config.storagePath);
+  const harness = await Harness.open(
+    storage,
+    { models: createModels(), registry: createRegistry() },
+    BACKGROUND_CONTEXT,
+  );
+  try {
+    await harness.commit(async (tx) => {
+      const conversations = await tx.scanConversations({}, 200);
+      for (const conversation of conversations.items) await change(tx, conversation.id);
+    }, BACKGROUND_CONTEXT);
+  } finally {
+    await harness.close(BACKGROUND_CONTEXT);
+  }
+}
+
+describe("per-task native model routing", () => {
+  const workspace = {
+    pi: {
+      modelRouting: {
+        profiles: {
+          fast: { modelId: "fixture-fast" },
+          balanced: { modelId: "fixture-balanced" },
+          strong: { modelId: "fixture-strong" },
+        },
+      },
+    },
+  };
+  async function reopenRouting(extra: Parameters<typeof createPiRunnerApp>[1] = {}) {
+    await closeServer(runnerServer);
+    await runner.close();
+    await openRunner({ configLoader: () => workspace, ...extra });
+  }
+  it("delivers trusted current Slack selectors through the actual gateway HTTP transport into Pi and freezes retries", async () => {
+    await reopenRouting();
+    const plan = await planBatchDispatch({
+      requestId: "gateway-actual-pi",
+      slackEvents: [
+        {
+          type: "app_mention",
+          channel: "C123",
+          thread_ts: "1",
+          ts: "1",
+          user: "U1",
+          text: "[profile:fast] old history",
+        },
+        {
+          type: "app_mention",
+          channel: "C123",
+          thread_ts: "1",
+          ts: "2",
+          user: "U1",
+          text: "<@UBOT> [model:fixture-strong thinking:low] Create a Google document",
+        },
+        {
+          type: "app_mention",
+          channel: "C123",
+          thread_ts: "1",
+          ts: "3",
+          user: "U2",
+          text: "[profile:fast] bystander",
+        },
+      ],
+      cronEvents: [],
+      githubEvents: [],
+      approvalOutcomes: [],
+      correlationKey: "slack:C123:1",
+      triggerSlackId: "U1",
+      deps: { runnerUrl, internalSecret: config.internalSecret },
+      slackDirectoryForChannel: () => ({ directory: triggerDirectory }),
+    });
+    if (plan.kind !== "dispatch") throw new Error("Expected Pi gateway dispatch");
+    const queue = join(directory, "routing-queue");
+    await mkdir(queue);
+    const frozen = persistBatchRunnerRequest(queue, {
+      ...plan.options,
+      requestId: "gateway-actual-pi",
+    });
+    expect(await executeBatchDispatchPlan({ ...plan, options: frozen })).toMatchObject({
+      busy: false,
+    });
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]).toMatchObject({ model: "fixture-strong", reasoning: { effort: "low" } });
+    const retry = persistBatchRunnerRequest(queue, {
+      ...plan.options,
+      modelProfile: "fast",
+      modelId: undefined,
+      thinkingLevel: "high",
+      routingTask: "different",
+    });
+    expect(await executeBatchDispatchPlan({ ...plan, options: retry })).toMatchObject({
+      busy: false,
+    });
+    expect(requests).toHaveLength(1);
+  });
+
+  it("rejects declared invalid routing from the real config loader without exposing diagnostics or falling back", async () => {
+    await closeServer(runnerServer);
+    await runner.close();
+    const path = join(directory, "operator-config.json");
+    await writeFile(
+      path,
+      JSON.stringify({
+        pi: {
+          modelRouting: {
+            profiles: {
+              strong: { modelId: "fixture-strong", thinkingLevel: "secret-DO_NOT_EXPOSE" },
+            },
+          },
+        },
+      }),
+    );
+    expect(await createPiRunnerApp(config, { configLoader: createConfigLoader(path) })).toEqual({
+      ok: false,
+      error: "pi_startup_failed",
+    });
+    expect(requests).toHaveLength(0);
+    await writeFile(path, JSON.stringify(workspace));
+    await openRunner({ configLoader: createConfigLoader(path) });
+    await stream({ prompt: "Create a Google document" });
+    expect(requests[0]).toMatchObject({ model: "fixture-fast", reasoning: { effort: "low" } });
+  });
+
+  it("selects actual HTTP model and effort per human task, freezes retries, and attributes each viewer", async () => {
+    const loader = vi.fn(() => workspace);
+    await reopenRouting({ configLoader: loader });
+    const first = {
+      prompt: "Create a Google document",
+      requestId: "route-fast",
+      correlationKey: "cron:routing",
+    };
+    await stream(first);
+    const receipt = await (await trigger(first)).json();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ model: "fixture-fast", reasoning: { effort: "low" } });
+    await stream({
+      prompt: "Investigate the architecture",
+      requestId: "route-strong",
+      sessionId: receipt.sessionId,
+    });
+    expect(requests[1]).toMatchObject({ model: "fixture-strong", reasoning: { effort: "high" } });
+    const html = await (
+      await fetch(`${runnerUrl}/runner/v/${receipt.anchorId}/${receipt.triggerId}`)
+    ).text();
+    expect(html).toContain("fixture-fast · thinking low · profile fast");
+    expect(html).not.toContain("<h3>codex-lb/fixture-strong</h3>");
+    expect(loader).toHaveBeenCalledTimes(1);
+    await reopenRouting({
+      configLoader: () => ({
+        pi: {
+          modelRouting: {
+            profiles: {
+              fast: { modelId: "fixture-strong" },
+              balanced: { modelId: "fixture-balanced" },
+              strong: { modelId: "fixture-fast" },
+            },
+          },
+        },
+      }),
+    });
+    await stream(first);
+    expect(requests).toHaveLength(2); // Completed retry never routes again or executes a new request.
+    await stream({
+      prompt: "Create a Google document",
+      requestId: "new-human",
+      sessionId: receipt.sessionId,
+    });
+    expect(requests[2]).toMatchObject({ model: "fixture-strong", reasoning: { effort: "low" } });
+  });
+
+  it.each([
+    [{ modelProfile: "strong", thinkingLevel: "minimal" }, "fixture-strong", "minimal"],
+    [{ modelId: "fixture-fast", thinkingLevel: "high" }, "fixture-fast", "high"],
+    [{ thinkingLevel: "low" }, "fixture-balanced", "low"],
+  ])(
+    "honors explicit overrides and denies escalation without changing native choices (%j)",
+    async (overrides, model, effort) => {
+      await reopenRouting();
+      modelActions = [
+        { tool: "escalate_model", args: { profile: "strong", reason: "Need deeper reasoning" } },
+        { text: "done" },
+      ];
+      const frames = await stream({ prompt: "Implement a feature", ...overrides });
+      expect(frames).toContainEqual({ type: "tool", tool: "escalate_model", status: "error" });
+      expect(requests).toHaveLength(2);
+      for (const input of requests) expect(input).toMatchObject({ model, reasoning: { effort } });
+      expect(JSON.stringify(requests)).not.toContain(config.modelApiKey);
+      expect(JSON.stringify(requests)).not.toContain(config.internalSecret);
+    },
+  );
+
+  it.each([
+    { modelProfile: "strong", modelId: "fixture-fast" },
+    { modelProfile: "unconfigured" },
+    { thinkingLevel: "xhigh" },
+    { modelId: "not-in-pool" },
+  ])("rejects invalid external selection before model/tool execution (%j)", async (overrides) => {
+    await reopenRouting();
+    expect((await trigger({ prompt: "Run tool", ...overrides })).status).toBe(400);
+    expect(requests).toHaveLength(0);
+    expect(executorRequests).toHaveLength(0);
+  });
+
+  it("restart with supported but reordered profiles keeps the active frozen choice, while disabled auto routing uses the fresh default", async () => {
+    await reopenRouting();
+    const body = { prompt: "hold-run Create a Google document", requestId: "pool-reload" };
+    const receipt = await (await trigger(body)).json();
+    await vi.waitFor(() => expect(hold).toBeDefined());
+    modelActions = [{ text: "frozen recovery" }];
+    await reopenRouting({
+      configLoader: () => ({
+        pi: {
+          modelRouting: {
+            autoSelect: false,
+            defaultProfile: "strong",
+            profiles: {
+              fast: { modelId: "fixture-strong" },
+              balanced: { modelId: "fixture-balanced" },
+              strong: { modelId: "fixture-fast" },
+            },
+          },
+        },
+      }),
+    });
+    await stream(body);
+    expect(requests).toHaveLength(2);
+    for (const input of requests)
+      expect(input).toMatchObject({ model: "fixture-fast", reasoning: { effort: "low" } });
+    modelActions = [
+      {
+        tool: "escalate_model",
+        args: { profile: "strong", reason: "default tasks are not automatic" },
+      },
+      { text: "new default settled" },
+    ];
+    const frames = await stream({
+      prompt: "replacement Read a Google document",
+      requestId: "fresh-default",
+      sessionId: receipt.sessionId,
+    });
+    expect(requests.at(-1)).toMatchObject({ model: "fixture-fast", reasoning: { effort: "high" } });
+    expect(JSON.stringify(requests.at(-1))).toContain(
+      "Model escalation is unavailable for this task",
+    );
+    expect(frames).toContainEqual({ type: "tool", tool: "escalate_model", status: "error" });
+  });
+
+  it.each(["fast", "balanced", "strong"] as const)(
+    "honestly shares the existing image capability and credential boundary with profile %s",
+    async (modelProfile) => {
+      await reopenRouting();
+      const bytes = await sharp({ create: { width: 3, height: 2, channels: 3, background: "red" } })
+        .png()
+        .toBuffer();
+      await writeFile(join(directory, imagePath), bytes);
+      const frames = await stream({ prompt: "image-round", modelProfile });
+      expect(frames).toContainEqual({ type: "tool", tool: "read_image", status: "completed" });
+      expect(requests[1]).toMatchObject({ model: `fixture-${modelProfile}` });
+      const input = JSON.stringify(requests[1]);
+      expect(input).toContain(`data:image/png;base64,${bytes.toString("base64")}`);
+      expect(input).not.toContain(config.internalSecret);
+      expect(input).not.toContain(config.modelApiKey);
+      expect(JSON.stringify(executorRequests)).not.toContain(config.modelApiKey);
+    },
+  );
+
+  it("routing evidence participates in duplicate identity and injected saved authority is stripped", async () => {
+    await reopenRouting();
+    const body = {
+      prompt: "history says investigate architecture",
+      routingTask: "read docs.google.com/document/d/example",
+      requestId: "frozen-task",
+    };
+    await stream({
+      ...body,
+      modelSelection: { modelId: "attacker", history: [] },
+      source: "explicit_model",
+      pool: {},
+      promotions: 2,
+    });
+    expect(requests[0]).toMatchObject({ model: "fixture-fast", reasoning: { effort: "low" } });
+    for (const patch of [
+      { routingTask: "investigate architecture" },
+      { thinkingLevel: "high" },
+      { modelProfile: "strong" },
+      { modelId: "fixture-strong" },
+    ])
+      expect((await trigger({ ...body, ...patch })).status).toBe(409);
+    expect(requests).toHaveLength(1);
+  });
+
+  it("promotes exactly twice, denies skip/self-loop/downgrade/third promotion, and saves truthful response models", async () => {
+    await reopenRouting();
+    modelActions = [
+      { tool: "escalate_model", args: { profile: "strong", reason: "skip" } },
+      { tool: "escalate_model", args: { profile: "balanced", reason: "Need more reasoning" } },
+      { tool: "escalate_model", args: { profile: "balanced", reason: "self loop" } },
+      { tool: "escalate_model", args: { profile: "strong", reason: "Need investigation" } },
+      { tool: "escalate_model", args: { profile: "balanced", reason: "downgrade" } },
+      { tool: "escalate_model", args: { profile: "strong", reason: "third" } },
+      { text: "done" },
+    ];
+    const body = { prompt: "Read a Google document", requestId: "promoted" };
+    const frames = await stream(body);
+    expect(
+      frames.filter((frame) => frame.type === "tool" && frame.status === "completed"),
+    ).toHaveLength(2);
+    expect(
+      frames.filter((frame) => frame.type === "tool" && frame.status === "error"),
+    ).toHaveLength(4);
+    expect(requests.map((input) => [input.model, input.reasoning])).toEqual([
+      ["fixture-fast", { effort: "low", summary: "auto" }],
+      ["fixture-fast", { effort: "low", summary: "auto" }],
+      ["fixture-balanced", { effort: "medium", summary: "auto" }],
+      ["fixture-balanced", { effort: "medium", summary: "auto" }],
+      ["fixture-strong", { effort: "high", summary: "auto" }],
+      ["fixture-strong", { effort: "high", summary: "auto" }],
+      ["fixture-strong", { effort: "high", summary: "auto" }],
+    ]);
+    const receipt = await (await trigger(body)).json();
+    const html = await (
+      await fetch(`${runnerUrl}/runner/v/${receipt.anchorId}/${receipt.triggerId}`)
+    ).text();
+    expect(html).toContain("fixture-strong · thinking high · profile strong");
+    expect(html).toContain("Need more reasoning");
+    expect(html).toContain("Need investigation");
+    for (const model of ["fixture-fast", "fixture-balanced", "fixture-strong"])
+      expect(html).toContain(`codex-lb/${model}`);
+    await reopenRouting();
+    await stream(body);
+    expect(requests).toHaveLength(7);
+    expect(JSON.stringify(requests.at(-1))).toContain(
+      "Model escalation is unavailable for this task",
+    );
+  });
+
+  it("Google admission, failed ack and restart copy the original final escalated choice", async () => {
+    const broker = await continuationBroker();
+    try {
+      await reopenRouting({ remoteCliUrl: broker.url });
+      modelActions = [
+        {
+          tool: "escalate_model",
+          args: { profile: "balanced", reason: "Google task became harder" },
+        },
+        { text: "waiting" },
+      ];
+      const body = {
+        prompt: "Create a Google document",
+        requestId: "oauth-route",
+        triggerSlackId: "UOWNER",
+      };
+      await stream(body);
+      const receipt = await (await trigger(body)).json();
+      broker.setAckUnavailable(true);
+      broker.publish(receipt);
+      await vi.waitFor(() => expect(broker.acks.length).toBeGreaterThan(0), { timeout: 3500 });
+      expect(requests).toHaveLength(2);
+      await reopenRouting({ remoteCliUrl: broker.url });
+      broker.setAckUnavailable(false);
+      await vi.waitFor(() => expect(requests).toHaveLength(3), { timeout: 4000 });
+      expect(requests[2]).toMatchObject({
+        model: "fixture-balanced",
+        reasoning: { effort: "medium" },
+      });
+      expect(JSON.stringify(requests[2])).toContain("Current model profile balanced");
+      expect(JSON.stringify(requests[2])).toContain("profile strong");
+      await new Promise((resolve) => setTimeout(resolve, 1300));
+      expect(requests).toHaveLength(3);
+    } finally {
+      await broker.close();
+    }
+  });
+
+  it("SIGKILL between escalation commit and tool memo replays once without double promotion or a resumed model reset", async () => {
+    await closeServer(runnerServer);
+    await runner.close();
+    modelActions = [
+      {
+        tool: "escalate_model",
+        args: { profile: "balanced", reason: "More reasoning for the Google task" },
+      },
+    ];
+    const body = {
+      prompt: "Read a Google document",
+      requestId: "crash-escalation",
+      directory: triggerDirectory,
+      interrupt: false,
+      stream: false,
+    };
+    const moduleUrl = (name: string) => new URL(name, import.meta.url).href;
+    const script = `
+      import { Harness, createRegistry, defineExtension } from ${JSON.stringify(moduleUrl("../node_modules/@earendil-works/pi-durable/dist/index.js"))};
+      import { openNodeSqliteStorage } from ${JSON.stringify(moduleUrl("../node_modules/@earendil-works/pi-durable/dist/storage/sqlite/node.js"))};
+      import { createModels, createProvider } from ${JSON.stringify(moduleUrl("../node_modules/@earendil-works/pi-ai/dist/models.js"))};
+      import { openAIResponsesApi } from ${JSON.stringify(moduleUrl("../node_modules/@earendil-works/pi-ai/dist/api/openai-responses.lazy.js"))};
+      import { BACKGROUND_CONTEXT as context } from ${JSON.stringify(moduleUrl("../node_modules/@earendil-works/chord/dist/context/index.js"))};
+      import { PiModelRoutingRuntime, loadPiModelRoutingPool } from ${JSON.stringify(moduleUrl("./pi-model-routing-runtime.ts"))};
+      import { selectPiTaskModel } from ${JSON.stringify(moduleUrl("./pi-model-routing-policy.ts"))};
+      import { piConversationMetadataDoc } from ${JSON.stringify(moduleUrl("./pi-runner-state.ts"))};
+      import { mintAnchor, mintTriggerId } from ${JSON.stringify(moduleUrl("../../common/src/index.ts"))};
+      const config = ${JSON.stringify(config)};
+      const pool = loadPiModelRoutingPool(config, () => (${JSON.stringify(workspace)})).value;
+      const routing = new PiModelRoutingRuntime(pool, config.modelId);
+      const models = createModels();
+      models.setProvider(createProvider({ id: 'codex-lb', baseUrl: config.modelBaseUrl,
+        auth: { apiKey: { name: 'fixture', resolve: async()=>({auth:{apiKey:config.modelApiKey}}) } }, api: openAIResponsesApi(),
+        models: routing.modelIds().map(id=>({id,name:id,provider:'codex-lb',api:'openai-responses',baseUrl:config.modelBaseUrl,
+          input:['text','image'],reasoning:true,contextWindow:65536,maxTokens:16384,
+          cost:{input:0,output:0,cacheRead:0,cacheWrite:0}})) }));
+      const registry = createRegistry(), tool = routing.escalationTool();
+      // Real native tool API and transaction; inject a process loss exactly before the memo/result commit.
+      registry.install(defineExtension({name:'fault-window',tools:[{...tool,execute:(args,api,ctx)=>tool.execute(args,{
+        ...api, memo: async (...rest)=>{
+          if(rest.length === 3){ console.log('escalation-committed'); await new Promise(()=>{}); }
+          return api.memo(...rest);
+        }
+      },ctx)}]}));
+      const runtime = await Harness.open(await openNodeSqliteStorage(config.storagePath), {models,registry,settings:{toolExecution:'sequential'}},context);
+      const request = ${JSON.stringify(body)};
+      const selected = selectPiTaskModel({pool,routingTask:request.prompt}).value;
+      const conversation = await runtime.createConversation({ownership:{kind:'ownerless'},agent:{model:{provider:'codex-lb',modelId:selected.modelId},thinkingLevel:selected.thinkingLevel,cwd:request.directory},
+        init:async(tx,id)=>Object.assign(await tx.doc(piConversationMetadataDoc,id),{
+          anchorId:mintAnchor(),directory:request.directory,activeRequestId:request.requestId,
+          receipts:[{requestId:request.requestId,fingerprint:'fixture-unused',triggerId:mintTriggerId(),startedAt:Date.now(),resumed:false,status:'accepted',request,modelSelection:selected}]
+        })},context);
+      await conversation.submit({type:'input',content:request.prompt,requestId:request.requestId},context);
+    `;
+    const loader = moduleUrl("../node_modules/tsx/dist/loader.mjs");
+    const child = spawn(
+      process.execPath,
+      ["--import", loader, "--input-type=module", "-e", script],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const exited = new Promise<NodeJS.Signals | null>((resolve) =>
+      child.once("close", (_code, signal) => resolve(signal)),
+    );
+    try {
+      await new Promise<void>((resolve, reject) => {
+        let output = "",
+          errors = "";
+        child.stderr.on("data", (chunk: Buffer) => {
+          errors += chunk.toString();
+        });
+        child.stdout.on("data", (chunk: Buffer) => {
+          output += chunk.toString();
+          if (output.includes("escalation-committed")) resolve();
+        });
+        child.once("exit", () =>
+          reject(new Error(`Native escalation crash fixture exited: ${errors}`)),
+        );
+      });
+      expect(child.kill("SIGKILL")).toBe(true);
+      expect(await exited).toBe("SIGKILL");
+      modelActions = [{ text: "recovered after committed promotion" }];
+      await openRunner({ configLoader: () => workspace });
+      await vi.waitFor(() => expect(requests).toHaveLength(2));
+      expect(requests[0]).toMatchObject({ model: "fixture-fast", reasoning: { effort: "low" } });
+      expect(requests[1]).toMatchObject({
+        model: "fixture-balanced",
+        reasoning: { effort: "medium" },
+      });
+      await vi.waitFor(() =>
+        expect(JSON.stringify(requests[1])).toContain("Model profile promoted to balanced"),
+      );
+      await editPiNativeDocuments(async (tx, id) => {
+        const metadata = await tx.doc(piConversationMetadataDoc, id);
+        expect(metadata.receipts[0]?.modelSelection).toMatchObject({
+          profile: "balanced",
+          promotions: 1,
+          history: [{ from: "fast", to: "balanced" }],
+        });
+        expect(metadata.receipts[0]?.escalationCalls).toHaveLength(1);
+        expect((await tx.doc(AgentDoc, id)).thinkingLevel).toBe("medium");
+      });
+      await openRunner({ configLoader: () => workspace });
+      expect(requests).toHaveLength(2);
+    } finally {
+      child.kill("SIGKILL");
+      await exited;
+    }
+  });
+
+  it("legacy admitted work resumes its native model/effort without reclassifying old text, then new human work reroutes", async () => {
+    const body = {
+      prompt: "hold-run create a Google document",
+      thinkingLevel: "high",
+      requestId: "legacy-native",
+    };
+    const accepted = await (await trigger(body)).json();
+    await vi.waitFor(() => expect(hold).toBeDefined());
+    expect(requests[0]).toMatchObject({ model: "fixture-model", reasoning: { effort: "high" } });
+    await editPiNativeDocuments(async (tx, id) => {
+      const metadata = await tx.doc(piConversationMetadataDoc, id);
+      for (const receipt of metadata.receipts) {
+        delete receipt.modelSelection;
+        delete receipt.escalationCalls;
+      }
+    });
+    modelActions = [{ text: "legacy recovered" }];
+    await openRunner({ configLoader: () => workspace });
+    await stream(body);
+    expect(requests.at(-1)).toMatchObject({
+      model: "fixture-model",
+      reasoning: { effort: "high" },
+    });
+    await stream({
+      prompt: "replacement Read a Google document",
+      requestId: "new-native",
+      sessionId: accepted.sessionId,
+    });
+    expect(requests.at(-1)).toMatchObject({ model: "fixture-fast", reasoning: { effort: "low" } });
+    const html = await (
+      await fetch(`${runnerUrl}/runner/v/${accepted.anchorId}/${accepted.triggerId}`)
+    ).text();
+    expect(html).toContain("fixture-model · thinking high · legacy native choice");
+    expect(html).not.toContain("profile fast");
+  });
+
+  it("invalid durable selection is preserved on startup failure, and native configuration drift fails before tools", async () => {
+    await reopenRouting();
+    const body = { prompt: "hold-run create a Google document", requestId: "invalid-evidence" };
+    await trigger(body);
+    await vi.waitFor(() => expect(hold).toBeDefined());
+    await editPiNativeDocuments(async (tx, id) => {
+      const metadata = await tx.doc(piConversationMetadataDoc, id);
+      const selection = metadata.receipts[0]?.modelSelection;
+      if (!selection) throw new Error("Missing routing fixture");
+      selection.modelId = "invalid-saved-secret-looking-evidence";
+    });
+    expect(await createPiRunnerApp(config, { configLoader: () => workspace })).toEqual({
+      ok: false,
+      error: "pi_startup_failed",
+    });
+    expect(requests).toHaveLength(1);
+    const executorCount = executorRequests.length;
+    await editPiNativeDocuments(async (tx, id) => {
+      const metadata = await tx.doc(piConversationMetadataDoc, id);
+      const selection = metadata.receipts[0]?.modelSelection;
+      expect(selection?.modelId).toBe("invalid-saved-secret-looking-evidence"); // No guessed overwrite.
+      if (!selection) throw new Error("Missing routing fixture");
+      selection.modelId = "fixture-fast";
+      await configure(tx, id, { model: { provider: "codex-lb", modelId: "fixture-strong" } });
+    });
+    expect(await createPiRunnerApp(config, { configLoader: () => workspace })).toEqual({
+      ok: false,
+      error: "pi_startup_failed",
+    });
+    expect(requests).toHaveLength(1);
+    expect(executorRequests).toHaveLength(executorCount);
+    await editPiNativeDocuments(async (tx, id) => {
+      await configure(tx, id, { model: { provider: "codex-lb", modelId: "fixture-fast" } });
+    });
+    modelActions = [{ text: "valid evidence recovered" }];
+    await openRunner({ configLoader: () => workspace });
+    await stream(body);
+    expect(requests.at(-1)).toMatchObject({ model: "fixture-fast", reasoning: { effort: "low" } });
+  });
+
+  it("fails startup safely on invalid declared config and unsupported frozen capabilities without execution", async () => {
+    await reopenRouting();
+    const saved = { prompt: "hold-run Read a file", requestId: "saved" };
+    await trigger(saved);
+    await vi.waitFor(() => expect(hold).toBeDefined());
+    await closeServer(runnerServer);
+    await runner.close();
+    const failedConfig = await createPiRunnerApp(config, {
+      configLoader: () => {
+        throw new Error("secret config value DO_NOT_EXPOSE");
+      },
+    });
+    expect(failedConfig).toEqual({ ok: false, error: "pi_startup_failed" });
+    const incompatible = await createPiRunnerApp(
+      { ...config, modelSupportsImages: false },
+      { configLoader: () => workspace },
+    );
+    expect(
+      await createPiRunnerApp(
+        { ...config, modelContextWindow: 131072 },
+        { configLoader: () => workspace },
+      ),
+    ).toEqual({ ok: false, error: "pi_startup_failed" });
+    expect(incompatible).toEqual({ ok: false, error: "pi_startup_failed" });
+    const removed = await createPiRunnerApp(config); // Only legacy model is registered now.
+    expect(removed).toEqual({ ok: false, error: "pi_startup_failed" });
+    expect(requests).toHaveLength(1);
+    modelActions = [{ text: "pending task recovered with its original model" }];
+    await openRunner({ configLoader: () => workspace }); // Invalid attempts did not overwrite saved evidence.
+    await stream(saved);
+    expect(requests.at(-1)).toMatchObject({ model: "fixture-fast", reasoning: { effort: "low" } });
+  });
+
+  it("retains completed history and duplicate results after retiring models, while fresh tasks use the new pool", async () => {
+    await reopenRouting();
+    const original = { prompt: "Read a Google document", requestId: "retired-model-history" };
+    await stream(original);
+    const receipt = await (await trigger(original)).json();
+    const replacement = {
+      pi: {
+        modelRouting: {
+          profiles: {
+            fast: { modelId: "replacement-fast" },
+            balanced: { modelId: "replacement-balanced" },
+            strong: { modelId: "replacement-strong" },
+          },
+        },
+      },
+    };
+    await reopenRouting({ configLoader: () => replacement });
+    const duplicate = await (await trigger(original)).json();
+    expect(duplicate).toMatchObject({ duplicate: true, triggerId: receipt.triggerId });
+    expect((await stream(original)).at(-1)).toMatchObject({ type: "done", status: "completed" });
+    expect(requests).toHaveLength(1);
+    const url = `${runnerUrl}/runner/v/${receipt.anchorId}/${receipt.triggerId}`;
+    expect(await (await fetch(url)).text()).toContain("fixture-fast · thinking low · profile fast");
+    await stream({
+      prompt: "Read another document",
+      requestId: "new-pool-task",
+      sessionId: receipt.sessionId,
+    });
+    expect(requests.at(-1)).toMatchObject({
+      model: "replacement-fast",
+      reasoning: { effort: "low" },
+    });
+    expect(await (await fetch(url)).text()).toContain("fixture-fast · thinking low · profile fast");
   });
 });

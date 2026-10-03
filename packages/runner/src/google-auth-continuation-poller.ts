@@ -1,5 +1,11 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { LiveDoc, type Harness, type Conversation } from "@earendil-works/pi-durable";
+import {
+  LiveDoc,
+  type Harness,
+  type Conversation,
+  type Tx,
+  type ConversationId,
+} from "@earendil-works/pi-durable";
 import { mintTriggerId } from "@thor/common";
 import {
   piConversationMetadataDoc,
@@ -187,6 +193,8 @@ export function startGoogleAuthContinuationCoordinator(options: {
     receipt: PiAdmissionReceipt,
   ) => Promise<"started" | "deferred" | "retired">;
   fingerprintRequest: (request: PiTriggerRequest) => string;
+  /** Adopt the original saved selection in the same native transaction as continuation admission. */
+  configureReceipt: (tx: Tx, id: ConversationId, receipt: PiAdmissionReceipt) => Promise<boolean>;
   now: () => number;
 }): { close: () => Promise<void> } {
   return startGoogleAuthContinuationPoller({
@@ -264,9 +272,13 @@ export function startGoogleAuthContinuationCoordinator(options: {
           status: "accepted",
           slackTeamId: record.slackTeamId,
           googleAuthSource: { ...record, originalRequestId: original.requestId },
+          ...(original.modelSelection ? { modelSelection: original.modelSelection } : {}),
+          ...(original.escalationCalls ? { escalationCalls: original.escalationCalls } : {}),
         };
         await owner.conversation.commit(async (tx) => {
           const metadata = await tx.doc(piConversationMetadataDoc, owner.conversation.id);
+          if (!(await options.configureReceipt(tx, owner.conversation.id, receipt)))
+            throw new Error("Pi Google continuation model unavailable");
           metadata.receipts.push(receipt);
           metadata.activeRequestId = requestId;
         }, context);

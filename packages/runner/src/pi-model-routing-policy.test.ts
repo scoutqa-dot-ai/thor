@@ -63,6 +63,11 @@ describe("Pi model routing policy", () => {
     ["Summarize Slack status", "fast", "low"],
     ["Look up the Jira issue", "fast", "low"],
     ["Read Google Drive document and summarize it", "fast", "low"],
+    ["Create a Google document", "fast", "low"],
+    ["https://docs.google.com/document/d/example", "fast", "low"],
+    ["Share this file link", "fast", "low"],
+    ["Implement a parser for Google document links", "balanced", "medium"],
+    ["Investigate security of this Google document", "strong", "high"],
     ["Implement a feature and tests", "balanced", "medium"],
     ["Fix the parser bug", "balanced", "medium"],
     ["Summarize a security investigation", "strong", "high"],
@@ -107,6 +112,22 @@ describe("Pi model routing policy", () => {
         selectPiTaskModel({ pool: configured, routingTask: "Security architecture investigation" }),
       ),
     ).toMatchObject({ profile: "fast", source: "default", escalationLocked: true });
+  });
+
+  it("configured default tasks cannot acquire automatic promotion authority", () => {
+    const configured = value(
+      resolvePiModelRoutingPool(config, { autoSelect: false, defaultProfile: "fast" }),
+    );
+    const selected = value(
+      selectPiTaskModel({ pool: configured, routingTask: "create a Google document" }),
+    );
+    expect(selected).toMatchObject({ source: "default", escalationLocked: true });
+    expect(
+      decidePiModelEscalation(selected, { profile: "balanced", reason: "more reasoning" }),
+    ).toMatchObject({ ok: false, error: { code: "escalation_locked" } });
+    expect(parsePiModelSelection({ ...selected, escalationLocked: false })).toMatchObject({
+      ok: false,
+    });
   });
 
   it.each([

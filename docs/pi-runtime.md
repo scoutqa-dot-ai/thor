@@ -87,6 +87,47 @@ The runner's Pi settings are also listed in README Deployment Configuration and 
 
 Use the **standard Responses API**, not the ChatGPT-specific Codex transport. The default GPT model supports text, tools and inline images. Custom models must support text and tools; validate reasoning compatibility and set `PI_MODEL_SUPPORTS_IMAGES=false` for text-only backends (image inspection then fails explicitly). Cost rates are not configured in this initial mode; consult codex-lb for spend rather than treating zero rate metadata as free usage.
 
+### Task model routing
+
+Optional `pi.modelRouting` in `/workspace/config/thor.json` defines the only allowed profile pool. A missing file or routing section falls back to `PI_MODEL_ID` for every profile, with fast/low, balanced/medium and strong/high thinking. Invalid declared configuration (including misspelled fields, invalid reasoning and invalid JSON) fails startup with a safe error; file access failures are not treated as absence. No new environment variables, provider credentials, routing LLM or live catalog probing are involved.
+
+For distinct models, replace these **sample IDs** with exact IDs your provider actually serves:
+
+```json
+{
+  "pi": {
+    "modelRouting": {
+      "profiles": {
+        "fast": { "modelId": "example-fast-model", "thinkingLevel": "low" },
+        "balanced": { "modelId": "example-balanced-model", "thinkingLevel": "medium" },
+        "strong": { "modelId": "example-strong-model", "thinkingLevel": "high" }
+      },
+      "autoSelect": true,
+      "defaultProfile": "balanced",
+      "allowEscalation": true
+    }
+  }
+}
+```
+
+Omitted profile IDs inherit `PI_MODEL_ID`; omitted effort inherits the profile default. `autoSelect=false` uses `defaultProfile` (balanced by default) for fresh tasks, with no automatic escalation. `allowEscalation=false` locks promotion. **Restart runner after pool edits.** Every registered model, including the legacy `PI_MODEL_ID`, inherits the same existing provider/transport, context window, reasoning and image contract. Select only models that satisfy it: a text-only fast model cannot share an image-capable declaration with other profiles. The runner does not independently verify live model availability.
+
+Automatic routing is a deterministic English cue heuristic, not a semantic classifier. Investigation/security/architecture cues take precedence, coding cues select balanced, and routine lookup/summarization/Google Docs/link/file operations select fast. Unknown tasks select balanced. Ambiguous text, negated cues, other languages and historical prompt context can misclassify; the gateway supplies only the latest trusted request as routing evidence, and overrides are available for important work.
+
+Fresh Slack request prefixes after the bot mention:
+
+- `[profile:strong thinking:high] Investigate this incident`
+- `[model:configured-id thinking:low] Create a Google document`
+- `[thinking:high] Read this document`
+
+Profiles and model IDs are mutually exclusive; effort is `minimal`, `low`, `medium` or `high`. An explicit model must belong to the configured pool. Any explicit selector or effort locks later escalation. Unknown/conflicting prefixes are rejected, not executed. Old thread directives and bystanders do not choose a new task's model.
+
+Trusted `POST /trigger` callers use the equivalent `modelProfile` or `modelId`, optional `thinkingLevel`, and optional `routingTask` containing only the fresh task text (otherwise `prompt` is used). Frozen selection, pool, source and history are runner-owned and cannot be injected by callers. All routing fields participate in duplicate request identity; a reused ID cannot change them. A new human request gets a new selection even in the same conversation.
+
+The native sequential `escalate_model({profile, reason})` tool is available only for automatic task promotion: fast → balanced → strong, one adjacent step per call, at most two promotions per task. It denies skips, self-loops, downgrades and explicit locks. Model/thinking and durable task history commit atomically; a crashed tool replay reuses committed evidence instead of promoting twice. The new choice applies to the next prepared response, never changes a prepared request or parallel tool execution, and cannot change cwd, tools, permissions or credentials. The prompt reports current profile/effort and the next allowed promotion.
+
+Retries, restart recovery and Google OAuth copy the saved final selection and frozen pool; generic continuation text is never classified. Unsupported frozen resources/capabilities cannot execute a pending task: restore its supported pool or supersede an auth wait with a fresh request. Invalid evidence is preserved rather than overwritten. Completed history and duplicate results remain readable after retired models are removed; a later human task selects the new pool. Legacy receipts retain their native persisted model/thinking instead of reclassifying old prompts. Viewers show the actual task selection/source/lock/promotion history, legacy native identity and each response's native model; usage remains conversation-wide.
+
 ### Image inspection contract
 
 `read_image(path)` reads only executor filesystem files, including Slack attachments downloaded through the existing credential-injecting workflow. It does not fetch URLs or carry Slack credentials. The separate Durable `read` remains a text-only tool.
@@ -105,7 +146,7 @@ Runner's trusted Slack SDK bypasses the agent-tool proxy policy for `slack.com`.
 - SQLite WAL/NORMAL is tested for process crashes, **not** lossless survival of newest commits after power/host failure. For consistent backup, stop runner before snapshotting its private volume; transcripts may contain private user/tool data.
 - Gateway persists uncertain batch membership and HTTP payloads until acceptance. Its `.runner-requests` manifests contain prompt/actor data; protect the queue directory like other conversation data. Retention/cleanup is not automated in this test delivery.
 - Slack progress is best-effort; recovery may duplicate a notification. Viewer usage is conversation-wide, not a per-trigger cost ledger.
-- Initial mode has read/write/edit/bash, remote `read_image` and explicit skills. Background subagents, lossless legacy transcript import and full browser chat parity are not implemented.
+- Initial mode has read/write/edit/bash, remote `read_image`, explicit skills and bounded `escalate_model`. Background subagents, lossless legacy transcript import and full browser chat parity are not implemented.
 
 ## Rollback
 

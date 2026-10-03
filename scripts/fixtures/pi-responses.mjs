@@ -10,6 +10,7 @@ let lastWrapper;
 let slackReplies = 0;
 let lastReply;
 let imageInputs = 0;
+const modelSelections = [];
 const imageFixtureBase64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVR4nGP4z8AAQVDqPwMDAEHSBfsl0XwmAAAAAElFTkSuQmCC";
 
@@ -93,6 +94,7 @@ async function handle(req, res) {
       slackReplies,
       lastReply,
       imageInputs,
+      modelSelections,
     });
     return;
   }
@@ -150,7 +152,37 @@ async function handle(req, res) {
     return;
   }
   calls++;
+  const effort = payload.reasoning?.effort;
+  if (
+    !["fixture-model", "fixture-fast", "fixture-balanced", "fixture-strong"].includes(
+      payload.model,
+    ) ||
+    !["minimal", "low", "medium", "high"].includes(effort) ||
+    !payload.tools.some((tool) => tool.name === "escalate_model")
+  ) {
+    json(res, { error: "unsupported fixture model, reasoning or routing tool contract" }, 400);
+    return;
+  }
+  modelSelections.push({ model: payload.model, effort });
   const input = JSON.stringify(payload.input);
+  if (input.includes("fixture-escalation")) {
+    if (payload.model === "fixture-fast")
+      respond(
+        res,
+        { profile: "balanced", reason: "Need more reasoning" },
+        "escalate_model",
+        "call_escalate_balanced",
+      );
+    else if (payload.model === "fixture-balanced")
+      respond(
+        res,
+        { profile: "strong", reason: "Need deeper reasoning" },
+        "escalate_model",
+        "call_escalate_strong",
+      );
+    else respond(res, "fixture promoted twice");
+    return;
+  }
   if (input.includes("fixture-hold") && !heldOnce) {
     heldOnce = true;
     return;

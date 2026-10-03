@@ -79,7 +79,7 @@ const connect=await fetch('http://ingress:8080/google-workspace/connect/authoriz
 assert.deepEqual(await connect.json(),{trustedInternalHeader:true,vouchUser:'fixture@example.com'});
 const callback=await fetch('http://ingress:8080/google-workspace/oauth/callback?code=fixture-code&state=fixture-state',{headers:{'x-thor-internal-secret':'forged'}});assert.equal((await callback.json()).trustedInternalHeader,true);
 // Actual signed HTTP intake, disk queue, gateway admission and embedded Pi response.
-const signedEvent={type:'event_callback',team_id:'T_FIXTURE',event_id:'Ev_signed_first',event:{type:'app_mention',user:'U_SIGNED',channel:'C_SIGNED',ts:'1710000000.010',text:'<@U_BOT> fixture-slack-intake'}};
+const signedEvent={type:'event_callback',team_id:'T_FIXTURE',event_id:'Ev_signed_first',event:{type:'app_mention',user:'U_SIGNED',channel:'C_SIGNED',ts:'1710000000.010',text:'<@UBOT> [profile:strong thinking:low] fixture-slack-intake'}};
 const slackRequest=async(payload,valid=true)=>{
   const raw=JSON.stringify(payload), timestamp=String(Math.floor(Date.now()/1000));
   const signature='v0='+createHmac('sha256','fixture-signing-secret').update(`v0:${timestamp}:${raw}`).digest('hex');
@@ -114,8 +114,21 @@ assert.equal((await slackRequest({...signedEvent,event_id:'Ev_signed_followup',e
 const followup=await waitSigned(2);assert.equal(followup.length,1);assert.equal(followup[0].sessionId,first[0].sessionId);assert.equal(followup[0].starts.length,2);
 assert(followup[0].starts.every(start=>start.triggerSlackId==='U_SIGNED'));
 const slackProbe=await (await fetch('http://model-fixture:8000/probe')).json();assert.equal(slackProbe.slackReplies,3);
+assert(slackProbe.modelSelections.some(choice=>choice.model==='fixture-strong'&&choice.effort==='low'));
+assert.deepEqual(slackProbe.modelSelections.at(-1),{model:'fixture-balanced',effort:'medium'}); // A new human task reroutes, not the prior strong override.
 assert.deepEqual(slackProbe.lastReply.args,['--channel','C_SIGNED','--thread-ts','1710000000.010']);assert.equal(slackProbe.lastReply.sessionId,first[0].sessionId);
 console.log('PASS: signed Slack mention, disk queue, actor attribution, duplicate suppression, in-thread reply and non-mention continuation through real gateway/Pi');
+const routingBody={prompt:'fixture-escalation',routingTask:'Create a Google document',requestId:'container-escalation'};
+const routingFrames=(await (await trigger({...routingBody,stream:true})).text()).trim().split('\n').map(JSON.parse);
+assert.equal(routingFrames.at(-1).response,'fixture promoted twice');
+assert.equal(routingFrames.filter(frame=>frame.type==='tool'&&frame.tool==='escalate_model'&&frame.status==='completed').length,2);
+const routingReceipt=await (await trigger(routingBody)).json();
+const routingHtml=await (await fetch(`http://127.0.0.1:3000/runner/v/${routingReceipt.anchorId}/${routingReceipt.triggerId}`)).text();
+assert(routingHtml.includes('fixture-strong · thinking high · profile strong'));
+assert(routingHtml.includes('Need more reasoning')&&routingHtml.includes('Need deeper reasoning'));
+const routingProbe=await (await fetch('http://model-fixture:8000/probe')).json();
+assert.deepEqual(routingProbe.modelSelections.slice(-3),[{model:'fixture-fast',effort:'low'},{model:'fixture-balanced',effort:'medium'},{model:'fixture-strong',effort:'high'}]);
+console.log('PASS: actual per-task Responses model/effort, explicit Slack override, new-human reroute, bounded native escalation and viewer attribution');
 const pending={prompt:'fixture-hold',requestId:'container-recovery',correlationKey:'cron:container-recovery'};
 const accepted=await (await trigger(pending)).json();assert.equal(accepted.accepted,true);
 await writeFile('/var/lib/runner/e2e-pending.json',JSON.stringify(accepted));

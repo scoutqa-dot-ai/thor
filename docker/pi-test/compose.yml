@@ -13,7 +13,7 @@ services:
       [
         node,
         -e,
-        "const fs=require('fs'); fs.mkdirSync('/workspace/repos/pi-fixture',{recursive:true}); fs.writeFileSync('/workspace/repos/pi-fixture/README.md','fixture repo'); fs.chownSync('/workspace/repos/pi-fixture',1001,1001); fs.chownSync('/workspace/repos/pi-fixture/README.md',1001,1001); fs.writeFileSync('/workspace/config/thor.json',JSON.stringify({owners:{},users:[]})); for(const p of ['repos','worktrees','memory','worklog','config'])fs.chownSync('/workspace/'+p,1001,1001);",
+        "const fs=require('fs'); fs.mkdirSync('/workspace/repos/pi-fixture',{recursive:true}); fs.writeFileSync('/workspace/repos/pi-fixture/README.md','fixture repo'); fs.chownSync('/workspace/repos/pi-fixture',1001,1001); fs.chownSync('/workspace/repos/pi-fixture/README.md',1001,1001); fs.writeFileSync('/workspace/config/thor.json',JSON.stringify({owners:{},users:[],pi:{modelRouting:{profiles:{fast:{modelId:'fixture-fast'},balanced:{modelId:'fixture-balanced'},strong:{modelId:'fixture-strong'}}}}})); for(const p of ['repos','worktrees','memory','worklog','config'])fs.chownSync('/workspace/'+p,1001,1001);",
       ]
 
   model-fixture:
@@ -106,7 +106,7 @@ services:
       THOR_INTERNAL_SECRET: runner-internal-sentinel
       SLACK_BOT_TOKEN: gateway-secret-sentinel
       SLACK_SIGNING_SECRET: fixture-signing-secret
-      SLACK_BOT_USER_ID: U_BOT
+      SLACK_BOT_USER_ID: UBOT
       SLACK_DEFAULT_REPO: pi-fixture
       SLACK_API_BASE_URL: http://model-fixture:8000/slack/
       GITHUB_APP_SLUG: fixture

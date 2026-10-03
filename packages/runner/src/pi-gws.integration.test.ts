@@ -44,19 +44,28 @@ async function listen(server: Server): Promise<string> {
   return `http://127.0.0.1:${address.port}`;
 }
 
-function respond(res: ServerResponse, content: { text: string } | { command: string }, id: number) {
+function respond(
+  res: ServerResponse,
+  content:
+    | { text: string }
+    | { command: string }
+    | { profile: "balanced" | "strong"; reason: string },
+  id: number,
+) {
   res.writeHead(200, { "content-type": "text/event-stream" });
   let sequence = 0;
   const emit = (event: object) =>
     res.write(`data: ${JSON.stringify({ ...event, sequence_number: sequence++ })}\n\n`);
   emit({ type: "response.created", response: { id: `resp_${id}` } });
-  if ("command" in content) {
+  if ("command" in content || "profile" in content) {
     const item = {
       type: "function_call",
       id: `fc_${id}`,
       call_id: `call_gws_${id}`,
-      name: "bash",
-      arguments: JSON.stringify({ command: content.command, timeout: 10 }),
+      name: "command" in content ? "bash" : "escalate_model",
+      arguments: JSON.stringify(
+        "command" in content ? { command: content.command, timeout: 10 } : content,
+      ),
       status: "completed",
     };
     emit({ type: "response.output_item.added", output_index: 0, item: { ...item, arguments: "" } });
@@ -288,6 +297,17 @@ it.each([true, false])(
         for await (const chunk of req) chunks.push(Buffer.from(chunk));
         const payload: Record<string, unknown> = JSON.parse(Buffer.concat(chunks).toString());
         modelRequests.push(payload);
+        if (modelRequests.length <= 2) {
+          respond(
+            res,
+            {
+              profile: modelRequests.length === 1 ? "balanced" : "strong",
+              reason: "Need deeper Google task reasoning",
+            },
+            modelRequests.length,
+          );
+          return;
+        }
         let requestedCommand = nextCommand;
         if (
           !resumedOperation &&
@@ -321,6 +341,17 @@ it.each([true, false])(
       },
       {
         remoteCliUrl: remoteUrl,
+        configLoader: () => ({
+          pi: {
+            modelRouting: {
+              profiles: {
+                fast: { modelId: "fixture-fast" },
+                balanced: { modelId: "fixture-balanced" },
+                strong: { modelId: "fixture-strong" },
+              },
+            },
+          },
+        }),
         progressEventSink: (event) => progressEvents.push(event),
         progressTransport: {
           async post() {
@@ -357,13 +388,28 @@ it.each([true, false])(
     nextCommand = `printf 'once\\n' >> compound-marker; ${command("gws", ["drive", "files", "list"])}`;
     const initialFrames = await stream({
       prompt: "warmup",
+      routingTask: "Create a Google document",
       requestId: "warmup",
       triggerSlackId: owner,
     });
     expect(initialFrames.at(-1)?.authWait).toBe(dmConfirmed ? "google" : undefined);
     expect(JSON.stringify(modelRequests[0]?.input)).toContain("no stored connection was found");
+    expect(modelRequests[0]).toMatchObject({ model: "fixture-fast", reasoning: { effort: "low" } });
+    expect(modelRequests[1]).toMatchObject({
+      model: "fixture-balanced",
+      reasoning: { effort: "medium" },
+    });
+    expect(modelRequests[2]).toMatchObject({
+      model: "fixture-strong",
+      reasoning: { effort: "high" },
+    });
     const receipt = await (
-      await trigger({ prompt: "warmup", requestId: "warmup", triggerSlackId: owner })
+      await trigger({
+        prompt: "warmup",
+        routingTask: "Create a Google document",
+        requestId: "warmup",
+        triggerSlackId: owner,
+      })
     ).json();
     for (const aliasType of ["opencode.session", "pi.conversation"]) {
       expect(resolveAlias({ aliasType, aliasValue: receipt.sessionId })).toBe(receipt.anchorId);
@@ -454,6 +500,12 @@ it.each([true, false])(
         JSON.stringify(input).includes("Google authorization continuation:"),
       ),
     );
+    expect(
+      modelRequests.find((input) =>
+        JSON.stringify(input).includes("Google authorization continuation:"),
+      ),
+    ).toMatchObject({ model: "fixture-strong", reasoning: { effort: "high" } });
+    expect(resumeInput).toContain("Current model profile strong");
     expect(resumeInput).toContain("warmup");
     expect(resumeInput).toContain("Continue only that original task");
     expect(resumeInput).toContain("never replay the compound bash command");
