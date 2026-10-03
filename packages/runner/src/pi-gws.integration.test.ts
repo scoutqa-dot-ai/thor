@@ -316,6 +316,7 @@ it("binds actual Pi tool calls to per-user GWS, owner approval and a single-use 
       modelId: "fixture-model",
       modelApiKey: "fixture-only",
       modelContextWindow: 65536,
+      modelSupportsImages: true,
       storagePath: join(root, "pi.sqlite"),
       skillsDir: join(root, "skills"),
       memoryDir: join(root, "memory"),

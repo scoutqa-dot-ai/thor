@@ -9,6 +9,9 @@ let lastProgressTarget;
 let lastWrapper;
 let slackReplies = 0;
 let lastReply;
+let imageInputs = 0;
+const imageFixtureBase64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVR4nGP4z8AAQVDqPwMDAEHSBfsl0XwmAAAAAElFTkSuQmCC";
 
 function respond(res, content, toolName = "bash", callId = "call_fixture") {
   res.writeHead(200, { "content-type": "text/event-stream" });
@@ -89,6 +92,7 @@ async function handle(req, res) {
       lastWrapper,
       slackReplies,
       lastReply,
+      imageInputs,
     });
     return;
   }
@@ -171,6 +175,21 @@ async function handle(req, res) {
         `call_signed_reply_${calls}`,
       );
     } else respond(res, "fixture signed completed");
+    return;
+  }
+  if (input.includes("fixture-image")) {
+    const output = payload.input?.findLast(
+      (item) => item.type === "function_call_output" && item.call_id === "call_image",
+    );
+    if (!output) {
+      respond(res, { path: "/tmp/pi-proof.png" }, "read_image", "call_image");
+    } else {
+      const image = output.output?.find((block) => block.type === "input_image");
+      if (image?.image_url === `data:image/png;base64,${imageFixtureBase64}`) {
+        imageInputs++;
+        respond(res, "fixture image inspected");
+      } else respond(res, "fixture image missing");
+    }
     return;
   }
   const toolOutput = payload.input?.findLast(

@@ -23,3 +23,5 @@ overrides:
 # prior behavior where the script was skipped.
 allowBuilds:
   protobufjs: false
+  # Prebuilt Sharp/libvips optional packages supply the raster decoder; no source build is needed.
+  sharp: false

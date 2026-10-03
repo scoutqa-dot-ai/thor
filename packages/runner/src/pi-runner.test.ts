@@ -19,6 +19,9 @@ import {
   resolveAlias,
 } from "@thor/common";
 import { createRunnerApp } from "./index.js";
+import sharp from "sharp";
+import { truncate } from "node:fs/promises";
+import { crc32 } from "node:zlib";
 
 async function listen(server: Server): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -99,6 +102,9 @@ let requests: Record<string, unknown>[];
 let hold: ServerResponse | undefined;
 let toolRound: boolean;
 let modelFailure: boolean;
+let imagePath: string;
+let holdImageRead: boolean;
+let failImageRead: boolean;
 const triggerDirectory = "/workspace/repos/pi-fixture";
 
 async function openRunner(options?: Parameters<typeof createPiRunnerApp>[1]) {
@@ -133,6 +139,9 @@ beforeEach(async () => {
   hold = undefined;
   toolRound = false;
   modelFailure = false;
+  imagePath = "remote-image.bin";
+  holdImageRead = false;
+  failImageRead = false;
   executor = createPiExecutorService({
     shellEnvironment: {
       PATH: process.env.PATH,
@@ -148,6 +157,11 @@ beforeEach(async () => {
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const payload = piExecutionRequestSchema.parse(JSON.parse(Buffer.concat(chunks).toString()));
     executorRequests.push(structuredClone(payload));
+    if (payload.operation.type === "readBoundedBinaryFile" && failImageRead) {
+      res.writeHead(503);
+      res.end();
+      return;
+    }
     payload.cwd = directory;
     if (payload.operation.type === "exec" && payload.operation.options?.cwd === triggerDirectory)
       payload.operation.options.cwd = directory;
@@ -160,6 +174,11 @@ beforeEach(async () => {
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
+      if (payload.operation.type === "readBoundedBinaryFile" && holdImageRead) {
+        await response.body?.cancel();
+        hold = res;
+        return;
+      }
       res.writeHead(response.status, {
         "content-type": response.headers.get("content-type") ?? "application/json",
       });
@@ -185,7 +204,10 @@ beforeEach(async () => {
       hold = res;
       return;
     }
-    if (serialized.includes("write-round") && !toolRound) {
+    if (serialized.includes("image-round") && !toolRound) {
+      toolRound = true;
+      respond(res, { tool: "read_image", args: { path: imagePath } });
+    } else if (serialized.includes("write-round") && !toolRound) {
       toolRound = true;
       respond(res, {
         tool: "write",
@@ -218,6 +240,7 @@ beforeEach(async () => {
     modelId: "fixture-model",
     modelApiKey: "fixture-only",
     modelContextWindow: 65536,
+    modelSupportsImages: true,
     storagePath: join(directory, "pi.sqlite"),
     skillsDir: join(directory, "skills"),
     memoryDir: join(directory, "memory"),
@@ -236,6 +259,179 @@ afterEach(async () => {
 });
 
 describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () => {
+  it.each(["png", "jpeg", "webp", "gif"] as const)(
+    "sends real inline %s image input from executor-only bytes and renders a safe marker",
+    async (format) => {
+      const bytes = await sharp({ create: { width: 3, height: 2, channels: 3, background: "red" } })
+        .toFormat(format)
+        .toBuffer();
+      await writeFile(join(directory, imagePath), bytes);
+      await expect(readFile(join(process.cwd(), imagePath))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      const frames = await stream({ prompt: "image-round", requestId: "image" });
+      expect(frames).toContainEqual({ type: "tool", tool: "read_image", status: "completed" });
+      expect(requests).toHaveLength(2);
+      const nextRequest = JSON.stringify(requests[1]);
+      expect(nextRequest).toContain('"type":"input_image"');
+      expect(nextRequest).toContain(`data:image/${format};base64,${bytes.toString("base64")}`);
+      expect(nextRequest).toContain("3 × 2");
+      expect(nextRequest).not.toContain(config.internalSecret);
+      expect(nextRequest).not.toContain(config.modelApiKey);
+      expect(
+        executorRequests.filter((r) => r.operation.type === "readBoundedBinaryFile"),
+      ).toHaveLength(1);
+      expect(executorRequests.some((r) => r.operation.type === "readBinaryFile")).toBe(false);
+      const receipt = await (await trigger({ prompt: "image-round", requestId: "image" })).json();
+      const html = await (
+        await fetch(`${runnerUrl}/runner/v/${receipt.anchorId}/${receipt.triggerId}`)
+      ).text();
+      expect(html).toContain(`[Image attached: image/${format}]`);
+      expect(html).not.toContain(bytes.toString("base64"));
+      expect(html).not.toContain("data:image/");
+      const log = JSON.stringify(readTriggerSlice(receipt.sessionId, receipt.triggerId));
+      expect(log).not.toContain(bytes.toString("base64"));
+    },
+  );
+
+  it.each([
+    ["https://files.slack.com/files-pri/private-sentinel", undefined, "filesystem path"],
+    ["data:image/png;base64,private-sentinel", undefined, "filesystem path"],
+    ["file:///etc/passwd", undefined, "filesystem path"],
+    ["//files.slack.com/private-sentinel", undefined, "filesystem path"],
+    [
+      "remote-image.bin",
+      "<svg xmlns='http://www.w3.org/2000/svg'><image href='https://private-sentinel'/></svg>",
+      "unsupported image contents",
+    ],
+    [
+      "remote-image.bin",
+      "<html><body>private-sentinel</body></html>",
+      "unsupported image contents",
+    ],
+    ["remote-image.bin", "not an image", "unsupported image contents"],
+    ["remote-image.bin", undefined, "not_found"],
+  ])(
+    "rejects unsafe or missing image input %s without forwarding it as image data",
+    async (path, content, reason) => {
+      imagePath = path;
+      if (content !== undefined) await writeFile(join(directory, path), content);
+      await stream({ prompt: "image-round", requestId: "image-rejected" });
+      const nextRequest = JSON.stringify(requests[1]);
+      expect(nextRequest).toContain(reason);
+      expect(nextRequest).not.toContain('"type":"input_image"');
+      if (content) expect(nextRequest).not.toContain(content);
+      expect(executorRequests.some((r) => r.operation.type === "readBinaryFile")).toBe(false);
+      if (reason === "filesystem path")
+        expect(executorRequests.some((r) => r.operation.type === "readBoundedBinaryFile")).toBe(
+          false,
+        );
+    },
+  );
+
+  it.each(["malformed", "decompression", "bytes", "pixels", "animated"])(
+    "rejects image %s boundaries without image content",
+    async (boundary) => {
+      const create = {
+        width: boundary === "pixels" ? 4001 : 3,
+        height: boundary === "pixels" ? 4000 : 2,
+        channels: 3 as const,
+        background: "red",
+      };
+      const bytes =
+        boundary === "animated"
+          ? Buffer.from(
+              "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAAh+QQBAAAAACwAAAAAAQABAAACAUSAOw==",
+              "base64",
+            )
+          : await sharp({ create }).png().toBuffer();
+      if (boundary === "decompression") {
+        // Preserve a correct PNG envelope/CRC while independently corrupting its compressed data.
+        const chunk = bytes.indexOf(Buffer.from("IDAT"));
+        const length = bytes.readUInt32BE(chunk - 4);
+        bytes[chunk + 4] = 0;
+        bytes.writeUInt32BE(crc32(bytes.subarray(chunk, chunk + 4 + length)), chunk + 4 + length);
+      }
+      await writeFile(
+        join(directory, imagePath),
+        boundary === "malformed" ? bytes.subarray(0, bytes.length - 15) : bytes,
+      );
+      if (boundary === "bytes") await truncate(join(directory, imagePath), 1024 * 1024 * 1024);
+      await stream({ prompt: "image-round", requestId: "image-limit" });
+      const next = JSON.stringify(requests[1]);
+      expect(next).toContain(
+        boundary === "bytes"
+          ? "10 MiB byte limit"
+          : boundary === "pixels"
+            ? "16 million pixel limit"
+            : boundary === "animated"
+              ? "animated images"
+              : "malformed",
+      );
+      expect(next).not.toContain('"type":"input_image"');
+    },
+  );
+
+  it("never falls back to a runner-local image when the remote executor is unavailable", async () => {
+    imagePath = join(directory, "runner-local.png");
+    await writeFile(
+      imagePath,
+      await sharp({ create: { width: 1, height: 1, channels: 3, background: "red" } })
+        .png()
+        .toBuffer(),
+    );
+    failImageRead = true;
+    await stream({ prompt: "image-round", requestId: "image-unavailable" });
+    expect(JSON.stringify(requests[1])).toContain("remote file unavailable (unknown)");
+    expect(JSON.stringify(requests[1])).not.toContain('"type":"input_image"');
+  });
+
+  it("cancels a remote image turn without publishing inline content or losing attribution", async () => {
+    await writeFile(
+      join(directory, imagePath),
+      await sharp({ create: { width: 1, height: 1, channels: 3, background: "red" } })
+        .png()
+        .toBuffer(),
+    );
+    holdImageRead = true;
+    const accepted = await (
+      await trigger({
+        prompt: "image-round",
+        requestId: "image-cancel",
+        correlationKey: "cron:image-cancel",
+        triggerSlackId: "U_IMAGE",
+      })
+    ).json();
+    await expect.poll(() => Boolean(hold)).toBe(true);
+    expect(findTriggerActor(accepted.sessionId)).toMatchObject({ slack: "U_IMAGE" });
+    const frames = await stream({
+      prompt: "replacement",
+      requestId: "image-replacement",
+      correlationKey: "cron:image-cancel",
+      interrupt: true,
+    });
+    expect(frames.at(-1)).toMatchObject({ type: "done", status: "completed" });
+    await expect.poll(() => hold?.destroyed).toBe(true);
+    expect(JSON.stringify(requests)).not.toContain('"type":"input_image"');
+    const cancelled = readTriggerSlice(accepted.sessionId, accepted.triggerId);
+    expect(cancelled).toMatchObject({ status: "aborted" });
+    if (!("notFound" in cancelled))
+      expect(cancelled.records).toContainEqual(
+        expect.objectContaining({ type: "trigger_start", triggerSlackId: "U_IMAGE" }),
+      );
+  });
+
+  it("fails honestly for a text-only model before opening a remote image", async () => {
+    await closeServer(runnerServer);
+    await runner.close();
+    config.modelSupportsImages = false;
+    await openRunner();
+    await stream({ prompt: "image-round", requestId: "text-model" });
+    expect(JSON.stringify(requests[1])).toContain("selected model does not support images");
+    expect(JSON.stringify(requests[1])).not.toContain('"type":"input_image"');
+    expect(executorRequests.some((r) => r.operation.type === "readBoundedBinaryFile")).toBe(false);
+  });
+
   it("answers, reports NDJSON, executes a remote tool round, renders escaped history and records attribution", async () => {
     const frames = await stream({
       prompt: "write-round",

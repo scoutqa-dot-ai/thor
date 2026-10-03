@@ -14,6 +14,7 @@ import { piConversationMetadataDoc } from "./pi-runner-state.js";
 import { buildToolInstructions } from "./tool-instructions.js";
 import type { PiRunnerConfig } from "./pi-runner-config.js";
 import type { IGoogleWorkspaceConnectionStatusClient } from "./google-workspace-connection-status.js";
+import { createPiReadImageTool } from "./pi-read-image.js";
 
 /** Install remote coding tools, explicitly discovered skills, memory and active actor instructions. */
 export function installPiRunnerTools(
@@ -34,6 +35,7 @@ export function installPiRunnerTools(
     defineExtension({
       name: "thor-pi",
       tools: [
+        createPiReadImageTool(config.modelSupportsImages),
         defineTool({
           ...bash,
           replay: "unsafe",
@@ -76,6 +78,11 @@ export function installPiRunnerTools(
           "thor",
           () =>
             "You are Thor, a concise engineering teammate. Use tools for facts. Repositories under /workspace/repos are read-only; create edits in /workspace/worktrees. Use sandbox wrappers for project build/test commands. Do not replay an uncertain write or an approved side effect. Read a relevant skill before using its integration. External tool access follows server-side policy.",
+        ),
+        section("image-reading", () =>
+          config.modelSupportsImages
+            ? "Use read_image(path) for local PNG, JPEG, WebP or static GIF image files, including screenshots downloaded with the Slack skill. Text read does not read images. The image tool takes a filesystem path, not a URL; download needed Slack files using the existing skill first. Report image tool failures without claiming to have seen the image."
+            : "The selected model cannot inspect images. Do not claim visual access; ask for a text description or an image-capable model.",
         ),
         section("skills", async (input, context) => {
           const result = await input.env?.listDir(config.skillsDir, context);

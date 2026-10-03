@@ -24,6 +24,7 @@ import {
   piFileInfoSchema,
   piTextLineSchema,
   piShellEnvironmentSchema,
+  piBoundedBinarySchema,
   type PiExecutionOperation,
 } from "@thor/pi-executor/protocol";
 
@@ -192,6 +193,18 @@ export class PiExecutionEnv implements ExecutionEnv {
   async readBinaryFile(path: string, context: Context): Promise<Result<Uint8Array, FileError>> {
     const result = await this.fileRequest({ type: "readBinaryFile", path }, z.base64(), context);
     return result.ok ? { ok: true, value: Buffer.from(result.value, "base64") } : result;
+  }
+  /** Read at most maxBytes plus one from an opened remote regular file, without stat/read races. */
+  async readBoundedBinaryFile(
+    path: string,
+    maxBytes: number,
+    context: Context,
+  ): Promise<Result<z.infer<typeof piBoundedBinarySchema>, FileError>> {
+    return this.fileRequest(
+      { type: "readBoundedBinaryFile", path, maxBytes },
+      piBoundedBinarySchema,
+      context,
+    );
   }
   /** Write text or bytes remotely, creating parents through the vendor implementation. */
   async writeFile(

@@ -15,6 +15,7 @@ const piRunnerConfigSchema = z.object({
   modelId: z.string().min(1),
   modelApiKey: z.string().min(1),
   modelContextWindow: z.coerce.number().int().min(32768),
+  modelSupportsImages: z.enum(["true", "false"]).transform((value) => value === "true"),
   skillsDir: z.string().startsWith("/"),
   memoryDir: z.string().startsWith("/"),
 });
@@ -34,6 +35,7 @@ export function parsePiRunnerConfig(
     modelId: env.PI_MODEL_ID ?? "gpt-5.4",
     modelApiKey: env.PI_MODEL_API_KEY ?? "codex-lb-local",
     modelContextWindow: env.PI_MODEL_CONTEXT_WINDOW ?? 272000,
+    modelSupportsImages: env.PI_MODEL_SUPPORTS_IMAGES ?? "true",
     skillsDir: env.PI_SKILLS_DIR ?? "/etc/thor/skills",
     memoryDir: env.PI_MEMORY_DIR ?? "/workspace/memory",
   });

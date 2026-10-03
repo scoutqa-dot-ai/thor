@@ -4,6 +4,7 @@ import { BACKGROUND_CONTEXT, withCancel } from "@earendil-works/chord/context";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { FileError, type Result, type TextLineReader } from "@earendil-works/pi-durable/env";
 import { piExecutionRequestSchema, type PiExecutionRequest } from "./execution-protocol.js";
+import { readBoundedExecutorFile } from "./bounded-binary-read.js";
 
 const shellEnvironmentNames = [
   "PATH",
@@ -129,6 +130,12 @@ export function createPiExecutorService(options: { shellEnvironment: NodeJS.Proc
             context,
           ),
         );
+      case "readBoundedBinaryFile": {
+        const path = await env.absolutePath(op.path, context);
+        return path.ok
+          ? fileResponse(await readBoundedExecutorFile(path.value, op.maxBytes, context))
+          : fileResponse(path);
+      }
       case "readBinaryFile": {
         const result = await env.readBinaryFile(op.path, context);
         return result.ok

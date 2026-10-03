@@ -72,19 +72,26 @@ Watch deployment logs with `docker compose -f docker-compose.yml -f docker-compo
 
 The runner's Pi settings are also listed in README Deployment Configuration and `.env.example`. The override fixes `THOR_RUNTIME=pi`; ordinary Compose defaults to OpenCode.
 
-| Variable                  | Default                     | Purpose                                                           |
-| ------------------------- | --------------------------- | ----------------------------------------------------------------- |
-| `THOR_RUNTIME`            | `opencode`                  | Runner/ingress mode; override selects `pi`                        |
-| `PI_EXECUTOR_URL`         | `http://pi-executor:3002`   | Credential-free private executor origin                           |
-| `PI_STORAGE_PATH`         | `/var/lib/runner/pi.sqlite` | Runner-only SQLite file; use local filesystem storage             |
-| `PI_MODEL_BASE_URL`       | `http://codex-lb:2455/v1`   | Standard OpenAI Responses endpoint                                |
-| `PI_MODEL_ID`             | `gpt-5.4`                   | Exact model ID served by the provider                             |
-| `PI_MODEL_API_KEY`        | `codex-lb-local`            | Runner-only model auth; never sent to executor                    |
-| `PI_MODEL_CONTEXT_WINDOW` | `272000`                    | Model context limit for compaction/progress                       |
-| `PI_SKILLS_DIR`           | `/etc/thor/skills`          | Skill catalog inside executor; image carries existing Thor skills |
-| `PI_MEMORY_DIR`           | `/workspace/memory`         | Shared root/repo memory path                                      |
+| Variable                   | Default                     | Purpose                                                              |
+| -------------------------- | --------------------------- | -------------------------------------------------------------------- |
+| `THOR_RUNTIME`             | `opencode`                  | Runner/ingress mode; override selects `pi`                           |
+| `PI_EXECUTOR_URL`          | `http://pi-executor:3002`   | Credential-free private executor origin                              |
+| `PI_STORAGE_PATH`          | `/var/lib/runner/pi.sqlite` | Runner-only SQLite file; use local filesystem storage                |
+| `PI_MODEL_BASE_URL`        | `http://codex-lb:2455/v1`   | Standard OpenAI Responses endpoint                                   |
+| `PI_MODEL_ID`              | `gpt-5.4`                   | Exact model ID served by the provider                                |
+| `PI_MODEL_API_KEY`         | `codex-lb-local`            | Runner-only model auth; never sent to executor                       |
+| `PI_MODEL_CONTEXT_WINDOW`  | `272000`                    | Model context limit for compaction/progress                          |
+| `PI_MODEL_SUPPORTS_IMAGES` | `true`                      | Inline image input; false disables inspection for text-only backends |
+| `PI_SKILLS_DIR`            | `/etc/thor/skills`          | Skill catalog inside executor; image carries existing Thor skills    |
+| `PI_MEMORY_DIR`            | `/workspace/memory`         | Shared root/repo memory path                                         |
 
-Use the **standard Responses API**, not the ChatGPT-specific Codex transport. Custom models must support text and tools; validate reasoning compatibility. Cost rates are not configured in this initial mode; consult codex-lb for spend rather than treating zero rate metadata as free usage.
+Use the **standard Responses API**, not the ChatGPT-specific Codex transport. The default GPT model supports text, tools and inline images. Custom models must support text and tools; validate reasoning compatibility and set `PI_MODEL_SUPPORTS_IMAGES=false` for text-only backends (image inspection then fails explicitly). Cost rates are not configured in this initial mode; consult codex-lb for spend rather than treating zero rate metadata as free usage.
+
+### Image inspection contract
+
+`read_image(path)` reads only executor filesystem files, including Slack attachments downloaded through the existing credential-injecting workflow. It does not fetch URLs or carry Slack credentials. The separate Durable `read` remains a text-only tool.
+
+The image-specific product safety limits are **10 MiB of encoded file bytes** and **16 million decoded pixels**. Bounded executor reads use a single opened regular file and allocate/read at most the byte limit plus one, even if the file grows; they never allocate based on a separate pathname stat. Contents must identify as PNG, JPEG, WebP or static GIF and pass full raster decoding. SVG, HTML, malformed/truncated images, animation with multiple pages and files over either limit fail visibly. Native decoding completes within its pixel bound if a turn is cancelled; cancelled results never publish image content. Viewer transcripts show an escaped image marker, not a raw image/data URL. Inline image blocks remain private conversation/model data, so protect the SQLite volume as usual.
 
 Runner's trusted Slack SDK bypasses the agent-tool proxy policy for `slack.com`. A custom `SLACK_API_BASE_URL` may need an explicit runner-only NO_PROXY adjustment. Executor HTTP(S) uses mitmproxy; its internal network cannot directly reach public internet or codex-lb's account dashboard. Do not add executor to the default network or give it runner credentials/storage.
 
@@ -96,7 +103,7 @@ Runner's trusted Slack SDK bypasses the agent-tool proxy policy for `slack.com`.
 - SQLite WAL/NORMAL is tested for process crashes, **not** lossless survival of newest commits after power/host failure. For consistent backup, stop runner before snapshotting its private volume; transcripts may contain private user/tool data.
 - Gateway persists uncertain batch membership and HTTP payloads until acceptance. Its `.runner-requests` manifests contain prompt/actor data; protect the queue directory like other conversation data. Retention/cleanup is not automated in this test delivery.
 - Slack progress is best-effort; recovery may duplicate a notification. Viewer usage is conversation-wide, not a per-trigger cost ledger.
-- Initial mode has read/write/edit/bash and explicit skills. Image reads, background subagents, lossless legacy transcript import and full browser chat parity are not implemented.
+- Initial mode has read/write/edit/bash, remote `read_image` and explicit skills. Background subagents, lossless legacy transcript import and full browser chat parity are not implemented.
 
 ## Rollback
 

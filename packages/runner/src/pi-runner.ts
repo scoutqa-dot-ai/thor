@@ -123,7 +123,7 @@ export async function createPiRunnerApp(
             provider: "codex-lb",
             api: "openai-responses",
             baseUrl: config.modelBaseUrl,
-            input: ["text"],
+            input: config.modelSupportsImages ? ["text", "image"] : ["text"],
             reasoning: true,
             thinkingLevelMap: {
               minimal: "minimal",
@@ -736,7 +736,7 @@ export async function createPiRunnerApp(
                     : message.role === "assistant"
                       ? `${message.provider}/${message.model}`
                       : message.role;
-                return `<h3>${escapePiHtml(heading)}</h3><pre>${escapePiHtml(typeof message.content === "string" ? message.content : message.content.map((block) => (block.type === "text" ? block.text : block.type === "toolCall" ? `${block.name} ${JSON.stringify(block.arguments)}` : "")).join("\n"))}</pre>`;
+                return `<h3>${escapePiHtml(heading)}</h3><pre>${escapePiHtml(typeof message.content === "string" ? message.content : message.content.map((block) => (block.type === "text" ? block.text : block.type === "toolCall" ? `${block.name} ${JSON.stringify(block.arguments)}` : block.type === "image" ? `[Image attached: ${block.mimeType}]` : "")).join("\n"))}</pre>`;
               })
               .join(""),
           )

@@ -50,6 +50,20 @@ async function post(operation: unknown): Promise<Response> {
 }
 
 describe("Pi executor private HTTP boundary", () => {
+  it("bounds binary reads at the HTTP edge and rejects an unbounded request", async () => {
+    await writeFile(join(cwd, "image"), Buffer.from([0, 255, 2]));
+    expect(
+      await (await post({ type: "readBoundedBinaryFile", path: "image", maxBytes: 3 })).json(),
+    ).toEqual({ ok: true, value: { data: "AP8C" } });
+    expect(
+      await (await post({ type: "readBoundedBinaryFile", path: "image", maxBytes: 2 })).json(),
+    ).toEqual({ ok: true, value: { tooLarge: true } });
+    for (const maxBytes of [undefined, -1, 0, 10 * 1024 * 1024 + 1]) {
+      expect((await post({ type: "readBoundedBinaryFile", path: "image", maxBytes })).status).toBe(
+        400,
+      );
+    }
+  });
   it("exposes health without starting work and rejects arbitrary routes/dispatch", async () => {
     expect(await (await fetch(`${url}/health`)).json()).toEqual({ ok: true });
     expect((await fetch(`${url}/execute`)).status).toBe(404);

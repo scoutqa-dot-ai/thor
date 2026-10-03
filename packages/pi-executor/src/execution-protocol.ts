@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+/** Image-specific input byte ceiling; bounded reads never allocate more than this plus one byte. */
+export const PI_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+
+/** Bounded binary read distinguishes the product byte ceiling from ordinary filesystem errors. */
+export const piBoundedBinarySchema = z.union([
+  z.strictObject({ data: z.base64() }),
+  z.strictObject({ tooLarge: z.literal(true) }),
+]);
+
 // Private executor protocol. Never dispatch a property named by an incoming request.
 const path = z.string();
 const content = z.discriminatedUnion("encoding", [
@@ -33,6 +42,11 @@ export const piExecutionRequestSchema = z.strictObject({
       options: z.strictObject({ maxLines: z.number().int().optional() }).optional(),
     }),
     z.strictObject({ type: z.literal("readBinaryFile"), path }),
+    z.strictObject({
+      type: z.literal("readBoundedBinaryFile"),
+      path,
+      maxBytes: z.number().int().positive().max(PI_IMAGE_MAX_BYTES),
+    }),
     z.strictObject({ type: z.literal("writeFile"), path, content }),
     z.strictObject({ type: z.literal("appendFile"), path, content }),
     z.strictObject({ type: z.literal("truncateFile"), path, size: z.number().int().nonnegative() }),

@@ -116,6 +116,15 @@ curl -sS -o "$DOWNLOAD_FILE" \
   'https://files.slack.com/files-pri/T123-F123/download/example'
 ```
 
+For image inspection when `read_image` is in your tool catalog, call
+`read_image(path)` with the downloaded file's path. It accepts PNG, JPEG, WebP
+and static GIF up to 10 MiB and 16 million pixels. Text `read` does not inspect
+images in this runtime. Pass the file path, not the private Slack URL; do not
+print/base64-encode image bytes into a shell or text tool response. Report a
+rejected format, size or model capability honestly rather than claiming visual
+access. If `read_image` is absent, use the image-reading tool listed in your
+catalog or ask for a text description.
+
 ### 4. Post a message
 
 For a short single-line reply, pipe text into `slack-post-message`:

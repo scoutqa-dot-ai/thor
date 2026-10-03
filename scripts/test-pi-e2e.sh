@@ -4,7 +4,7 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 project="thor-pi-e2e-$(id -u)-$$"
-compose=(docker compose -p "$project" -f "$root/docker/pi-test/compose.yml")
+compose=(docker compose --env-file /dev/null -p "$project" -f "$root/docker/pi-test/compose.yml")
 cleanup() {
   status=$?
   if (( status != 0 )); then "${compose[@]}" logs --no-color --tail 80 || true; fi
@@ -13,6 +13,12 @@ cleanup() {
 }
 trap cleanup EXIT
 "${compose[@]}" up --build -d --wait --wait-timeout 180
+
+# Seed an image only in the executor filesystem, without placing encoded bytes in model text.
+"${compose[@]}" exec -T pi-executor node --input-type=module <<'JS'
+import { writeFile } from 'node:fs/promises';
+await writeFile('/tmp/pi-proof.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVR4nGP4z8AAQVDqPwMDAEHSBfsl0XwmAAAAAElFTkSuQmCC', 'base64'));
+JS
 
 "${compose[@]}" exec -T runner node --input-type=module <<'JS'
 import assert from 'node:assert/strict';
@@ -46,6 +52,17 @@ assert(probe.lastWrapper.callId.includes('call_fixture'));
 assert.equal(probe.slackReplies,1); assert.equal(probe.lastReply.sessionId,receipt.sessionId);
 assert.deepEqual(probe.lastReply.args,['--channel','C_FIXTURE','--thread-ts','1710000000.001']);
 assert.equal(probe.lastReply.text,'fixture thread reply\n');
+await assert.rejects(readFile('/tmp/pi-proof.png'));
+const imageBody={prompt:'fixture-image',requestId:'container-image',correlationKey:'cron:container-image'};
+const imageFrames=(await (await trigger({...imageBody,stream:true})).text()).trim().split('\n').map(JSON.parse);
+assert.equal(imageFrames.at(-1).response,'fixture image inspected');
+assert(imageFrames.some(frame=>frame.type==='tool'&&frame.tool==='read_image'&&frame.status==='completed'));
+assert.equal((await (await fetch('http://model-fixture:8000/probe')).json()).imageInputs,1);
+const imageReceipt=await (await trigger(imageBody)).json();
+const imageHtml=await (await fetch(`http://127.0.0.1:3000/runner/v/${imageReceipt.anchorId}/${imageReceipt.triggerId}`)).text();
+assert(imageHtml.includes('[Image attached: image/png]'));
+assert(!imageHtml.includes('data:image/')); assert(!imageHtml.includes('iVBORw0KGgo'));
+console.log('PASS: executor-only raster image reaches actual Responses input_image and safe viewer marker');
 const denied=await (await fetch('http://pi-executor:3002/execute',{
   method:'POST',headers:{'content-type':'application/json'},
   body:JSON.stringify({sessionId:'00000000-0000-4000-8000-000000000001',cwd:'/workspace/repos/pi-fixture',operation:{type:'writeFile',path:'/workspace/repos/pi-fixture/README.md',content:{encoding:'text',data:'must fail'}}}),

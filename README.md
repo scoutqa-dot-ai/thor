@@ -211,17 +211,18 @@ rollback.
 
 Use `docker compose -f docker-compose.yml -f docker-compose.pi.yml up --build -d --remove-orphans` after configuring the stack. See [Pi testing, persistence and rollback](docs/pi-runtime.md); do not run two stacks on the same ports/webhook stream. The override selects Pi and routes the authenticated home page to the Thor sessions dashboard, not an interactive OpenCode UI.
 
-| Variable                  | Default                     | Service             | Purpose                                                  |
-| ------------------------- | --------------------------- | ------------------- | -------------------------------------------------------- |
-| `THOR_RUNTIME`            | `opencode`                  | `runner`, `ingress` | Override selects `pi`; default deployment stays OpenCode |
-| `PI_EXECUTOR_URL`         | `http://pi-executor:3002`   | `runner`            | Private remote file/process execution origin             |
-| `PI_STORAGE_PATH`         | `/var/lib/runner/pi.sqlite` | `runner`            | Runner-only durable state, never mounted in executor     |
-| `PI_MODEL_BASE_URL`       | `http://codex-lb:2455/v1`   | `runner`            | Standard Responses provider endpoint                     |
-| `PI_MODEL_ID`             | `gpt-5.4`                   | `runner`            | Provider model ID                                        |
-| `PI_MODEL_API_KEY`        | `codex-lb-local`            | `runner`            | Model auth; never forwarded to tools                     |
-| `PI_MODEL_CONTEXT_WINDOW` | `272000`                    | `runner`            | Context limit for compaction and progress                |
-| `PI_SKILLS_DIR`           | `/etc/thor/skills`          | `runner`            | Remote skill catalog path inside executor                |
-| `PI_MEMORY_DIR`           | `/workspace/memory`         | `runner`            | Shared root/repo memory location                         |
+| Variable                   | Default                     | Service             | Purpose                                                     |
+| -------------------------- | --------------------------- | ------------------- | ----------------------------------------------------------- |
+| `THOR_RUNTIME`             | `opencode`                  | `runner`, `ingress` | Override selects `pi`; default deployment stays OpenCode    |
+| `PI_EXECUTOR_URL`          | `http://pi-executor:3002`   | `runner`            | Private remote file/process execution origin                |
+| `PI_STORAGE_PATH`          | `/var/lib/runner/pi.sqlite` | `runner`            | Runner-only durable state, never mounted in executor        |
+| `PI_MODEL_BASE_URL`        | `http://codex-lb:2455/v1`   | `runner`            | Standard Responses provider endpoint                        |
+| `PI_MODEL_ID`              | `gpt-5.4`                   | `runner`            | Provider model ID                                           |
+| `PI_MODEL_API_KEY`         | `codex-lb-local`            | `runner`            | Model auth; never forwarded to tools                        |
+| `PI_MODEL_CONTEXT_WINDOW`  | `272000`                    | `runner`            | Context limit for compaction and progress                   |
+| `PI_MODEL_SUPPORTS_IMAGES` | `true`                      | `runner`            | Inline image input; set false for text-only custom backends |
+| `PI_SKILLS_DIR`            | `/etc/thor/skills`          | `runner`            | Remote skill catalog path inside executor                   |
+| `PI_MEMORY_DIR`            | `/workspace/memory`         | `runner`            | Shared root/repo memory location                            |
 
 ### Workspace config (`thor.json`)
 

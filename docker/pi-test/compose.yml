@@ -68,6 +68,7 @@ services:
       PI_MODEL_ID: fixture-model
       PI_MODEL_API_KEY: fixture-only
       PI_MODEL_CONTEXT_WINDOW: "65536"
+      PI_MODEL_SUPPORTS_IMAGES: "true"
       PI_SKILLS_DIR: /etc/thor/skills
       PI_MEMORY_DIR: /workspace/memory
       # Sentinels must never reach tools. These are not real credentials.
