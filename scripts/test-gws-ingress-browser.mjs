@@ -2,7 +2,6 @@
 // Real Chromium + shipped Nginx template, local fake SSO/Google providers, no live accounts.
 // Requires Linux Docker, openssl and Chromium. Optional first arg: browser executable.
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { createServer as httpServer, request as httpRequest } from "node:http";
 import { createServer as httpsServer } from "node:https";
 import { once } from "node:events";
@@ -17,7 +16,6 @@ const require = createRequire(
   new URL("../packages/onepassword-browser-mcp/package.json", import.meta.url),
 );
 const { chromium } = require("playwright-core");
-const sharp = createRequire(new URL("../packages/runner/package.json", import.meta.url))("sharp");
 const root = await mkdtemp(join(tmpdir(), "thor-gws-nginx-probe-"));
 const servers = [];
 const container = "thor-gws-ingress-probe-" + process.pid;
@@ -247,23 +245,6 @@ try {
       bytes,
       await readFile(new URL(`../docker/ingress/static/${name}`, import.meta.url)),
     );
-    const metadata = await sharp(bytes, { animated }).metadata();
-    assert.equal(metadata.width, 64);
-    assert.equal(animated ? metadata.pageHeight : metadata.height, 64);
-    if (animated) {
-      assert.equal(metadata.pages, 66);
-      assert.equal(metadata.loop, 0);
-      assert.deepEqual(metadata.delay, Array(66).fill(100));
-      const raw = await sharp(bytes, { animated: true }).ensureAlpha().raw().toBuffer();
-      const hashes = new Set(
-        Array.from({ length: 66 }, (_, i) =>
-          createHash("sha256")
-            .update(raw.subarray(i * 64 * 64 * 4, (i + 1) * 64 * 64 * 4))
-            .digest("hex"),
-        ),
-      );
-      assert(hashes.size > 50, "Public Slack GIF must contain actual varying frames");
-    }
   }
   // Unknown names still enter the existing SSO boundary, not a public folder.
   const unknownAsset = await context.request.get(publicUrl + "/neo-thinking-v2.gif", {
@@ -283,7 +264,7 @@ try {
     );
   }
   console.log(
-    "PASS: public Slack GIF/PNG MIME, exact content, varying frames/6.6s loop, Chromium decoding in both themes and narrow SSO boundary",
+    "PASS: public Slack GIF/PNG MIME, exact content, Chromium decoding in both themes and narrow SSO boundary",
   );
 
   const invitation = oauth.createConnectionRequest({

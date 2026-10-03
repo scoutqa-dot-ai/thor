@@ -232,3 +232,109 @@ Operator rollout: retain the existing public `RUNNER_BASE_URL`, rebuild/redeploy
 **ingress + gateway + runner**, and ensure Slack can retrieve the three fixed
 images without SSO. No app/scope/credential replacement. Live Slack GIF playback
 and reduced-motion acceptance remain client/operator checks.
+
+## User-requested test necessity audit and pruning
+
+The user questioned the **1,099 repository-wide cases**, not 1,099 newly added
+Slack cases (that feature added 32), and requested removal of unnecessary tests.
+Tests are development checks, not runtime dependencies. Audit the full existing
+suite, apply AGENTS rule 7, and prune in one follow-up phase without changing
+production behavior, public contracts, auth/storage/config or deployment.
+
+Three independent read-only reviews covered common/admin/docker, gateway, and
+remote-cli/1Password; parent review covers runner/executor and approves exact
+deletions against source and retained coverage. Detailed inventories are in
+`/tmp/neo-test-audit-{common,gateway,integrations}.md`. No arbitrary case-count
+target, removal of safety matrices merely because they are long, or merging
+independent cases to game the count. Keep distinct state transitions, public
+transport behavior, malformed authority, credential isolation, crypto/OAuth,
+current requester targeting, frozen delivery, model selection and real recovery.
+
+Candidate deletions: obvious display construction, raw env default/trim wrappers,
+schema echo, thin append/path/map helpers, duplicate happy-path signature/helper
+tests with retained webhook coverage, weaker queue/ticker/cleanup subsets, and
+legacy cache-warming implementation-detail checks. Reduce remaining setup/default
+noise. Keep documented config-example validation, the non-text MCP JSON fallback
+(not proven by the HTTP text-only case), source-time ordering, secret byte-length
+comparison and non-obvious startup failures. Slack unit race tests and native
+SDK/OAuth tests exercise different layers; keep their meaningful boundaries.
+
+Exit criteria: document removed families and retained proof, no production diff
+or empty/dead test scaffolding, complete remaining tests/types/build and static
+asset/proxy/browser checks pass. Use local deterministic fixtures only; no live
+account requests, new dependencies, .pi/private data staging, push or CI claim.
+
+### Whole-repository audit outcome
+
+Scope at `7e698b6`: **all 73 TypeScript test files**, both Python proxy files and
+all 10 standalone test/diagnostic entrypoints, including existing/legacy code.
+Tracked-file inventory, not only the latest diff:
+
+| Area                      | TS files reviewed |
+| ------------------------- | ----------------: |
+| Common                    |                15 |
+| Gateway                   |                11 |
+| Remote CLI                |                24 |
+| 1Password browser         |                 7 |
+| Runner                    |                 9 |
+| Pi executor               |                 2 |
+| Admin                     |                 1 |
+| Docker ingress / OpenCode |                 4 |
+
+Four independent read-only inventories covered the above non-runner areas and
+Python/scripts; parent owns runner/executor review, checks exact deletion hunks
+and decides which recommendations actually preserve coverage. Additional report:
+`/tmp/neo-test-audit-script-python.md`.
+
+**Removed 81 Vitest cases and 2 Python cases**, plus repeated assertions and
+browser-side asset decoding. Deleted six unnecessary test files. The remaining
+Vitest suite is **67 files / 1,018 cases**; Python is **27 cases**. This is genuine
+deletion, not regrouping parameterized scenarios to disguise the case count.
+Only tests and audit/provenance docs changed; no production implementation,
+dependency manifests, env/config, actor, permission or storage changes.
+
+| Removed family                                                 | Retained evidence / reason                                                                                                                                                                  |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `format.test.ts`, schema-echo `progress-events.test.ts`        | Drop obvious display construction and a parse-then-equal echo; real progress/SDK/viewer behavior remains.                                                                                   |
+| `memory-paths.test.ts`                                         | Runner memory-progress cases retain root containment, normalized directory suppression and file reads.                                                                                      |
+| `worklog.test.ts`                                              | Thin two-line append wrapper; history/alias/archive behavior is tested at owning interfaces.                                                                                                |
+| `github-gate.test.ts`                                          | HTTP check-suite tests retain successful bot SHA, missing SHA, author mismatch and execution failure.                                                                                       |
+| `auth-helper-format.test.ts`                                   | Cosmetic prefix/default/idempotent string formatting, not credential resolution.                                                                                                            |
+| Raw env/default/interpolation/map helpers                      | Retain UTF-8 secret-byte comparison, service startup denial/identity/audit/schema boundaries and missing-env fail-closed; remove default noise.                                             |
+| Happy-path signature/schema/mention helper duplicates          | Retain real webhook intake, malformed signatures, stale replay window, terminal conclusions, null close/delete payloads and issue/branch routing.                                           |
+| Weaker queue/privacy/helper subsets                            | Retain retry with disk survival + ACK deletion, timed mention pull-forward, in-flight batch separation, health 503, HTTP privacy/shared/config-error decisions, TTL and uncertain delivery. |
+| Ticker/delegate/cleanup subsets                                | Stronger backoff/run-group/completed cleanup and scoped short-run tests prove the same outcomes, plus races and terminal silence.                                                           |
+| Exec stdout/stderr and askpass username duplicates             | Real GWS process invocation covers both streams; password-prompt URL/owner and unresolved-host denial remain.                                                                               |
+| Legacy cache warm-up/cross-URL implementation checks           | Keep visible context calculation, model/provider separation, suppression and per-trigger cache reuse; do not lock unnecessary fetches on busy/tokenless turns or global cache placement.    |
+| Repeated source-timestamp invalid strings / routing roundtrips | Keep real pre-execution malformed timestamp rejection and exhaustive persisted selection/transition roundtrips; no repeated same-branch regex inputs or decode on every cue row.            |
+| Python interpolation/readonly helper mirrors                   | Actual addon injection, missing-env 502, readonly 403 and unknown-host/CONNECT denial remain.                                                                                               |
+| GIF metadata/frame decoding inside Nginx browser test          | Asset export checker owns frame/beat/handoff safety once; browser retains actual public MIME/bytes, both-theme decode, narrow SSO, cold OAuth and cookie behavior.                          |
+
+Not every overlap was accepted as a deletion. Keep the documented config-example
+smoke without its hardcoded installation-ID snapshot, non-text MCP JSON fallback
+and text-block output contract, Jira absolute upload-URL guidance, current actor
+and frozen retry evidence, SDK/native state projection, OAuth/browser/outbox
+security, image bounds, model authority, crypto and actual restart/SIGKILL tests.
+In particular, the HTTP single-text MCP test does **not** replace its non-text
+JSON fallback test. E2E scripts for Core, GWS, OpenCode, Pi, sandbox and Jira
+exercise different deployed boundaries, so remain; manual MCP discovery is a
+diagnostic, not a duplicate unit test. Cookie scripts exercise different sites
+and ingress boundaries, so both remain.
+
+### Pruning verification
+
+All remaining Vitest cases (**1,018 / 67 files**), workspace typechecks and builds
+passed. Python proxy suite (**27**) passed using existing cached pytest through
+`uv run --offline --no-project --with pytest python -m pytest ...`; no project
+dependency added or download. Bare Python lacked pytest, and offline mitmproxy
+resolution was unavailable; the production addon's existing faithful test
+fallback needs no mitmproxy installation. Static asset safety/decoding and both
+serial Chromium/shipped-Nginx cookie/OAuth/public-artwork regressions passed;
+all standalone shell/MJS syntax checks and formatting/diff checks passed.
+
+Logs: `/tmp/neo-test-prune-{tests,types,build,python,assets,ingress-browser,cookie-browser,format}.log`.
+Runtime code is unchanged; previously green container gates are retained, not
+claimed as newly rerun in this pruning phase. No GitHub CI, push, production or
+live account check. Review/exit criteria passed; ready for one test-only phase
+commit. The remaining count is not a correctness target or a claim that tests
+are required to run the product.

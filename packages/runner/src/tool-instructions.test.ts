@@ -12,8 +12,4 @@ describe("buildToolInstructions", () => {
       "https://api.atlassian.com/ex/jira/<cloudId>/rest/api/3/issue/<KEY>/attachments",
     );
   });
-
-  it("returns undefined when not under /workspace/repos", () => {
-    expect(buildToolInstructions("/tmp")).toBeUndefined();
-  });
 });

@@ -84,7 +84,6 @@ describe("Pi model routing policy", () => {
       source: "automatic",
       escalationLocked: false,
     });
-    expect(value(parsePiModelSelection(JSON.parse(JSON.stringify(selection))))).toEqual(selection);
   });
 
   it("uses only supplied raw current task evidence, not rendered thread/history", () => {

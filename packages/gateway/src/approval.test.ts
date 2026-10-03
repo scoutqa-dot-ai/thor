@@ -118,16 +118,6 @@ describe("approval presentation", () => {
       markdown: "Looks good to me.",
     });
     expect(
-      buildApprovalPresentation("addCommentToJiraIssue", {
-        cloudId: "cloud-1",
-        issueIdOrKey: "KSR-11011",
-        commentBody: "Approved.",
-      }),
-    ).toEqual({
-      title: "Comment on Jira issue: KSR-11011",
-      markdown: "Approved.",
-    });
-    expect(
       buildApprovalPresentation("create-feature-flag", { key: "beta", active: false }),
     ).toEqual({ title: "Create feature flag: beta", markdown: "*Key:* beta\n\n*Active:* false" });
   });

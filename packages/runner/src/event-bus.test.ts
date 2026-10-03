@@ -178,12 +178,6 @@ describe("SessionSubscription", () => {
     expect(items).toHaveLength(1);
     sub.close();
   });
-
-  it("deduplicates session ids passed to the constructor", () => {
-    const sub = new SessionSubscription(emitter, ["s1", "s1"]);
-    expect(emitter.listenerCount("s1")).toBe(1);
-    sub.close();
-  });
 });
 
 describe("EventBusRegistry", () => {

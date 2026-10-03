@@ -12,22 +12,6 @@ function sign(body: string, secret: string, timestamp: string): string {
 }
 
 describe("slack helpers", () => {
-  it("verifies a valid Slack signature", () => {
-    const body = JSON.stringify({ type: "url_verification", challenge: "abc" });
-    const timestamp = "1710000000";
-    const secret = "top-secret";
-
-    expect(
-      verifySlackSignature({
-        signingSecret: secret,
-        rawBody: body,
-        signature: sign(body, secret, timestamp),
-        timestamp,
-        nowSeconds: 1710000000,
-      }),
-    ).toBe(true);
-  });
-
   it("rejects stale Slack signatures", () => {
     const body = JSON.stringify({ test: true });
     const timestamp = "1710000000";

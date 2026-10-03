@@ -1546,13 +1546,12 @@ describe("native Pi activity through the real Slack SDK", () => {
     }
   });
 
-  it.each(["1710000000", "malformed", "1710000000.002?cap=private"])(
-    "rejects malformed direct message timestamp (%s) at trusted admission",
-    async (messageTs) => {
-      expect((await trigger({ prompt: "task", messageTs })).status).toBe(400);
-      expect(requests).toHaveLength(0);
-    },
-  );
+  it("rejects a malformed direct message timestamp before model execution", async () => {
+    expect(
+      (await trigger({ prompt: "task", messageTs: "1710000000.002?cap=private" })).status,
+    ).toBe(400);
+    expect(requests).toHaveLength(0);
+  });
 });
 
 describe("per-task native model routing", () => {

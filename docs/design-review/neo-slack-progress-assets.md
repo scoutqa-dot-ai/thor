@@ -100,9 +100,10 @@ Static verification decodes every GIF frame: 66 frames, **63 unique frames** per
 mode, exact 6.6s duration, infinite loop, distinct initial mode silhouettes, white
 substrate and assembled-frame match to the still PNG despite GIF quantization.
 It also proves hostile wrong-checksum source rejection without execution/output
-and byte-for-byte offline regeneration. The broadened Chromium/shipped-Nginx
-fixture verifies real MIME/exact bytes/frame variation/timing before login,
-64px browser image decoding in light/dark preferences, unknown-path SSO, unchanged
+and byte-for-byte offline regeneration. Frame/beat verification lives in that
+export check, not duplicated inside the Chromium/shipped-Nginx fixture. The
+browser fixture verifies real MIME/exact bytes before login, 64px browser image
+decoding in light/dark preferences, unknown-path SSO, unchanged
 historical/current branding and cold Google OAuth/cookie/owner flow.
 
 Observed artifact sizes and SHA-256:

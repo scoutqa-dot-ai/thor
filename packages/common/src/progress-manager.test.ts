@@ -329,31 +329,6 @@ describe("ProgressManager", () => {
     expect(chat(deps).update.mock.calls.length).toBe(updateCountBefore);
   });
 
-  it("renders delegate context from task-derived delegate events", async () => {
-    const deps = mockSlackDeps();
-
-    await handleProgressEvent(
-      progressTarget(deps),
-      {
-        type: "delegate",
-        agent: "research-agent",
-      },
-      transport,
-    );
-    await handleProgressEvent(
-      progressTarget(deps),
-      {
-        type: "delegate",
-        agent: "research-agent",
-      },
-      transport,
-    );
-    await sendTools(deps, 3);
-
-    const postCall = chat(deps).postMessage.mock.calls[0][0] as { text: string };
-    expect(postCall.text).toContain("agents: research-agent x2");
-  });
-
   it("collapses consecutive duplicate agents using run semantics", async () => {
     const deps = mockSlackDeps();
 
@@ -579,20 +554,6 @@ describe("ProgressManager", () => {
     expect(chat(deps).update).toHaveBeenCalledOnce();
   });
 
-  it("ticks the elapsed timer even when no events arrive", async () => {
-    const deps = mockSlackDeps();
-    await sendTools(deps, 3);
-    expect(chat(deps).postMessage).toHaveBeenCalledOnce();
-    expect(chat(deps).update).not.toHaveBeenCalled();
-
-    // No events for 30s — heartbeat ticks at 10s under 10m elapsed, so we
-    // expect at least a couple of refresh updates.
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(
-      (chat(deps).update as ReturnType<typeof vi.fn>).mock.calls.length,
-    ).toBeGreaterThanOrEqual(2);
-  });
-
   it("backs off the heartbeat cadence as the session ages", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);
@@ -696,25 +657,6 @@ describe("ProgressManager", () => {
     expect(chat(deps).update).not.toHaveBeenCalled();
   });
 
-  it("short run (below threshold) produces no Slack messages on finish", async () => {
-    const deps = mockSlackDeps();
-    await sendTools(deps, 2);
-
-    const doneEvent: ProgressEvent = {
-      type: "done",
-      sessionId: "s1",
-      resumed: false,
-      status: "completed",
-      response: "",
-      toolCalls: [],
-      durationMs: 1000,
-    };
-    await handleProgressEvent(progressTarget(deps, ""), doneEvent, transport);
-
-    expect(chat(deps).postMessage).not.toHaveBeenCalled();
-    expect(chat(deps).update).not.toHaveBeenCalled();
-  });
-
   it("adds x reaction instead of posting a first-time failure message", async () => {
     const deps = mockSlackDeps();
     await handleProgressEvent(
@@ -747,29 +689,6 @@ describe("ProgressManager", () => {
 });
 
 describe("onSessionEnd (via handleProgressEvent done)", () => {
-  it("deletes completed progress messages automatically", async () => {
-    const deps = mockSlackDeps();
-    await sendTools(deps, 3);
-    expect(getRegistrySize()).toBe(1);
-
-    const doneEvent: ProgressEvent = {
-      type: "done",
-      sessionId: "s1",
-      resumed: false,
-      status: "completed",
-      response: "",
-      toolCalls: [],
-      durationMs: 5000,
-    };
-    await handleProgressEvent(progressTarget(deps, ""), doneEvent, transport);
-
-    expect(chat(deps).delete).toHaveBeenCalledWith({
-      channel: "C123",
-      ts: "msg.001",
-    });
-    expect(getRegistrySize()).toBe(0);
-  });
-
   it("preserves error progress messages", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3);

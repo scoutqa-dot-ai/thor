@@ -246,31 +246,6 @@ describe("EventQueue", () => {
     expect(batches).toEqual([["first"], ["second", "third"]]);
   });
 
-  it("ack deletes files from the queue directory", async () => {
-    const handler = ackHandler();
-    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
-
-    await queue.enqueue(makeEvent("key-1", "hello"));
-    await queue.flush();
-
-    const remaining = readdirSync(queueDir).filter((f) => f.endsWith(".json"));
-    expect(remaining).toHaveLength(0);
-  });
-
-  it("files stay on disk when handler does not call ack", async () => {
-    const handler = vi.fn<EventHandler>().mockImplementation(async () => {
-      // Don't call ack — simulates busy/deferred
-    });
-    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
-
-    await queue.enqueue(makeEvent("key-1", "deferred"));
-    await queue.flush();
-
-    expect(handler).toHaveBeenCalledTimes(1);
-    const remaining = readdirSync(queueDir).filter((f) => f.endsWith(".json"));
-    expect(remaining.filter((file) => !file.startsWith("."))).toHaveLength(1);
-  });
-
   it("deferred events are retried on next flush", async () => {
     let callCount = 0;
     const handler = vi.fn<EventHandler>().mockImplementation(async (_events, ack) => {
@@ -331,21 +306,6 @@ describe("EventQueue", () => {
       source: "slack",
       correlationKey: "key-2",
       interrupt: true,
-    });
-  });
-
-  it("reports snapshot read failures explicitly", () => {
-    const handler = ackHandler();
-    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
-
-    rmSync(queueDir, { recursive: true, force: true });
-
-    const snapshot = queue.snapshotPending();
-
-    expect(snapshot).toMatchObject({
-      pending: [],
-      pendingCount: 0,
-      readError: expect.any(String),
     });
   });
 
@@ -518,74 +478,4 @@ describe("EventQueue", () => {
   // ---------------------------------------------------------------------------
   // Interrupt readyAt behavior
   // ---------------------------------------------------------------------------
-
-  it("interrupt events still debounce on their own readyAt", async () => {
-    const handler = ackHandler();
-    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
-
-    await queue.enqueue(makeMention("key-1", "mention", 60_000));
-
-    await queue.flush();
-    expect(handler).not.toHaveBeenCalled();
-
-    // File still in queue
-    const remaining = readdirSync(queueDir).filter((f) => f.endsWith(".json"));
-    expect(remaining).toHaveLength(1);
-  });
-
-  it("interrupt events ignore non-interrupt readyAt when deciding batch readiness", async () => {
-    const handler = ackHandler();
-    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
-
-    // Non-interrupt with readyAt far in the future
-    await queue.enqueue(makeEvent("key-1", "unaddressed", 60_000));
-
-    // Interrupt that is ready now
-    await queue.enqueue({
-      id: `test-${++eventSeq}`,
-      source: "slack",
-      correlationKey: "key-1",
-      payload: { text: "mention" },
-      receivedAt: new Date().toISOString(),
-      sourceTs: now,
-      readyAt: 0,
-      delayMs: 0,
-      interrupt: true,
-    });
-
-    await queue.flush();
-
-    expect(handler).toHaveBeenCalledTimes(1);
-    expect(handler.mock.calls[0][0]).toHaveLength(2);
-  });
-
-  it("non-interrupt events wait while key is processing", async () => {
-    const batches: string[][] = [];
-    let resolveFirst: (() => void) | null = null;
-
-    const handler = vi.fn<EventHandler>().mockImplementation(async (events, ack) => {
-      const texts = events.map((e) => (e.payload as { text: string }).text);
-      if (texts[0] === "first") {
-        await new Promise<void>((resolve) => {
-          resolveFirst = resolve;
-        });
-      }
-      ack();
-      batches.push(texts);
-    });
-
-    queue = new EventQueue({ dir: queueDir, handler, disableInterval: true });
-
-    await queue.enqueue(makeEvent("key-1", "first"));
-    const flushPromise = queue.flush();
-
-    await new Promise((r) => setTimeout(r, 50));
-
-    await queue.enqueue(makeEvent("key-1", "non-interrupt"));
-
-    resolveFirst!();
-    await flushPromise;
-
-    expect(batches).toEqual([["first"], ["non-interrupt"]]);
-  });
 });

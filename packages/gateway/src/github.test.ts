@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { computeGitCorrelationKey } from "@thor/common";
 import {
   buildCorrelationKey,
-  CheckSuiteCompletedEventSchema,
   detectMention,
   extractGitHubBranchFromRef,
   getGitHubEventBranch,
@@ -17,7 +16,6 @@ import {
   PullRequestClosedEventSchema,
   isPullRequestReviewCommentEvent,
   isPullRequestReviewEvent,
-  shouldIgnoreGitHubEvent,
   shouldIgnoreIssueCommentEvent,
   shouldIgnorePullRequestReviewCommentEvent,
   shouldIgnorePullRequestReviewEvent,
@@ -128,12 +126,6 @@ function basePullRequestClosedEvent(overrides: Record<string, unknown> = {}) {
 }
 
 describe("verifyGitHubSignature", () => {
-  it("accepts a valid signature", () => {
-    const secret = "super-secret";
-    const rawBody = Buffer.from('{"a":1}');
-    expect(verifyGitHubSignature({ secret, rawBody, header: sign(rawBody, secret) })).toBe(true);
-  });
-
   it("rejects wrong secret, missing header, and body mutations", () => {
     const secret = "super-secret";
     const rawBody = Buffer.from('{"text":"hi 👋"}');
@@ -173,15 +165,6 @@ describe("GitHubWebhookEnvelopeSchema", () => {
     expect(getGitHubEventSourceTs(parsed.data)).toBe(Date.parse("2026-04-24T12:00:00Z"));
   });
 
-  it("accepts non-success check_suite conclusions", () => {
-    const parsed = GitHubWebhookEnvelopeSchema.safeParse(baseCheckSuiteEvent("failure"));
-    expect(parsed.success).toBe(true);
-    if (!parsed.success || !isCheckSuiteCompletedEvent(parsed.data)) return;
-
-    expect(parsed.data.check_suite.conclusion).toBe("failure");
-    expect(CheckSuiteCompletedEventSchema.safeParse(parsed.data).success).toBe(true);
-  });
-
   it("accepts push events and preserves slash-containing branch names", () => {
     const parsed = GitHubWebhookEnvelopeSchema.safeParse(basePushEvent());
     expect(parsed.success).toBe(true);
@@ -215,22 +198,6 @@ describe("GitHubWebhookEnvelopeSchema", () => {
     expect(PullRequestClosedEventSchema.safeParse(parsed.data).success).toBe(true);
   });
 
-  it("accepts abandoned pull_request closed events with null merge fields", () => {
-    const parsed = GitHubWebhookEnvelopeSchema.safeParse(
-      basePullRequestClosedEvent({
-        merged: false,
-        merged_at: null,
-        merge_commit_sha: null,
-      }),
-    );
-    expect(parsed.success).toBe(true);
-    if (!parsed.success || !isPullRequestClosedEvent(parsed.data)) return;
-
-    expect(parsed.data.pull_request.merged).toBe(false);
-    expect(parsed.data.pull_request.merged_at).toBeNull();
-    expect(parsed.data.pull_request.merge_commit_sha).toBeNull();
-  });
-
   it("keeps review and review-comment event type precedence over standalone pull_request", () => {
     const reviewComment = GitHubWebhookEnvelopeSchema.parse(baseReviewCommentEvent());
     expect(getGitHubEventType(reviewComment)).toBe("pull_request_review_comment");
@@ -249,21 +216,6 @@ describe("GitHubWebhookEnvelopeSchema", () => {
     });
     expect(getGitHubEventType(review)).toBe("pull_request_review");
   });
-
-  it("accepts deleted push events with null head_commit", () => {
-    const parsed = GitHubWebhookEnvelopeSchema.safeParse(
-      basePushEvent({
-        deleted: true,
-        after: "0000000000000000000000000000000000000000",
-        head_commit: null,
-      }),
-    );
-    expect(parsed.success).toBe(true);
-    if (!parsed.success) return;
-    expect(isPushEvent(parsed.data)).toBe(true);
-    expect(getGitHubEventBranch(parsed.data)).toBe("feat/file-handoff");
-    expect(Number.isFinite(getGitHubEventSourceTs(parsed.data))).toBe(true);
-  });
 });
 
 describe("push helpers", () => {
@@ -271,11 +223,6 @@ describe("push helpers", () => {
     expect(extractGitHubBranchFromRef("refs/heads/feature/a/b")).toBe("feature/a/b");
     expect(extractGitHubBranchFromRef("refs/tags/v1.0.0")).toBeNull();
     expect(extractGitHubBranchFromRef("refs/heads/")).toBeNull();
-  });
-
-  it("does not apply mention gating to push events", () => {
-    const parsed = GitHubWebhookEnvelopeSchema.parse(basePushEvent());
-    expect(shouldIgnoreGitHubEvent(parsed, { mentionLogins: ["thor"], botId: 7777 })).toBeNull();
   });
 });
 
@@ -287,37 +234,6 @@ describe("GitHub ignore helpers", () => {
     mentionLogins: ["thor", "thor[bot]"],
     botId: THOR_BOT_ID,
   };
-
-  it("accepts pull_request_review_comment and derives branch", () => {
-    const event = baseReviewCommentEvent();
-    if (!isPullRequestReviewCommentEvent(event)) throw new Error("expected review comment event");
-
-    expect(shouldIgnorePullRequestReviewCommentEvent(event, options)).toBeNull();
-    expect(getGitHubEventBranch(event)).toBe("feature/refactor");
-  });
-
-  it("mention-gates pure issue comments", () => {
-    const event: GitHubWebhookEnvelope = {
-      action: "created",
-      installation: { id: 1 },
-      repository: { full_name: "acme/repo" },
-      sender: { id: 1001, login: "alice", type: "User" },
-      issue: { number: 12, pull_request: null },
-      comment: {
-        body: "hello",
-        html_url: "https://github.com/acme/repo/issues/12#issuecomment-1",
-        created_at: "2026-04-24T11:00:00Z",
-      },
-    };
-    if (!isIssueCommentEvent(event)) throw new Error("expected issue comment event");
-    expect(shouldIgnoreIssueCommentEvent(event, options)).toBe("non_mention_comment");
-    expect(
-      shouldIgnoreIssueCommentEvent(
-        { ...event, comment: { ...event.comment, body: "@thor help" } },
-        options,
-      ),
-    ).toBeNull();
-  });
 
   it("does not special-case fork PR comments", () => {
     const event = {

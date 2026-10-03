@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from rules import RuleStore, interpolate_env, parse_ruleset, resolve_headers
+from rules import RuleStore, parse_ruleset
 
 
 def test_exact_and_suffix_matching() -> None:
@@ -38,37 +38,6 @@ def test_exact_and_suffix_matching() -> None:
     assert ruleset.classify("service.example.internal", "/write").action == "deny"
     assert ruleset.classify("api.openai.com").action == "passthrough"
     assert ruleset.classify("foo.openai.com").action == "passthrough"
-
-
-def test_env_interpolation() -> None:
-    assert interpolate_env("Bearer ${TOKEN}", env={"TOKEN": "abc"}) == "Bearer abc"
-    assert resolve_headers(
-        {"Authorization": "Bearer ${TOKEN}", "X-Org": "${ORG}"},
-        env={"TOKEN": "abc", "ORG": "acme"},
-    ) == {
-        "Authorization": "Bearer abc",
-        "X-Org": "acme",
-    }
-
-
-def test_readonly_flag_and_deny_by_default() -> None:
-    ruleset = parse_ruleset(
-        {
-            "mitmproxy": [
-                {
-                    "host": "readonly.example.com",
-                    "headers": {"Authorization": "Bearer ${TOKEN}"},
-                    "readonly": True,
-                }
-            ]
-        }
-    )
-
-    decision = ruleset.classify("readonly.example.com", "/")
-    assert decision.action == "inject"
-    assert decision.rule is not None
-    assert decision.rule.readonly is True
-    assert ruleset.classify("unknown.example.com").action == "deny"
 
 
 def test_builtins_apply_when_user_rules_empty() -> None:

@@ -10,17 +10,6 @@ afterEach(() => {
 });
 
 describe("execCommand", () => {
-  it("captures stdout", async () => {
-    const result = await execCommand("echo", ["hello"], "/tmp");
-    expect(result.stdout.trim()).toBe("hello");
-    expect(result.exitCode).toBe(0);
-  });
-
-  it("captures stderr", async () => {
-    const result = await execCommand("node", ["-e", "process.stderr.write('oops')"], "/tmp");
-    expect(result.stderr).toBe("oops");
-  });
-
   it("returns exit code from failing command", async () => {
     const result = await execCommand("node", ["-e", "process.exit(42)"], "/tmp");
     expect(result.exitCode).toBe(42);

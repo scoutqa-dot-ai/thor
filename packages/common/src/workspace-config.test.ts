@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -7,9 +7,7 @@ import {
   validateWorkspaceConfig,
   createConfigLoader,
   extractRepoFromCwd,
-  getInstallationIdForOwner,
   interpolateEnv,
-  interpolateHeaders,
   findUserBySlack,
   findUserByGithub,
   findUserByEmail,
@@ -36,21 +34,6 @@ function writeConfig(filename: string, data: unknown): string {
 }
 
 describe("loadWorkspaceConfig", () => {
-  it("loads an empty config", () => {
-    const path = writeConfig("config.json", {});
-    expect(loadWorkspaceConfig(path)).toEqual({});
-  });
-
-  it("throws on missing file", () => {
-    expect(() => loadWorkspaceConfig("/nonexistent/path.json")).toThrow("Failed to read");
-  });
-
-  it("throws on invalid JSON", () => {
-    const path = join(tempDir, "bad.json");
-    writeFileSync(path, "not json {{{");
-    expect(() => loadWorkspaceConfig(path)).toThrow("Invalid JSON");
-  });
-
   it("rejects non-positive owner installation IDs with path details", () => {
     const path = writeConfig("config.json", {
       owners: {
@@ -60,11 +43,8 @@ describe("loadWorkspaceConfig", () => {
     expect(() => loadWorkspaceConfig(path)).toThrow("owners.acme.github_app_installation_id");
   });
 
-  it("loads the tracked workspace config example", () => {
-    const config = loadWorkspaceConfig(join(process.cwd(), "docs/examples/thor.json"));
-    expect(config.owners).toEqual({
-      "scoutqa-dot-ai": { github_app_installation_id: 126669985 },
-    });
+  it("accepts the documented deployment example through the actual disk loader", () => {
+    expect(() => loadWorkspaceConfig(join(process.cwd(), "docs/examples/thor.json"))).not.toThrow();
   });
 
   it("accepts mitmproxy rules and passthrough host list", () => {
@@ -328,72 +308,15 @@ describe("Slack channel repo routing helpers", () => {
 });
 
 describe("interpolateEnv", () => {
-  it("replaces ${VAR} with env value", () => {
-    vi.stubEnv("TEST_SECRET", "mysecret");
-    expect(interpolateEnv("Bearer ${TEST_SECRET}")).toBe("Bearer mysecret");
-    vi.unstubAllEnvs();
-  });
-
   it("throws on missing env var", () => {
     delete process.env.NONEXISTENT_VAR;
     expect(() => interpolateEnv("${NONEXISTENT_VAR}")).toThrow("is not set");
   });
-
-  it("returns string unchanged if no placeholders", () => {
-    expect(interpolateEnv("plain string")).toBe("plain string");
-  });
-});
-
-describe("interpolateHeaders", () => {
-  it("interpolates all header values", () => {
-    vi.stubEnv("AUTH_TOKEN", "abc123");
-    const result = interpolateHeaders({ Authorization: "Bearer ${AUTH_TOKEN}" });
-    expect(result).toEqual({ Authorization: "Bearer abc123" });
-    vi.unstubAllEnvs();
-  });
-
-  it("returns undefined for undefined input", () => {
-    expect(interpolateHeaders(undefined)).toBeUndefined();
-  });
 });
 
 describe("extractRepoFromCwd", () => {
-  it("extracts repo name from direct repo path", () => {
-    expect(extractRepoFromCwd("/workspace/repos/acme-app")).toBe("acme-app");
-  });
-
-  it("extracts repo name from nested path", () => {
-    expect(extractRepoFromCwd("/workspace/repos/acme-app/src/lib")).toBe("acme-app");
-  });
-
-  it("returns undefined for non-repo path", () => {
-    expect(extractRepoFromCwd("/tmp")).toBeUndefined();
-  });
-
-  it("returns undefined for /workspace/repos/ without repo name", () => {
-    expect(extractRepoFromCwd("/workspace/repos/")).toBeUndefined();
-  });
-
   it("returns undefined for path traversal", () => {
     expect(extractRepoFromCwd("/workspace/repos/../etc/passwd")).toBeUndefined();
-  });
-});
-
-describe("getInstallationIdForOwner", () => {
-  it("returns installation id for known owner", () => {
-    expect(
-      getInstallationIdForOwner(
-        { owners: { acme: { github_app_installation_id: 12345 } } },
-        "acme",
-      ),
-    ).toBe(12345);
-  });
-
-  it("returns undefined for unknown or missing owner map", () => {
-    expect(getInstallationIdForOwner({}, "acme")).toBeUndefined();
-    expect(
-      getInstallationIdForOwner({ owners: { other: { github_app_installation_id: 1 } } }, "acme"),
-    ).toBeUndefined();
   });
 });
 

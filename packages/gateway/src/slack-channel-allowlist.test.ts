@@ -22,23 +22,6 @@ describe("Slack channel gating", () => {
     vi.useRealTimers();
   });
 
-  it("admits regular public channels after confirming they are not shared", async () => {
-    const deps = depsWithInfo(vi.fn().mockResolvedValue({ channel: { is_private: false } }));
-    await expect(
-      isSlackEventGated({ channel: "C123", channel_type: "channel" }, deps),
-    ).resolves.toBe(false);
-    expect(deps.info).toHaveBeenCalledWith({ channel: "C123" });
-  });
-
-  it("gates public Slack Connect/shared channels", async () => {
-    const deps = depsWithInfo(
-      vi.fn().mockResolvedValue({ channel: { is_private: false, is_ext_shared: true } }),
-    );
-    await expect(
-      isSlackEventGated({ channel: "CEXT", channel_type: "channel" }, deps),
-    ).resolves.toBe(true);
-  });
-
   it("gates every other known surface (group, im, mpim) without a lookup", async () => {
     const deps = depsWithInfo();
     await expect(isSlackEventGated({ channel: "G123", channel_type: "group" }, deps)).resolves.toBe(
@@ -53,41 +36,12 @@ describe("Slack channel gating", () => {
     expect(deps.info).not.toHaveBeenCalled();
   });
 
-  it("falls back to conversations.info when channel_type is missing", async () => {
-    const privateDeps = depsWithInfo(vi.fn().mockResolvedValue({ channel: { is_private: true } }));
-    await expect(isSlackEventGated({ channel: "G123" }, privateDeps)).resolves.toBe(true);
-    expect(privateDeps.info).toHaveBeenCalledWith({ channel: "G123" });
-
-    const imDeps = depsWithInfo(vi.fn().mockResolvedValue({ channel: { is_im: true } }));
-    await expect(isSlackEventGated({ channel: "D123" }, imDeps)).resolves.toBe(true);
-
-    const mpimDeps = depsWithInfo(vi.fn().mockResolvedValue({ channel: { is_mpim: true } }));
-    await expect(isSlackEventGated({ channel: "GMPIM" }, mpimDeps)).resolves.toBe(true);
-
-    const publicDeps = depsWithInfo(vi.fn().mockResolvedValue({ channel: { is_private: false } }));
-    await expect(isSlackEventGated({ channel: "C123" }, publicDeps)).resolves.toBe(false);
-  });
-
   it("gates unknown channel_type values (e.g. future Slack surfaces) without a lookup", async () => {
     const deps = depsWithInfo();
     await expect(
       isSlackEventGated({ channel: "CSHARED", channel_type: "shared_channel" }, deps),
     ).resolves.toBe(true);
     expect(deps.info).not.toHaveBeenCalled();
-  });
-
-  it("fails closed on lookup errors", async () => {
-    const deps = depsWithInfo(vi.fn().mockRejectedValue(new Error("unavailable")));
-    await expect(isSlackEventGated({ channel: "G_fail_only" }, deps)).resolves.toBe(true);
-  });
-
-  it("caches successful lookups and skips Slack on repeat hits for the same channel", async () => {
-    const info = vi.fn().mockResolvedValue({ channel: { is_private: false } });
-    const deps = depsWithInfo(info);
-    await expect(isSlackEventGated({ channel: "C_cached_public" }, deps)).resolves.toBe(false);
-    expect(getCachedSlackChannelGate("C_cached_public")).toBe(false);
-    await expect(isSlackEventGated({ channel: "C_cached_public" }, deps)).resolves.toBe(false);
-    expect(info).toHaveBeenCalledTimes(1);
   });
 
   it("refreshes successful lookups after the 60 minute TTL", async () => {

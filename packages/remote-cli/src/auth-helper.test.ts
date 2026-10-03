@@ -10,12 +10,6 @@ describe("parseRemoteUrlFromAskpassPrompt", () => {
     ).toBe("https://x-access-token@github.com/acme/web.git");
   });
 
-  it("extracts the remote URL from a username prompt", () => {
-    expect(parseRemoteUrlFromAskpassPrompt("Username for 'https://github.com/acme/web': ")).toBe(
-      "https://github.com/acme/web",
-    );
-  });
-
   it("returns undefined when the prompt does not include a quoted URL", () => {
     expect(parseRemoteUrlFromAskpassPrompt("Password: ")).toBeUndefined();
   });

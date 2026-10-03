@@ -1446,87 +1446,6 @@ describe("runner /trigger orchestration", () => {
     expect(providerLists).toBe(1);
   });
 
-  it("shares the global model-limit cache across opencode urls", async () => {
-    let providerListsA = 0;
-    let providerListsB = 0;
-    const promptEvents = (sessionId: string) => [
-      messageUpdatedEvent(sessionId),
-      textEvent(sessionId, "done"),
-      idleEvent(sessionId),
-    ];
-
-    const a = createHarness({
-      opencodeUrl: "http://opencode-a.test:4096",
-      onProviderList: () => {
-        providerListsA++;
-      },
-      providerList: {
-        all: [{ id: "openai", models: { "gpt-5.5": { limit: { context: 200_000 } } } }],
-        default: {},
-        connected: [],
-      },
-      promptEvents,
-    });
-    const b = createHarness({
-      opencodeUrl: "http://opencode-b.test:4096",
-      onProviderList: () => {
-        providerListsB++;
-      },
-      providerList: {
-        all: [{ id: "openai", models: { "gpt-5.5": { limit: { context: 200_000 } } } }],
-        default: {},
-        connected: [],
-      },
-      promptEvents,
-    });
-
-    await withServer(a.app, async (urlA) => {
-      await withServer(b.app, async (urlB) => {
-        await Promise.all([
-          trigger(urlA, {
-            prompt: "large search a",
-            correlationKey: "slack:thread:1710000000.095",
-          }),
-          trigger(urlB, {
-            prompt: "large search b",
-            correlationKey: "slack:thread:1710000000.096",
-          }),
-        ]);
-      });
-    });
-
-    expect(providerListsA + providerListsB).toBe(1);
-  });
-
-  it("warms model limits best-effort even when a resumed session returns busy", async () => {
-    let providerLists = 0;
-    const h = createHarness({
-      existingSessions: new Set(["busy-session"]),
-      busySessions: new Set(["busy-session"]),
-      onProviderList: () => {
-        providerLists++;
-      },
-    });
-
-    await withServer(h.app, async (url) => {
-      const response = await fetch(`${url}/trigger`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          prompt: "hello",
-          sessionId: "busy-session",
-          correlationKey: "slack:thread:1710000000.097",
-          directory: "/workspace/repos/runner-trigger-test",
-        }),
-      });
-
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ busy: true });
-    });
-
-    expect(providerLists).toBe(1);
-  });
-
   it("skips context progress when no positive configured model limit is known", async () => {
     const h = createHarness({
       providerList: {
@@ -1549,48 +1468,6 @@ describe("runner /trigger orchestration", () => {
 
       expect(result.events.find((e) => e.type === "context")).toBeUndefined();
     });
-  });
-
-  it("warms model limits best-effort even for tokenless message.updated events", async () => {
-    let providerLists = 0;
-    const h = createHarness({
-      onProviderList: () => {
-        providerLists++;
-      },
-      providerList: {
-        all: [
-          {
-            id: "openai",
-            models: {
-              "gpt-5.5": { limit: { context: 200_000 } },
-            },
-          },
-        ],
-        default: {},
-        connected: [],
-      },
-      promptEvents: (sessionId) => [
-        messageUpdatedEvent(sessionId, {
-          providerID: "openai",
-          modelID: "gpt-5.5",
-          tokens: undefined,
-          role: "assistant",
-        }),
-        textEvent(sessionId, "done"),
-        idleEvent(sessionId),
-      ],
-    });
-
-    await withServer(h.app, async (url) => {
-      const result = await trigger(url, {
-        prompt: "tokenless update",
-        correlationKey: "slack:thread:1710000000.098",
-      });
-
-      expect(result.events.find((e) => e.type === "context")).toBeUndefined();
-    });
-
-    expect(providerLists).toBe(1);
   });
 
   it("emits opencode.subsession aliases for discovered child sessions", async () => {
