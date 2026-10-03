@@ -11,3 +11,19 @@ Historical attribution (pre-Neo assets, replaced in this release):
     Licensed under CC BY-SA 4.0
     (https://creativecommons.org/licenses/by-sa/4.0/).
     Recoloured and rasterised; no other modifications.
+
+Neo Slack activity assets (separate from the original Neo branding above):
+    neo-thinking-v1.gif, neo-working-v1.gif, neo-ai-still-v1.png
+    Pre-rendered from the original Katalon AI mark by MinhTranKatalon/Katalon,
+    user-provided design reference: Katalon Design System 2.0.
+    https://github.com/MinhTranKatalon/katalon-ds-2-0/blob/9af9aca730f24fd6cf880e2838a7646b64094f91/thinking-mark.jsx
+    Source SHA-256: b7b9ce28728fb94f24cb311a79b1db5ea9f25db09863c329f3a438052bc3d3d7
+    Original 839-point engine, thinking torus / working angular plate and
+    original two-tone leaf/spark handoff; sampled at 64px, 10fps, 6.6s,
+    infinite GIF loop, fixed white DS substrate and light Forest ink.
+    Exporter: scripts/generate-slack-progress-assets.mjs (explicit pinned source).
+    No license grant/statement was found in the pinned source/repository or
+    supplied reference. These assets are NOT claimed as original Neo artwork,
+    relicensed under the repository license, or covered by the historical
+    CC BY-SA attribution above. Confirm rights before external redistribution.
+    Review/publication guidance: docs/design-review/neo-slack-progress-assets.md.

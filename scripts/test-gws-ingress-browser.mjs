@@ -2,6 +2,7 @@
 // Real Chromium + shipped Nginx template, local fake SSO/Google providers, no live accounts.
 // Requires Linux Docker, openssl and Chromium. Optional first arg: browser executable.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { createServer as httpServer, request as httpRequest } from "node:http";
 import { createServer as httpsServer } from "node:https";
 import { once } from "node:events";
@@ -16,6 +17,7 @@ const require = createRequire(
   new URL("../packages/onepassword-browser-mcp/package.json", import.meta.url),
 );
 const { chromium } = require("playwright-core");
+const sharp = createRequire(new URL("../packages/runner/package.json", import.meta.url))("sharp");
 const root = await mkdtemp(join(tmpdir(), "thor-gws-nginx-probe-"));
 const servers = [];
 const container = "thor-gws-ingress-probe-" + process.pid;
@@ -234,6 +236,56 @@ try {
     if (msg.type() === "error")
       console.log("Browser console error:", msg.text().replace(/\?[^\s"']*/g, "?[REDACTED]"));
   });
+  // Inspect actual unauthenticated Nginx bytes, not just URL construction.
+  for (const name of ["neo-thinking-v1.gif", "neo-working-v1.gif", "neo-ai-still-v1.png"]) {
+    const response = await context.request.get(`${publicUrl}/${name}`);
+    assert.equal(response.status(), 200);
+    const animated = name.endsWith(".gif");
+    assert.equal(response.headers()["content-type"], animated ? "image/gif" : "image/png");
+    const bytes = await response.body();
+    assert.deepEqual(
+      bytes,
+      await readFile(new URL(`../docker/ingress/static/${name}`, import.meta.url)),
+    );
+    const metadata = await sharp(bytes, { animated }).metadata();
+    assert.equal(metadata.width, 64);
+    assert.equal(animated ? metadata.pageHeight : metadata.height, 64);
+    if (animated) {
+      assert.equal(metadata.pages, 66);
+      assert.equal(metadata.loop, 0);
+      assert.deepEqual(metadata.delay, Array(66).fill(100));
+      const raw = await sharp(bytes, { animated: true }).ensureAlpha().raw().toBuffer();
+      const hashes = new Set(
+        Array.from({ length: 66 }, (_, i) =>
+          createHash("sha256")
+            .update(raw.subarray(i * 64 * 64 * 4, (i + 1) * 64 * 64 * 4))
+            .digest("hex"),
+        ),
+      );
+      assert(hashes.size > 50, "Public Slack GIF must contain actual varying frames");
+    }
+  }
+  // Unknown names still enter the existing SSO boundary, not a public folder.
+  const unknownAsset = await context.request.get(publicUrl + "/neo-thinking-v2.gif", {
+    maxRedirects: 0,
+  });
+  assert.equal(unknownAsset.status(), 302);
+  assert.match(unknownAsset.headers().location, /\/vouch\/login/);
+  for (const colorScheme of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme });
+    await page.setContent(
+      `<body style="background:${colorScheme === "dark" ? "#1a1d21" : "white"}"><img src="${publicUrl}/neo-thinking-v1.gif" alt="Neo is thinking"><img src="${publicUrl}/neo-working-v1.gif" alt="Neo is working"><img src="${publicUrl}/neo-ai-still-v1.png" alt="Neo AI mark"></body>`,
+    );
+    await page.waitForFunction(() =>
+      [...document.images].every(
+        (image) => image.complete && image.naturalWidth === 64 && image.naturalHeight === 64,
+      ),
+    );
+  }
+  console.log(
+    "PASS: public Slack GIF/PNG MIME, exact content, varying frames/6.6s loop, Chromium decoding in both themes and narrow SSO boundary",
+  );
+
   const invitation = oauth.createConnectionRequest({
     slackUserId: "U123",
     sessionId: "fixture-session",

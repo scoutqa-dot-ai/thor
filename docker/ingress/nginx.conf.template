@@ -155,6 +155,11 @@ server {
         proxy_set_header Connection "";
     }
 
+    # Fixed public Slack activity artwork; no directory/prefix auth bypass.
+    location = /neo-thinking-v1.gif { root /usr/share/nginx/thor-brand; try_files /neo-thinking-v1.gif =404; }
+    location = /neo-working-v1.gif  { root /usr/share/nginx/thor-brand; try_files /neo-working-v1.gif =404; }
+    location = /neo-ai-still-v1.png { root /usr/share/nginx/thor-brand; try_files /neo-ai-still-v1.png =404; }
+
     # Neo-branded icons / manifest / social-share — served from local files
     # to override OpenCode's defaults. Listed individually so unknown paths
     # still fall through to opencode.
