@@ -30,7 +30,7 @@ const trigger = async (body) => fetch('http://127.0.0.1:3000/trigger', {
   body:JSON.stringify({directory:'/workspace/repos/pi-fixture', ...body}),
 });
 await writeFile('/var/lib/runner/runner-only','runner-private-sentinel');
-const body={prompt:'fixture-tool',requestId:'container-tool',correlationKey:'slack:thread:C_FIXTURE/1710000000.001',triggerSlackId:'U_FIXTURE'};
+const body={prompt:'fixture-tool',requestId:'container-tool',correlationKey:'slack:thread:C_FIXTURE/1710000000.001',triggerSlackId:'U_FIXTURE',messageTs:'1710000000.002'};
 const streamed=await trigger({...body,stream:true});
 assert.equal(streamed.status,200);
 const frames=(await streamed.text()).trim().split('\n').map(JSON.parse);
@@ -43,6 +43,18 @@ const receipt=await (await trigger(body)).json();
 assert.equal(receipt.duplicate,true);
 assert.equal((await trigger({...body,prompt:'different'})).status,409);
 await writeFile('/var/lib/runner/e2e-receipt.json',JSON.stringify(receipt));
+const waitProgress=async(predicate)=>{
+  for(let attempt=0;attempt<100;attempt++){
+    const probe=await (await fetch('http://model-fixture:8000/probe')).json();
+    if(predicate(probe.slackDeliveries))return probe.slackDeliveries;
+    await new Promise(resolve=>setTimeout(resolve,50));
+  }
+  throw new Error('Pi Slack progress did not settle');
+};
+const initialDeliveries=await waitProgress(deliveries=>deliveries.some(d=>d.method==='/slack/reactions.add'&&d.timestamp==='1710000000.002'));
+assert(initialDeliveries.some(d=>d.name==='white_check_mark'&&d.channel==='C_FIXTURE'&&d.timestamp==='1710000000.002'));
+assert(!initialDeliveries.some(d=>d.name==='white_check_mark'&&d.timestamp==='1710000000.001'));
+assert(frames.filter(frame=>frame.type!=='text').every(frame=>frame.requestId==='container-tool'&&frame.sessionId===frames[0].sessionId));
 const probe=await (await fetch('http://model-fixture:8000/probe')).json();
 assert.equal(probe.calls,4);assert.equal(probe.wrapperCalls,1);assert(probe.slackPosts>0);
 assert.deepEqual(probe.lastProgressTarget,{channel:'C_FIXTURE',threadTs:'1710000000.001'});
@@ -52,6 +64,20 @@ assert(probe.lastWrapper.callId.includes('call_fixture'));
 assert.equal(probe.slackReplies,1); assert.equal(probe.lastReply.sessionId,receipt.sessionId);
 assert.deepEqual(probe.lastReply.args,['--channel','C_FIXTURE','--thread-ts','1710000000.001']);
 assert.equal(probe.lastReply.text,'fixture thread reply\n');
+const delayedBody={prompt:'fixture-progress-delay',requestId:'container-zero-tool',correlationKey:'slack:thread:C_DELAYED/1710000000.001',messageTs:'1710000000.003'};
+const delayedFrames=(await (await trigger({...delayedBody,stream:true})).text()).trim().split('\n').map(JSON.parse);
+assert.deepEqual(delayedFrames.at(-1).toolCalls,[]);
+const delayedDeliveries=await waitProgress(deliveries=>deliveries.some(d=>d.method==='/slack/chat.delete'&&d.channel==='C_DELAYED'));
+const delayedFooter=delayedDeliveries.find(d=>d.method==='/slack/chat.postMessage'&&d.channel==='C_DELAYED');
+assert(delayedFooter.text.includes('Neo thinking... 0 tool calls'));
+assert.equal(delayedFooter.blocks[0].elements[0].image_url,'http://ingress:8080/neo-thinking-v1.gif');
+assert(delayedDeliveries.some(d=>d.channel==='C_DELAYED'&&d.text?.includes('Neo responding')&&d.blocks[0].elements[0].image_url==='http://ingress:8080/neo-ai-still-v1.png'));
+assert(delayedDeliveries.some(d=>d.name==='white_check_mark'&&d.timestamp==='1710000000.003'));
+for(const [path,mime] of [['/neo-thinking-v1.gif','image/gif'],['/neo-working-v1.gif','image/gif'],['/neo-ai-still-v1.png','image/png']]){
+  const image=await fetch('http://ingress:8080'+path,{redirect:'manual'});
+  assert.equal(image.status,200);assert(image.headers.get('content-type').includes(mime));assert((await image.arrayBuffer()).byteLength>1000);
+}
+console.log('PASS: actual native Pi/Slack SDK image lifecycle, zero-tool grace, static output, exact-source check and public artwork');
 await assert.rejects(readFile('/tmp/pi-proof.png'));
 const imageBody={prompt:'fixture-image',requestId:'container-image',correlationKey:'cron:container-image'};
 const imageFrames=(await (await trigger({...imageBody,stream:true})).text()).trim().split('\n').map(JSON.parse);
@@ -117,6 +143,9 @@ const slackProbe=await (await fetch('http://model-fixture:8000/probe')).json();a
 assert(slackProbe.modelSelections.some(choice=>choice.model==='fixture-strong'&&choice.effort==='low'));
 assert.deepEqual(slackProbe.modelSelections.at(-1),{model:'fixture-balanced',effort:'medium'}); // A new human task reroutes, not the prior strong override.
 assert.deepEqual(slackProbe.lastReply.args,['--channel','C_SIGNED','--thread-ts','1710000000.010']);assert.equal(slackProbe.lastReply.sessionId,first[0].sessionId);
+const signedChecks=await waitProgress(deliveries=>deliveries.some(d=>d.name==='white_check_mark'&&d.timestamp==='1710000000.011'));
+assert(signedChecks.some(d=>d.name==='white_check_mark'&&d.timestamp==='1710000000.010'&&d.channel==='C_SIGNED'));
+assert(signedChecks.some(d=>d.name==='white_check_mark'&&d.timestamp==='1710000000.011'&&d.channel==='C_SIGNED'));
 console.log('PASS: signed Slack mention, disk queue, actor attribution, duplicate suppression, in-thread reply and non-mention continuation through real gateway/Pi');
 const routingBody={prompt:'fixture-escalation',routingTask:'Create a Google document',requestId:'container-escalation'};
 const routingFrames=(await (await trigger({...routingBody,stream:true})).text()).trim().split('\n').map(JSON.parse);

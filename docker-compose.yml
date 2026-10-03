@@ -288,6 +288,7 @@ services:
     environment:
       - NODE_ENV=production
       - OPENCODE_URL=http://opencode:4096
+      - RUNNER_BASE_URL=${RUNNER_BASE_URL:-}
       - THOR_RUNTIME=${THOR_RUNTIME:-opencode}
       - PI_EXECUTOR_URL=${PI_EXECUTOR_URL:-http://pi-executor:3002}
       - PI_STORAGE_PATH=${PI_STORAGE_PATH:-/var/lib/runner/pi.sqlite}

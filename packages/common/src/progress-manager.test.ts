@@ -652,7 +652,7 @@ describe("ProgressManager", () => {
     expect(getRegistrySize()).toBe(0);
   });
 
-  it("treats abort errors as completed (updates to Done)", async () => {
+  it("stops and deletes interrupted progress without claiming completion", async () => {
     const deps = mockSlackDeps();
     await sendTools(deps, 3); // cross threshold, message posted
 
@@ -668,11 +668,12 @@ describe("ProgressManager", () => {
     };
     await handleProgressEvent(progressTarget(deps, ""), abortEvent, transport);
 
-    // Should update to "Done" — not show an error
+    // Interruption is not a successful task, even when a footer already exists.
     expect(chat(deps).update).toHaveBeenCalledOnce();
     const updateCall = chat(deps).update.mock.calls[0][0] as { text: string };
-    expect(updateCall.text).toContain("Done");
-    expect(updateCall.text).not.toContain("Failed");
+    expect(updateCall.text).not.toContain("Done");
+    expect(chat(deps).delete).toHaveBeenCalledOnce();
+    expect(reactions(deps).add).not.toHaveBeenCalled();
   });
 
   it("suppresses abort errors even below threshold (no Slack message at all)", async () => {
@@ -879,10 +880,362 @@ it("renders authenticated Google auth wait instead of Done and stops ticking unt
     },
     recording,
   );
-  expect(updates.at(-1)).toContain("Waiting for Google sign-in");
+  expect(updates.at(-1)).toContain("waiting for Google sign-in");
   expect([...posts, ...updates].join("\n")).not.toContain("Done");
   expect(reactions).toEqual([]);
   const count = updates.length;
   await vi.advanceTimersByTimeAsync(120000);
   expect(updates).toHaveLength(count);
 });
+
+describe("scoped Neo activity lifecycle", () => {
+  const scope = { requestId: "request-1", sessionId: "same-session" };
+  const done = (fields: Partial<Extract<ProgressEvent, { type: "done" }>> = {}): ProgressEvent => ({
+    ...scope,
+    type: "done",
+    resumed: false,
+    status: "completed",
+    response: "answer",
+    toolCalls: [],
+    durationMs: 1,
+    ...fields,
+  });
+  async function begin(
+    deps: MockDeps,
+    requestId = scope.requestId,
+    base = "https://neo.example.test/viewer/path",
+  ) {
+    const target = { ...progressTarget(deps, "1710000000.002"), assetBaseUrl: base };
+    await handleProgressEvent(
+      target,
+      { ...scope, requestId, type: "start", resumed: false },
+      transport,
+    );
+    return target;
+  }
+
+  it("shows long zero-tool thinking once after grace, stops motion at output and reacts to the exact source", async () => {
+    const deps = mockSlackDeps();
+    const target = await begin(deps);
+    await vi.advanceTimersByTimeAsync(1499);
+    expect(chat(deps).postMessage).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(chat(deps).postMessage).toHaveBeenCalledOnce();
+    expect(chat(deps).postMessage.mock.calls[0][0]).toMatchObject({
+      text: expect.stringContaining("Neo thinking... 0 tool calls"),
+      blocks: [
+        {
+          type: "context",
+          elements: [
+            {
+              type: "image",
+              image_url: "https://neo.example.test/neo-thinking-v1.gif",
+              alt_text: "Neo activity",
+            },
+            { type: "mrkdwn", text: expect.stringContaining("Neo thinking") },
+          ],
+        },
+      ],
+    });
+    for (let index = 0; index < 20; index++)
+      await handleProgressEvent(
+        target,
+        { ...scope, type: "activity", activity: "responding" },
+        transport,
+      );
+    expect(chat(deps).update).toHaveBeenCalledOnce();
+    expect(JSON.stringify(chat(deps).update.mock.calls)).toContain("neo-ai-still-v1.png");
+    await handleProgressEvent(target, done(), transport);
+    expect(reactions(deps).add).toHaveBeenCalledExactlyOnceWith({
+      channel: "C123",
+      timestamp: "1710000000.002",
+      name: "white_check_mark",
+    });
+    expect(chat(deps).delete).toHaveBeenCalledOnce();
+    const count = chat(deps).update.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(120000);
+    await handleProgressEvent(
+      target,
+      { ...scope, type: "activity", activity: "working" },
+      transport,
+    );
+    await handleProgressEvent(target, done(), transport);
+    expect(chat(deps).update).toHaveBeenCalledTimes(count);
+    expect(reactions(deps).add).toHaveBeenCalledOnce();
+  });
+
+  it("does not invent work from heartbeats or retired legacy streams, but accepts the next real start", async () => {
+    const deps = mockSlackDeps();
+    const target = progressTarget(deps, "1710000000.002");
+    await handleProgressEvent(target, { type: "heartbeat" }, transport);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(chat(deps).postMessage).not.toHaveBeenCalled();
+    const start = { type: "start" as const, sessionId: "legacy", resumed: false };
+    await handleProgressEvent(target, start, transport);
+    const completed = {
+      type: "done" as const,
+      sessionId: "legacy",
+      resumed: false,
+      status: "completed" as const,
+      response: "answer",
+      toolCalls: [],
+      durationMs: 1,
+    };
+    await handleProgressEvent(target, completed, transport);
+    for (const event of [
+      { type: "heartbeat" },
+      { type: "tool", sessionId: "legacy", tool: "read", status: "completed" },
+      completed,
+    ] satisfies ProgressEvent[])
+      await handleProgressEvent(target, event, transport);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(chat(deps).postMessage).not.toHaveBeenCalled();
+    expect(reactions(deps).add).toHaveBeenCalledOnce();
+    await handleProgressEvent(target, { ...start, resumed: true }, transport);
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(chat(deps).postMessage).toHaveBeenCalledOnce();
+    expect(chat(deps).postMessage.mock.calls[0][0].text).toContain("Neo thinking... 0 tool calls");
+  });
+
+  it.each([0, 1, 2])(
+    "completes a fast %i-tool request independently of the footer threshold",
+    async (count) => {
+      const deps = mockSlackDeps();
+      const target = await begin(deps);
+      for (let index = 0; index < count; index++) {
+        const tool = { ...scope, type: "tool" as const, tool: "read", toolCallId: `call-${index}` };
+        await handleProgressEvent(target, { ...tool, status: "running" }, transport);
+        await handleProgressEvent(target, { ...tool, status: "completed" }, transport);
+      }
+      await handleProgressEvent(target, done(), transport);
+      expect(chat(deps).postMessage).not.toHaveBeenCalled();
+      expect(reactions(deps).add).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("counts each completed native tool once and switches to working on start without counting it", async () => {
+    const deps = mockSlackDeps();
+    const target = await begin(deps);
+    await vi.advanceTimersByTimeAsync(1500);
+    const event = { ...scope, type: "tool" as const, tool: "read", toolCallId: "call-1" };
+    await handleProgressEvent(target, { ...event, status: "running" }, transport);
+    expect(chat(deps).update.mock.calls.at(-1)?.[0].text).toContain("Neo working... 0 tool calls");
+    expect(JSON.stringify(chat(deps).update.mock.calls.at(-1))).toContain("neo-working-v1.gif");
+    await handleProgressEvent(target, { ...event, status: "completed" }, transport);
+    await handleProgressEvent(target, { ...event, status: "completed" }, transport);
+    await handleProgressEvent(
+      target,
+      { ...scope, type: "activity", activity: "thinking" },
+      transport,
+    );
+    expect(chat(deps).update.mock.calls.at(-1)?.[0].text).toContain("Neo thinking... 1 tool calls");
+  });
+
+  it.each([
+    "",
+    "not-a-url",
+    "file:///tmp/image",
+    "https://user:password@example.test",
+    "https://example.test?private=1",
+    "https://example.test#private",
+  ])("keeps unsafe/blank public base text-only (%s)", async (base) => {
+    const deps = mockSlackDeps();
+    await begin(deps, scope.requestId, base);
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(chat(deps).postMessage.mock.calls[0][0].blocks[0].elements).toEqual([
+      { type: "mrkdwn", text: expect.stringContaining("Neo thinking") },
+    ]);
+  });
+
+  it("drains a delayed initial post before completion so it cannot leave an animated orphan", async () => {
+    const deps = mockSlackDeps();
+    let resolve!: (value: { ts: string }) => void;
+    chat(deps).postMessage.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    const target = await begin(deps);
+    vi.advanceTimersByTime(1500);
+    const working = handleProgressEvent(
+      target,
+      { ...scope, type: "activity", activity: "working" },
+      transport,
+    );
+    const responding = handleProgressEvent(
+      target,
+      { ...scope, type: "activity", activity: "responding" },
+      transport,
+    );
+    const completion = handleProgressEvent(target, done(), transport);
+    expect(chat(deps).postMessage).toHaveBeenCalledOnce();
+    expect(reactions(deps).add).not.toHaveBeenCalled();
+    resolve({ ts: "late-post" });
+    await Promise.all([working, responding, completion]);
+    expect(chat(deps).postMessage).toHaveBeenCalledOnce();
+    expect(chat(deps).delete).toHaveBeenCalledExactlyOnceWith({ channel: "C123", ts: "late-post" });
+    expect(JSON.stringify(chat(deps).update.mock.calls)).not.toContain(".gif");
+    expect(reactions(deps).add).toHaveBeenCalledOnce();
+    expect(getRegistrySize()).toBe(0);
+  });
+
+  it("coalesces overlapping updates while preserving a single posted footer", async () => {
+    const deps = mockSlackDeps();
+    let resolve!: (value: { ts: string }) => void;
+    chat(deps).postMessage.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    const target = await begin(deps);
+    vi.advanceTimersByTime(1500);
+    const working = handleProgressEvent(
+      target,
+      { ...scope, type: "activity", activity: "working" },
+      transport,
+    );
+    const responding = handleProgressEvent(
+      target,
+      { ...scope, type: "activity", activity: "responding" },
+      transport,
+    );
+    resolve({ ts: "coalesced-post" });
+    await Promise.all([working, responding]);
+    expect(chat(deps).postMessage).toHaveBeenCalledOnce();
+    expect(chat(deps).update).toHaveBeenCalledOnce();
+    expect(chat(deps).update.mock.calls[0][0].text).toContain("Neo responding");
+  });
+
+  it("retires a delayed old post on same-session new start and rejects every stale event", async () => {
+    const deps = mockSlackDeps();
+    let resolve!: (value: { ts: string }) => void;
+    chat(deps).postMessage.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    const target = await begin(deps);
+    vi.advanceTimersByTime(1500);
+    const nextTarget = { ...target, sourceTs: "1710000000.003" };
+    const next = handleProgressEvent(
+      nextTarget,
+      { ...scope, requestId: "request-2", type: "start", resumed: true },
+      transport,
+    );
+    for (const event of [
+      { ...scope, type: "tool", tool: "stale-tool", status: "completed" },
+      { ...scope, type: "activity", activity: "working" },
+      { ...scope, type: "memory", action: "write", path: "/stale", source: "tool" },
+      {
+        ...scope,
+        type: "context",
+        providerID: "stale",
+        modelID: "stale",
+        tokens: 10,
+        limit: 100,
+        usagePercent: 10,
+      },
+      { ...scope, type: "error", error: "stale-error" },
+      done(),
+      { ...scope, type: "start", resumed: false },
+    ] satisfies ProgressEvent[])
+      await handleProgressEvent(target, event, transport);
+    resolve({ ts: "old-footer" });
+    await next;
+    expect(chat(deps).delete).toHaveBeenCalledExactlyOnceWith({
+      channel: "C123",
+      ts: "old-footer",
+    });
+    expect(reactions(deps).add).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(chat(deps).postMessage).toHaveBeenCalledTimes(2);
+    expect(chat(deps).postMessage.mock.calls[1][0].text).toContain("0 tool calls");
+    await handleProgressEvent(nextTarget, done({ requestId: "request-2" }), transport);
+    expect(reactions(deps).add).toHaveBeenCalledExactlyOnceWith({
+      channel: "C123",
+      timestamp: "1710000000.003",
+      name: "white_check_mark",
+    });
+  });
+
+  it("also drains an in-flight short auth-wait post when superseded", async () => {
+    const deps = mockSlackDeps();
+    let resolve!: (value: { ts: string }) => void;
+    chat(deps).postMessage.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    const target = await begin(deps);
+    const waiting = handleProgressEvent(target, done({ authWait: "google" }), transport);
+    await Promise.resolve();
+    const next = handleProgressEvent(
+      target,
+      { ...scope, requestId: "request-2", type: "start", resumed: true },
+      transport,
+    );
+    resolve({ ts: "wait-footer" });
+    await Promise.all([waiting, next]);
+    expect(chat(deps).delete).toHaveBeenCalledOnce();
+    expect(getRegistrySize()).toBe(0);
+    expect(reactions(deps).add).not.toHaveBeenCalled();
+  });
+
+  it("keeps a short OAuth wait visible and static, with no completion check or ticks", async () => {
+    const deps = mockSlackDeps();
+    const target = await begin(deps);
+    await handleProgressEvent(target, done({ authWait: "google" }), transport);
+    expect(chat(deps).postMessage.mock.calls[0][0].text).toContain("waiting for Google sign-in");
+    expect(JSON.stringify(chat(deps).postMessage.mock.calls)).toContain("neo-ai-still-v1.png");
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(chat(deps).postMessage).toHaveBeenCalledOnce();
+    expect(chat(deps).update).not.toHaveBeenCalled();
+    expect(reactions(deps).add).not.toHaveBeenCalled();
+  });
+
+  it("transport errors do not fail task completion and failed deletes leave only static progress", async () => {
+    const deps = mockSlackDeps();
+    const target = await begin(deps);
+    chat(deps).postMessage.mockRejectedValueOnce(new Error("unavailable"));
+    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(chat(deps).postMessage).toHaveBeenCalledTimes(2);
+    chat(deps).delete.mockRejectedValue(new Error("unavailable"));
+    reactions(deps).add.mockRejectedValue(new Error("unavailable"));
+    await expect(handleProgressEvent(target, done(), transport)).resolves.toBeUndefined();
+    expect(JSON.stringify(chat(deps).update.mock.calls.at(-1))).toContain("neo-ai-still-v1.png");
+    expect(chat(deps).update.mock.calls.at(-1)?.[0].text).toContain("✅ Done");
+    expect(getRegistrySize()).toBe(1);
+  });
+});
+
+it.each(["waiting", "error"] as const)(
+  "tries to remove motion when a %s static update is unavailable",
+  async (status) => {
+    const deps = mockSlackDeps();
+    const target = progressTarget(deps, "1710000000.002");
+    await sendTools(deps, 3);
+    chat(deps).update.mockRejectedValue(new Error("unavailable"));
+    await handleProgressEvent(
+      target,
+      {
+        type: "done",
+        sessionId: "legacy",
+        resumed: false,
+        status: status === "waiting" ? "completed" : "error",
+        authWait: status === "waiting" ? "google" : undefined,
+        error: status === "error" ? "task failed" : undefined,
+        response: "",
+        toolCalls: [],
+        durationMs: 1,
+      },
+      transport,
+    );
+    expect(chat(deps).delete).toHaveBeenCalledOnce();
+    expect(reactions(deps).add).not.toHaveBeenCalled();
+  },
+);

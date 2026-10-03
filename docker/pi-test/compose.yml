@@ -65,6 +65,7 @@ services:
       PI_EXECUTOR_URL: http://pi-executor:3002
       PI_STORAGE_PATH: /var/lib/runner/pi.sqlite
       PI_MODEL_BASE_URL: http://model-fixture:8000/v1
+      RUNNER_BASE_URL: http://ingress:8080
       PI_MODEL_ID: fixture-model
       PI_MODEL_API_KEY: fixture-only
       PI_MODEL_CONTEXT_WINDOW: "65536"

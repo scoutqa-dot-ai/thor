@@ -1,8 +1,21 @@
 import { z } from "zod/v4";
 
+/** Slack message timestamp metadata is optional for historical requests, never parsed from prompts. */
+export const SlackMessageTsSchema = z
+  .string()
+  .regex(/^\d+\.\d+$/)
+  .max(32);
+
+// Optional scope preserves historical callers; Pi supplies both on every event.
+const progressScopeFields = {
+  requestId: z.string().min(1).optional(),
+  sessionId: z.string().optional(),
+};
+
 // --- Individual event schemas ---
 
 export const ProgressStartSchema = z.object({
+  ...progressScopeFields,
   type: z.literal("start"),
   sessionId: z.string(),
   correlationKey: z.string().optional(),
@@ -10,12 +23,15 @@ export const ProgressStartSchema = z.object({
 });
 
 export const ProgressToolSchema = z.object({
+  ...progressScopeFields,
   type: z.literal("tool"),
+  toolCallId: z.string().optional(),
   tool: z.string(),
   status: z.enum(["running", "completed", "error"]),
 });
 
 export const ProgressMemorySchema = z.object({
+  ...progressScopeFields,
   type: z.literal("memory"),
   action: z.enum(["read", "write"]),
   path: z.string(),
@@ -23,11 +39,13 @@ export const ProgressMemorySchema = z.object({
 });
 
 export const ProgressDelegateSchema = z.object({
+  ...progressScopeFields,
   type: z.literal("delegate"),
   agent: z.string(),
 });
 
 export const ProgressContextSchema = z.object({
+  ...progressScopeFields,
   type: z.literal("context"),
   providerID: z.string(),
   modelID: z.string(),
@@ -37,6 +55,7 @@ export const ProgressContextSchema = z.object({
 });
 
 export const ProgressDoneSchema = z.object({
+  ...progressScopeFields,
   type: z.literal("done"),
   sessionId: z.string(),
   correlationKey: z.string().optional(),
@@ -51,17 +70,27 @@ export const ProgressDoneSchema = z.object({
 });
 
 export const ProgressErrorSchema = z.object({
+  ...progressScopeFields,
   type: z.literal("error"),
   error: z.string(),
 });
 
 export const ProgressHeartbeatSchema = z.object({
+  ...progressScopeFields,
   type: z.literal("heartbeat"),
 });
 
 // --- Discriminated union ---
 
+/** Observable phase only: never carries model reasoning or text deltas. */
+export const ProgressActivitySchema = z.object({
+  ...progressScopeFields,
+  type: z.literal("activity"),
+  activity: z.enum(["thinking", "working", "responding"]),
+});
+
 export const ProgressEventSchema = z.union([
+  ProgressActivitySchema,
   ProgressStartSchema,
   ProgressToolSchema,
   ProgressMemorySchema,

@@ -21,10 +21,6 @@ function tickDelayForElapsed(elapsedMs: number): number {
   return TICK_INTERVAL_MS; // 10s
 }
 
-function threadKey(channel: string, threadTs: string): string {
-  return `${channel}:${threadTs}`;
-}
-
 /** A run of consecutive identical tool calls. */
 interface ToolGroup {
   name: string;
@@ -189,10 +185,18 @@ function formatMemoryFileLabels(shortPaths: string[]): string {
 const BLOCK_TEXT_LIMIT = 3000;
 
 /** Wrap text in a context block for compact, muted rendering in Slack. */
-function contextBlocks(text: string): ProgressBlock[] {
+function contextBlocks(text: string, imageUrl?: string): ProgressBlock[] {
   const truncated =
     text.length > BLOCK_TEXT_LIMIT ? text.slice(0, BLOCK_TEXT_LIMIT - 1) + "…" : text;
-  return [{ type: "context", elements: [{ type: "mrkdwn", text: truncated }] }];
+  return [
+    {
+      type: "context",
+      elements: [
+        ...(imageUrl ? [{ type: "image", image_url: imageUrl, alt_text: "Neo activity" }] : []),
+        { type: "mrkdwn", text: truncated },
+      ],
+    },
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +215,8 @@ export type ProgressBlock = { type: string; [key: string]: unknown };
 export interface ProgressTarget<TTarget = unknown> {
   key: string;
   sourceTs: string;
+  /** Safe public asset origin, never a task/viewer URL. Unconfigured targets stay text-only. */
+  assetBaseUrl?: string;
   transportTarget: TTarget;
 }
 
@@ -233,14 +239,12 @@ const progressMessages = new Map<string, Map<string, ProgressEntry>>();
 const MAX_ERROR_ENTRIES_PER_THREAD = 5;
 
 function registerProgress(
-  channel: string,
-  threadTs: string,
+  key: string,
   messageTs: string,
   status: ProgressStatus,
   transport: ProgressTransport,
   target: unknown,
 ): void {
-  const key = threadKey(channel, threadTs);
   let thread = progressMessages.get(key);
   if (!thread) {
     thread = new Map();
@@ -260,13 +264,7 @@ function evictExcessErrors(thread: Map<string, ProgressEntry>): void {
   }
 }
 
-function updateProgressStatus(
-  channel: string,
-  threadTs: string,
-  messageTs: string,
-  status: ProgressStatus,
-): void {
-  const key = threadKey(channel, threadTs);
+function updateProgressStatus(key: string, messageTs: string, status: ProgressStatus): void {
   const thread = progressMessages.get(key);
   const entry = thread?.get(messageTs);
   if (entry) {
@@ -281,8 +279,7 @@ function updateProgressStatus(
  * Delete all non-error progress messages for a thread.
  * Skips deletion if there is still an active session running.
  */
-async function cleanupProgressMessages(channel: string, threadTs: string): Promise<void> {
-  const key = threadKey(channel, threadTs);
+async function cleanupProgressMessages(key: string): Promise<void> {
   const thread = progressMessages.get(key);
   const hasActiveSession = activeSessions.has(key);
   logInfo(log, "cleanup_progress", {
@@ -316,7 +313,7 @@ async function cleanupProgressMessages(channel: string, threadTs: string): Promi
         .delete(entry.target, messageTs)
         .then(() => {
           thread.delete(messageTs);
-          logInfo(log, "progress_deleted", { channel, ts: messageTs, threadTs });
+          logInfo(log, "progress_deleted", { key, ts: messageTs });
         })
         .catch((err) => {
           const message = err instanceof Error ? err.message : String(err);
@@ -339,10 +336,6 @@ async function cleanupProgressMessages(channel: string, threadTs: string): Promi
   }
 }
 
-async function onSessionEnd(channel: string, threadTs: string): Promise<void> {
-  await cleanupProgressMessages(channel, threadTs);
-}
-
 /** Visible for testing. */
 export function getRegistrySize(): number {
   let count = 0;
@@ -354,8 +347,11 @@ export function getRegistrySize(): number {
 
 /** Visible for testing. */
 export function clearRegistry(): void {
+  for (const session of activeSessions.values()) void session.abandon();
   progressMessages.clear();
   activeSessions.clear();
+  latestScopes.clear();
+  seenRequests.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -364,312 +360,324 @@ export function clearRegistry(): void {
 
 class ProgressSession {
   readonly sessionId: string | undefined;
-  private channel: string;
-  private threadTs: string;
-  private sourceTs: string;
-
+  readonly requestId: string | undefined;
   private messageTs?: string;
+  private sourceTs: string;
   private toolCallCount = 0;
-  /** Last 3 groups of consecutive identical tool calls. */
+  private completedTools = new Set<string>();
   private lastToolGroups: ToolGroup[] = [];
-  /** Recent memory activity from bootstrap/tool file access. */
   private recentMemory: MemoryActivity[] = [];
-  /** Recent delegated agents from subtask parts. */
   private recentDelegates: DelegateActivity[] = [];
-  /** Latest context-window usage update from the runner. */
   private latestContext?: ContextStatus;
-  private startTime: number;
+  private activity: "thinking" | "working" | "responding" = "thinking";
+  private startTime = Date.now();
   private lastUpdateTime = 0;
   private thresholdMet = false;
   private finished = false;
+  private abandoned = false;
   private tickTimer?: ReturnType<typeof setTimeout>;
+  private pending?: string;
+  private sending?: Promise<void>;
+  private inFlight?: Promise<boolean>;
 
   constructor(
     private progressTarget: ProgressTarget,
     private transport: ProgressTransport,
     sessionId?: string,
+    requestId?: string,
   ) {
-    this.channel = progressTarget.key;
-    this.threadTs = progressTarget.key;
     this.sourceTs = progressTarget.sourceTs;
     this.sessionId = sessionId;
-    this.startTime = Date.now();
-    this.scheduleNextTick();
+    this.requestId = requestId;
+    this.tickTimer = setTimeout(() => void this.onTick(), 1500);
+    this.tickTimer.unref?.();
   }
 
-  /**
-   * Stop ticking and refuse further updates without posting any final state.
-   * Used when this session is superseded by a newer one (e.g. a duplicate
-   * `start` arrives) so the orphaned tickTimer chain doesn't keep editing
-   * messages owned by the new session.
-   */
-  abandon(): void {
-    if (this.finished) return;
+  private stop(): void {
     this.finished = true;
-    if (this.tickTimer) {
-      clearTimeout(this.tickTimer);
-      this.tickTimer = undefined;
-    }
+    this.pending = undefined;
+    clearTimeout(this.tickTimer);
   }
 
-  private scheduleNextTick(): void {
-    if (this.finished) return;
-    const delay = tickDelayForElapsed(Date.now() - this.startTime);
-    this.tickTimer = setTimeout(() => {
-      void this.onTick();
-    }, delay);
+  /** Supersession stops ownership synchronously, then drains even a delayed initial post. */
+  async abandon(): Promise<void> {
+    this.abandoned = true;
+    this.stop();
+    await this.sending;
+    await this.inFlight;
+    await this.removeMessage();
   }
 
   private async onTick(): Promise<void> {
-    this.tickTimer = undefined;
     if (this.finished) return;
-    try {
-      if (this.thresholdMet && this.messageTs) {
-        if (Date.now() - this.lastUpdateTime >= UPDATE_INTERVAL_MS) {
-          await this.flush();
-        }
-      }
-    } finally {
-      this.scheduleNextTick();
+    this.thresholdMet = true;
+    await this.flush();
+    if (!this.finished) {
+      this.tickTimer = setTimeout(
+        () => void this.onTick(),
+        tickDelayForElapsed(Date.now() - this.startTime),
+      );
+      this.tickTimer.unref?.();
     }
   }
 
   setSourceTs(sourceTs: string): void {
-    this.sourceTs = sourceTs;
+    // Scoped receipts own their source; later events cannot retarget a reaction.
+    if (!this.requestId) this.sourceTs = sourceTs;
   }
 
-  async onToolCall(toolName: string): Promise<void> {
-    if (this.finished) {
-      logInfo(log, "tool_after_finish", {
-        channel: this.channel,
-        threadTs: this.threadTs,
-        tool: toolName,
-        ts: Date.now(),
-      });
+  async onActivity(activity: "thinking" | "working" | "responding"): Promise<void> {
+    if (this.finished || this.activity === activity) return;
+    this.activity = activity;
+    if (this.thresholdMet) await this.flush();
+  }
+
+  async onToolCall(event: Extract<ProgressEvent, { type: "tool" }>): Promise<void> {
+    if (this.finished) return;
+    if (event.status === "running") {
+      await this.onActivity("working");
       return;
     }
-
+    if (event.toolCallId) {
+      if (this.completedTools.has(event.toolCallId)) return;
+      this.completedTools.add(event.toolCallId);
+    }
     this.toolCallCount++;
-
-    const last = this.lastToolGroups[this.lastToolGroups.length - 1];
-    if (last && last.name === toolName) {
-      last.count++;
-    } else {
-      this.lastToolGroups.push({ name: toolName, count: 1 });
-    }
-    // Keep up to 5 groups; flush() decides how many to render
-    if (this.lastToolGroups.length > 5) {
-      this.lastToolGroups = this.lastToolGroups.slice(-5);
-    }
-
-    if (!this.thresholdMet) {
-      if (this.toolCallCount >= TOOL_CALL_THRESHOLD) {
-        this.thresholdMet = true;
-        await this.flush();
-      }
-      return;
-    }
-
-    if (Date.now() - this.lastUpdateTime >= UPDATE_INTERVAL_MS) {
+    const last = this.lastToolGroups.at(-1);
+    if (last?.name === event.tool) last.count++;
+    else this.lastToolGroups.push({ name: event.tool, count: 1 });
+    this.lastToolGroups = this.lastToolGroups.slice(-5);
+    // Legacy callers emit only completions; Pi separately projects its actual next phase.
+    if (!this.requestId) this.activity = "working";
+    if (!this.thresholdMet && this.toolCallCount >= TOOL_CALL_THRESHOLD) {
+      this.thresholdMet = true;
+      await this.flush();
+    } else if (this.thresholdMet && Date.now() - this.lastUpdateTime >= UPDATE_INTERVAL_MS) {
       await this.flush();
     }
   }
 
   async onMemory(activity: MemoryActivity): Promise<void> {
-    if (this.finished) return;
-    if (activity.action === "read" && isReadmePath(activity.path)) return;
-
-    this.recentMemory.push(activity);
-    if (this.recentMemory.length > 4) {
-      this.recentMemory = this.recentMemory.slice(-4);
-    }
-
-    if (this.thresholdMet) {
-      await this.flush();
-    }
+    if (this.finished || (activity.action === "read" && isReadmePath(activity.path))) return;
+    this.recentMemory = [...this.recentMemory, activity].slice(-4);
+    if (this.thresholdMet) await this.flush();
   }
 
   async onDelegate(activity: DelegateActivity): Promise<void> {
     if (this.finished) return;
-
-    this.recentDelegates.push(activity);
-    if (this.recentDelegates.length > 4) {
-      this.recentDelegates = this.recentDelegates.slice(-4);
-    }
-
-    if (this.thresholdMet) {
-      await this.flush();
-    }
+    this.recentDelegates = [...this.recentDelegates, activity].slice(-4);
+    if (this.thresholdMet) await this.flush();
   }
 
   async onContext(status: ContextStatus): Promise<void> {
     if (this.finished) return;
-    const prevRendered = renderedContextText(this.latestContext);
-    if (prevRendered !== undefined && isBogusContextStatus(status)) {
-      return;
-    }
+    const previous = renderedContextText(this.latestContext);
+    if (previous !== undefined && isBogusContextStatus(status)) return;
     this.latestContext = status;
-    const nextRendered = renderedContextText(this.latestContext);
-
-    if (!this.thresholdMet) {
-      return;
-    }
-
-    if (prevRendered === nextRendered) {
-      return;
-    }
-
+    const next = renderedContextText(status);
     if (
-      prevRendered === undefined ||
-      nextRendered === undefined ||
-      Date.now() - this.lastUpdateTime >= UPDATE_INTERVAL_MS
-    ) {
+      this.thresholdMet &&
+      previous !== next &&
+      (previous === undefined ||
+        next === undefined ||
+        Date.now() - this.lastUpdateTime >= UPDATE_INTERVAL_MS)
+    )
       await this.flush();
-    }
   }
 
   async finish(status: "completed" | "error" | "waiting", errorMsg?: string): Promise<void> {
     logInfo(log, "session_finish", {
-      channel: this.channel,
-      threadTs: this.threadTs,
+      key: this.progressTarget.key,
+      sessionId: this.sessionId,
+      requestId: this.requestId,
       status,
       alreadyFinished: this.finished,
       toolCallCount: this.toolCallCount,
       hasMessageTs: !!this.messageTs,
       thresholdMet: this.thresholdMet,
-      ts: Date.now(),
     });
     if (this.finished) return;
-    this.finished = true;
-    if (this.tickTimer) {
-      clearTimeout(this.tickTimer);
-      this.tickTimer = undefined;
-    }
-
-    // Treat aborts as successful completions — the session was intentionally
-    // interrupted (e.g. new message arrived) and will be re-triggered.
-    if (status === "error" && errorMsg && /abort/i.test(errorMsg)) {
-      logInfo(log, "session_abort_as_completed", {
-        channel: this.channel,
-        threadTs: this.threadTs,
-        errorMsg,
-        toolCallCount: this.toolCallCount,
-      });
-      status = "completed";
-      errorMsg = undefined;
-    }
-
+    this.stop();
+    await this.sending;
+    if (this.abandoned) return;
     if (status === "waiting") {
-      if (this.messageTs)
-        await this.update("⏳ Waiting for Google sign-in — the task will automatically continue.");
+      // Waiting is visible even for a short request, with no moving mark.
+      const delivered = await this.sendText(
+        "⏳ Neo waiting for Google sign-in — the task will automatically continue.",
+        "terminal",
+      );
+      if (!delivered) await this.removeMessage();
       return;
     }
-
-    // Always post errors so failures are never invisible in Slack.
-    if (!this.thresholdMet && status === "completed") return;
-
-    const elapsed = formatDuration(Date.now() - this.startTime);
-
     if (status === "completed") {
-      // Only update an existing progress message — never create a new "Done" post.
-      // If no progress message was posted (e.g. bot replied before threshold), stay silent.
-      if (this.messageTs) {
-        const text = `✅ Done — ${this.toolCallCount} tool calls in ${elapsed}`;
-        await this.update(text);
-        updateProgressStatus(this.channel, this.threadTs, this.messageTs, "completed");
+      const completedText = `✅ Done — ${this.toolCallCount} tool calls in ${formatDuration(Date.now() - this.startTime)}`;
+      if (this.messageTs) await this.sendText(completedText, "terminal");
+      if (!this.abandoned && this.sourceTs) {
+        try {
+          await this.transport.addReaction(
+            this.progressTarget.transportTarget,
+            this.sourceTs,
+            "white_check_mark",
+          );
+        } catch {
+          logError(log, "reaction_error", "Progress completion reaction unavailable");
+        }
       }
-      return;
-    }
-
-    const text = `❌ Failed — ${errorMsg || "session error"} after ${this.toolCallCount} tool calls`;
-    if (this.messageTs) {
-      await this.update(text);
-      updateProgressStatus(this.channel, this.threadTs, this.messageTs, "error");
-    } else {
-      await this.transport
-        .addReaction(this.progressTarget.transportTarget, this.sourceTs, "x")
-        .catch((err: unknown) =>
-          logError(log, "reaction_error", err instanceof Error ? err.message : String(err)),
-        );
+      await this.removeMessage(completedText);
+    } else if (errorMsg && /abort|interrupt|supersed/i.test(errorMsg)) {
+      await this.removeMessage();
+    } else if (this.messageTs) {
+      const delivered = await this.sendText(
+        `❌ Neo failed — ${errorMsg || "session error"} after ${this.toolCallCount} tool calls`,
+        "terminal",
+      );
+      if (delivered && this.messageTs)
+        updateProgressStatus(this.progressTarget.key, this.messageTs, "error");
+      else await this.removeMessage();
+    } else if (this.sourceTs) {
+      try {
+        await this.transport.addReaction(this.progressTarget.transportTarget, this.sourceTs, "x");
+      } catch {
+        logError(log, "reaction_error", "Progress failure reaction unavailable");
+      }
     }
   }
 
   private async flush(): Promise<void> {
-    const elapsed = formatDuration(Date.now() - this.startTime);
+    if (this.finished) return;
     const context = shouldRenderContext(this.latestContext) ? this.latestContext : undefined;
     const hasExtras = this.recentMemory.length > 0 || this.recentDelegates.length > 0 || !!context;
-    const toolLimit = hasExtras ? 5 : 3;
-    const toolGroups = this.lastToolGroups.slice(-toolLimit);
-
-    const header = `⏳ Working... ${this.toolCallCount} tool calls | ${elapsed} elapsed`;
-    const lines: string[] = [];
-
-    if (toolGroups.length > 0 && hasExtras) {
-      lines.push(header);
-      lines.push(`• tools: ${formatToolGroups(toolGroups)}`);
-    } else if (toolGroups.length > 0) {
-      lines.push(`${header} | latest: ${formatToolGroups(toolGroups)}`);
-    } else {
-      lines.push(header);
-    }
-
-    if (this.recentMemory.length > 0) {
+    const tools = this.lastToolGroups.slice(-(hasExtras ? 5 : 3));
+    const label = {
+      thinking: "Neo thinking",
+      working: "Neo working",
+      responding: "Neo responding",
+    }[this.activity];
+    const header = `⏳ ${label}... ${this.toolCallCount} tool calls | ${formatDuration(Date.now() - this.startTime)} elapsed`;
+    const lines = [
+      tools.length && !hasExtras ? `${header} | latest: ${formatToolGroups(tools)}` : header,
+    ];
+    if (tools.length && hasExtras) lines.push(`• tools: ${formatToolGroups(tools)}`);
+    if (this.recentMemory.length)
       lines.push(`• memory: ${formatMemoryActivities(this.recentMemory)}`);
-    }
-    if (this.recentDelegates.length > 0) {
+    if (this.recentDelegates.length)
       lines.push(`• agents: ${formatDelegates(this.recentDelegates)}`);
-    }
-    if (context) {
-      lines.push(`• context: ${formatContextStatus(context)}`);
-    }
-
-    const text = lines.join("\n");
-
-    // Set before the awaited network call so concurrent flushes (e.g. a
-    // heartbeat tick and an incoming tool event firing in the same turn) see
-    // the updated timestamp and throttle correctly.
+    if (context) lines.push(`• context: ${formatContextStatus(context)}`);
     this.lastUpdateTime = Date.now();
-
-    if (this.messageTs) {
-      await this.update(text);
-    } else {
-      await this.post(text);
+    // Latest desired payload wins while one network operation is in flight.
+    this.pending = lines.join("\n");
+    if (!this.sending) {
+      this.sending = (async () => {
+        while (this.pending && !this.finished) {
+          const text = this.pending;
+          this.pending = undefined;
+          await this.sendText(text, "active");
+        }
+      })();
+      this.sending = this.sending.finally(() => {
+        this.sending = undefined;
+        if (this.pending && !this.finished) void this.flush();
+      });
     }
+    await this.sending;
   }
 
-  private async post(text: string): Promise<void> {
-    try {
-      const blocks = contextBlocks(text);
-      const result = await this.transport.post(this.progressTarget.transportTarget, text, blocks);
-      this.messageTs = result.ts;
-      // Register immediately — this is the key to avoiding the race condition
-      registerProgress(
-        this.channel,
-        this.threadTs,
-        this.messageTs,
-        "in_progress",
-        this.transport,
-        this.progressTarget.transportTarget,
-      );
-      logInfo(log, "progress_posted", { channel: this.channel, ts: this.messageTs });
-    } catch (err) {
-      logError(log, "post_error", err instanceof Error ? err.message : String(err));
-    }
+  private async sendText(text: string, phase: "active" | "terminal"): Promise<boolean> {
+    if (this.abandoned) return false;
+    const path =
+      phase === "terminal" || this.activity === "responding"
+        ? "/neo-ai-still-v1.png"
+        : this.activity === "working"
+          ? "/neo-working-v1.gif"
+          : "/neo-thinking-v1.gif";
+    const blocks = contextBlocks(
+      text,
+      publicProgressAssetUrl(this.progressTarget.assetBaseUrl, path),
+    );
+    this.inFlight = (async () => {
+      try {
+        if (this.messageTs)
+          await this.transport.update(
+            this.progressTarget.transportTarget,
+            this.messageTs,
+            text,
+            blocks,
+          );
+        else {
+          const result = await this.transport.post(
+            this.progressTarget.transportTarget,
+            text,
+            blocks,
+          );
+          if (!result.ts) return false;
+          this.messageTs = result.ts;
+          registerProgress(
+            this.progressTarget.key,
+            result.ts,
+            "in_progress",
+            this.transport,
+            this.progressTarget.transportTarget,
+          );
+          logInfo(log, "progress_posted", { key: this.progressTarget.key, ts: result.ts });
+        }
+        return true;
+      } catch {
+        logError(log, "send_error", "Progress delivery unavailable");
+        return false;
+      }
+    })();
+    const delivered = await this.inFlight;
+    this.inFlight = undefined;
+    return delivered;
   }
 
-  private async update(text: string): Promise<void> {
+  private async removeMessage(stoppedText = "Neo stopped"): Promise<void> {
     if (!this.messageTs) return;
+    const ts = this.messageTs;
+    // Stop motion before deletion: a transient delete failure must not leave an active GIF.
     try {
-      const blocks = contextBlocks(text);
       await this.transport.update(
         this.progressTarget.transportTarget,
-        this.messageTs,
-        text,
-        blocks,
+        ts,
+        stoppedText,
+        contextBlocks(
+          stoppedText,
+          publicProgressAssetUrl(this.progressTarget.assetBaseUrl, "/neo-ai-still-v1.png"),
+        ),
       );
-    } catch (err) {
-      logError(log, "update_error", err instanceof Error ? err.message : String(err));
+    } catch {
+      logError(log, "update_error", "Progress stop update unavailable");
     }
+    updateProgressStatus(this.progressTarget.key, ts, "completed");
+    try {
+      await this.transport.delete(this.progressTarget.transportTarget, ts);
+      const key = this.progressTarget.key;
+      const thread = progressMessages.get(key);
+      thread?.delete(ts);
+      if (thread?.size === 0) progressMessages.delete(key);
+      this.messageTs = undefined;
+    } catch {
+      logError(log, "delete_error", "Progress cleanup unavailable");
+    }
+  }
+}
+
+/** Build only fixed public artwork URLs; invalid/credential-bearing bases stay text-only. */
+function publicProgressAssetUrl(base: string | undefined, path: string): string | undefined {
+  if (!base?.trim()) return undefined;
+  try {
+    const url = new URL(base);
+    if (
+      !["http:", "https:"].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    )
+      return undefined;
+    return new URL(path, url).href;
+  } catch {
+    return undefined;
   }
 }
 
@@ -678,6 +686,9 @@ class ProgressSession {
 // ---------------------------------------------------------------------------
 
 const activeSessions = new Map<string, ProgressSession>();
+// Bounded replay evidence also rejects late events after a terminal footer was removed.
+const latestScopes = new Map<string, { sessionId?: string; requestId?: string }>();
+const seenRequests = new Set<string>();
 
 /**
  * Handle a progress event for a specific thread.
@@ -712,18 +723,42 @@ export async function handleProgressEvent(
     ts: Date.now(),
   });
 
+  // A transport heartbeat is not evidence of an active task.
+  if (event.type === "heartbeat") return;
+
   if (event.type === "start") {
     // Abandon any prior session on this thread so its tickTimer stops and it
     // can no longer post or edit messages — otherwise the orphan keeps
     // editing the OLD progress message while the new session runs.
     const prior = activeSessions.get(key);
-    if (prior) prior.abandon();
-    activeSessions.set(key, new ProgressSession(target, transport, event.sessionId));
+    if (event.requestId) {
+      const identity = `${key}:${event.requestId}`;
+      if (seenRequests.has(identity)) return;
+      seenRequests.add(identity);
+      const oldest = seenRequests.values().next().value;
+      if (seenRequests.size > 2000 && oldest !== undefined) seenRequests.delete(oldest);
+    }
+    latestScopes.set(key, { sessionId: event.sessionId, requestId: event.requestId });
+    const oldestKey = latestScopes.keys().next().value;
+    if (latestScopes.size > 1000 && oldestKey !== undefined) latestScopes.delete(oldestKey);
+    activeSessions.set(
+      key,
+      new ProgressSession(target, transport, event.sessionId, event.requestId),
+    );
+    if (prior) await prior.abandon();
     return;
   }
 
   let session = activeSessions.get(key);
+  const scope = session ?? latestScopes.get(key);
+  if (
+    (scope?.requestId && event.requestId !== scope.requestId) ||
+    (scope?.sessionId && event.sessionId && event.sessionId !== scope.sessionId)
+  )
+    return;
+
   if (!session) {
+    if (event.requestId || scope) return; // Known retired streams require a new start.
     // Late-arriving event without start — create session on the fly
     session = new ProgressSession(target, transport);
     activeSessions.set(key, session);
@@ -731,8 +766,11 @@ export async function handleProgressEvent(
   session.setSourceTs(target.sourceTs);
 
   switch (event.type) {
+    case "activity":
+      await session.onActivity(event.activity);
+      break;
     case "tool":
-      await session.onToolCall(event.tool);
+      await session.onToolCall(event);
       break;
     case "memory":
       await session.onMemory({ action: event.action, path: event.path, source: event.source });
@@ -769,14 +807,18 @@ export async function handleProgressEvent(
             : "error",
         event.error,
       );
-      activeSessions.delete(key);
-      if (!event.authWait) await onSessionEnd(target.key, target.key);
+      if (activeSessions.get(key) === session && !event.authWait) {
+        activeSessions.delete(key);
+        await cleanupProgressMessages(target.key);
+      }
       break;
     }
     case "error":
       await session.finish("error", event.error);
-      activeSessions.delete(key);
-      await onSessionEnd(target.key, target.key);
+      if (activeSessions.get(key) === session) {
+        activeSessions.delete(key);
+        await cleanupProgressMessages(target.key);
+      }
       break;
   }
 }

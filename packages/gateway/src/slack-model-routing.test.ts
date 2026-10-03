@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { SlackThreadEvent } from "./slack.js";
 import { createSlackClient } from "./slack-api.js";
-import { extractSlackModelRouting } from "./slack-model-routing.js";
+import { extractSlackModelRouting, selectSlackRequestSource } from "./slack-model-routing.js";
 import { executeBatchDispatchPlan, planBatchDispatch } from "./service.js";
 import { persistBatchRunnerRequest } from "./batch-request.js";
 
@@ -20,6 +20,33 @@ async function listen(server: Server): Promise<string> {
 }
 
 describe("trusted current Slack model routing", () => {
+  it("selects the current human source timestamp independently of thread roots, history and bystanders", async () => {
+    const current = {
+      ...event("U_CURRENT", "current request", "1710000000.002"),
+      thread_ts: "1710000000.001",
+      history: [{ user: "U_CURRENT", ts: "1710000000.999", text: "not current" }],
+    };
+    const events = [
+      event("U_CURRENT", "older", "1710000000.001"),
+      current,
+      event("U_OTHER", "bystander", "1710000000.003"),
+      { ...event("U_CURRENT", "bot", "1710000000.004"), bot_id: "B123" },
+      { ...event("U_CURRENT", "bot subtype", "1710000000.005"), subtype: "bot_message" },
+    ];
+    expect(selectSlackRequestSource(events, "U_CURRENT")).toBe(current);
+    expect(selectSlackRequestSource(events, undefined)).toBeUndefined();
+    const plan = await planBatchDispatch({
+      slackEvents: events,
+      cronEvents: [],
+      githubEvents: [],
+      approvalOutcomes: [],
+      correlationKey: "slack:thread:C123/1710000000.001",
+      triggerSlackId: "U_CURRENT",
+      deps: { runnerUrl: "http://runner.invalid" },
+      slackDirectoryForChannel: () => ({ directory: "/workspace/repos/fixture" }),
+    });
+    expect(plan).toMatchObject({ kind: "dispatch", options: { messageTs: "1710000000.002" } });
+  });
   it("selects only the newest event for the trusted actor, ignores thread fields, bystanders and older directives", () => {
     const current = {
       ...event("U1", "<@UBOT> [profile:fast thinking:low] List Jira issues\nwith status"),

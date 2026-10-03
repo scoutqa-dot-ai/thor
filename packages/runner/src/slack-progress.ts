@@ -10,15 +10,18 @@ export interface SlackProgressTransportTarget {
   threadTs: string;
 }
 
+/** Resolve a thread delivery target while retaining the current human message for reactions. */
 export function resolveSlackProgressTarget(
   correlationKey: string | undefined,
+  source?: { messageTs?: string; runnerBaseUrl?: string },
 ): ProgressTarget<SlackProgressTransportTarget> | undefined {
   const match = /^slack:thread:([^/]+)\/(.+)$/.exec(correlationKey ?? "");
   if (!match) return undefined;
   const [, channel, threadTs] = match;
   return {
     key: `${channel}:${threadTs}`,
-    sourceTs: threadTs,
+    sourceTs: source?.messageTs ?? threadTs,
+    assetBaseUrl: source?.runnerBaseUrl,
     transportTarget: { channel, threadTs },
   };
 }

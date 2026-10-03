@@ -28,7 +28,8 @@ import {
   type IssueCommentEvent,
 } from "./github.js";
 import { addReaction, postMessage, updateMessage, type SlackDeps } from "./slack-api.js";
-import { extractSlackModelRouting } from "./slack-model-routing.js";
+import { extractSlackModelRouting, selectSlackRequestSource } from "./slack-model-routing.js";
+import { SlackMessageTsSchema } from "@thor/common";
 import {
   addSlackGateRejectedReaction,
   evaluateSlackChannelGate,
@@ -56,6 +57,8 @@ export interface RunnerTriggerOptions extends Pick<
 > {
   /** Stable queued batch identity, retained across uncertain delivery. */
   requestId?: string;
+  /** Current trusted requester's message, not the thread root or rendered history. */
+  messageTs?: string;
   prompt: string;
   correlationKey: string;
   triggerSlackId?: string;
@@ -583,6 +586,7 @@ async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<Trigg
       interrupt: options.interrupt,
       directory: options.directory,
       ...(options.triggerSlackId ? { triggerSlackId: options.triggerSlackId } : {}),
+      ...(options.messageTs ? { messageTs: options.messageTs } : {}),
       ...(options.triggerGithubLogin ? { triggerGithubLogin: options.triggerGithubLogin } : {}),
     }),
   });
@@ -782,6 +786,10 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     return { kind: "drop", logPrefix, reason: routing.error.message };
   }
 
+  const sourceTs = SlackMessageTsSchema.safeParse(
+    selectSlackRequestSource(input.slackEvents, input.triggerSlackId)?.ts,
+  );
+
   const prompt =
     parts.length === 1 ? parts[0].singlePrompt : parts.map((part) => part.mixedPrompt).join("\n\n");
 
@@ -793,6 +801,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
       prompt,
       correlationKey: input.correlationKey,
       ...routing.value,
+      ...(sourceTs.success ? { messageTs: sourceTs.data } : {}),
       ...(input.triggerSlackId ? { triggerSlackId: input.triggerSlackId } : {}),
       ...(input.triggerGithubLogin ? { triggerGithubLogin: input.triggerGithubLogin } : {}),
       directory: directories[0],

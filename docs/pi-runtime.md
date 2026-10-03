@@ -62,11 +62,39 @@ For non-streamed acceptance, omit `stream`; the response includes `anchorId` and
 3. Expose ingress port 8080 through your HTTPS reverse proxy or a development tunnel. In the Slack app set Event Subscriptions to `https://HOST/slack/events` and Interactivity to `https://HOST/slack/interactivity`. Slack's URL verification should succeed. This is HTTP Events API, not Socket Mode.
 4. Install the [Slack manifest](examples/slack.json) scopes/events and reinstall the app if scopes changed. Include `app_mention` and `message.*` subscriptions for non-mention thread follow-ups. Private/DM/shared test channels need their ID in `slack.private_channel_allowlist` in `thor.json`.
 5. Open `/dashboard`, connect your codex-lb subscription(s), and select an available model using `PI_MODEL_ID`; this setting is independent of legacy OpenCode's model config. Pi defaults to `gpt-5.4`; use `gpt-5.6-sol` only if your pool advertises it. Do not assume the named `codex-lb-data` volume contains accounts from the previous bind mount or another Compose project—migrate/restore privately or reconnect them.
-6. Mention the bot: `@Neo Read README and summarize this repository in three bullets. Reply here; do not modify files or call external write tools.` Expect a substantive in-thread reply, not merely a viewer entry. Fast runs can finish before the progress-card threshold; no progress card is not itself a failure.
+6. Mention the bot: `@Neo Read README and summarize this repository in three bullets. Reply here; do not modify files or call external write tools.` Expect a substantive in-thread reply and a ✅ reaction on that request message. Fast runs can finish before the footer appears; no footer is not itself a failure.
 7. Reply in that same thread without mentioning the bot: `What setup step should I try first?` Check that the conversation resumes. In `/admin/sessions`, its current runtime ID should start with `pi-`; the trigger viewer should show Pi model/tool history.
 8. Test human ownership with a low-risk GWS command after configuring Google OAuth, `SLACK_TEAM_ID` and the Slack app's Messages Tab. The trusted requester receives a private OAuth DM without a profile-email lookup or Google mapping. Confirm the Google account/Slack recipient and connect. Pi automatically continues the original task without command approval or a manual retry. An optional `google_workspace_email` restricts account choice. A newer human request or interrupt supersedes waiting work; another requester must not inherit it. Sign-in does not prove the Google operation succeeded. See [Google Workspace](google-workspace.md).
 
 Watch deployment logs with `docker compose -f docker-compose.yml -f docker-compose.pi.yml logs -f gateway runner remote-cli pi-executor` (append the platform override if selected). Signature errors, missing repo mapping/private allowlist, invalid Falcon credentials, unloaded AppArmor policy, unconnected model accounts, and missing Google identity are configuration failures, not reasons to bypass authorization. The deterministic tests use dummy Slack/Google/model fixtures; they do not send real Slack messages or validate real accounts.
+
+## Slack activity footer
+
+Long requests show a compact footer after a 1.5s grace, or three completed tool
+calls. Its original DS mark animates beside **Neo thinking** during model work
+and **Neo working** during tool execution. Visible output switches it to a still
+**Neo responding** mark; Google sign-in waits stay static and do not get a check.
+Completed turns react ✅ to the current request message, including thread
+follow-ups and short/zero-tool turns. Errors, interruption and superseded turns
+do not get a completion check. A check marks normal turn completion; read the
+reply for the actual Google/provider operation outcome.
+
+After syncing this change, rebuild `ingress`, `gateway` and `runner`, then use
+the existing `docker compose up -d`. Keep `RUNNER_BASE_URL` pointed at the public
+ingress HTTP(S) origin without credentials, query or fragment. Slack's image
+fetcher must retrieve `/neo-thinking-v1.gif`, `/neo-working-v1.gif` and
+`/neo-ai-still-v1.png` without login. Blank/invalid bases produce text-only
+footers. Slack controls GIF playback/reduced motion; labels remain readable.
+Artwork provenance and rights checks are in
+[the design review](design-review/neo-slack-progress-assets.md).
+
+Trusted trigger callers may supply optional `messageTs` (a Slack timestamp),
+separate from the thread's `correlationKey`; the gateway supplies and freezes
+the latest current-requester timestamp. Historical requests without it fall back
+to the thread root. OAuth resumes retain the original human source. Pi NDJSON
+frames now carry `requestId` and `sessionId`, with an additional `activity` frame
+whose value is `thinking`, `working` or `responding`; it contains no reasoning
+content. Tool start/end frames share `toolCallId` and represent one call.
 
 ## Configuration
 

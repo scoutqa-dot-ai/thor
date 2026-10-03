@@ -37,6 +37,8 @@ import { piConversationMetadataDoc } from "./pi-runner-state.js";
 import { executeBatchDispatchPlan, planBatchDispatch } from "../../gateway/src/service.js";
 import { persistBatchRunnerRequest } from "../../gateway/src/batch-request.js";
 import { createConfigLoader } from "@thor/common";
+import { clearRegistry, type ProgressEvent } from "@thor/common";
+import { createSlackProgressTransport } from "./slack-progress.js";
 
 async function listen(server: Server): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -102,6 +104,60 @@ function respond(res: ServerResponse, content: { text: string } | { tool: string
     },
   });
   res.end();
+}
+
+function respondAfterThinking(res: ServerResponse) {
+  res.writeHead(200, { "content-type": "text/event-stream" });
+  let sequence_number = 0;
+  const emit = (event: object) =>
+    res.write(`data: ${JSON.stringify({ ...event, sequence_number: sequence_number++ })}\n\n`);
+  emit({ type: "response.created", response: { id: "resp_thought" } });
+  const reasoning = {
+    type: "reasoning",
+    id: "rs_thought",
+    summary: [{ type: "summary_text", text: "private-reasoning-fixture" }],
+  };
+  emit({
+    type: "response.output_item.added",
+    output_index: 0,
+    item: { ...reasoning, summary: [] },
+  });
+  emit({
+    type: "response.reasoning_summary_text.delta",
+    output_index: 0,
+    summary_index: 0,
+    delta: "private-reasoning-fixture",
+  });
+  const timer = setTimeout(() => {
+    emit({ type: "response.output_item.done", output_index: 0, item: reasoning });
+    const item = {
+      type: "message",
+      id: "msg_thought",
+      role: "assistant",
+      status: "completed",
+      content: [{ type: "output_text", text: "Visible answer", annotations: [] }],
+    };
+    emit({ type: "response.output_item.added", output_index: 1, item: { ...item, content: [] } });
+    for (const delta of ["Visible", " ", "answer"])
+      emit({ type: "response.output_text.delta", output_index: 1, content_index: 0, delta });
+    emit({ type: "response.output_item.done", output_index: 1, item });
+    emit({
+      type: "response.completed",
+      response: {
+        id: "resp_thought",
+        status: "completed",
+        usage: {
+          input_tokens: 20,
+          output_tokens: 7,
+          total_tokens: 27,
+          input_tokens_details: { cached_tokens: 2 },
+          output_tokens_details: { reasoning_tokens: 1 },
+        },
+      },
+    });
+    res.end();
+  }, 1800);
+  res.once("close", () => clearTimeout(timer));
 }
 
 let directory: string;
@@ -230,6 +286,10 @@ beforeEach(async () => {
       hold = res;
       return;
     }
+    if (serialized.includes("fixture-thinking-delay")) {
+      respondAfterThinking(res);
+      return;
+    }
     if (serialized.includes("image-round") && !toolRound) {
       toolRound = true;
       respond(res, { tool: "read_image", args: { path: imagePath } });
@@ -274,6 +334,7 @@ beforeEach(async () => {
   await openRunner();
 });
 afterEach(async () => {
+  clearRegistry();
   hold?.destroy();
   await closeServer(runnerServer);
   await runner.close();
@@ -572,7 +633,9 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
         code: "ENOENT",
       });
       const frames = await stream({ prompt: "image-round", requestId: "image" });
-      expect(frames).toContainEqual({ type: "tool", tool: "read_image", status: "completed" });
+      expect(frames).toContainEqual(
+        expect.objectContaining({ type: "tool", tool: "read_image", status: "completed" }),
+      );
       expect(requests).toHaveLength(2);
       const nextRequest = JSON.stringify(requests[1]);
       expect(nextRequest).toContain('"type":"input_image"');
@@ -742,21 +805,25 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
       triggerSlackId: "UACTOR",
     });
     expect(frames[0]).toMatchObject({ type: "start", sessionId: expect.stringMatching(/^pi-/) });
-    expect(frames).toContainEqual({ type: "tool", tool: "write", status: "completed" });
+    expect(frames).toContainEqual(
+      expect.objectContaining({ type: "tool", tool: "write", status: "completed" }),
+    );
     expect(frames.some((frame) => frame.type === "text")).toBe(true);
     expect(frames.at(-1)).toMatchObject({
       type: "done",
       status: "completed",
       response: '<answer> & "fixture"',
     });
-    expect(frames).toContainEqual({
-      type: "context",
-      providerID: "codex-lb",
-      modelID: "fixture-model",
-      tokens: 27,
-      limit: 65536,
-      usagePercent: 0,
-    });
+    expect(frames).toContainEqual(
+      expect.objectContaining({
+        type: "context",
+        providerID: "codex-lb",
+        modelID: "fixture-model",
+        tokens: 27,
+        limit: 65536,
+        usagePercent: 0,
+      }),
+    );
     expect(await readFile(join(directory, "remote-only.txt"), "utf8")).toBe("<remote-result>");
     expect(executorRequests.some((request) => request.operation.type === "writeFile")).toBe(true);
     await expect(readFile(join(process.cwd(), "remote-only.txt"), "utf8")).rejects.toMatchObject({
@@ -803,7 +870,9 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
       requestId: "skill",
       triggerGithubLogin: "alice",
     });
-    expect(frames).toContainEqual({ type: "tool", tool: "load_skill", status: "completed" });
+    expect(frames).toContainEqual(
+      expect.objectContaining({ type: "tool", tool: "load_skill", status: "completed" }),
+    );
     const prompt = JSON.stringify(requests[0]);
     expect(prompt).toContain("You are Neo");
     expect(prompt).not.toContain("You are Thor");
@@ -1174,6 +1243,318 @@ async function editPiNativeDocuments(change: (tx: Tx, id: ConversationId) => Pro
   }
 }
 
+describe("native Pi activity through the real Slack SDK", () => {
+  async function slackFixture(reactionError?: "already_reacted" | "invalid_auth") {
+    const deliveries: Array<{ method: string; form: URLSearchParams }> = [];
+    const server = createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      deliveries.push({
+        method: req.url ?? "",
+        form: new URLSearchParams(Buffer.concat(chunks).toString()),
+      });
+      res.setHeader("content-type", "application/json");
+      res.end(
+        JSON.stringify(
+          req.url === "/reactions.add" && reactionError
+            ? { ok: false, error: reactionError }
+            : { ok: true, ts: `footer-${deliveries.length}` },
+        ),
+      );
+    });
+    const url = await listen(server);
+    const progressTransport = createSlackProgressTransport({
+      token: "dummy-slack-token",
+      slackApiUrl: `${url}/`,
+    });
+    const events: ProgressEvent[] = [];
+    config.runnerBaseUrl = "https://neo.example.test/private/viewer/path";
+    return {
+      deliveries,
+      events,
+      progressTransport,
+      progressEventSink: (event: ProgressEvent) => events.push(event),
+      close: async () => {
+        // Keep the SDK endpoint alive until terminal footer delivery has drained.
+        await closeServer(runnerServer);
+        await runner.close();
+        await closeServer(server);
+        await openRunner();
+      },
+    };
+  }
+  async function reopenProgress(
+    fixture: Awaited<ReturnType<typeof slackFixture>>,
+    remoteCliUrl?: string,
+  ) {
+    await closeServer(runnerServer);
+    await runner.close();
+    await openRunner({
+      progressTransport: fixture.progressTransport,
+      progressEventSink: fixture.progressEventSink,
+      remoteCliUrl,
+    });
+  }
+  const correlationKey = "slack:thread:C_CURRENT/1710000000.001";
+  const posts = (fixture: Awaited<ReturnType<typeof slackFixture>>) =>
+    fixture.deliveries.filter((entry) => entry.method === "/chat.postMessage");
+  const checks = (fixture: Awaited<ReturnType<typeof slackFixture>>) =>
+    fixture.deliveries.filter((entry) => entry.method === "/reactions.add");
+
+  it("shows delayed zero-tool model activity, replaces animation on text output, and checks successive current messages", async () => {
+    const fixture = await slackFixture();
+    try {
+      await reopenProgress(fixture);
+      const pending = stream({
+        prompt: "hold-run",
+        requestId: "long-thought",
+        correlationKey,
+        triggerSlackId: "U_CURRENT",
+        messageTs: "1710000000.002",
+      });
+      await vi.waitFor(() => expect(hold).toBeDefined());
+      await vi.waitFor(() => expect(posts(fixture)).toHaveLength(1), { timeout: 3000 });
+      const footer = posts(fixture)[0].form;
+      expect(footer.get("thread_ts")).toBe("1710000000.001");
+      expect(footer.get("text")).toContain("Neo thinking... 0 tool calls");
+      expect(JSON.parse(footer.get("blocks") ?? "[]")[0].elements[0].image_url).toBe(
+        "https://neo.example.test/neo-thinking-v1.gif",
+      );
+      if (!hold) throw new Error("Held model response missing");
+      respond(hold, { text: "Visible answer" });
+      const frames = await pending;
+      expect(frames.at(-1)).toMatchObject({
+        requestId: "long-thought",
+        status: "completed",
+        toolCalls: [],
+      });
+      await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
+      expect(checks(fixture)[0].form.get("timestamp")).toBe("1710000000.002");
+      expect(checks(fixture)[0].form.get("name")).toBe("white_check_mark");
+      const updates = fixture.deliveries.filter((entry) => entry.method === "/chat.update");
+      expect(
+        updates.some(
+          (entry) =>
+            entry.form.get("text")?.includes("Neo responding") &&
+            entry.form.get("blocks")?.includes("neo-ai-still-v1.png"),
+        ),
+      ).toBe(true);
+      expect(
+        fixture.events.every((event) => event.requestId === "long-thought" && !!event.sessionId),
+      ).toBe(true);
+      expect(fixture.events.filter((event) => event.type === "activity")).toEqual([
+        expect.objectContaining({ activity: "responding" }),
+      ]);
+      const followup = await stream({
+        prompt: "replacement follow-up",
+        requestId: "short-followup",
+        correlationKey,
+        triggerSlackId: "U_CURRENT",
+        messageTs: "1710000000.003",
+      });
+      expect(followup[0].sessionId).toBe(frames[0].sessionId);
+      await vi.waitFor(() => expect(checks(fixture)).toHaveLength(2));
+      expect(checks(fixture)[1].form.get("timestamp")).toBe("1710000000.003");
+      expect(posts(fixture)).toHaveLength(1);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("ignores private native reasoning content while showing long model-only work and coalescing text output", async () => {
+    const fixture = await slackFixture();
+    try {
+      await reopenProgress(fixture);
+      const frames = await stream({
+        prompt: "fixture-thinking-delay",
+        requestId: "reasoning-only",
+        correlationKey,
+        messageTs: "1710000000.010",
+      });
+      await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
+      expect(posts(fixture)[0].form.get("text")).toContain("Neo thinking... 0 tool calls");
+      expect(frames.at(-1)).toMatchObject({
+        status: "completed",
+        response: "Visible answer",
+        toolCalls: [],
+      });
+      expect(JSON.stringify(frames)).not.toContain("private-reasoning-fixture");
+      expect(JSON.stringify(fixture.events)).not.toContain("private-reasoning-fixture");
+      expect(
+        fixture.deliveries.some((entry) =>
+          entry.form.toString().includes("private-reasoning-fixture"),
+        ),
+      ).toBe(false);
+      expect(
+        fixture.events.filter(
+          (event) => event.type === "activity" && event.activity === "responding",
+        ),
+      ).toHaveLength(1);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("projects observable tool start/finish without double counting and checks a one-tool success", async () => {
+    const fixture = await slackFixture();
+    try {
+      await reopenProgress(fixture);
+      modelActions = [
+        { tool: "bash", args: { command: "sleep 1.8; printf complete", timeout: 3 } },
+        { text: "Tool completed" },
+      ];
+      const frames = await stream({
+        prompt: "one slow tool",
+        requestId: "working",
+        correlationKey,
+        messageTs: "1710000000.004",
+      });
+      expect(posts(fixture)[0].form.get("text")).toContain("Neo working... 0 tool calls");
+      expect(posts(fixture)[0].form.get("blocks")).toContain("neo-working-v1.gif");
+      expect(
+        fixture.deliveries.some((entry) =>
+          entry.form.get("text")?.includes("Neo thinking... 1 tool calls"),
+        ),
+      ).toBe(true);
+      expect(frames.filter((frame) => frame.type === "tool").map((frame) => frame.status)).toEqual([
+        "running",
+        "completed",
+      ]);
+      await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
+      expect(
+        fixture.deliveries.some((entry) => entry.form.get("text")?.includes("Done — 1 tool calls")),
+      ).toBe(true);
+      expect(checks(fixture)[0].form.get("timestamp")).toBe("1710000000.004");
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("does not check an interrupted native request, but checks only its successful replacement", async () => {
+    const fixture = await slackFixture();
+    try {
+      await reopenProgress(fixture);
+      const body = {
+        prompt: "hold-run",
+        requestId: "old-turn",
+        correlationKey,
+        messageTs: "1710000000.005",
+      };
+      await trigger(body);
+      await vi.waitFor(() => expect(posts(fixture)).toHaveLength(1), { timeout: 3000 });
+      const replacement = await stream({
+        ...body,
+        prompt: "replacement",
+        requestId: "new-turn",
+        messageTs: "1710000000.006",
+        interrupt: true,
+      });
+      expect(replacement.at(-1)).toMatchObject({ status: "completed" });
+      await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
+      expect(checks(fixture)[0].form.get("timestamp")).toBe("1710000000.006");
+      expect(fixture.deliveries.some((entry) => entry.method === "/chat.delete")).toBe(true);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("leaves OAuth waiting static without a check, then resumes against the original human source", async () => {
+    const fixture = await slackFixture();
+    const broker = await continuationBroker();
+    try {
+      await reopenProgress(fixture, broker.url);
+      broker.setAckUnavailable(true);
+      const body = {
+        prompt: "hold-run",
+        requestId: "auth-original",
+        correlationKey,
+        triggerSlackId: "UOWNER",
+        messageTs: "1710000000.007",
+      };
+      const receipt = await (await trigger(body)).json();
+      await vi.waitFor(() => expect(hold).toBeDefined());
+      broker.publish(receipt);
+      if (!hold) throw new Error("Held auth response missing");
+      respond(hold, { text: "Waiting for Google sign-in" });
+      await vi.waitFor(() =>
+        expect(
+          fixture.deliveries.some((entry) =>
+            entry.form.get("text")?.includes("Neo waiting for Google sign-in"),
+          ),
+        ).toBe(true),
+      );
+      expect(checks(fixture)).toHaveLength(0);
+      const waiting = fixture.deliveries.findLast((entry) =>
+        entry.form.get("text")?.includes("Neo waiting for Google sign-in"),
+      );
+      expect(waiting?.form.get("blocks")).toContain("neo-ai-still-v1.png");
+      broker.setAckUnavailable(false);
+      await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1), { timeout: 4000 });
+      expect(checks(fixture)[0].form.get("timestamp")).toBe("1710000000.007");
+      expect(fixture.events).toContainEqual(
+        expect.objectContaining({
+          type: "start",
+          requestId: "google-auth:continuation_invitation_fixture",
+          resumed: true,
+        }),
+      );
+    } finally {
+      await broker.close();
+      await fixture.close();
+    }
+  });
+
+  it.each(["already_reacted", "invalid_auth"] as const)(
+    "keeps native completion independent of Slack reaction outcome (%s)",
+    async (reactionError) => {
+      const fixture = await slackFixture(reactionError);
+      try {
+        await reopenProgress(fixture);
+        const frames = await stream({
+          prompt: "short answer",
+          requestId: "sdk-reaction",
+          correlationKey,
+          messageTs: "1710000000.008",
+        });
+        expect(frames.at(-1)).toMatchObject({ status: "completed" });
+        await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
+        expect(checks(fixture)[0].form.get("name")).toBe("white_check_mark");
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  it("never sends a success reaction for a failed native model turn", async () => {
+    const fixture = await slackFixture();
+    try {
+      await reopenProgress(fixture);
+      modelFailure = true;
+      const frames = await stream({
+        prompt: "fail",
+        requestId: "sdk-error",
+        correlationKey,
+        messageTs: "1710000000.009",
+      });
+      expect(frames.at(-1)).toMatchObject({ status: "error" });
+      expect(
+        fixture.deliveries.filter((entry) => entry.form.get("name") === "white_check_mark"),
+      ).toHaveLength(0);
+      expect(JSON.stringify(fixture.events)).not.toContain("DO_NOT_EXPOSE");
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it.each(["1710000000", "malformed", "1710000000.002?cap=private"])(
+    "rejects malformed direct message timestamp (%s) at trusted admission",
+    async (messageTs) => {
+      expect((await trigger({ prompt: "task", messageTs })).status).toBe(400);
+      expect(requests).toHaveLength(0);
+    },
+  );
+});
+
 describe("per-task native model routing", () => {
   const workspace = {
     pi: {
@@ -1341,7 +1722,9 @@ describe("per-task native model routing", () => {
         { text: "done" },
       ];
       const frames = await stream({ prompt: "Implement a feature", ...overrides });
-      expect(frames).toContainEqual({ type: "tool", tool: "escalate_model", status: "error" });
+      expect(frames).toContainEqual(
+        expect.objectContaining({ type: "tool", tool: "escalate_model", status: "error" }),
+      );
       expect(requests).toHaveLength(2);
       for (const input of requests) expect(input).toMatchObject({ model, reasoning: { effort } });
       expect(JSON.stringify(requests)).not.toContain(config.modelApiKey);
@@ -1402,7 +1785,9 @@ describe("per-task native model routing", () => {
     expect(JSON.stringify(requests.at(-1))).toContain(
       "Model escalation is unavailable for this task",
     );
-    expect(frames).toContainEqual({ type: "tool", tool: "escalate_model", status: "error" });
+    expect(frames).toContainEqual(
+      expect.objectContaining({ type: "tool", tool: "escalate_model", status: "error" }),
+    );
   });
 
   it.each(["fast", "balanced", "strong"] as const)(
@@ -1414,7 +1799,9 @@ describe("per-task native model routing", () => {
         .toBuffer();
       await writeFile(join(directory, imagePath), bytes);
       const frames = await stream({ prompt: "image-round", modelProfile });
-      expect(frames).toContainEqual({ type: "tool", tool: "read_image", status: "completed" });
+      expect(frames).toContainEqual(
+        expect.objectContaining({ type: "tool", tool: "read_image", status: "completed" }),
+      );
       expect(requests[1]).toMatchObject({ model: `fixture-${modelProfile}` });
       const input = JSON.stringify(requests[1]);
       expect(input).toContain(`data:image/png;base64,${bytes.toString("base64")}`);

@@ -106,3 +106,129 @@ production deployment or CI claims. Parent reviewed the exact public-route diff,
 source-pinned exporter, frame/handoff safety tests, decoded contact sheet and
 real-Nginx fixture additions; independently reran all asset/reproduction checks.
 Phase 1 exit criteria passed; Phase 2 can now proceed after the phase commit.
+
+## Phase 2 implementation and local evidence
+
+**Implemented and verified through parent review, full local tests and rebuilt
+container/browser gates; approved for the phase commit, no push.** Phase 1
+generator, artwork and public routes are unchanged.
+
+- Common progress now renders adjacent Neo thinking/working/responding labels
+  and the fixed public GIF/still assets. A 1.5s grace reveals long model-only
+  work with zero tools; the existing three-completed-call shortcut remains.
+  Native model preparation/start, tool start/end and visible text output drive
+  phase transitions. Reasoning content is neither classified nor forwarded to
+  progress; repeated text deltas emit only one responding transition.
+- Each session serializes its footer sends and coalesces the latest desired
+  payload. Finish/supersession synchronously stops timers/pending updates,
+  drains in-flight posts/updates (including an initial short waiting post),
+  replaces motion with a still and deletes retired footers. Failed transport
+  operations remain best-effort, use safe diagnostics and never fail the task.
+  Failed terminal static updates attempt removal; failed deletes retain retry
+  registry evidence rather than knowingly leaving a moving mark. Complete
+  transport unavailability cannot guarantee a remote Slack edit/delete.
+- All Pi progress and text frames carry receipt `requestId` and `sessionId`;
+  every progress variant rejects stale request/session scope, including reused
+  sessions and events arriving after terminal cleanup. Duplicate/replayed
+  scoped starts are ignored. Historical unscoped callers remain compatible.
+  Native tool-call IDs deduplicate completed calls; starts never count.
+- Successful requests react `white_check_mark` independently of footer/tool
+  thresholds. Gateway selects the newest queued human message of its already
+  trusted actor, excluding bots/bystanders/rendered history, and freezes optional
+  validated `messageTs` with the actual retry payload. Pi admission fingerprints
+  and receipts retain it; OAuth continuation copies the original receipt, so
+  its distinct continuation request reacts to the original human source.
+  Historical missing timestamps fall back to the existing thread root.
+  Wait/error/abort/interruption/supersession do not claim success; SDK
+  `already_reacted` idempotence is retained.
+- Reused `RUNNER_BASE_URL` is exposed to runner in Compose, Pi CI and dummy
+  container fixtures, parsed as optional configuration and used only for fixed
+  root-relative asset paths. HTTP(S) bases with credentials/query/fragment, or
+  invalid/blank bases, produce safe text-only footers. `.env.example` and README
+  Deployment Configuration now describe this existing variable's extra consumer.
+  No new env, dependency, model/approval/auth policy or OpenCode persisted schema.
+- Behavior tests cover delayed/coalesced posts, completion/new-start races,
+  same-session stale variants, duplicate tool completion, error/fallback cleanup,
+  short success, static waiting, safe public bases, exact-source selection and
+  accepted-but-lost frozen retries. Actual native Pi/Responses/executor/SQLite
+  plus Slack SDK/local HTTP prove image/label payloads, private reasoning
+  exclusion, output coalescing, short/one-tool checks, failed model/no check,
+  interruption and original-source OAuth resume. SDK reaction errors and
+  `already_reacted` do not alter successful native completion.
+- The existing container gate now records bounded dummy Slack deliveries and
+  asserts native zero-tool grace, static output, completion/source timestamps,
+  same-session signed follow-ups, and unauthenticated public image retrieval.
+  These new container assertions are **not yet executed by this delegated
+  implementation session**; the parent will run them with the existing cached
+  fixture build, plus the Google/ingress Chromium regression.
+
+### Phase 2 decision log
+
+| Decision                                                                       | Reason                                                                                                                                                     |
+| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Keep lifecycle ownership in common progress, project native observations in Pi | Avoid scattering send/drain/cleanup races into runtime or Slack adapters; preserve legacy transport contracts.                                             |
+| Receipt request identity, not session identity alone                           | A follow-up and OAuth continuation reuse a native session but have separate stream ownership and completion.                                               |
+| Optional wire fields in existing schemas/receipts                              | Preserve historical admissions/frozen retries without a schema migration or unrelated branded-ID rewrite.                                                  |
+| Bounded recent start/scope evidence plus live-session guards                   | Reject replay/stale terminal events without an unbounded process-wide history; live owners remain guarded even after cache eviction.                       |
+| Best-effort delivery outcomes stay inside progress                             | A Slack failure must not change successful agent work; waiting/error static-update failure attempts cleanup instead of keeping active motion deliberately. |
+| Fixed root-relative paths ignore a base pathname                               | Artwork URLs cannot contain viewer/task/user/OAuth capability data; unsafe base components disable images.                                                 |
+| No new Slack permissions or public-host configuration                          | Existing reaction transport and existing public ingress base already provide the required capability.                                                      |
+
+### Phase 2 verification
+
+Toolchain: Node **24.21.0**, existing pnpm/dependencies only; no installation,
+live Slack/Google/backend requests, private mounted data or `.pi` edits.
+
+```sh
+export PATH=/home/s4ukk/.local/share/mise/installs/node/24.21.0/bin:/tmp/thor-pi-tools:$PATH
+pnpm typecheck
+pnpm exec vitest run packages/common/src/progress-manager.test.ts packages/common/src/progress-events.test.ts packages/runner/src/pi-runner.test.ts packages/gateway/src/batch-request.test.ts packages/gateway/src/slack-model-routing.test.ts
+pnpm test
+pnpm build
+bash -n scripts/test-pi-e2e.sh
+node --check scripts/fixtures/pi-responses.mjs
+git diff --check
+```
+
+Focused tests: **151 passed**, 5 files. Full suite: **1,098 passed**, 73 files.
+Workspace typecheck and build passed. Shell/fixture syntax and diff checks
+passed. Initial focused runs exposed the intended old abort-as-Done assertion
+and exact equality assertions that excluded new scope fields; updated behavior
+assertions and an early common export fix pass through real interfaces now.
+Logs: `/tmp/neo-progress-types.log`, `/tmp/neo-progress-focused.log`,
+`/tmp/neo-progress-full-test.log`, `/tmp/neo-progress-full-build.log`.
+
+Parent reviewed the complete code/diff and fixed three adjacent lifecycle
+issues: native tool completion now updates the count before publishing the next
+phase; failed cleanup preserves the truthful static **Done** label rather than
+overwriting it with **stopped**; transport heartbeats and known retired legacy
+streams cannot invent a new thinking footer. The registry now consistently uses
+the canonical target key (the old doubled key made its active-owner check
+ineffective). No new abstractions: the redundant cleanup forwarding helper was
+removed and active/terminal send policy uses named domain values instead of a
+behavior-controlling boolean. Real native/SDK and common lifecycle regressions
+prove the completed-count display, static Done after failed deletion, and the
+legacy heartbeat/late-event boundary with a later genuine start still accepted.
+
+Final parent gate: **73 files / 1,099 tests**, all workspace typechecks and builds
+passed. Rebuilt Pi container E2E passed the actual native/SDK image lifecycle,
+zero-tool grace, static output, exact current/source follow-up checks, public
+images, model routing/escalation, isolation, viewers and SIGKILL recovery.
+Rebuilt Google container E2E passed requester OAuth/direct execution,
+reads/writes/formatting/pagination, upstream denials and private mounts. Both
+serial Chromium regressions passed: shipped Nginx serves exact GIF/PNG MIME and
+bytes before login, with real frame variation/loop and both theme decodes, and
+preserves narrow SSO/brand/OAuth/cookie/verified-owner behavior. Fixture runtimes
+cleaned up. These are local deterministic integration checks, not GitHub CI,
+production serving, real provider/account acceptance or live Slack playback.
+
+Final logs: `/tmp/neo-progress-final-{types,tests,build,pi-container,gws-container}.log`,
+`/tmp/neo-progress-parent-focused.log`, `/tmp/neo-progress-ingress-browser.log`,
+`/tmp/neo-progress-cookie-browser.log`. SBX preflight confirmed runtime/base
+availability but no prepared project/dependency image; this feature's explicitly
+requested host/local-fixture checks are not a sandbox security-audit claim.
+
+Operator rollout: retain the existing public `RUNNER_BASE_URL`, rebuild/redeploy
+**ingress + gateway + runner**, and ensure Slack can retrieve the three fixed
+images without SSO. No app/scope/credential replacement. Live Slack GIF playback
+and reduced-motion acceptance remain client/operator checks.

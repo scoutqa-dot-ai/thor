@@ -11,6 +11,7 @@ let slackReplies = 0;
 let lastReply;
 let imageInputs = 0;
 const modelSelections = [];
+const slackDeliveries = [];
 const imageFixtureBase64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVR4nGP4z8AAQVDqPwMDAEHSBfsl0XwmAAAAAElFTkSuQmCC";
 
@@ -95,6 +96,7 @@ async function handle(req, res) {
       lastReply,
       imageInputs,
       modelSelections,
+      slackDeliveries,
     });
     return;
   }
@@ -105,9 +107,20 @@ async function handle(req, res) {
   if (req.url?.startsWith("/slack/")) {
     const chunks = [];
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
+    const form = new URLSearchParams(Buffer.concat(chunks).toString());
+    slackDeliveries.push({
+      method: req.url,
+      channel: form.get("channel"),
+      threadTs: form.get("thread_ts"),
+      timestamp: form.get("timestamp"),
+      name: form.get("name"),
+      ts: form.get("ts"),
+      text: form.get("text"),
+      blocks: JSON.parse(form.get("blocks") || "[]"),
+    });
+    if (slackDeliveries.length > 200) slackDeliveries.shift();
     if (req.url.includes("chat.postMessage")) {
       slackPosts++;
-      const form = new URLSearchParams(Buffer.concat(chunks).toString());
       lastProgressTarget = { channel: form.get("channel"), threadTs: form.get("thread_ts") };
     }
     json(res, {
@@ -181,6 +194,11 @@ async function handle(req, res) {
         "call_escalate_strong",
       );
     else respond(res, "fixture promoted twice");
+    return;
+  }
+  if (input.includes("fixture-progress-delay")) {
+    await new Promise((resolve) => setTimeout(resolve, 1800));
+    respond(res, "fixture zero-tool answer");
     return;
   }
   if (input.includes("fixture-hold") && !heldOnce) {

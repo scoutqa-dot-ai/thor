@@ -190,6 +190,8 @@ export {
 export type { ActiveTriggerSnapshot, ThorDisclaimerContext } from "./disclaimer.js";
 export {
   ProgressStartSchema,
+  ProgressActivitySchema,
+  SlackMessageTsSchema,
   ProgressToolSchema,
   ProgressMemorySchema,
   ProgressDelegateSchema,

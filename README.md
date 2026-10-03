@@ -123,7 +123,7 @@ Integration-specific env vars live in each integration's doc. Cross-cutting vars
 | `THOR_ADMIN_EMAILS`             | Yes      | `ingress`                                       | Comma-separated authenticated Google emails allowed for OpenCode-backed and `/admin/` ingress routes |
 | `THOR_INTERNAL_SECRET`          | Yes      | `remote-cli`, `gateway`, `ingress`, Pi `runner` | Secret-gates internal APIs, OAuth ingress and Pi trigger admission                                   |
 | `THOR_E2E_TEST_HELPERS`         | No       | `runner`                                        | Enables secret-gated deterministic runner e2e helpers                                                |
-| `RUNNER_BASE_URL`               | Yes      | `remote-cli`                                    | Public base URL for Neo trigger viewer links in PR/Jira content                                      |
+| `RUNNER_BASE_URL`               | Yes      | `remote-cli`, `runner`                          | Public base URL for Neo trigger viewer links and Slack activity artwork                              |
 | `INGRESS_PORT`                  | No       | `ingress`                                       | Host port for the reverse proxy                                                                      |
 | `ATLASSIAN_AUTH`                | Yes      | `remote-cli`, `mitmproxy`                       | Atlassian MCP auth header and mitmproxy default injection                                            |
 | `POSTHOG_API_KEY`               | Yes      | `remote-cli`                                    | PostHog MCP auth                                                                                     |
@@ -152,6 +152,14 @@ Integration-specific env vars live in each integration's doc. Cross-cutting vars
 | `VOUCH_ALLOWED_EMAIL_DOMAINS`   | No       | `compose -> vouch`                              | Rendered into Vouch's `VOUCH_DOMAINS`; comma-separated email domains, default `scoutqa.cc`           |
 | `VOUCH_CALLBACK_URL`            | No       | `vouch`                                         | OAuth callback URL                                                                                   |
 | `VOUCH_COOKIE_DOMAIN`           | No       | `vouch`                                         | Cookie domain                                                                                        |
+
+Runner uses `RUNNER_BASE_URL` with fixed root paths `/neo-thinking-v1.gif`,
+`/neo-working-v1.gif` and `/neo-ai-still-v1.png`. Set the existing public ingress
+HTTP(S) base without credentials, query or fragment; blank/invalid bases retain
+text-only progress. Slack must be able to retrieve these images without login.
+Rebuild/redeploy ingress, gateway and runner together; no new env var, Slack
+scope, app or credential is needed. Slack controls GIF playback and reduced
+motion; adjacent labels remain readable when images/animation are disabled.
 
 Drata uses `drata api METHOD /path [--json JSON]`, without a method or API-version
 allowlist. Configure its OAuth app/scopes for intended operations. Paths stay on

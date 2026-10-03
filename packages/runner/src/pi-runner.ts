@@ -55,7 +55,9 @@ import {
 const context = BACKGROUND_CONTEXT;
 type ConversationMetadata = ReturnType<typeof piConversationMetadataSchema.parse>;
 type ConversationOwner = { conversation: Conversation; metadata: ConversationMetadata };
-type StreamFrame = ProgressEvent | { type: "text"; text: string };
+type StreamFrame =
+  | ProgressEvent
+  | { type: "text"; text: string; requestId?: string; sessionId?: string };
 
 function escapePiHtml(text: string): string {
   return text.replace(
@@ -87,6 +89,7 @@ function fingerprintPiRequest(request: PiTriggerRequest): string {
         correlationKey: request.correlationKey,
         sessionId: request.sessionId,
         triggerSlackId: request.triggerSlackId,
+        messageTs: request.messageTs,
         triggerGithubLogin: request.triggerGithubLogin,
         interrupt: request.interrupt,
         modelProfile: request.modelProfile,
@@ -269,9 +272,12 @@ export async function createPiRunnerApp(
           });
       }
     };
-    const progress = async (event: ProgressEvent, correlationKey: string | undefined) => {
+    const progress = async (event: ProgressEvent, receipt: PiAdmissionReceipt) => {
       options.progressEventSink?.(event);
-      const target = resolveSlackProgressTarget(correlationKey);
+      const target = resolveSlackProgressTarget(receipt.request.correlationKey, {
+        messageTs: receipt.request.messageTs,
+        runnerBaseUrl: config.runnerBaseUrl,
+      });
       if (target && slackTransport) {
         try {
           await handleProgressEvent(target, event, slackTransport);
@@ -324,6 +330,7 @@ export async function createPiRunnerApp(
       const entries = await entriesFor(owner, receipt);
       return {
         type: "done",
+        requestId: receipt.requestId,
         sessionId: sessionId(owner),
         correlationKey: receipt.request.correlationKey,
         resumed: receipt.resumed,
@@ -354,15 +361,25 @@ export async function createPiRunnerApp(
       const firstEntry = submitted.entry;
       const stream = await watchEvents(runtime, owner.conversation.id, context);
       let emittedText = "";
-      const emit = async (event: StreamFrame) => {
+      const emit = async (frame: StreamFrame) => {
+        const event: StreamFrame = {
+          ...frame,
+          sessionId: sessionId(owner),
+          requestId: receipt.requestId,
+        };
         if (event.type === "done" || event.type === "error") {
           const monitorState = monitors.get(receipt.requestId);
           if (monitorState) monitorState.terminal = event;
         }
         for (const listener of listeners) listener(event);
-        // NDJSON includes both tool states; Slack counts one completed call, not start + end twice.
-        if (event.type !== "text" && !(event.type === "tool" && event.status === "running"))
-          await progress(event, receipt.request.correlationKey);
+        if (event.type !== "text") await progress(event, receipt);
+      };
+      let activity: "thinking" | "working" | "responding" = "thinking";
+      const runningTools = new Set<string>();
+      const setActivity = async (next: typeof activity) => {
+        if (next === activity) return;
+        activity = next;
+        await emit({ type: "activity", activity });
       };
       const project = async (event: AgentEvent) => {
         if (event.type === "snapshot") {
@@ -373,29 +390,48 @@ export async function createPiRunnerApp(
                 await emit({
                   type: "tool",
                   tool: message.toolName,
+                  toolCallId: message.toolCallId,
                   status: message.isError ? "error" : "completed",
                 });
           }
           for (const tool of event.tools)
-            if (tool.status !== "done")
-              await emit({ type: "tool", tool: tool.name, status: "running" });
+            if (tool.status !== "done") {
+              runningTools.add(tool.callId);
+              await emit({
+                type: "tool",
+                tool: tool.name,
+                toolCallId: tool.callId,
+                status: "running",
+              });
+            }
+          if (runningTools.size) await setActivity("working");
           const partial =
             event.generation?.message?.content
               .filter((block) => block.type === "text")
               .map((block) => block.text)
               .join("") ?? "";
           emittedText = partial;
-          if (partial) await emit({ type: "text", text: partial });
+          if (partial) {
+            await setActivity("responding");
+            await emit({ type: "text", text: partial });
+          }
         } else if (event.type === "tool_execution_start" || event.type === "tool_execution_end") {
           const failed =
             event.type === "tool_execution_end" &&
             event.entry?.model?.some((message) => message.role === "toolResult" && message.isError);
+          if (event.type === "tool_execution_start") runningTools.add(event.toolCallId);
+          else runningTools.delete(event.toolCallId);
+          if (event.type === "tool_execution_start") await setActivity("working");
           await emit({
             type: "tool",
             tool: event.toolName,
+            toolCallId: event.toolCallId,
             status:
               event.type === "tool_execution_start" ? "running" : failed ? "error" : "completed",
           });
+          // The next phase footer includes this just-completed call, not the previous count.
+          if (event.type === "tool_execution_end")
+            await setActivity(runningTools.size ? "working" : "thinking");
           if (
             event.type === "tool_execution_start" &&
             ["read", "write", "edit"].includes(event.toolName) &&
@@ -411,10 +447,12 @@ export async function createPiRunnerApp(
         } else if (event.type === "message_update") {
           for (const change of event.changes)
             if (change.type === "text_delta") {
+              await setActivity("responding");
               emittedText += change.delta;
               await emit({ type: "text", text: change.delta });
             }
         } else if (event.type === "message_start") {
+          if (event.message.role === "assistant") await setActivity("thinking");
           emittedText = "";
         } else if (event.type === "message_end") {
           for (const message of event.entry.model ?? []) {
@@ -432,19 +470,22 @@ export async function createPiRunnerApp(
             });
           }
           const completeText = textFromEntries([event.entry]);
-          if (completeText.startsWith(emittedText) && completeText.length > emittedText.length)
+          if (completeText.startsWith(emittedText) && completeText.length > emittedText.length) {
+            await setActivity("responding");
             await emit({ type: "text", text: completeText.slice(emittedText.length) });
+          }
           emittedText = "";
         }
       };
       await progress(
         {
           type: "start",
+          requestId: receipt.requestId,
           sessionId: sessionId(owner),
           correlationKey: receipt.request.correlationKey,
           resumed: receipt.resumed,
         },
-        receipt.request.correlationKey,
+        receipt,
       );
       await project(stream.snapshot);
       stream.start(async (events) => {
@@ -798,6 +839,7 @@ export async function createPiRunnerApp(
         };
         write({
           type: "start",
+          requestId: receipt.requestId,
           sessionId: sessionId(owner),
           correlationKey: receipt.request.correlationKey,
           resumed: receipt.resumed,

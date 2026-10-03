@@ -104,6 +104,8 @@ describe("gateway durable batch delivery over real HTTP", () => {
           const options = persistBatchRunnerRequest(directory, {
             requestId,
             prompt: `render-${++attempt}-${events.map((item) => item.id).join(",")}`,
+            messageTs: `1710000000.00${attempt}`,
+            triggerSlackId: "U_CURRENT",
             correlationKey: "cron:batch-fixture",
             directory: "/workspace/repos/fixture",
             deps: { runnerUrl: url, internalSecret },
@@ -130,6 +132,9 @@ describe("gateway durable batch delivery over real HTTP", () => {
       expect(received).toHaveLength(3);
       expect(received[1]).toEqual(received[0]);
       expect(received[2]?.requestId).not.toBe(received[0]?.requestId);
+      expect(received[0]?.messageTs).toBe("1710000000.001");
+      expect(received[1]?.messageTs).toBe("1710000000.001");
+      expect(received[2]?.messageTs).toBe("1710000000.003");
       expect(accepted.size).toBe(2);
       for (const file of await readdir(join(directory, ".runner-requests"))) {
         expect(await readFile(join(directory, ".runner-requests", file), "utf8")).not.toContain(
@@ -230,6 +235,7 @@ it.each([{ modelProfile: "strong" as const }, { modelId: "configured-id" }])(
         thinkingLevel: "high",
         routingTask: "new evidence must not leak",
         triggerSlackId: "U_FRESH",
+        messageTs: "1710000000.999",
         triggerGithubLogin: "fresh-login",
         interrupt: true,
         onAccepted: () => retryAcknowledged++,
@@ -243,6 +249,7 @@ it.each([{ modelProfile: "strong" as const }, { modelId: "configured-id" }])(
         "thinkingLevel",
         "routingTask",
         "triggerSlackId",
+        "messageTs",
         "triggerGithubLogin",
         "interrupt",
       ]) {

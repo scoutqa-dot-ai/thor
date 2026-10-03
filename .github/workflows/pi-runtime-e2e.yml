@@ -33,6 +33,7 @@ jobs:
     # The standalone test compose pins these dummy values too; no live secret is required.
     env:
       THOR_RUNTIME: pi
+      RUNNER_BASE_URL: http://ingress:8080
       PI_EXECUTOR_URL: http://pi-executor:3002
       PI_STORAGE_PATH: /var/lib/runner/pi.sqlite
       PI_MODEL_BASE_URL: http://model-fixture:8000/v1

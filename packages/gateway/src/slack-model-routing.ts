@@ -20,17 +20,29 @@ export type SlackModelRoutingResult =
 const looksLikeDirective = (text: string) =>
   /^\[(?:(?:profile|model|thinking)\b|[a-z]+\s*:)/i.test(text);
 
+/** Select the latest current human message for the trusted actor, never thread history/bots. */
+export function selectSlackRequestSource(
+  events: readonly SlackThreadEvent[],
+  triggerSlackId: string | undefined,
+): SlackThreadEvent | undefined {
+  return triggerSlackId === undefined
+    ? undefined
+    : [...events]
+        .reverse()
+        .find(
+          (candidate) =>
+            candidate.user === triggerSlackId &&
+            !candidate.bot_id &&
+            candidate.subtype !== "bot_message",
+        );
+}
+
 /** Read the newest queued requester event (chronological input), never rendered thread/history fields. */
 export function extractSlackModelRouting(input: {
   events: readonly SlackThreadEvent[];
   triggerSlackId?: string;
 }): SlackModelRoutingResult {
-  const event =
-    input.triggerSlackId === undefined
-      ? undefined
-      : [...input.events]
-          .reverse()
-          .find((candidate) => candidate.user === input.triggerSlackId && !candidate.bot_id);
+  const event = selectSlackRequestSource(input.events, input.triggerSlackId);
   if (!event) return { ok: true, value: {} };
   const text = event.text ?? "";
   // Slack mention syntax is a delimiter only, not actor authority.

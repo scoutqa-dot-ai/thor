@@ -2,6 +2,7 @@ import { defineDoc } from "@earendil-works/pi-durable";
 import { z } from "zod";
 import {
   GoogleAuthContinuationSchema,
+  SlackMessageTsSchema,
   UUID_V7_RE,
   PiTaskRoutingFields,
   PiModelSelectionSchema,
@@ -23,6 +24,7 @@ export const piTriggerRequestSchema = z
     correlationKey: z.string().min(1).max(512).optional(),
     sessionId: z.string().min(1).optional(),
     triggerSlackId: z.string().trim().min(1).optional(),
+    messageTs: SlackMessageTsSchema.optional(),
     triggerGithubLogin: z.string().trim().min(1).optional(),
     interrupt: z.boolean().default(false),
     directory: z.string().min(1),
