@@ -1098,7 +1098,16 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       oauth: gwsOAuth.setupStatus(),
       botTokenConfigured: !!gwsSlackTransport.env.SLACK_BOT_TOKEN,
       identity: pin.ok
-        ? { ok: true, pinned: !!pin.googleEmailPin, connected: connected?.ok ?? false }
+        ? {
+            ok: true,
+            pinned: !!pin.googleEmailPin,
+            connected: connected?.ok ?? false,
+            connectionState: connected?.ok
+              ? "connected"
+              : connected?.error.code === "connection_missing"
+                ? "missing"
+                : "unavailable",
+          }
         : pin,
     });
   });

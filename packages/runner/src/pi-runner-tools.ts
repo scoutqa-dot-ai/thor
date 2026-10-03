@@ -13,9 +13,14 @@ import { piShellAttributionKey } from "./pi-execution-env.js";
 import { piConversationMetadataDoc } from "./pi-runner-state.js";
 import { buildToolInstructions } from "./tool-instructions.js";
 import type { PiRunnerConfig } from "./pi-runner-config.js";
+import type { IGoogleWorkspaceConnectionStatusClient } from "./google-workspace-connection-status.js";
 
 /** Install remote coding tools, explicitly discovered skills, memory and active actor instructions. */
-export function installPiRunnerTools(registry: Registry, config: PiRunnerConfig): void {
+export function installPiRunnerTools(
+  registry: Registry,
+  config: PiRunnerConfig,
+  googleWorkspaceStatus: IGoogleWorkspaceConnectionStatusClient,
+): void {
   const loader = createConfigLoader(WORKSPACE_CONFIG_PATH);
   const bash = createBashTool({
     prepare: (execution, _api, context) => {
@@ -157,6 +162,23 @@ export function installPiRunnerTools(registry: Registry, config: PiRunnerConfig)
           return user
             ? `Run triggered by ${user.name} <${user.email}>.`
             : `Run triggered by ${actor.triggerSlackId ? `slack: ${actor.triggerSlackId}` : `github: ${actor.triggerGithubLogin}`}.`;
+        }),
+        section("google-workspace-connection", async (input, context) => {
+          const metadata = await input.read.snapshot(
+            piConversationMetadataDoc,
+            input.conversationId,
+            context,
+          );
+          const requester = metadata?.receipts.find(
+            (item) => item.requestId === metadata.activeRequestId,
+          )?.request.triggerSlackId;
+          if (!requester) return undefined;
+          const status = await googleWorkspaceStatus.forSlackUser(requester);
+          if (status === "connected")
+            return `Current Google Workspace status for Slack requester ${requester}: a stored connection is present, freshly checked for this turn. Earlier connection-required tool results are historical, not current status. If the user's command previously stopped before approval because connection was missing, submit that blocked command through gws now to request owner approval. A stored connection does not prove document permission or successful execution; report the new tool result. Never replay an already-approved or uncertain side effect.`;
+          if (status === "missing")
+            return `Current Google Workspace status for Slack requester ${requester}: no stored connection was found. A sign-in or user statement alone is not evidence of completed connection. Use gws for the current result and private onboarding instructions; do not claim the connection is ready.`;
+          return `Current Google Workspace connection status for Slack requester ${requester} could not be verified. Do not infer connected/disconnected from old tool results or user claims. Use gws to check the current request; preserve owner approval and never replay an uncertain effect.`;
         }),
         section("tool-instructions", (input) => buildToolInstructions(input.agent.cwd ?? "")),
       ],

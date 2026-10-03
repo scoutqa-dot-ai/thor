@@ -321,6 +321,7 @@ it("binds actual Pi tool calls to per-user GWS, owner approval and a single-use 
       memoryDir: join(root, "memory"),
     },
     {
+      remoteCliUrl: remoteUrl,
       progressTransport: {
         async post() {
           return { ts: "1710000000.200" };
@@ -355,6 +356,7 @@ it("binds actual Pi tool calls to per-user GWS, owner approval and a single-use 
   // A real Pi GWS tool call with no Google pin must initiate private OAuth onboarding.
   nextCommand = command("gws", ["drive", "files", "list"]);
   await stream({ prompt: "warmup", requestId: "warmup", triggerSlackId: owner });
+  expect(JSON.stringify(modelRequests[0]?.input)).toContain("no stored connection was found");
   const receipt = await (
     await trigger({ prompt: "warmup", requestId: "warmup", triggerSlackId: owner })
   ).json();
@@ -421,6 +423,10 @@ it("binds actual Pi tool calls to per-user GWS, owner approval and a single-use 
   const args = ["drive", "files", "update", "--json", '{"name":"private title"}'];
   nextCommand = command("gws", args);
   await stream({ prompt: "request GWS change", requestId: "gws", triggerSlackId: owner });
+  expect(JSON.stringify(modelRequests.at(-1)?.input)).toContain(
+    "a stored connection is present, freshly checked for this turn",
+  );
+  expect(JSON.stringify(modelRequests)).not.toContain(internalSecret);
   const gwsReceipt = await (
     await trigger({ prompt: "request GWS change", requestId: "gws", triggerSlackId: owner })
   ).json();
@@ -488,6 +494,9 @@ it("binds actual Pi tool calls to per-user GWS, owner approval and a single-use 
     triggerSlackId: other,
   });
   const otherOutput = JSON.stringify(modelRequests.at(-1));
+  expect(otherOutput).toContain(
+    `Current Google Workspace status for Slack requester ${other}: no stored connection was found`,
+  );
   expect(otherOutput).not.toContain("private-gws-output");
   expect(otherOutput).toContain("unavailable for this active Slack turn");
   expect(otherOutput).toContain("connection is required");

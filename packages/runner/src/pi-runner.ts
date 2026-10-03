@@ -42,6 +42,7 @@ import {
 import { resolveSlackProgressTarget, type SlackProgressTransportTarget } from "./slack-progress.js";
 import type { ProgressTransport } from "@thor/common";
 import type { PiRunnerConfig } from "./pi-runner-config.js";
+import { GoogleWorkspaceConnectionStatusClient } from "./google-workspace-connection-status.js";
 
 const context = BACKGROUND_CONTEXT;
 type ConversationMetadata = ReturnType<typeof piConversationMetadataSchema.parse>;
@@ -92,6 +93,8 @@ export async function createPiRunnerApp(
     legacyViewerApp?: express.Express;
     progressEventSink?: (event: ProgressEvent) => void;
     progressTransport?: ProgressTransport<SlackProgressTransportTarget>;
+    /** Existing internal broker service; override only for embedded integration tests/custom topology. */
+    remoteCliUrl?: string;
   } = {},
 ): Promise<
   | { ok: false; error: "pi_storage_owned_or_unavailable" | "pi_startup_failed" }
@@ -137,7 +140,14 @@ export async function createPiRunnerApp(
       }),
     );
     const registry = createRegistry();
-    installPiRunnerTools(registry, config);
+    installPiRunnerTools(
+      registry,
+      config,
+      new GoogleWorkspaceConnectionStatusClient({
+        remoteCliUrl: options.remoteCliUrl ?? "http://remote-cli:3004",
+        internalSecret: config.internalSecret,
+      }),
+    );
     const storage = await openNodeSqliteStorage(ownerLock.path);
     try {
       harness = await Harness.open(
