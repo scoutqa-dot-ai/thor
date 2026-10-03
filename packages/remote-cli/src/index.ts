@@ -380,7 +380,7 @@ function withGhDisclaimer(args: string[], sessionId?: string): string[] | { erro
   } catch (err) {
     return {
       error:
-        err instanceof Error ? err.message : "Disclaimer required: unable to build Thor disclaimer",
+        err instanceof Error ? err.message : "Disclaimer required: unable to build Neo disclaimer",
     };
   }
   const result =
@@ -715,7 +715,7 @@ function setGwsOAuthBrowserSecurityHeaders(
 }
 
 function gwsDisconnectConfirmationHtml(csrfToken: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Disconnect Google Workspace</title></head><body><h1>Disconnect Google Workspace</h1><p>This removes Thor's local grant. You should also revoke Thor in Google Account security settings.</p><form method="post" action="/google-workspace/disconnect"><input type="hidden" name="csrf" value="${csrfToken}"><button type="submit">Disconnect Google Workspace</button></form></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Disconnect Google Workspace</title></head><body><h1>Disconnect Google Workspace</h1><p>This removes Neo's local grant. You should also revoke Neo in Google Account security settings.</p><form method="post" action="/google-workspace/disconnect"><input type="hidden" name="csrf" value="${csrfToken}"><button type="submit">Disconnect Google Workspace</button></form></body></html>`;
 }
 
 function timingSafeStringEqual(left: string, right: string): boolean {
@@ -1312,7 +1312,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         .send(
           gwsOAuthHtml(
             "Google Workspace disconnect failed",
-            "Thor could not remove the local grant. Ask an operator to check configuration.",
+            "Neo could not remove the local grant. Ask an operator to check configuration.",
           ),
         );
       return;
@@ -1327,7 +1327,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       .send(
         gwsOAuthHtml(
           "Google Workspace disconnected",
-          "Thor removed the local grant. Revoke Thor in your Google Account security settings to invalidate the provider grant immediately.",
+          "Neo removed the local grant. Revoke Neo in your Google Account security settings to invalidate the provider grant immediately.",
         ),
       );
   });
@@ -1382,7 +1382,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         {
           channel: retryTarget.channel,
           threadTs: retryTarget.threadTs,
-          text: "Google Workspace is connected. Retry the original request; Thor will ask you to approve the exact command before execution.",
+          text: "Google Workspace is connected. Retry the original request; Neo will ask you to approve the exact command before execution.",
         },
         gwsSlackTransport,
       );
@@ -1399,7 +1399,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       .send(
         gwsOAuthHtml(
           "Google Workspace connected",
-          "Return to Slack and submit the command again. Thor will ask you to approve it before execution.",
+          "Return to Slack and submit the command again. Neo will ask you to approve it before execution.",
         ),
       );
   });
@@ -1885,7 +1885,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       const slackPost = await postSlackMessageApi(
         {
           channel: activeUser.slackUserId,
-          text: `Connect your Google Workspace account to Thor. This single-use link expires in 10 minutes: <${request.value.connectUrl}|Connect Google Workspace>`,
+          text: `Connect your Google Workspace account to Neo. This single-use link expires in 10 minutes: <${request.value.connectUrl}|Connect Google Workspace>`,
         },
         gwsSlackTransport,
       );

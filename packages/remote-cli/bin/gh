@@ -1,5 +1,5 @@
 #!/bin/sh
-# Thor gh wrapper — resolves GitHub App auth before executing real gh.
+# Neo gh wrapper — resolves GitHub App auth before executing real gh.
 # Placed on PATH before /usr/bin/gh inside the remote-cli container.
 
 set -e

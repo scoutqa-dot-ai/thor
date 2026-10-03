@@ -1,4 +1,12 @@
-# Thor
+# Neo
+
+Neo is the product name. Existing `THOR_*` variables, `@thor/*` packages,
+`thor.json`, container paths, crypto namespaces and deployment project/volume
+names remain legacy compatibility identifiers. Keep your current Ubuntu checkout,
+`.env`, Compose project and data; a branding update must not create another stack
+or disconnect stored accounts. Historical plans and third-party attributions keep
+their original names. Update the existing Slack/Google app display names to Neo
+without replacing their IDs, credentials or callback URLs.
 
 An event-driven AI team member that watches Slack and scheduled jobs, resumes OpenCode sessions through the runner, and reaches external systems through `remote-cli`.
 
@@ -71,7 +79,7 @@ loopback port `1455`. codex-lb persists its private state in the `codex-lb-data`
 
 ## Integrations
 
-Thor is an internal AI teammate for engineering and product work; it is not meant to mirror production infrastructure exactly. Each integration owns its own env vars, app/manifest setup, required permissions, and troubleshooting reasons.
+Neo is an internal AI teammate for engineering and product work; it is not meant to mirror production infrastructure exactly. Each integration owns its own env vars, app/manifest setup, required permissions, and troubleshooting reasons.
 
 - **Slack** — [`docs/slack.md`](docs/slack.md). Events API intake, signing-secret verification, private-channel allowlist, per-channel repo override, app manifest.
 - **GitHub App** — [`docs/github.md`](docs/github.md). Webhook intake, App permissions and event subscriptions, installation IDs, bot commit identity, CI wake gate.
@@ -102,8 +110,8 @@ Runtime integration paths:
 Common usage patterns:
 
 - **PR merged, errors spike** — a scheduled prompt checks telemetry, inspects recent merges through GitHub tools, prepares a fix in a worktree, and requests approval for the final write action.
-- **Jira issue triage** — a webhook or Slack prompt asks Thor to investigate an issue; Thor reads Jira, checks recent commits, and reports likely owners and suspects.
-- **Daily delivery digest** — a cron job asks Thor to summarize stale PRs, blocked issues, or failing tests and post the result to Slack.
+- **Jira issue triage** — a webhook or Slack prompt asks Neo to investigate an issue; Neo reads Jira, checks recent commits, and reports likely owners and suspects.
+- **Daily delivery digest** — a cron job asks Neo to summarize stale PRs, blocked issues, or failing tests and post the result to Slack.
 
 ## Deployment Configuration
 
@@ -115,7 +123,7 @@ Integration-specific env vars live in each integration's doc. Cross-cutting vars
 | `THOR_ADMIN_EMAILS`             | Yes      | `ingress`                                       | Comma-separated authenticated Google emails allowed for OpenCode-backed and `/admin/` ingress routes |
 | `THOR_INTERNAL_SECRET`          | Yes      | `remote-cli`, `gateway`, `ingress`, Pi `runner` | Secret-gates internal APIs, OAuth ingress and Pi trigger admission                                   |
 | `THOR_E2E_TEST_HELPERS`         | No       | `runner`                                        | Enables secret-gated deterministic runner e2e helpers                                                |
-| `RUNNER_BASE_URL`               | Yes      | `remote-cli`                                    | Public base URL for Thor trigger viewer links in PR/Jira content                                     |
+| `RUNNER_BASE_URL`               | Yes      | `remote-cli`                                    | Public base URL for Neo trigger viewer links in PR/Jira content                                      |
 | `INGRESS_PORT`                  | No       | `ingress`                                       | Host port for the reverse proxy                                                                      |
 | `ATLASSIAN_AUTH`                | Yes      | `remote-cli`, `mitmproxy`                       | Atlassian MCP auth header and mitmproxy default injection                                            |
 | `POSTHOG_API_KEY`               | Yes      | `remote-cli`                                    | PostHog MCP auth                                                                                     |
@@ -148,7 +156,7 @@ Integration-specific env vars live in each integration's doc. Cross-cutting vars
 Drata uses `drata api METHOD /path [--json JSON]`, without a method or API-version
 allowlist. Configure its OAuth app/scopes for intended operations. Paths stay on
 `DRATA_API_BASE_URL`; redirects are returned rather than followed. Writes do not
-require Thor approval. OAuth secrets remain in remote-cli, and token failures do
+require Neo approval. OAuth secrets remain in remote-cli, and token failures do
 not expose the OAuth response body.
 
 Google Workspace configuration (per-Slack-user OAuth):
@@ -168,7 +176,7 @@ First use sends the trusted requesting Slack user a private OAuth DM. No Google 
 | workspace user `google_workspace_email`  | Optional | workspace config        | Restrict Google account choice; otherwise learn identity during private OAuth |
 
 Every GWS call requires the latest active Slack actor, that user's connected Google
-identity, and same-user Slack approval. Thor stores raw argv only in encrypted
+identity, and same-user Slack approval. Neo stores raw argv only in encrypted
 private state and shows a secret-free operation summary plus exact command
 fingerprint. It blocks `gws auth` and local-file command surfaces, has no global credential fallback, and injects
 only a refreshed `GOOGLE_WORKSPACE_CLI_TOKEN` into a fresh isolated child cwd.
@@ -209,7 +217,7 @@ rollback.
 
 ### Optional Pi Durable runtime
 
-Use `docker compose -f docker-compose.yml -f docker-compose.pi.yml up --build -d --remove-orphans` after configuring the stack. See [Pi testing, persistence and rollback](docs/pi-runtime.md); do not run two stacks on the same ports/webhook stream. The override selects Pi and routes the authenticated home page to the Thor sessions dashboard, not an interactive OpenCode UI.
+Use `docker compose -f docker-compose.yml -f docker-compose.pi.yml up --build -d --remove-orphans` after configuring the stack. See [Pi testing, persistence and rollback](docs/pi-runtime.md); do not run two stacks on the same ports/webhook stream. The override selects Pi and routes the authenticated home page to the Neo sessions dashboard, not an interactive OpenCode UI.
 
 | Variable                   | Default                     | Service             | Purpose                                                     |
 | -------------------------- | --------------------------- | ------------------- | ----------------------------------------------------------- |
@@ -231,13 +239,13 @@ Lives at `/workspace/config/thor.json` inside containers, `docker-volumes/worksp
 The file carries four operator-maintained registries:
 
 - `owners.<owner>.github_app_installation_id` — GitHub App installation IDs. See [`docs/github.md`](docs/github.md) §2.
-- `slack.private_channel_allowlist` — conversation ids Thor may act in for private channels, DMs, group DMs, and Slack Connect. See [`docs/slack.md`](docs/slack.md) §5.
+- `slack.private_channel_allowlist` — conversation ids Neo may act in for private channels, DMs, group DMs, and Slack Connect. See [`docs/slack.md`](docs/slack.md) §5.
 - `mitmproxy[]` / `mitmproxy_passthrough[]` — outbound credential rules and passthrough hosts. See [`docs/feat/security-model.md`](docs/feat/security-model.md) Layer 1a.
 - `users[]` — human attribution (see below).
 
 ### Human attribution (`users[]`)
 
-`email` must be the Jira account email; Thor may write the name/email into `Co-authored-by:` commit trailers and use the email to resolve Jira assignees.
+`email` must be the Jira account email; Neo may write the name/email into `Co-authored-by:` commit trailers and use the email to resolve Jira assignees.
 
 ```json
 {
@@ -248,21 +256,21 @@ The file carries four operator-maintained registries:
 }
 ```
 
-To verify your entry, trigger Thor from Slack and look for `attribution_applied` with `outcome: "applied"` and your Slack id; `skipped_no_user_record` means the configured Slack id did not match the trigger.
+To verify your entry, trigger Neo from Slack and look for `attribution_applied` with `outcome: "applied"` and your Slack id; `skipped_no_user_record` means the configured Slack id did not match the trigger.
 
 The registry is maintained by operators from team Slack and GitHub membership records, with Jira account emails verified manually when needed. Keep source exports out of git if they contain personal data — commit only sanitized reconciliation decisions.
 
 ## Operations Notes
 
-- Tell Thor about your team, repos, and reusable operating context in the OpenCode UI after the stack is up. That context is stored in persistent memory.
+- Tell Neo about your team, repos, and reusable operating context in the OpenCode UI after the stack is up. That context is stored in persistent memory.
 - Clone source repos from the `remote-cli` container so git credentials and filesystem ownership stay consistent.
-- Repos under `/workspace/repos` are mounted read-only into OpenCode. Thor creates edits in `/workspace/worktrees`.
+- Repos under `/workspace/repos` are mounted read-only into OpenCode. Neo creates edits in `/workspace/worktrees`.
 - OpenCode and remote-cli share the same `/tmp` volume so temporary artifacts referenced by absolute path, such as `slack-post-message --blocks-file /tmp/...`, are readable by the posting service.
 - Scheduled prompts live in `docker-volumes/workspace/cron/crontab`.
 
 ## Security Model
 
-Thor contains untrusted input — agent, OpenCode wrappers, external webhooks — through layered controls. In short:
+Neo contains untrusted input — agent, OpenCode wrappers, external webhooks — through layered controls. In short:
 
 - Vouch SSO + mitmproxy bound the network; remote-cli binds to `127.0.0.1` only.
 - codex-lb holds pooled ChatGPT OAuth credentials. Its direct host ports bind to loopback, while `/dashboard` is exposed through the ingress Vouch/admin-email gate.

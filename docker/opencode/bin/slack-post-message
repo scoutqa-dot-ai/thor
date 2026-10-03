@@ -6,9 +6,9 @@ usage() {
 Usage:
   slack-post-message --channel <id> [--thread-ts <ts>] [--blocks-file <path>]
 
-Post a Slack message through Thor's controlled remote-cli path.
+Post a Slack message through Neo's controlled remote-cli path.
 Message input is stdin-only; positional text, --text, and --json are not supported.
-Always pass --channel because Thor aliases store Slack thread timestamps, not channel IDs.
+Always pass --channel because Neo aliases store Slack thread timestamps, not channel IDs.
 Stdin uses Slack mrkdwn: `*bold*`, `_italic_`, bullets, and code spans/fences.
 For table or block output, pass --blocks-file.
 

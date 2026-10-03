@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# End-to-end test for Thor.
+# End-to-end test for Neo.
 #
 # Deterministic direct service checks only; no OpenCode/LLM-backed /trigger or
 # cron/hey-thor calls. Use scripts/test-opencode-e2e.sh for model-backed smoke.
@@ -52,7 +52,7 @@ REMOTE_CLI_WORKTREE_DIR="${REMOTE_CLI_WORKTREE_DIR:-/workspace/worktrees/${REMOT
 HOST_REMOTE_CLI_WORKTREE_DIR="${HOST_REMOTE_CLI_WORKTREE_DIR:-${HOST_WORKSPACE}/worktrees/${REMOTE_CLI_GIT_REPO_NAME}/${REMOTE_CLI_WORKTREE_BRANCH}}"
 DEFAULT_THOR_E2E_JIRA_EMAIL="thor-e2e-reviewer@example.com"
 ATTRIBUTION_E2E_SLACK_ID="${ATTRIBUTION_E2E_SLACK_ID:-U_E2E_ATTRIBUTION}"
-ATTRIBUTION_E2E_NAME="${ATTRIBUTION_E2E_NAME:-Thor E2E Reviewer}"
+ATTRIBUTION_E2E_NAME="${ATTRIBUTION_E2E_NAME:-Neo E2E Reviewer}"
 ATTRIBUTION_E2E_GITHUB="${ATTRIBUTION_E2E_GITHUB:-thor-e2e-reviewer}"
 THOR_E2E_JIRA_EMAIL="${THOR_E2E_JIRA_EMAIL:-$DEFAULT_THOR_E2E_JIRA_EMAIL}"
 JIRA_CLOUD_ID="${JIRA_CLOUD_ID:-}"
@@ -515,7 +515,7 @@ elif assert_attribution_config; then
     "attribution e2e: runner created actor-bearing trigger context" \
     "response: ${attribution_context_raw:0:300}; set THOR_E2E_TEST_HELPERS=1 for the runner service"
 
-  docker exec "$remote_cli_container" /usr/bin/git -C "$REMOTE_CLI_WORKTREE_DIR" config user.name "Thor E2E Bot" >/dev/null 2>&1 || true
+  docker exec "$remote_cli_container" /usr/bin/git -C "$REMOTE_CLI_WORKTREE_DIR" config user.name "Neo E2E Bot" >/dev/null 2>&1 || true
   docker exec "$remote_cli_container" /usr/bin/git -C "$REMOTE_CLI_WORKTREE_DIR" config user.email "thor-e2e-bot@example.com" >/dev/null 2>&1 || true
 
   if [[ -n "$ATTRIBUTION_SESSION_ID" ]]; then
@@ -558,12 +558,12 @@ elif assert_attribution_config; then
       "commit body: ${commit_body:0:500}"
 
     # gh pr create: the e2e GitHub App lacks PR write permission, so the
-    # underlying gh call is expected to fail. We only verify that Thor's
+    # underlying gh call is expected to fail. We only verify that Neo's
     # /exec/gh handler injected --assignee <github> from the user config
     # before invoking gh, by inspecting the remote-cli exec_gh log line.
     gh_log_since=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    pr_title="Thor attribution e2e ${REMOTE_CLI_AUTH_TS}"
-    pr_body="Thor attribution e2e marker ${REMOTE_CLI_AUTH_TS}"
+    pr_title="Neo attribution e2e ${REMOTE_CLI_AUTH_TS}"
+    pr_body="Neo attribution e2e marker ${REMOTE_CLI_AUTH_TS}"
     export pr_title pr_body
     pr_create_payload=$(node -e "
       console.log(JSON.stringify({
@@ -589,11 +589,11 @@ elif assert_attribution_config; then
       "expected --assignee ${ATTRIBUTION_E2E_GITHUB} in exec_gh args; logs: ${gh_logs:0:1500}"
 
     # gh issue create: use a unique missing label so the underlying gh call is
-    # expected to fail before creating an issue, while still proving Thor
+    # expected to fail before creating an issue, while still proving Neo
     # injected --assignee <github> and preserved disclaimer body rewriting.
     issue_log_since=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    issue_title="Thor issue attribution e2e ${REMOTE_CLI_AUTH_TS}"
-    issue_body="Thor issue attribution e2e marker ${REMOTE_CLI_AUTH_TS}"
+    issue_title="Neo issue attribution e2e ${REMOTE_CLI_AUTH_TS}"
+    issue_body="Neo issue attribution e2e marker ${REMOTE_CLI_AUTH_TS}"
     issue_missing_label="thor-e2e-missing-label-${REMOTE_CLI_AUTH_TS}"
     export issue_title issue_body issue_missing_label
     issue_create_payload=$(node -e "
@@ -629,7 +629,7 @@ elif assert_attribution_config; then
       "expected --assignee ${ATTRIBUTION_E2E_GITHUB} in issue create exec_gh args; logs: ${issue_logs:0:1500}"
     assert '[[ "$issue_logs" == *"\"event\":\"exec_gh\""*"$issue_body"*"View Neo context"* ]]' \
       "attribution e2e: gh issue create invocation keeps the traced body footer" \
-      "expected original body marker and Thor context footer in exec_gh args; logs: ${issue_logs:0:1500}"
+      "expected original body marker and Neo context footer in exec_gh args; logs: ${issue_logs:0:1500}"
   fi
 fi
 
@@ -696,7 +696,7 @@ else
       const marker = process.argv[1] || '';
       console.log(JSON.stringify({
         channel: process.env.SLACK_CHANNEL_ID,
-        text: 'Thor approval e2e seed ' + marker
+        text: 'Neo approval e2e seed ' + marker
       }));
     " "$REMOTE_CLI_AUTH_TS")
     approval_seed_raw=$(slack_post_json "chat.postMessage" "$approval_seed_json")
@@ -751,7 +751,7 @@ else
   # 4b. remote-cli-level: call the approval-required tool directly
   echo "  Calling tool via remote-cli (expecting approval interception)..."
   if [[ "$jira_assignee_live" == "true" ]]; then
-    JIRA_E2E_SUMMARY="Thor Jira assignee e2e ${REMOTE_CLI_AUTH_TS}"
+    JIRA_E2E_SUMMARY="Neo Jira assignee e2e ${REMOTE_CLI_AUTH_TS}"
     jira_e2e_description="Jira assignee attribution e2e. Marker: ${REMOTE_CLI_AUTH_TS}"
     export JIRA_E2E_SUMMARY jira_e2e_description
     approval_args_json=$(node -e "
@@ -772,7 +772,7 @@ else
         approval_args_json='{"cloudId":"e2e-cloud","issueIdOrKey":"THOR-1","commentBody":"e2e approval body"}'
         ;;
       posthog/create-feature-flag)
-        approval_args_json="{\"key\":\"thor-e2e-approval-${REMOTE_CLI_AUTH_TS}\",\"name\":\"Thor E2E approval ${REMOTE_CLI_AUTH_TS}\",\"description\":\"e2e approval body\",\"active\":false}"
+        approval_args_json="{\"key\":\"thor-e2e-approval-${REMOTE_CLI_AUTH_TS}\",\"name\":\"Neo E2E approval ${REMOTE_CLI_AUTH_TS}\",\"description\":\"e2e approval body\",\"active\":false}"
         ;;
       *)
         approval_args_json='{"description":"e2e approval body"}'
@@ -819,7 +819,7 @@ else
 
     if [[ "$jira_assignee_live" == "true" ]]; then
       # 4d. Approve a Jira issue creation with a fake project key. The upstream
-      # create should fail, but only after Thor has performed lookup and sent
+      # create should fail, but only after Neo has performed lookup and sent
       # the create payload with assignee_account_id.
       echo "  Approving Jira approval $action_id..."
       jira_log_since=$(date -u +"%Y-%m-%dT%H:%M:%SZ")

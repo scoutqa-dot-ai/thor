@@ -379,7 +379,7 @@ describe("OnePasswordLoginCredentialReader credential loading", () => {
     });
   });
 
-  it("accepts AnywhereOnWebsite while retaining Thor's exact-origin boundary", async () => {
+  it("accepts AnywhereOnWebsite while retaining Neo's exact-origin boundary", async () => {
     const h = readerWith({
       fullItem: item({
         websites: [

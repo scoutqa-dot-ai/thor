@@ -1,6 +1,6 @@
 #!/bin/sh
 # Git credential setup for the remote-cli container.
-# Thor git/gh wrappers handle per-invocation GitHub App token minting.
+# Neo git/gh wrappers handle per-invocation GitHub App token minting.
 
 set -e
 

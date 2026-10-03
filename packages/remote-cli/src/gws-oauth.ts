@@ -27,7 +27,7 @@ const GOOGLE_WORKSPACE_ALLOWED_SCOPES = new Set([
   "https://www.googleapis.com/auth/spreadsheets",
 ]);
 
-/** Same-browser nonce cookie required when Google returns to Thor. */
+/** Same-browser nonce cookie required when Google returns to Neo. */
 export const GWS_OAUTH_BROWSER_COOKIE = "thor_gws_oauth_browser";
 
 class Redacted<T> {

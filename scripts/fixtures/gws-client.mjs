@@ -107,7 +107,7 @@ const pages = (await gws(["drive", "files", "list", "--page-all", "--page-limit=
   .trim()
   .split("\n")
   .map((line) => JSON.parse(line));
-assert.equal(pages.length, 12, "caller pagination must reach upstream without a Thor cap");
+assert.equal(pages.length, 12, "caller pagination must reach upstream without a Neo cap");
 assert.equal(pages.at(-1).nextPageToken, "12");
 assert.equal(
   (await gws(["drive", "files", "list", "--page-all", "--page-limit=2"])).trim().split("\n").length,

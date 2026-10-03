@@ -62,7 +62,7 @@ def test_unknown_host_is_denied(tmp_path) -> None:
 
     assert flow.response is not None
     assert _status_code(flow.response) == 403
-    assert "thor proxy denied host/path: example.com/" == _response_text(flow.response)
+    assert "Neo proxy denied host/path: example.com/" == _response_text(flow.response)
 
 
 def test_connect_unknown_host_is_denied(tmp_path) -> None:
@@ -262,7 +262,7 @@ def test_disallowed_builtin_slack_update_returns_403(tmp_path, monkeypatch) -> N
 
     assert flow.response is not None
     assert _status_code(flow.response) == 403
-    assert _response_text(flow.response) == "thor proxy denied host/path: slack.com/api/chat.update"
+    assert _response_text(flow.response) == "Neo proxy denied host/path: slack.com/api/chat.update"
 
 
 def test_disallowed_builtin_slack_delete_returns_403(tmp_path, monkeypatch) -> None:
@@ -277,7 +277,7 @@ def test_disallowed_builtin_slack_delete_returns_403(tmp_path, monkeypatch) -> N
 
     assert flow.response is not None
     assert _status_code(flow.response) == 403
-    assert _response_text(flow.response) == "thor proxy denied host/path: slack.com/api/chat.delete"
+    assert _response_text(flow.response) == "Neo proxy denied host/path: slack.com/api/chat.delete"
 
 
 def test_disallowed_builtin_slack_reaction_remove_returns_403(tmp_path, monkeypatch) -> None:
@@ -292,7 +292,7 @@ def test_disallowed_builtin_slack_reaction_remove_returns_403(tmp_path, monkeypa
 
     assert flow.response is not None
     assert _status_code(flow.response) == 403
-    assert _response_text(flow.response) == "thor proxy denied host/path: slack.com/api/reactions.remove"
+    assert _response_text(flow.response) == "Neo proxy denied host/path: slack.com/api/reactions.remove"
 
 
 def test_builtin_slack_post_message_is_denied_without_auth_injection(tmp_path, monkeypatch) -> None:
@@ -309,7 +309,7 @@ def test_builtin_slack_post_message_is_denied_without_auth_injection(tmp_path, m
     assert _status_code(flow.response) == 403
     assert (
         _response_text(flow.response)
-        == "thor proxy denied slack.com/api/chat.postMessage; use slack-post-message instead"
+        == "Neo proxy denied slack.com/api/chat.postMessage; use slack-post-message instead"
     )
     assert "Authorization" not in flow.request.headers
 

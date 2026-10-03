@@ -168,7 +168,7 @@ export interface ICredentialBroker {
     readonly sessionId: string;
   }): Promise<Result<BrowserActionOutput, BrokerError>>;
 
-  /** Destroy one authenticated browser owned by the requesting Thor session. */
+  /** Destroy one authenticated browser owned by the requesting Neo session. */
   closeBrowser(input: {
     readonly browserSessionId: string;
     readonly sessionId: string;

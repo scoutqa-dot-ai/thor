@@ -184,7 +184,9 @@ export function renderConfigPage(props: PageProps): string {
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Thor Admin — Config</title>
+<title>Neo Admin — Config</title>
+<link rel="icon" type="image/svg+xml" href="/favicon-v4.svg" />
+<link rel="manifest" href="/site.webmanifest" />
 <style>
   ${baseStyles()}
   body { max-width: 960px; }
@@ -335,7 +337,9 @@ export function renderSessionsPage(props: SessionsProps): string {
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Thor Admin — Sessions</title>
+<title>Neo Admin — Sessions</title>
+<link rel="icon" type="image/svg+xml" href="/favicon-v4.svg" />
+<link rel="manifest" href="/site.webmanifest" />
 <style>
   ${baseStyles()}
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }

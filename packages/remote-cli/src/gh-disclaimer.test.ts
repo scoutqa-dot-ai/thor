@@ -317,7 +317,7 @@ describe("gh disclaimer injection", () => {
     expect(readAliases().filter((alias) => alias.aliasType === "git.branch")).toEqual([]);
   });
 
-  it("passes mutating command help requests without requiring a Thor session", async () => {
+  it("passes mutating command help requests without requiring a Neo session", async () => {
     await withServer(async (url) => {
       const commands = [
         ["pr", "create", "--help"],
@@ -335,14 +335,14 @@ describe("gh disclaimer injection", () => {
     });
   });
 
-  it("fails closed without a Thor session id", async () => {
+  it("fails closed without a Neo session id", async () => {
     await withServer(async (url) => {
       const { response, body } = await postGh(url, ["pr", "comment", "123", "--body", "note"]);
       expect(response.status).toBe(400);
-      expect(body.stderr).toContain("missing Thor session id");
+      expect(body.stderr).toContain("missing Neo session id");
       const issue = await postGh(url, ["issue", "comment", "42", "--body", "note"]);
       expect(issue.response.status).toBe(400);
-      expect(issue.body.stderr).toContain("missing Thor session id");
+      expect(issue.body.stderr).toContain("missing Neo session id");
       expect(execCalls).toHaveLength(0);
     });
   });

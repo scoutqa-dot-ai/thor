@@ -775,7 +775,7 @@ describe("validateGitArgs", () => {
       expect(validateGitArgs(["config", "--list", "--show-origin", "--show-scope"])).toBeNull();
       expect(validateGitArgs(["config", "--local", "--get", "remote.origin.url"])).toBeNull();
       // Write forms and scope overrides remain denied.
-      expectGitDenied(["config", "user.name", "Thor"]);
+      expectGitDenied(["config", "user.name", "Neo"]);
       expectGitDenied(["config", "--global", "--get", "user.name"]);
       expectGitDenied(["config", "--system", "--get", "user.name"]);
       expectGitDenied(["config", "--file", "/tmp/cfg", "--get", "user.name"]);

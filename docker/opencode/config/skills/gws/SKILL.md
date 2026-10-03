@@ -5,7 +5,7 @@ description: Use Google Workspace CLI for Drive files, Docs, Sheets, and other W
 
 # Google Workspace
 
-Use `gws` for Workspace tasks. Thor selects only the Google account connected to
+Use `gws` for Workspace tasks. Neo selects only the Google account connected to
 the human driving the current Slack turn. Every command requires that same human's
 Slack approval before execution; never claim success while approval is pending.
 

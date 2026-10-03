@@ -9,6 +9,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { GwsOAuthService, createRemoteCliApp } from "../packages/remote-cli/src/index.ts";
 const require = createRequire(
@@ -194,6 +195,9 @@ try {
       "host",
       "-v",
       join(root, "nginx.conf") + ":/etc/nginx/conf.d/default.conf:ro",
+      "-v",
+      fileURLToPath(new URL("../docker/ingress/static/", import.meta.url)) +
+        ":/usr/share/nginx/thor-brand:ro",
       "--entrypoint",
       "nginx",
       "nginx:alpine",
@@ -208,6 +212,23 @@ try {
     args: ["--no-sandbox"],
   });
   const context = await browser.newContext({ ignoreHTTPSErrors: true });
+  // Public branding assets work before login, including historical bookmarked URLs.
+  const manifestResponse = await context.request.get(publicUrl + "/site.webmanifest");
+  assert.equal(manifestResponse.status(), 200);
+  const manifest = await manifestResponse.json();
+  assert.equal(manifest.name, "Neo");
+  for (const icon of manifest.icons) {
+    const response = await context.request.get(publicUrl + icon.src);
+    assert.equal(response.status(), 200);
+    assert.equal(response.headers()["content-type"], "image/png");
+  }
+  const currentIcon = await context.request.get(publicUrl + "/favicon-v4.svg");
+  const legacyIcon = await context.request.get(publicUrl + "/favicon-v3.svg");
+  assert.equal(currentIcon.status(), 200);
+  assert.equal(legacyIcon.status(), 200);
+  assert.match(await currentIcon.text(), /aria-label="Neo"/);
+  assert.equal(await legacyIcon.text(), await currentIcon.text());
+  console.log("PASS: public Neo manifest/icons and legacy asset URL compatibility");
   const page = await context.newPage();
   page.on("console", (msg) => {
     if (msg.type() === "error")
@@ -241,6 +262,7 @@ try {
   await page.getByRole("heading", { name: "Google account selection fixture" }).waitFor();
   await page.getByRole("link", { name: "Choose fixture Google account and consent" }).click();
   await page.getByRole("heading", { name: "Google Workspace connected" }).waitFor();
+  assert.match(await page.locator("body").innerText(), /Neo will ask you to approve/);
   assert.equal(oauth.findConnectedIdentity("U123").ok, true);
   console.log(
     "PASS: real Chromium/shipped Nginx cold SSO login, scoped cookies, Google chooser/consent and verified owner callback grant",

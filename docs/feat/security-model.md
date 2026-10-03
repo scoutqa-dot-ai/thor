@@ -1,6 +1,6 @@
 # Security Model
 
-How Thor contains untrusted input through layered controls. For integration-specific details, see [`slack.md`](../slack.md), [`github.md`](../github.md), and [`daytona.md`](../daytona.md).
+How Neo contains untrusted input through layered controls. For integration-specific details, see [`slack.md`](../slack.md), [`github.md`](../github.md), and [`daytona.md`](../daytona.md).
 
 ## Threat model
 
@@ -23,7 +23,7 @@ The Docker network carries trusted services and the untrusted OpenCode runtime. 
 
 ## Layer 1a: Outbound proxy (mitmproxy)
 
-Thor's outbound HTTP(S) routing for operator-invoked clients is explicit:
+Neo's outbound HTTP(S) routing for operator-invoked clients is explicit:
 
 ```text
 opencode -> HTTP(S)_PROXY -> mitmproxy -> upstream
@@ -94,8 +94,8 @@ After authentication, events still face content-aware gates before they wake the
 
 - **Slack private-channel allowlist** — public non-shared channels admit by default; private channels, DMs, group DMs, and Slack Connect channels must appear in `slack.private_channel_allowlist` in `thor.json`. Fail-closed on lookup error. See `slack.md` §5.
 - **GitHub mention-required for first contact** — pure issue comments require `@${GITHUB_APP_SLUG}`. Once a session exists for the issue, later follow-ups can wake without a mention. See `github.md` §4.
-- **Self-loop guards** — events whose sender matches `SLACK_BOT_USER_ID` or `GITHUB_APP_BOT_ID` are dropped. Without these, every Thor-authored reply would re-trigger Thor.
-- **CI wake gate.** `check_suite.completed` only wakes Thor when the head commit's author email matches the derived GitHub App bot email and an alias-backed session for that branch already exists. See `github.md` §4a.
+- **Self-loop guards** — events whose sender matches `SLACK_BOT_USER_ID` or `GITHUB_APP_BOT_ID` are dropped. Without these, every Neo-authored reply would re-trigger Neo.
+- **CI wake gate.** `check_suite.completed` only wakes Neo when the head commit's author email matches the derived GitHub App bot email and an alias-backed session for that branch already exists. See `github.md` §4a.
 
 ## Layer 4: Server-side policy at remote-cli
 
@@ -127,7 +127,7 @@ requests. Treat that as an explicit trust-boundary limitation, not as protection
 from a compromised agent. Pi's override places its executor on a separate
 internal network without codex-lb, while the trusted runner retains model access.
 
-- **1Password browser credentials stay in the broker.** `OP_SERVICE_ACCOUNT_TOKEN` exists only in `remote-cli`; a dedicated stdio transport sends it to the sandbox over anonymous fd 3, where broker startup consumes and unlinks a private tmpfs file before accepting MCP requests. The broker lists only safe exact-origin Login metadata from one dedicated vault and reads credential-bearing fields only after Slack approval. If the approval explicitly enables automated TOTP, the broker re-reads one fresh SDK-computed code only after validating one same-origin MFA challenge and attempts it once. Authenticated Chromium remains broker-owned, credential-free in its process environment, exact-origin, Thor-session-bound, ref-controlled, and limited by a ten-minute inactivity lease. No credential, TOTP secret/code, cookie/storage value, full browser handle, or raw Playwright snapshot crosses the boundary.
+- **1Password browser credentials stay in the broker.** `OP_SERVICE_ACCOUNT_TOKEN` exists only in `remote-cli`; a dedicated stdio transport sends it to the sandbox over anonymous fd 3, where broker startup consumes and unlinks a private tmpfs file before accepting MCP requests. The broker lists only safe exact-origin Login metadata from one dedicated vault and reads credential-bearing fields only after Slack approval. If the approval explicitly enables automated TOTP, the broker re-reads one fresh SDK-computed code only after validating one same-origin MFA challenge and attempts it once. Authenticated Chromium remains broker-owned, credential-free in its process environment, exact-origin, Neo-session-bound, ref-controlled, and limited by a ten-minute inactivity lease. No credential, TOTP secret/code, cookie/storage value, full browser handle, or raw Playwright snapshot crosses the boundary.
 
 ## Layer 5: Blast radius limits
 
@@ -149,7 +149,7 @@ If a policy layer fails, these limit what damage is reachable:
 ## Deferred to infrastructure
 
 - **Rate limiting / DDoS protection.** Application code does not implement Express rate limiters. Enforcement is expected at the ingress / WAF layer. See `AGENTS.md` §8.
-- **OpenCode harness boundaries.** Thor-side wrappers do not re-enforce timeouts, output caps, or transformations already handled by the OpenCode harness. See `AGENTS.md` §9.
+- **OpenCode harness boundaries.** Neo-side wrappers do not re-enforce timeouts, output caps, or transformations already handled by the OpenCode harness. See `AGENTS.md` §9.
 
 ## Opt-in Pi execution boundary
 

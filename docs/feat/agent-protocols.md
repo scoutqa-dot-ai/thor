@@ -1,6 +1,6 @@
 # Agent Protocols
 
-Directional index for Thor's multi-agent handoff protocols.
+Directional index for Neo's multi-agent handoff protocols.
 
 ## Source Of Truth
 
@@ -16,7 +16,7 @@ catalogue or ownership model changed.
 
 ## Why Protocols Exist
 
-Protocols give multi-hop Thor work a shared task state so the primary agent and
+Protocols give multi-hop Neo work a shared task state so the primary agent and
 subagents do not re-narrate context on every hop. They are prompt-guided
 conventions, not a workflow engine.
 
@@ -31,10 +31,10 @@ artifacts.
 
 ## Current Protocols
 
-| Protocol      | Used for                            | Primary prompt owner    | Subagent roles                                  |
-| ------------- | ----------------------------------- | ----------------------- | ----------------------------------------------- |
-| Code change   | Non-trivial implementation work     | `build.md`              | `thinker:plan`, `coder:implement`, `thinker:review` |
-| Investigation | Debugging, root-cause, and analysis | `build.md`, `thinker.md` | `thinker:investigate`                          |
+| Protocol      | Used for                            | Primary prompt owner     | Subagent roles                                      |
+| ------------- | ----------------------------------- | ------------------------ | --------------------------------------------------- |
+| Code change   | Non-trivial implementation work     | `build.md`               | `thinker:plan`, `coder:implement`, `thinker:review` |
+| Investigation | Debugging, root-cause, and analysis | `build.md`, `thinker.md` | `thinker:investigate`                               |
 
 ## Protocol Ownership
 

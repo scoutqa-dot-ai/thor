@@ -31,7 +31,7 @@ export class GwsArgsError extends Error {
   }
 }
 
-/** Agent-facing authentication commands are owned by Thor's OAuth broker. */
+/** Agent-facing authentication commands are owned by Neo's OAuth broker. */
 export class GwsAuthCommandDenied extends Error {
   readonly _tag = "GwsAuthCommandDenied" as const;
 

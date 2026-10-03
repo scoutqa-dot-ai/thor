@@ -73,7 +73,7 @@ describe("ingress auth split", () => {
   const compose = readFileSync(resolve(repoRoot, "docker-compose.yml"), "utf8");
   const template = readFileSync(resolve(repoRoot, "docker/ingress/nginx.conf.template"), "utf8");
 
-  it("configures Vouch with managed email domains and comma-separated Thor admin emails", () => {
+  it("configures Vouch with managed email domains and comma-separated Neo admin emails", () => {
     expect(compose).toContain(
       "VOUCH_DOMAINS=${VOUCH_ALLOWED_EMAIL_DOMAINS:-scoutqa.cc},${VOUCH_COOKIE_DOMAIN:-localhost}",
     );

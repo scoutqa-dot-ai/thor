@@ -1492,7 +1492,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         logInfo(log, "corr_key_resolved", { rawKey: rawKeys[0], correlationKey });
       }
 
-      // Only forward if Thor is engaged in this thread via the JSONL alias index.
+      // Only forward if Neo is engaged in this thread via the JSONL alias index.
       // Users must @mention to start new conversations.
       const engaged = hasSessionForCorrelationKey(rawKeys);
       if (!engaged) {

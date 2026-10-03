@@ -368,6 +368,8 @@ it("binds actual Pi tool calls to per-user GWS, owner approval and a single-use 
     .map((body) => JSON.parse(body))
     .find((body) => body.channel === owner && body.text.includes("Connect Google Workspace"));
   expect(privateDm).toBeDefined();
+  expect(privateDm.text).toContain("account to Neo");
+  expect(privateDm.text).not.toContain("account to Thor");
   expect(privateDm.thread_ts).toBeUndefined();
   const privateLink = /<(https:\/\/[^|]+)\|Connect Google Workspace>/.exec(privateDm.text)?.[1];
   if (!privateLink) throw new Error("Pi GWS fixture DM link missing");

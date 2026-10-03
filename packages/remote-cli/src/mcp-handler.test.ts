@@ -530,7 +530,7 @@ describe("remote-cli MCP endpoints", () => {
     });
   });
 
-  it("fails closed for Jira approvals when Thor session context is missing", async () => {
+  it("fails closed for Jira approvals when Neo session context is missing", async () => {
     const pending = await postJson("/exec/mcp", {
       args: [
         "atlassian",
@@ -548,7 +548,7 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(pending.status).toBe(200);
     expect(pendingBody).toMatchObject({ stdout: "", exitCode: 1 });
-    expect(pendingBody.stderr).toContain("missing Thor session id");
+    expect(pendingBody.stderr).toContain("missing Neo session id");
     expect(toolCalls).toEqual([]);
 
     const list = await postJson("/exec/approval", { args: ["list"] });
@@ -1433,7 +1433,7 @@ describe("remote-cli MCP endpoints", () => {
     });
     const missingBody = (await missingSession.json()) as { stderr: string; exitCode: number };
     expect(missingBody.exitCode).toBe(1);
-    expect(missingBody.stderr).toContain("Missing Thor session id for 1Password browser request");
+    expect(missingBody.stderr).toContain("Missing Neo session id for 1Password browser request");
   });
 
   it("does not create approval when the selected Login does not match the exact origin", async () => {

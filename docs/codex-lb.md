@@ -1,6 +1,6 @@
 # codex-lb multi-subscription routing
 
-Thor follows the `katalon-internal/thor` codex-lb topology:
+Neo follows the `katalon-internal/thor` codex-lb topology:
 
 ```text
 browser -> ingress :8080 -> Vouch/admin-email gate -> codex-lb :2455
@@ -18,14 +18,14 @@ codex-lb owns the ChatGPT OAuth credentials, account pool, quota state, and rout
   - `127.0.0.1:1455` — OAuth callback listener.
 - OpenCode reaches `http://codex-lb:2455/v1` over the private Compose network.
 
-Port 8080 is Thor ingress, not a direct `2455:2455` publication. This preserves the existing SSO gate while making the dashboard reachable from the office. Restrict the ingress host with the deployment firewall/VPN as appropriate.
+Port 8080 is Neo ingress, not a direct `2455:2455` publication. This preserves the existing SSO gate while making the dashboard reachable from the office. Restrict the ingress host with the deployment firewall/VPN as appropriate.
 
 For an office hostname, set `VOUCH_CALLBACK_URL` and `VOUCH_COOKIE_DOMAIN` to
 that deployment and use HTTPS at the outer ingress/load balancer. The Compose
 nginx listener itself is plain HTTP. Keep `THOR_ADMIN_EMAILS` restricted to the
 operators allowed to manage subscription credentials.
 
-The OAuth provider normally redirects the browser to `localhost:1455`. For a browser running away from the Docker host, `localhost` means the office workstation, not Thor. Use codex-lb's manual callback flow, or deliberately tunnel local port 1455 to the Docker host.
+The OAuth provider normally redirects the browser to `localhost:1455`. For a browser running away from the Docker host, `localhost` means the office workstation, not Neo. Use codex-lb's manual callback flow, or deliberately tunnel local port 1455 to the Docker host.
 
 ## Runtime configuration
 
@@ -33,7 +33,7 @@ The checked-in Compose configuration:
 
 - pins codex-lb v1.24.0 by tag and OCI digest;
 - persists `/var/lib/codex-lb` in the `codex-lb-data` volume;
-- sends codex-lb HTTP/WebSocket egress through Thor's mitmproxy and mounts its public CA;
+- sends codex-lb HTTP/WebSocket egress through Neo's mitmproxy and mounts its public CA;
 - disables codex-lb's own dashboard login because Vouch owns browser authentication at ingress;
 - permits unauthenticated proxy calls from private Docker CIDRs, using the non-secret `codex-lb-local` OpenCode placeholder key;
 - disables the HTTP Responses session bridge to avoid cross-call stream mixing;
@@ -86,13 +86,13 @@ chmod 600 docker-volumes/opencode/auth.json
 docker compose up -d opencode runner
 ```
 
-Start fresh Thor conversations after switching. Existing sessions can contain account-bound continuation state.
+Start fresh Neo conversations after switching. Existing sessions can contain account-bound continuation state.
 
 ## Routing behavior
 
 Configure routing strategy, account pauses, quotas, and eligibility in the dashboard. Fresh conversations can select another healthy subscription. Continuations involving `previous_response_id`, encrypted reasoning, files, or other upstream state can have hard account affinity and may fail closed when the owning subscription is unavailable.
 
-For a deterministic pool check, temporarily select round-robin routing, create several fresh Thor sessions, and confirm in codex-lb request logs that multiple accounts are selected:
+For a deterministic pool check, temporarily select round-robin routing, create several fresh Neo sessions, and confirm in codex-lb request logs that multiple accounts are selected:
 
 ```bash
 docker compose logs -f codex-lb
@@ -165,4 +165,4 @@ docker run --rm \
 docker compose up -d codex-lb opencode runner
 ```
 
-Before upgrading, drain Thor triggers, stop consumers, back up the volume, review codex-lb release notes, and update both the image tag and digest. Database migrations run at startup. Do not run an older image against migrated state; restore the matching pre-upgrade backup first.
+Before upgrading, drain Neo triggers, stop consumers, back up the volume, review codex-lb release notes, and update both the image tag and digest. Database migrations run at startup. Do not run an older image against migrated state; restore the matching pre-upgrade backup first.

@@ -1,6 +1,6 @@
-# Thor — AI Team Member Architecture
+# Neo — AI Team Member Architecture
 
-> Scope: Thor is an internal AI teammate for engineering and product work. It is not meant to mirror production infra exactly.
+> Scope: Neo is an internal AI teammate for engineering and product work. It is not meant to mirror production infra exactly.
 
 ## Core Topology
 
@@ -64,7 +64,7 @@ Approval records are persisted under `/workspace/data/approvals`. Approval creat
 
 ## Triggers
 
-Thor is event-driven.
+Neo is event-driven.
 
 - Slack mentions and engaged thread replies enter through `gateway`.
 - Scheduled prompts enter through `gateway /cron`.
@@ -89,8 +89,8 @@ A scheduled prompt checks PostHog, sees an error spike, inspects recent merges t
 
 ### Jira issue triage
 
-A webhook or Slack prompt asks Thor to investigate a Jira issue. Thor reads the issue, checks recent commits, and reports likely code owners and suspects.
+A webhook or Slack prompt asks Neo to investigate a Jira issue. Neo reads the issue, checks recent commits, and reports likely code owners and suspects.
 
 ### Daily delivery digest
 
-A cron job asks Thor to summarize stale PRs, blocked issues, or failing tests and post the result to Slack.
+A cron job asks Neo to summarize stale PRs, blocked issues, or failing tests and post the result to Slack.

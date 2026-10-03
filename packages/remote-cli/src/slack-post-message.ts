@@ -209,10 +209,10 @@ export async function handleSlackPostMessage(
   const started = Date.now();
   const sessionId = request.sessionId;
   if (!sessionId) {
-    return result("missing x-thor-session-id; slack-post-message requires a Thor session\n");
+    return result("missing x-thor-session-id; slack-post-message requires a Neo session\n");
   }
   if (!hasUsableThorSession(sessionId)) {
-    return result(`invalid x-thor-session-id; no live Thor session binding for ${sessionId}\n`);
+    return result(`invalid x-thor-session-id; no live Neo session binding for ${sessionId}\n`);
   }
 
   const parsed = parseSlackPostMessageArgs(request.args);

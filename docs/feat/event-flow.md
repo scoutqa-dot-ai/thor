@@ -1,6 +1,6 @@
 # Event Flow
 
-Stable contracts for how Thor turns external events into resumed OpenCode work.
+Stable contracts for how Neo turns external events into resumed OpenCode work.
 For operator setup, see [`../slack.md`](../slack.md) and [`../github.md`](../github.md).
 For trust boundaries, see [`security-model.md`](./security-model.md).
 
@@ -53,16 +53,16 @@ flowchart LR
 
 All external event routes validate shape and origin before queueing work.
 
-| Source | Route | Authentication | Main correlation key |
-| --- | --- | --- | --- |
-| Slack events | `POST /slack/events` | Slack signing secret | `slack:thread:<channel>/<threadTs>` |
-| GitHub webhooks | `POST /github/webhook` | `X-Hub-Signature-256` | `git:branch:<repo>:<branch>` or `github:issue:<...>` |
-| Cron | `POST /cron` | `Authorization: Bearer <CRON_SECRET>` | caller-supplied or derived `cron:<hash>:<time>` |
-| Slack approval buttons | `POST /slack/interactivity` | Slack signing secret | originating `slack:thread:<channel>/<threadTs>` |
+| Source                 | Route                       | Authentication                        | Main correlation key                                 |
+| ---------------------- | --------------------------- | ------------------------------------- | ---------------------------------------------------- |
+| Slack events           | `POST /slack/events`        | Slack signing secret                  | `slack:thread:<channel>/<threadTs>`                  |
+| GitHub webhooks        | `POST /github/webhook`      | `X-Hub-Signature-256`                 | `git:branch:<repo>:<branch>` or `github:issue:<...>` |
+| Cron                   | `POST /cron`                | `Authorization: Bearer <CRON_SECRET>` | caller-supplied or derived `cron:<hash>:<time>`      |
+| Slack approval buttons | `POST /slack/interactivity` | Slack signing secret                  | originating `slack:thread:<channel>/<threadTs>`      |
 
-Slack first-contact work comes from `app_mention` events. Plain `message` events are accepted only after Thor is already engaged in the thread. Public, non-shared channels are admitted by default; private channels, DMs, group DMs, and Slack Connect/shared channels must be allowlisted in `slack.private_channel_allowlist`. Channel classification failures fail closed.
+Slack first-contact work comes from `app_mention` events. Plain `message` events are accepted only after Neo is already engaged in the thread. Public, non-shared channels are admitted by default; private channels, DMs, group DMs, and Slack Connect/shared channels must be allowlisted in `slack.private_channel_allowlist`. Channel classification failures fail closed.
 
-GitHub first-contact comments must mention the app unless the event belongs to a Thor-owned PR flow or an already-active issue session. Branch-known events use `git:branch:<repo>:<branch>`. PR issue comments that do not include the branch enqueue under `pending:branch-resolve:<repo>:<number>` until dispatch can resolve the PR head. Pure issue sessions use `github:issue:<localRepo>:<repoFullName>#<issueNumber>`.
+GitHub first-contact comments must mention the app unless the event belongs to a Neo-owned PR flow or an already-active issue session. Branch-known events use `git:branch:<repo>:<branch>`. PR issue comments that do not include the branch enqueue under `pending:branch-resolve:<repo>:<number>` until dispatch can resolve the PR head. Pure issue sessions use `github:issue:<localRepo>:<repoFullName>#<issueNumber>`.
 
 Cron events are already trusted by `CRON_SECRET`; they do not create aliasable keys unless the caller passes an existing alias-backed key, such as a Slack thread key.
 
@@ -126,7 +126,7 @@ Every accepted trigger writes `trigger_start` and then a terminal `trigger_end` 
 
 ## Progress
 
-Runner observes OpenCode events and converts them into Thor progress events. When the current request correlation key is the channel-aware Slack form `slack:thread:<channel>/<threadTs>`, runner sends those progress events to the shared progress engine and its Slack transport.
+Runner observes OpenCode events and converts them into Neo progress events. When the current request correlation key is the channel-aware Slack form `slack:thread:<channel>/<threadTs>`, runner sends those progress events to the shared progress engine and its Slack transport.
 
 Progress is intentionally tied to the current trigger key. Runner does not search historical aliases to infer a Slack target for non-Slack triggers. GitHub, cron, and other non-Slack triggers can still resume the same OpenCode session, but they do not create Slack progress messages unless the current trigger itself is a Slack-thread trigger.
 
@@ -149,14 +149,14 @@ No usable pending approval is created unless the human-visible Slack card is pos
 
 Aliases bind external keys and OpenCode entities to an opaque anchor id. The anchor is the durable conversation identity; sessions can be replaced without moving external aliases.
 
-| Alias type | Value | Purpose |
-| --- | --- | --- |
-| `slack.thread` | `<channel>/<threadTs>` | Current Slack thread key |
-| `slack.thread_id` | `<threadTs>` | Legacy Slack thread fallback |
-| `git.branch` | `base64url("git:branch:<repo>:<branch>")` | GitHub branch session key |
-| `github.issue` | `base64url("github:issue:<...>")` | GitHub issue session key |
-| `opencode.session` | `<sessionId>` | OpenCode session bound to an anchor |
-| `opencode.subsession` | `<childSessionId>` | Child session bound to the parent's anchor |
+| Alias type            | Value                                     | Purpose                                    |
+| --------------------- | ----------------------------------------- | ------------------------------------------ |
+| `slack.thread`        | `<channel>/<threadTs>`                    | Current Slack thread key                   |
+| `slack.thread_id`     | `<threadTs>`                              | Legacy Slack thread fallback               |
+| `git.branch`          | `base64url("git:branch:<repo>:<branch>")` | GitHub branch session key                  |
+| `github.issue`        | `base64url("github:issue:<...>")`         | GitHub issue session key                   |
+| `opencode.session`    | `<sessionId>`                             | OpenCode session bound to an anchor        |
+| `opencode.subsession` | `<childSessionId>`                        | Child session bound to the parent's anchor |
 
 Alias records are append-only JSONL. The newest session binding for an anchor is the current session; external aliases do not move. Branch and issue keys are base64url encoded because they contain characters that are awkward in raw JSONL lookup keys. Slack ids and timestamps are stored raw.
 
@@ -172,7 +172,7 @@ Aliases are read by the queue for lock grouping, by gateway filters for "already
 
 ## Example
 
-A user mentions Thor in Slack, Thor opens a PR, then CI pushes a GitHub event back into the same conversation:
+A user mentions Neo in Slack, Neo opens a PR, then CI pushes a GitHub event back into the same conversation:
 
 1. Slack `app_mention` queues `slack:thread:C123/1701234567.123`.
 2. No alias exists, so the queue lock is the raw Slack key.

@@ -1,4 +1,4 @@
-# Thor — Docker Compose
+# Neo — Docker Compose
 #
 # Start:   docker compose up --build -d
 # Test:    ./scripts/test-e2e.sh

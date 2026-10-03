@@ -3,7 +3,7 @@ import { z } from "zod/v4";
 /**
  * OpenCode event types — schema, parser, and writer-side projection.
  *
- * One module for everything Thor knows about OpenCode's `event` payload:
+ * One module for everything Neo knows about OpenCode's `event` payload:
  *
  * - {@link OpencodeEventSchema} is the authoritative shape covering the four
  *   event types the runner viewer renders plus ~9 lifecycle events watched

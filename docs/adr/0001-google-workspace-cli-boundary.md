@@ -10,6 +10,6 @@ Every command is stored privately and bound to a Slack approval by action ID and
 
 The broker owns private, expiring, single-use connection links; PKCE and OAuth state; same-browser nonce binding; exact callback routing; Vouch email comparison; verified Google userinfo comparison; token refresh; local disconnect; and encrypted grant storage. OpenCode receives only normal `gws` output.
 
-Google Drive, Docs, and Sheets scopes are a fixed configuration allowlist. Google resource permissions and Workspace policy remain additional authorization layers; Thor does not rewrite supported API argv after blocking credential-management and local-filesystem command surfaces.
+Google Drive, Docs, and Sheets scopes are a fixed configuration allowlist. Google resource permissions and Workspace policy remain additional authorization layers; Neo does not rewrite supported API argv after blocking credential-management and local-filesystem command surfaces.
 
 This supersedes both the initial read-only command allowlist and the later one-global-identity design. See [deployment and security guidance](../google-workspace.md) and the [per-user OAuth plan](../plan/2026092901_google-workspace-user-oauth.md).

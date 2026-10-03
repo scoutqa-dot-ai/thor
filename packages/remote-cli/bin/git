@@ -1,5 +1,5 @@
 #!/bin/sh
-# Thor git wrapper — wires GIT_ASKPASS to the Thor helper for GitHub App
+# Neo git wrapper — wires GIT_ASKPASS to the Neo helper for GitHub App
 # installation tokens. Git only invokes askpass when a remote operation actually
 # needs credentials, so local commands avoid the Node startup cost.
 

@@ -122,7 +122,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     );
   });
 
-  it("requires a live Thor session before calling Slack", async () => {
+  it("requires a live Neo session before calling Slack", async () => {
     appendAlias({
       aliasType: "opencode.session",
       aliasValue: "session-stale",
@@ -178,14 +178,14 @@ describe("remote-cli slack-post-message endpoint", () => {
     await expectFailure(
       {
         args: ["--channel", "C123"],
-        stdin: "| Name | Status |\n|---|---|\n| Thor | Ready |\n",
+        stdin: "| Name | Status |\n|---|---|\n| Neo | Ready |\n",
       },
       "must not include markdown table separators",
     );
     await expectFailure(
       {
         args: ["--channel", "C123"],
-        stdin: "| Name | Status |\n|---|---|\n| Thor | Ready |\n",
+        stdin: "| Name | Status |\n|---|---|\n| Neo | Ready |\n",
       },
       "Use Slack mrkdwn instead: `*bold*` (not `**bold**`)",
     );
@@ -199,7 +199,7 @@ describe("remote-cli slack-post-message endpoint", () => {
     await expectFailure(
       {
         args: ["--channel", "C123"],
-        stdin: "| **Name** | Status |\n|---|---|\n| Thor | Ready |\n",
+        stdin: "| **Name** | Status |\n|---|---|\n| Neo | Ready |\n",
       },
       "use --blocks-file with Slack blocks/table output instead",
     );

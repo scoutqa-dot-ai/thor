@@ -603,7 +603,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     sessionId: string | undefined,
   ): Record<string, unknown> {
     if (instance.name !== "onepassword-browser") return args;
-    if (!sessionId) throw new Error("Missing Thor session id for 1Password browser request");
+    if (!sessionId) throw new Error("Missing Neo session id for 1Password browser request");
     if (args.item_title !== undefined) {
       const {
         item_title: approvedItemTitle,
@@ -708,7 +708,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       return fail('Invalid arguments for "browser_open_authenticated"');
     }
     if (!context.sessionId) {
-      return fail('Approval required for "browser_open_authenticated": missing Thor session id');
+      return fail('Approval required for "browser_open_authenticated": missing Neo session id');
     }
 
     const resolved = await executeUpstreamCall({
@@ -794,12 +794,12 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       const formatError = validateDisclaimerCompatibleArgs(toolInfo.name, approvalArgs);
       if (formatError) return fail(formatError);
       if (!context.sessionId) {
-        return fail(`Approval required for "${toolInfo.name}": missing Thor session id`);
+        return fail(`Approval required for "${toolInfo.name}": missing Neo session id`);
       }
       const anchorContext = findAnchorContext(context.sessionId);
       if (!anchorContext.ok) {
         return fail(
-          `Approval required for "${toolInfo.name}": no Thor anchor for session ${context.sessionId} (${anchorContext.reason})`,
+          `Approval required for "${toolInfo.name}": no Neo anchor for session ${context.sessionId} (${anchorContext.reason})`,
         );
       }
       const slackTarget = resolveSlackThreadTargetFromTrigger(context.sessionId);

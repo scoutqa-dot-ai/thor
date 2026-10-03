@@ -58,7 +58,7 @@ const SNAPSHOT_KEYS = new Set([
   "url",
 ]);
 
-/** Opaque identifier for a browser session owned by exactly one Thor session. */
+/** Opaque identifier for a browser session owned by exactly one Neo session. */
 export type BrowserSessionId = string & { readonly __brand: "BrowserSessionId" };
 
 /** Opaque identifier binding element refs to one accessibility snapshot. */
@@ -151,7 +151,7 @@ export interface IAuthenticatedBrowserSessions {
     input: OwnedBrowserSessionInput & { readonly destination: BrowserDestination },
   ): Promise<Result<BrowserSessionLocation, BrowserSessionError | BrokerRequestDeniedError>>;
 
-  /** Destroy one browser session after verifying its owning Thor session. */
+  /** Destroy one browser session after verifying its owning Neo session. */
   closeBrowser(
     input: OwnedBrowserSessionInput,
   ): Promise<Result<{ readonly status: "closed" }, BrokerRequestDeniedError>>;
@@ -1632,7 +1632,7 @@ export class PlaywrightAuthenticatedBrowserSessions implements IAuthenticatedBro
     }
   }
 
-  /** Close one browser only for the Thor session that opened it. */
+  /** Close one browser only for the Neo session that opened it. */
   async closeBrowser(
     input: OwnedBrowserSessionInput,
   ): Promise<Result<{ readonly status: "closed" }, BrokerRequestDeniedError>> {

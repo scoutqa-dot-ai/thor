@@ -36,7 +36,7 @@ export function buildThorTriggerUrl(
 
 export function findActiveTriggerOrThrow(sessionId: string | undefined): ActiveTriggerSnapshot {
   if (!sessionId) {
-    throw new Error("Disclaimer required: missing Thor session id");
+    throw new Error("Disclaimer required: missing Neo session id");
   }
   const active = findActiveTrigger(sessionId);
   if (!active.ok) {
@@ -66,12 +66,12 @@ export function buildThorDisclaimerForSession(
   runnerBaseUrl = "",
 ): ThorDisclaimerContext {
   if (!sessionId) {
-    throw new Error("Disclaimer required: missing Thor session id");
+    throw new Error("Disclaimer required: missing Neo session id");
   }
   const context = findAnchorContext(sessionId);
   if (!context.ok) {
     throw new Error(
-      `Disclaimer required: no Thor anchor for session ${sessionId} (${context.reason})`,
+      `Disclaimer required: no Neo anchor for session ${sessionId} (${context.reason})`,
     );
   }
   const { anchorId, sessionId: anchorSessionId, triggerId } = context;

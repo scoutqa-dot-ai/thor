@@ -1,5 +1,10 @@
 # AGENTS.md — Way of Work
 
+The product is Neo. Retain legacy technical identifiers (`THOR_*`, `@thor/*`,
+storage/crypto/protocol namespaces and existing deployment paths) unless a plan
+explicitly migrates them. Historical records and external identities keep their
+original names; new user/agent-facing copy uses Neo.
+
 Instructions for AI agents working on this repository.
 
 ## Workflow
@@ -35,7 +40,7 @@ Instructions for AI agents working on this repository.
 
 8. **Rate limiting** — App-level rate limiters / DDoS protection are deferred to infrastructure (ingress, proxy, WAF, or platform controls). CodeQL missing-rate-limit alerts are acknowledged, but do not add Express middleware limiters unless a future plan explicitly changes this policy.
 
-9. **OpenCode harness boundaries** — Thor-side wrappers and tools should not re-enforce timeouts, output caps/truncation, or output transformations already handled by the OpenCode harness. Add Thor-side enforcement only when Thor has its own explicit product/API contract or safety boundary (for example, endpoint-specific JSON formatting or a documented internal output limit).
+9. **OpenCode harness boundaries** — Neo-side wrappers and tools should not re-enforce timeouts, output caps/truncation, or output transformations already handled by the OpenCode harness. Add Neo-side enforcement only when Neo has its own explicit product/API contract or safety boundary (for example, endpoint-specific JSON formatting or a documented internal output limit).
 
 10. **Agent-facing prompts and skills** — Write in terms of what the agent can do, and describe only state the agent can actually observe or act on. Concretely:
     - Describe supported command/argument shapes positively, listing the forms that work.

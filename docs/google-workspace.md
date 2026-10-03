@@ -1,22 +1,26 @@
 # Google Workspace
 
-Thor installs [`@googleworkspace/cli`](https://github.com/googleworkspace/cli), pinned in `Dockerfile`. The agent's `gws` wrapper sends argv to trusted `remote-cli`; Pi and OpenCode never receive Google refresh credentials, OAuth client secrets or connection storage.
+Use Neo as the existing Google OAuth consent application's display name. Preserve
+its Web client ID/secret, registered callback and encryption key. Google's account
+security list may retain the legacy name until that operator-side display update.
+
+Neo installs [`@googleworkspace/cli`](https://github.com/googleworkspace/cli), pinned in `Dockerfile`. The agent's `gws` wrapper sends argv to trusted `remote-cli`; Pi and OpenCode never receive Google refresh credentials, OAuth client secrets or connection storage.
 
 ## Security and ownership model
 
 Each command is owned by the human who started the **currently active Slack turn**:
 
-1. `remote-cli` resolves the latest open trigger bound to the Thor session.
+1. `remote-cli` resolves the latest open trigger bound to the Neo session.
 2. The trigger must be Slack-only. Cron, GitHub, missing, ended, superseded, or ambiguous triggers fail closed.
 3. The trusted Slack user ID selects the DM recipient and account slot in `SLACK_TEAM_ID`. Neither a directory entry, a Slack profile email nor email-read permissions are required. An explicit `google_workspace_email` is an optional restriction on account choice; conflicting pins fail closed. Jira `email`, agent argv and browser query parameters never choose the credential owner.
-4. Thor loads only that Slack user's encrypted Google grant. There is no global account or service-account fallback.
-5. Thor stores exact argv in encrypted private state and posts a secret-free Slack approval containing the operation, argument count, expected Google account, Slack user, and keyed HMAC-SHA-256 command fingerprint.
+4. Neo loads only that Slack user's encrypted Google grant. There is no global account or service-account fallback.
+5. Neo stores exact argv in encrypted private state and posts a secret-free Slack approval containing the operation, argument count, expected Google account, Slack user, and keyed HMAC-SHA-256 command fingerprint.
 6. Only the same Slack user can approve or reject the action. The private command is consumed before execution, so an uncertain result is never replayed from the same approval.
 7. `remote-cli` refreshes one short-lived access token, revalidates its Google email and subject, and injects only `GOOGLE_WORKSPACE_CLI_TOKEN` into a fresh private `gws` cwd. The cwd is deleted after execution.
 
 `gws auth`, including login, logout, and credential export, is blocked at the agent-facing boundary. Local file input/output flags, absolute/file-URI/response-file arguments, and upload/download/import/export/send helpers are also blocked so the credential-bearing child cannot be used to read or export other `remote-cli` files. OAuth client credentials, refresh tokens, authorization codes, PKCE verifiers, state, cookies, raw argv, and OAuth response bodies are not returned to OpenCode or Slack and are not written to normal worklogs.
 
-Outside those credential and local-filesystem exclusions, Thor does not reinterpret upstream Google API commands. Google OAuth scopes, Google resource permissions, Workspace policy, and the explicit Slack approval jointly define authority. Command output still reaches the requesting session and can contain sensitive Workspace data.
+Outside those credential and local-filesystem exclusions, Neo does not reinterpret upstream Google API commands. Google OAuth scopes, Google resource permissions, Workspace policy, and the explicit Slack approval jointly define authority. Command output still reaches the requesting session and can contain sensitive Workspace data.
 
 ## Configure Google OAuth
 
@@ -70,7 +74,7 @@ Outside those credential and local-filesystem exclusions, Thor does not reinterp
 
 ## Connect and execute
 
-On the first `gws` request for an unconnected user, Thor sends a private Slack DM containing a random, single-use link that expires after ten minutes. The link is bound to Slack workspace, Slack user, Thor session, anchor and trigger, plus any optional Google pin. Slack must confirm delivery to a DM before the tool reports a link sent. The private link is an invitation capability: do not forward it.
+On the first `gws` request for an unconnected user, Neo sends a private Slack DM containing a random, single-use link that expires after ten minutes. The link is bound to Slack workspace, Slack user, Neo session, anchor and trigger, plus any optional Google pin. Slack must confirm delivery to a DM before the tool reports a link sent. The private link is an invitation capability: do not forward it.
 
 Ingress first moves the private request ID into a scoped `HttpOnly` cookie and redirects to a query-free authorization path, so the capability does not pass through Vouch URLs or normal access/error logs. The browser flow then requires:
 
@@ -86,7 +90,7 @@ The verified Google grant is encrypted under that Slack user's account slot. Lat
 
 For an unpinned account, the expected sequence is browser SSO → confirm the displayed Google/Slack association → Google's account picker and consent → **Google Workspace connected**. The authorization request explicitly uses `prompt=select_account consent`. The confirmation page's CSP permits only same-origin form submission and the trusted Google authorization origin for its redirect. A Resume/error page is not completed authorization; connection-required tool responses remain authoritative.
 
-After the page reports success, return to Slack and retry the original request. Thor then posts the command approval in the originating thread. The command fingerprint binds the card and audit trail to the exact encrypted argv without putting argv or document contents in Slack. After resolution, the trusted gateway gives the re-entered turn a short-lived, single-use result capability. The agent retrieves command output with `approval result <action-id> <capability>`; output remains encrypted until that retrieval and never enters the Slack card or gateway resolution log. The capability is not returned by approval list/status and must never be quoted to Slack or reused.
+After the page reports success, return to Slack and retry the original request. Neo then posts the command approval in the originating thread. The command fingerprint binds the card and audit trail to the exact encrypted argv without putting argv or document contents in Slack. After resolution, the trusted gateway gives the re-entered turn a short-lived, single-use result capability. The agent retrieves command output with `approval result <action-id> <capability>`; output remains encrypted until that retrieval and never enters the Slack card or gateway resolution log. The capability is not returned by approval list/status and must never be quoted to Slack or reused.
 
 ## Disconnect and revoke
 
@@ -96,7 +100,7 @@ A connected user can open:
 https://<thor-host>/google-workspace/disconnect
 ```
 
-Vouch must authenticate the connected Google email. Thor finds its unique encrypted grant, including accounts connected without a config pin. The page requires an explicit same-browser POST confirmation protected by a five-minute CSRF nonce; merely opening the URL does not mutate state. Thor deletes only that grant. The user should also revoke Thor from Google Account security settings; local deletion alone does not revoke the provider-side grant.
+Vouch must authenticate the connected Google email. Neo finds its unique encrypted grant, including accounts connected without a config pin. The page requires an explicit same-browser POST confirmation protected by a five-minute CSRF nonce; merely opening the URL does not mutate state. Neo deletes only that grant. The user should also revoke Neo from Google Account security settings; local deletion alone does not revoke the provider-side grant.
 
 An operator responding to compromise should revoke the OAuth client or user grant at Google, stop `remote-cli`, preserve only the secret-free audit trail required by policy, delete the `google-workspace-oauth-data` volume, rotate `GOOGLE_WORKSPACE_OAUTH_ENCRYPTION_KEY` and the client secret, then recreate `remote-cli`.
 
@@ -106,7 +110,7 @@ An operator responding to compromise should revoke the OAuth client or user gran
 - The named volume and encryption key are both required to decrypt a grant. Neither is mounted into OpenCode.
 - Refresh tokens stay encrypted at rest and are revealed only inside the broker during refresh. Only the resulting short-lived access token enters the isolated `gws` child environment.
 - Request cwd is ignored. `gws` receives a fresh empty HOME/config directory, selected PATH, optional project ID, and the access token—no Slack token, OAuth client secret, credential file, inherited cached auth, or shared `.env`.
-- Audit records contain action ID, reviewer Slack ID, owner Slack ID, Google email/subject connection ID, operation category, argument count, command fingerprint, approval/outcome status, and Thor correlation IDs. They omit raw argv, tokens, OAuth parameters/responses, and document contents.
+- Audit records contain action ID, reviewer Slack ID, owner Slack ID, Google email/subject connection ID, operation category, argument count, command fingerprint, approval/outcome status, and Neo correlation IDs. They omit raw argv, tokens, OAuth parameters/responses, and document contents.
 - OAuth requests/state expire after 10 minutes; encrypted private command payloads, results, and result capabilities expire after 30 minutes and are pruned during broker activity. Result retrieval is single-use. Wrong-user review does not execute or consume the command; successful dispatch consumes it before the external side effect.
 - Secret-free approval summaries and structural outcome logs follow the deployment's normal approval/worklog retention policy. Operators should set that policy to their audit requirement; increasing it does not retain raw argv or OAuth material.
 

@@ -37,11 +37,11 @@ describe("buildThorDisclaimerForSession", () => {
 
   it("fails fast with actionable reasons when disclaimer context is unsafe", () => {
     expect(() => buildThorDisclaimerForSession(undefined)).toThrowError(
-      "Disclaimer required: missing Thor session id",
+      "Disclaimer required: missing Neo session id",
     );
 
     expect(() => buildThorDisclaimerForSession("missing")).toThrowError(
-      "Disclaimer required: no Thor anchor for session missing (none)",
+      "Disclaimer required: no Neo anchor for session missing (none)",
     );
   });
 

@@ -19,7 +19,7 @@ RUN_ID="approval-cards-e2e-$(date +%s)"
 
 JIRA_PROJECT_KEY="${JIRA_PROJECT_KEY:-THOR}"
 JIRA_ISSUE_TYPE="${JIRA_ISSUE_TYPE:-Task}"
-JIRA_SUMMARY="${JIRA_SUMMARY:-Thor createJiraIssue approval card e2e ${RUN_ID}}"
+JIRA_SUMMARY="${JIRA_SUMMARY:-Neo createJiraIssue approval card e2e ${RUN_ID}}"
 JIRA_DESCRIPTION="${JIRA_DESCRIPTION:-CreateJiraIssue approval-card e2e. Leave pending for human inspection. Marker: ${RUN_ID}}"
 JIRA_COMMENT_ISSUE_KEY="${JIRA_COMMENT_ISSUE_KEY:-${JIRA_PROJECT_KEY}-123}"
 JIRA_COMMENT_BODY="${JIRA_COMMENT_BODY:-AddCommentToJiraIssue approval-card e2e. Leave pending for human inspection. Marker: ${RUN_ID}}"

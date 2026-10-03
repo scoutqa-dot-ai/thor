@@ -1,5 +1,5 @@
 /**
- * git policy — explicit allowlist of Thor-supported workflows.
+ * git policy — explicit allowlist of Neo-supported workflows.
  *
  * This module intentionally supports a small set of command shapes. Anything
  * outside that allowlist is denied with a pointer to the `using-git` skill,
@@ -100,21 +100,21 @@ const ALLOWED_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
 const PROTECTED_PUSH_BRANCHES: ReadonlySet<string> = new Set(["main", "master"]);
 
 const DEFAULT_GIT_DENY_GUIDANCE: DenyGuidance = {
-  reason: "this command shape is outside Thor's allowed git workflows.",
+  reason: "this command shape is outside Neo's allowed git workflows.",
 };
 
 const GIT_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
   "git --version": {
-    reason: "git --version does not accept extra arguments in Thor.",
+    reason: "git --version does not accept extra arguments in Neo.",
     instead: "git --version",
   },
   "git checkout": {
-    reason: "checkout can switch branches in the current worktree, which Thor blocks.",
+    reason: "checkout can switch branches in the current worktree, which Neo blocks.",
     instead:
       "for branch work, use git worktree add /workspace/worktrees/<repo>/<branch> <branch>; for file restore, use git restore [--source <tree>] -- <path>",
   },
   "git switch": {
-    reason: "switch changes the current worktree branch, which Thor blocks.",
+    reason: "switch changes the current worktree branch, which Neo blocks.",
     instead: "git worktree add /workspace/worktrees/<repo>/<branch> <branch>",
   },
   "git merge-base": {
@@ -127,11 +127,11 @@ const GIT_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
   },
   "git clone": {
     reason:
-      "clone is limited to one HTTPS github.com URL whose owner is configured; Thor derives the /workspace/repos/<repo> destination.",
+      "clone is limited to one HTTPS github.com URL whose owner is configured; Neo derives the /workspace/repos/<repo> destination.",
     instead: "git clone https://github.com/<allowed-owner>/<repo>[.git]",
   },
   "git remote": {
-    reason: "remote mutation is blocked; Thor only allows reading the configured origin.",
+    reason: "remote mutation is blocked; Neo only allows reading the configured origin.",
     instead: "git remote -v or git remote get-url origin",
   },
   "git fetch": {
@@ -159,7 +159,7 @@ const GIT_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
     instead: "git commit -m <message> or git commit -F <path>",
   },
   "git worktree": {
-    reason: "only Thor's worktree add/list/remove/prune workflows are allowed.",
+    reason: "only Neo's worktree add/list/remove/prune workflows are allowed.",
     instead: "git worktree add /workspace/worktrees/<repo>/<branch> <branch>",
   },
   "git worktree list": {

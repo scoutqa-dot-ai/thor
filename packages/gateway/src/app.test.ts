@@ -2853,7 +2853,7 @@ describe("gateway", () => {
     });
   });
 
-  it("ignores thread replies in unengaged threads (Thor has not replied)", async () => {
+  it("ignores thread replies in unengaged threads (Neo has not replied)", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     sessionKeys.delete("slack:thread:1710000000.001");
 
@@ -2893,7 +2893,7 @@ describe("gateway", () => {
     });
   });
 
-  it("enqueues thread replies in engaged threads (Thor has replied before)", async () => {
+  it("enqueues thread replies in engaged threads (Neo has replied before)", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       // POST /trigger → 200 (fire-and-forget)

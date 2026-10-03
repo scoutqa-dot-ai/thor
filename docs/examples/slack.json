@@ -1,6 +1,6 @@
 {
   "display_information": {
-    "name": "Thor"
+    "name": "Neo"
   },
   "features": {
     "app_home": {
@@ -9,7 +9,7 @@
       "messages_tab_read_only_enabled": false
     },
     "bot_user": {
-      "display_name": "Thor",
+      "display_name": "Neo",
       "always_online": true
     }
   },

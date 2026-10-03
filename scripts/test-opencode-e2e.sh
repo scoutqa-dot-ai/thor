@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Minimal OpenCode/LLM smoke test for Thor.
+# Minimal OpenCode/LLM smoke test for Neo.
 #
 # This script intentionally calls runner /trigger and may incur model cost.
 # Keep deterministic service/policy checks in scripts/test-e2e.sh.

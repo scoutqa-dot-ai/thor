@@ -31,7 +31,7 @@ describe("execCommand", () => {
     expect(result.exitCode).toBe(1);
   });
 
-  it("does not enforce a Thor-side timeout", async () => {
+  it("does not enforce a Neo-side timeout", async () => {
     vi.useFakeTimers();
     vi.resetModules();
     const child = Object.assign(new EventEmitter(), { kill: vi.fn() });
@@ -135,7 +135,7 @@ describe("execCommandStream", () => {
     expect(exitCode).toBe(1);
   });
 
-  it("does not enforce a Thor-side streaming timeout", async () => {
+  it("does not enforce a Neo-side streaming timeout", async () => {
     vi.useFakeTimers();
     vi.resetModules();
     const child = Object.assign(new EventEmitter(), {

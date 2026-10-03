@@ -111,7 +111,7 @@ export async function createPiRunnerApp(
         baseUrl: config.modelBaseUrl,
         auth: {
           apiKey: {
-            name: "Thor model key",
+            name: "Neo model key",
             resolve: async () => ({ auth: { apiKey: config.modelApiKey } }),
           },
         },
@@ -747,7 +747,7 @@ export async function createPiRunnerApp(
         res
           .type("html")
           .send(
-            `<!doctype html><html><head><meta charset="utf-8"><title>Thor Pi trigger</title></head><body><h1>Thor Pi trigger</h1><p>${escapePiHtml(current?.status ?? receipt.status)} · ${escapePiHtml(sessionId(owner))} · ${escapePiHtml(config.modelId)}</p>${body}${liveTools}<h3>Conversation usage</h3><pre>${escapePiHtml(usage)}</pre></body></html>`,
+            `<!doctype html><html><head><meta charset="utf-8"><link rel="icon" type="image/svg+xml" href="/favicon-v4.svg"><link rel="manifest" href="/site.webmanifest"><title>Neo Pi trigger</title></head><body><h1>Neo Pi trigger</h1><p>${escapePiHtml(current?.status ?? receipt.status)} · ${escapePiHtml(sessionId(owner))} · ${escapePiHtml(config.modelId)}</p>${body}${liveTools}<h3>Conversation usage</h3><pre>${escapePiHtml(usage)}</pre></body></html>`,
           );
       } catch {
         res.status(503).send("Pi history unavailable");

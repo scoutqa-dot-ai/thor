@@ -121,7 +121,7 @@ export const applySearchScopePolicy = (tool, args, options = {}) => {
 };
 
 const SEARCH_GUIDANCE =
-  "Thor search scope guardrail: for glob/grep, set path to an allowed scoped root (/workspace/<segment> descendants or /tmp) and keep glob.pattern/grep.include relative. Grep may also read /home/thor/.local/share/opencode/tool-output. In this runtime, rg is wrapped to block unsafe absolute --glob scans against broad roots such as /, /workspace, /home, or /tmp; use a scoped path plus relative glob/include instead.";
+  "Neo search scope guardrail: for glob/grep, set path to an allowed scoped root (/workspace/<segment> descendants or /tmp) and keep glob.pattern/grep.include relative. Grep may also read /home/thor/.local/share/opencode/tool-output. In this runtime, rg is wrapped to block unsafe absolute --glob scans against broad roots such as /, /workspace, /home, or /tmp; use a scoped path plus relative glob/include instead.";
 
 export const applySearchDefinitionGuidance = (tool, definition) => {
   if (tool !== "glob" && tool !== "grep") return definition;
@@ -134,7 +134,7 @@ export const applySearchDefinitionGuidance = (tool, definition) => {
 };
 
 /**
- * Thor OpenCode plugin — injects trusted env vars into every shell execution
+ * Neo OpenCode plugin — injects trusted env vars into every shell execution
  * and scopes built-in search tools away from broad filesystem roots.
  *
  * Hooks into `shell.env` so that CLI wrappers (mcp, approval, git, gh) receive

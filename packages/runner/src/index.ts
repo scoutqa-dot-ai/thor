@@ -454,7 +454,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         res
           .status(404)
           .type("html")
-          .send(renderPage("Anchor not found", "No Thor anchor context was found."));
+          .send(renderPage("Anchor not found", "No Neo anchor context was found."));
         return;
       }
       const anchor = reverseLookupAnchor(anchorId);
@@ -462,10 +462,10 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         res
           .status(404)
           .type("html")
-          .send(renderPage("Anchor not found", "No Thor anchor context was found."));
+          .send(renderPage("Anchor not found", "No Neo anchor context was found."));
         return;
       }
-      res.type("html").send(renderPage("Thor context", "<p>Coming soon.</p>"));
+      res.type("html").send(renderPage("Neo context", "<p>Coming soon.</p>"));
     },
   );
 
@@ -481,9 +481,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         res
           .status(404)
           .type("html")
-          .send(
-            renderPage("Trigger not found", "No Thor trigger slice was found for this anchor."),
-          );
+          .send(renderPage("Trigger not found", "No Neo trigger slice was found for this anchor."));
         return;
       }
 
@@ -492,9 +490,7 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         res
           .status(404)
           .type("html")
-          .send(
-            renderPage("Trigger not found", "No Thor trigger slice was found for this anchor."),
-          );
+          .send(renderPage("Trigger not found", "No Neo trigger slice was found for this anchor."));
         return;
       }
 
@@ -505,18 +501,14 @@ export function createRunnerApp(options: RunnerAppOptions = {}): express.Express
         res
           .status(404)
           .type("html")
-          .send(
-            renderPage("Trigger not found", "No Thor trigger slice was found for this anchor."),
-          );
+          .send(renderPage("Trigger not found", "No Neo trigger slice was found for this anchor."));
         return;
       }
       if ("notFound" in slice) {
         res
           .status(404)
           .type("html")
-          .send(
-            renderPage("Trigger not found", "No Thor trigger slice was found for this anchor."),
-          );
+          .send(renderPage("Trigger not found", "No Neo trigger slice was found for this anchor."));
         return;
       }
       res
@@ -1764,7 +1756,7 @@ function decodeSourceLine(
 }
 
 function getStateTitle(part: ViewerToolPart): string | undefined {
-  // Prefer Claude's own `state.title` (e.g. "Lists test-management Thor
+  // Prefer Claude's own `state.title` (e.g. "Lists test-management Neo
   // worktrees"). Fall back to `state.input.description` for tools whose
   // caller supplied it (most notably `task`) so the row carries a label even
   // when `state.title` is absent.
@@ -2141,7 +2133,7 @@ function contextTokenTotal(tokens: unknown): number | undefined {
 }
 
 /**
- * Recover the user prompt body from the opencode_event stream. Thor wraps
+ * Recover the user prompt body from the opencode_event stream. Neo wraps
  * every prompt as `[correlation-key: <key>]\n\n<body>` before sending it to
  * OpenCode (see prompt construction in this file), and OpenCode echoes that
  * text back through `message.part.updated` events. The first such text part
@@ -2182,12 +2174,12 @@ function extractTokenCounts(tokens: unknown): TokenCounts | undefined {
 }
 
 /**
- * Per-million-token USD prices for the model ids Thor currently runs against.
+ * Per-million-token USD prices for the model ids Neo currently runs against.
  *
  * Source: https://models.dev/api.json (snapshot 2026-05-15). To refresh:
  *   curl -s https://models.dev/api.json | jq '.openai.models["gpt-5.4","gpt-5.5"]'
  *
- * Only the exact ids Thor uses are listed; any other model id renders without
+ * Only the exact ids Neo uses are listed; any other model id renders without
  * a cost estimate so we never surface guessed numbers. The 200k+ context tier
  * (which roughly doubles the published prices) is intentionally ignored — we
  * render the base-tier estimate and prefix it with `~`.
@@ -2346,7 +2338,7 @@ function shortUuid(value: string): string {
 }
 
 function renderPage(title: string, body: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>body{font:16px -apple-system,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}main{max-width:900px;margin:0 auto;padding:24px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700}.completed{background:#dcfce7;color:#166534}.error,.crashed{background:#fee2e2;color:#991b1b}.aborted{background:#ffedd5;color:#9a3412}.in_flight{background:#fef9c3;color:#854d0e}.summary{color:#334155;font-weight:500;margin:8px 0}.chips{color:#475569;font-size:0.9em;margin:4px 0}.chips code{font-size:0.95em}.live{display:inline-block;margin-left:8px;color:#dc2626;font-size:0.9em;animation:thor-pulse 1.6s ease-in-out infinite}@keyframes thor-pulse{0%,100%{opacity:1}50%{opacity:0.35}}@media (prefers-reduced-motion:reduce){.live{animation:none}}.row.truncated{color:#94a3b8;font-style:italic}.row.truncated .ts{color:#cbd5e1;font-size:0.85em;margin-left:4px}.omitted{color:#94a3b8;font-style:italic;font-size:0.9em}.source{margin:8px 0;font-size:1.05em}.source a{color:#0f172a;text-decoration:none;border-bottom:1px solid #cbd5e1}.source a:hover{border-bottom-color:#0f172a}.events{list-style:none;padding-left:0}.events>li{margin:6px 0}.row.step-boundary{padding-left:0}.row.step-boundary::before{display:none}.row.step-boundary hr{border:none;border-top:1px dashed #cbd5e1;margin:8px 0}.row{position:relative;padding-left:18px}.row::before{content:"";position:absolute;left:2px;top:0.55em;width:8px;height:8px;border-radius:50%;background:#94a3b8}.row[data-status="completed"]::before{background:#22c55e}.row[data-status="running"]::before{background:#facc15}.row[data-status="pending"]::before{background:#cbd5e1}.row[data-status="error"]::before{background:#ef4444}.row[data-status="aborted"]::before{background:#f97316}.tool-title{color:#475569;font-style:italic;margin-left:6px}.text-body{white-space:pre-wrap;margin:4px 0 0;color:#0f172a;font-size:0.95em}.task-card{background:#f1f5f9;border-left:3px solid #6366f1;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.task-card .task-hdr{color:#3730a3;font-size:0.9em;font-weight:600;margin-bottom:4px}.task-card .task-sub{color:#475569;font-size:0.85em;margin:2px 0 4px}.sub-events{margin:6px 0 0;padding-left:12px;border-left:2px solid #c7d2fe}.totals{color:#475569;font-size:0.95em;margin:12px 0 4px}.totals-table{border-collapse:collapse;font-size:0.9em;margin:8px 0;width:100%}.totals-table th,.totals-table td{padding:4px 8px;text-align:right;border-bottom:1px solid #e2e8f0}.totals-table thead th{color:#64748b;font-weight:600;text-align:right;border-bottom:1px solid #cbd5e1}.totals-table thead th:first-child,.totals-table tbody th{text-align:left}.totals-table tbody th{font-weight:500;color:#0f172a}.totals-table .ledger-sid{color:#64748b;font-size:0.85em;margin-left:4px}.totals-table tr.totals-total th,.totals-table tr.totals-total td{font-weight:700;border-top:2px solid #cbd5e1;border-bottom:none;padding-top:6px}.diff{font-size:0.85em;line-height:1.4}.diff .diff-add{color:#86efac;display:block}.diff .diff-del{color:#fca5a5;display:block}.diff .diff-meta{color:#94a3b8;display:block}details{margin:4px 0}summary{cursor:pointer}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto}</style></head><body><main><header><h1>${escapeHtml(title)}</h1></header>${body}</main></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/svg+xml" href="/favicon-v4.svg"><link rel="manifest" href="/site.webmanifest"><title>${escapeHtml(title)}</title><style>body{font:16px -apple-system,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}main{max-width:900px;margin:0 auto;padding:24px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700}.completed{background:#dcfce7;color:#166534}.error,.crashed{background:#fee2e2;color:#991b1b}.aborted{background:#ffedd5;color:#9a3412}.in_flight{background:#fef9c3;color:#854d0e}.summary{color:#334155;font-weight:500;margin:8px 0}.chips{color:#475569;font-size:0.9em;margin:4px 0}.chips code{font-size:0.95em}.live{display:inline-block;margin-left:8px;color:#dc2626;font-size:0.9em;animation:thor-pulse 1.6s ease-in-out infinite}@keyframes thor-pulse{0%,100%{opacity:1}50%{opacity:0.35}}@media (prefers-reduced-motion:reduce){.live{animation:none}}.row.truncated{color:#94a3b8;font-style:italic}.row.truncated .ts{color:#cbd5e1;font-size:0.85em;margin-left:4px}.omitted{color:#94a3b8;font-style:italic;font-size:0.9em}.source{margin:8px 0;font-size:1.05em}.source a{color:#0f172a;text-decoration:none;border-bottom:1px solid #cbd5e1}.source a:hover{border-bottom-color:#0f172a}.events{list-style:none;padding-left:0}.events>li{margin:6px 0}.row.step-boundary{padding-left:0}.row.step-boundary::before{display:none}.row.step-boundary hr{border:none;border-top:1px dashed #cbd5e1;margin:8px 0}.row{position:relative;padding-left:18px}.row::before{content:"";position:absolute;left:2px;top:0.55em;width:8px;height:8px;border-radius:50%;background:#94a3b8}.row[data-status="completed"]::before{background:#22c55e}.row[data-status="running"]::before{background:#facc15}.row[data-status="pending"]::before{background:#cbd5e1}.row[data-status="error"]::before{background:#ef4444}.row[data-status="aborted"]::before{background:#f97316}.tool-title{color:#475569;font-style:italic;margin-left:6px}.text-body{white-space:pre-wrap;margin:4px 0 0;color:#0f172a;font-size:0.95em}.task-card{background:#f1f5f9;border-left:3px solid #6366f1;padding:8px 12px;border-radius:4px;margin:6px 0;list-style:none}.task-card .task-hdr{color:#3730a3;font-size:0.9em;font-weight:600;margin-bottom:4px}.task-card .task-sub{color:#475569;font-size:0.85em;margin:2px 0 4px}.sub-events{margin:6px 0 0;padding-left:12px;border-left:2px solid #c7d2fe}.totals{color:#475569;font-size:0.95em;margin:12px 0 4px}.totals-table{border-collapse:collapse;font-size:0.9em;margin:8px 0;width:100%}.totals-table th,.totals-table td{padding:4px 8px;text-align:right;border-bottom:1px solid #e2e8f0}.totals-table thead th{color:#64748b;font-weight:600;text-align:right;border-bottom:1px solid #cbd5e1}.totals-table thead th:first-child,.totals-table tbody th{text-align:left}.totals-table tbody th{font-weight:500;color:#0f172a}.totals-table .ledger-sid{color:#64748b;font-size:0.85em;margin-left:4px}.totals-table tr.totals-total th,.totals-table tr.totals-total td{font-weight:700;border-top:2px solid #cbd5e1;border-bottom:none;padding-top:6px}.diff{font-size:0.85em;line-height:1.4}.diff .diff-add{color:#86efac;display:block}.diff .diff-del{color:#fca5a5;display:block}.diff .diff-meta{color:#94a3b8;display:block}details{margin:4px 0}summary{cursor:pointer}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:8px;overflow:auto}</style></head><body><main><header><h1>${escapeHtml(title)}</h1></header>${body}</main></body></html>`;
 }
 
 function renderSlicePage(
@@ -2374,8 +2366,8 @@ function renderSlicePage(
 
   // TODO(model-attribution): the main agent's model isn't recorded anywhere
   // in the on-disk JSONL today — OpenCode emits it on `message.updated`
-  // events which Thor's runner doesn't subscribe to, and `step-finish` parts
-  // don't carry it. We hardcode `gpt-5.4` (Thor's current default main-agent
+  // events which Neo's runner doesn't subscribe to, and `step-finish` parts
+  // don't carry it. We hardcode `gpt-5.4` (Neo's current default main-agent
   // model) so the totals/cost stay useful; switch to the real value once
   // the runner persists `message.updated` events or we call `sessions.get`
   // at render time.
@@ -2457,10 +2449,10 @@ function renderSlicePage(
   }
   const decodedSource = decodeSourceLine(correlationKey, promptPreview, opts.slackTeamId);
   const sourceLine = decodedSource ? renderSourceLine(decodedSource) : "";
-  // Tab title: <source-type> · <short-trigger-id> · Thor.
+  // Tab title: <source-type> · <short-trigger-id> · Neo.
   // Short id makes multiple open tabs distinguishable without duplicating the
   // full source label that the in-page source line already shows.
-  const pageTitle = `${sourceFrom(correlationKey)} · ${shortUuid(triggerId)} · Thor`;
+  const pageTitle = `${sourceFrom(correlationKey)} · ${shortUuid(triggerId)} · Neo`;
 
   const activityHtml = rows.length
     ? `<ul class="events">${rows.join("")}</ul>`

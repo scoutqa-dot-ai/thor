@@ -1,6 +1,6 @@
 # Daytona
 
-Thor runs project commands (builds, tests, lints) in [Daytona](https://daytona.io) cloud sandboxes via the `sandbox` command. Sandboxes are created on demand, keep your committed and uncommitted code in sync, and stop automatically when idle.
+Neo runs project commands (builds, tests, lints) in [Daytona](https://daytona.io) cloud sandboxes via the `sandbox` command. Sandboxes are created on demand, keep your committed and uncommitted code in sync, and stop automatically when idle.
 
 This doc covers how the integration works, how to configure it, and how admins publish and register a custom sandbox image.
 

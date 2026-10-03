@@ -7,7 +7,7 @@ import thorPluginExport, {
   applySearchScopePolicy,
 } from "./thor.js";
 
-describe("Thor OpenCode search scope policy", () => {
+describe("Neo OpenCode search scope policy", () => {
   it("rewrites absolute glob patterns under an allowed fixed prefix", () => {
     const result = applySearchScopePolicy(
       "glob",
@@ -86,7 +86,7 @@ describe("Thor OpenCode search scope policy", () => {
 
   it("adds tool-definition guidance for glob and grep only", () => {
     const guided = applySearchDefinitionGuidance("glob", { description: "Find files." });
-    expect(guided.description).toContain("Thor search scope guardrail");
+    expect(guided.description).toContain("Neo search scope guardrail");
     expect(guided.description).toContain("/workspace/<segment>");
     expect(guided.description).toContain("/tmp");
     expect(guided.description).toContain("absolute --glob");

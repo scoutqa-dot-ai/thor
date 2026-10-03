@@ -1,4 +1,4 @@
-# Unified multi-target Dockerfile for all Thor Node.js services.
+# Unified multi-target Dockerfile for all Neo Node.js services.
 # Shared deps and build stages mean pnpm install runs once, not per-service.
 #
 # Usage in docker-compose.yml:
@@ -186,7 +186,7 @@ FROM remote-cli-tools AS remote-cli
 COPY --from=remote-cli-build /app /app
 COPY --from=onepassword-browser-mcp-build /app/packages/onepassword-browser-mcp/dist /app/packages/onepassword-browser-mcp/dist
 COPY packages/remote-cli/entrypoint.sh /entrypoint.sh
-# Thor git/gh wrappers for GitHub App auth
+# Neo git/gh wrappers for GitHub App auth
 COPY packages/remote-cli/bin/git /usr/local/lib/thor/bin/git
 COPY packages/remote-cli/bin/gh /usr/local/lib/thor/bin/gh
 COPY packages/remote-cli/bin/git-askpass /usr/local/lib/thor/bin/git-askpass
@@ -197,7 +197,7 @@ RUN mkdir -p /var/lib/remote-cli/github-app/cache /var/lib/remote-cli/gws /var/l
 USER thor
 RUN mkdir -p /workspace/repos
 WORKDIR /workspace/repos
-# Prepend Thor wrappers to PATH so they shadow /usr/bin/git and /usr/bin/gh
+# Prepend Neo wrappers to PATH so they shadow /usr/bin/git and /usr/bin/gh
 ENV PATH="/usr/local/lib/thor/bin:$PATH"
 ENV GOOGLE_WORKSPACE_CLI_CONFIG_DIR=/var/lib/remote-cli/gws
 ENV PORT=3004

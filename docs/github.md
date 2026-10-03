@@ -1,6 +1,6 @@
 # GitHub App Webhooks Operator Runbook
 
-This runbook covers the minimum setup for GitHub App webhook intake in Thor (`POST /github/webhook`) and common failure modes seen in gateway logs.
+This runbook covers the minimum setup for GitHub App webhook intake in Neo (`POST /github/webhook`) and common failure modes seen in gateway logs.
 
 ## 1) Environment variables
 
@@ -22,7 +22,7 @@ Notes:
 
 ## 2) Workspace config: installation IDs
 
-Thor resolves installation IDs from `owners.<name>.github_app_installation_id` in `/workspace/config/thor.json`:
+Neo resolves installation IDs from `owners.<name>.github_app_installation_id` in `/workspace/config/thor.json`:
 
 ```json
 {
@@ -43,7 +43,7 @@ How to find installation ID:
 
 ## 3) Required app permissions
 
-Thor's GitHub App is used for both webhook intake and agent-driven GitHub actions (`git push`, `gh pr create`, issue/PR comments). Issues need read/write for inbound issue mentions and traced outbound `gh issue comment`. Configure permissions accordingly:
+Neo's GitHub App is used for both webhook intake and agent-driven GitHub actions (`git push`, `gh pr create`, issue/PR comments). Issues need read/write for inbound issue mentions and traced outbound `gh issue comment`. Configure permissions accordingly:
 
 | Permission    | Access       |
 | ------------- | ------------ |
@@ -64,22 +64,22 @@ Subscribe to:
 - Check suite
 - Push
 
-`check_suite.completed` wakes Thor for any non-empty terminal `conclusion` on an existing Thor-authored branch session after the existing-session and git-authorship gates pass. Success-like outcomes are typically silent/log-only in the agent layer; failure-like outcomes trigger investigation or rerun handling. Missing/blank conclusions are ignored as malformed/incomplete terminal events. GitHub reports check suites per commit per checks app, so repos with multiple CI providers may still produce more than one terminal suite.
+`check_suite.completed` wakes Neo for any non-empty terminal `conclusion` on an existing Neo-authored branch session after the existing-session and git-authorship gates pass. Success-like outcomes are typically silent/log-only in the agent layer; failure-like outcomes trigger investigation or rerun handling. Missing/blank conclusions are ignored as malformed/incomplete terminal events. GitHub reports check suites per commit per checks app, so repos with multiple CI providers may still produce more than one terminal suite.
 
-`pull_request.closed` wakes Thor when a PR for an existing alias-backed branch session is merged or closed without merge. The gateway correlates on `pull_request.head.ref`, requires an existing session alias for the resolved `git:branch:<repo>:<branch>` key, and queues accepted events with `interrupt:false`. Other `pull_request` actions are not supported and are archived as `schema_validation_failed`.
+`pull_request.closed` wakes Neo when a PR for an existing alias-backed branch session is merged or closed without merge. The gateway correlates on `pull_request.head.ref`, requires an existing session alias for the resolved `git:branch:<repo>:<branch>` key, and queues accepted events with `interrupt:false`. Other `pull_request` actions are not supported and are archived as `schema_validation_failed`.
 
-`push` keeps local checkouts current. The handler first runs `git rev-parse HEAD` in the target directory; if it already equals `event.after`, the event short-circuits as `push_sync_already_up_to_date` with no fetch, no reset, and no wake. Otherwise gateway runs `git fetch origin refs/heads/<branch>` (full ref so branch names are never parsed as CLI options), then `git merge-base --is-ancestor HEAD FETCH_HEAD` to classify the update as a fast-forward (exit 0) or a divergent reset (exit 1), then `git reset --hard FETCH_HEAD` to land the new tip in either case. The target is `/workspace/repos/<repo>` for default-branch pushes and an existing `/workspace/worktrees/<repo>/<branch>` for non-default branches; Thor does not create missing worktrees. Default-branch pushes sync only and never wake OpenCode. Non-default branch pushes wake OpenCode through the GitHub queue when an alias-backed session exists; the wake uses `interrupt:false` for fast-forwards (the agent absorbs the new commits at its next yield) and `interrupt:true` for divergent resets (force-push, rebase, branch rewrite — the agent must re-read HEAD before continuing). Deleted branch pushes remove the matching non-default worktree only after `git status --porcelain` reports clean; dirty worktrees are preserved and logged. Delete events never wake OpenCode.
+`push` keeps local checkouts current. The handler first runs `git rev-parse HEAD` in the target directory; if it already equals `event.after`, the event short-circuits as `push_sync_already_up_to_date` with no fetch, no reset, and no wake. Otherwise gateway runs `git fetch origin refs/heads/<branch>` (full ref so branch names are never parsed as CLI options), then `git merge-base --is-ancestor HEAD FETCH_HEAD` to classify the update as a fast-forward (exit 0) or a divergent reset (exit 1), then `git reset --hard FETCH_HEAD` to land the new tip in either case. The target is `/workspace/repos/<repo>` for default-branch pushes and an existing `/workspace/worktrees/<repo>/<branch>` for non-default branches; Neo does not create missing worktrees. Default-branch pushes sync only and never wake OpenCode. Non-default branch pushes wake OpenCode through the GitHub queue when an alias-backed session exists; the wake uses `interrupt:false` for fast-forwards (the agent absorbs the new commits at its next yield) and `interrupt:true` for divergent resets (force-push, rebase, branch rewrite — the agent must re-read HEAD before continuing). Deleted branch pushes remove the matching non-default worktree only after `git status --porcelain` reports clean; dirty worktrees are preserved and logged. Delete events never wake OpenCode.
 
-Pure issue `issue_comment.created` events require a mention for first contact (for example `@${GITHUB_APP_SLUG}` or `@${GITHUB_APP_SLUG}[bot]`). Once the issue already has an active `github:issue:<localRepo>:<repoFullName>#<issueNumber>` session, later follow-up comments on that same issue can wake Thor without another mention. These route directly to the repo checkout with that `github:issue:` correlation key. PR-backed issue comments keep the pending branch-resolution path and route to the PR branch session.
+Pure issue `issue_comment.created` events require a mention for first contact (for example `@${GITHUB_APP_SLUG}` or `@${GITHUB_APP_SLUG}[bot]`). Once the issue already has an active `github:issue:<localRepo>:<repoFullName>#<issueNumber>` session, later follow-up comments on that same issue can wake Neo without another mention. These route directly to the repo checkout with that `github:issue:` correlation key. PR-backed issue comments keep the pending branch-resolution path and route to the PR branch session.
 
 ## 4a) Bot commit identity and CI wake gate
 
-Thor derives the Git author identity from the existing GitHub App variables:
+Neo derives the Git author identity from the existing GitHub App variables:
 
 - `user.name = ${GITHUB_APP_SLUG}[bot]`
 - `user.email = ${GITHUB_APP_BOT_ID}+${GITHUB_APP_SLUG}[bot]@users.noreply.github.com`
 
-There is no separate author-email environment variable. Remote-cli uses the derived identity for commits, and gateway derives the same email when checking `check_suite.head_sha` before waking Thor. A CI wake is accepted only when the branch maps to an existing alias-backed session, the commit exists in the local repo, and `git log -1 --format=%ae <head_sha>` matches the derived bot email.
+There is no separate author-email environment variable. Remote-cli uses the derived identity for commits, and gateway derives the same email when checking `check_suite.head_sha` before waking Neo. A CI wake is accepted only when the branch maps to an existing alias-backed session, the commit exists in the local repo, and `git log -1 --format=%ae <head_sha>` matches the derived bot email.
 
 ## 5) Webhook URL and payload format
 
@@ -99,7 +99,7 @@ If the basename does not exist locally, gateway drops the event with `reason: "r
 
 Notes:
 
-- Routing currently uses the repo basename as delivered; Thor does not normalize mixed-case repo names during webhook intake.
+- Routing currently uses the repo basename as delivered; Neo does not normalize mixed-case repo names during webhook intake.
 - We do not expect that to matter anytime soon for current repos because local clone names are already lowercase and aligned with the webhook payloads we use today.
 - If mixed-case repo naming becomes an operational problem later, we can add normalization then.
 
@@ -107,7 +107,7 @@ Notes:
 
 1. Generate a new high-entropy secret.
 2. Update the GitHub App webhook secret.
-3. Update Thor deployment `GITHUB_WEBHOOK_SECRET` immediately after.
+3. Update Neo deployment `GITHUB_WEBHOOK_SECRET` immediately after.
 4. Trigger a test delivery from GitHub App settings.
 5. Confirm acceptance (`github_event_accepted`) and no `signature_invalid` logs.
 
@@ -128,20 +128,20 @@ npx smee-client --url https://smee.io/<channel-id> --path /github/webhook --port
 
 ## 9) Troubleshooting (`github_event_ignored`)
 
-| Reason                           | What it means                                                                                  | How to fix                                                                                          |
-| -------------------------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `signature_invalid`              | HMAC verification failed or signature header missing                                           | Verify `GITHUB_WEBHOOK_SECRET`; ensure JSON payload is unmodified in transit                        |
-| `event_unsupported`              | Event is outside Thor allowlist                                                                | Ensure subscription list is correct                                                                 |
-| `repo_not_mapped`                | Repo basename has no matching local clone                                                      | Clone under `/workspace/repos/<basename>`; keep basename aligned                                    |
-| `self_sender`                    | Sender's numeric user ID matches `GITHUB_APP_BOT_ID`                                           | Self-loop guard — expected when Thor comments/reviews                                               |
-| `empty_review_body`              | Submitted review body was blank                                                                | Include text in the review body                                                                     |
-| `non_mention_comment`            | Comment/review does not mention the app, and (for review events) the PR was not opened by Thor | Mention `@${GITHUB_APP_SLUG}` to act, or open the PR from Thor                                      |
-| `check_suite_branch_missing`     | GitHub did not include `check_suite.head_branch`                                               | Expected for fork/detached/tag cases; no action unless same-repo PRs are affected                   |
-| `check_suite_conclusion_missing` | CI finished without a usable `check_suite.conclusion` value                                    | Expected for malformed/incomplete terminal events; replay only if the source payload was incomplete |
-| `correlation_key_unresolved`     | CI/PR-close/push branch has no existing Thor alias-backed branch session                       | Confirm Thor previously worked that branch; otherwise the event is ignored                          |
-| `check_suite_gate_failed`        | The git SHA/authorship gate failed before queueing a CI wake                                   | See `metadata.gateReason` in `github-webhook-ignored` worklog                                       |
-| `push_sync_failed`               | Gateway could not complete the rev-parse, fetch, ancestry check, or reset for a push sync      | Inspect `metadata.exitCode` / `metadata.errorMessage`; resolve dirty checkout or remote-cli issues  |
-| `push_delete_cleanup_failed`     | Gateway could not check status or remove a clean deleted-branch worktree                       | Inspect `metadata.exitCode`; clean up manually if safe                                              |
+| Reason                           | What it means                                                                                 | How to fix                                                                                          |
+| -------------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `signature_invalid`              | HMAC verification failed or signature header missing                                          | Verify `GITHUB_WEBHOOK_SECRET`; ensure JSON payload is unmodified in transit                        |
+| `event_unsupported`              | Event is outside Neo allowlist                                                                | Ensure subscription list is correct                                                                 |
+| `repo_not_mapped`                | Repo basename has no matching local clone                                                     | Clone under `/workspace/repos/<basename>`; keep basename aligned                                    |
+| `self_sender`                    | Sender's numeric user ID matches `GITHUB_APP_BOT_ID`                                          | Self-loop guard — expected when Neo comments/reviews                                                |
+| `empty_review_body`              | Submitted review body was blank                                                               | Include text in the review body                                                                     |
+| `non_mention_comment`            | Comment/review does not mention the app, and (for review events) the PR was not opened by Neo | Mention `@${GITHUB_APP_SLUG}` to act, or open the PR from Neo                                       |
+| `check_suite_branch_missing`     | GitHub did not include `check_suite.head_branch`                                              | Expected for fork/detached/tag cases; no action unless same-repo PRs are affected                   |
+| `check_suite_conclusion_missing` | CI finished without a usable `check_suite.conclusion` value                                   | Expected for malformed/incomplete terminal events; replay only if the source payload was incomplete |
+| `correlation_key_unresolved`     | CI/PR-close/push branch has no existing Neo alias-backed branch session                       | Confirm Neo previously worked that branch; otherwise the event is ignored                           |
+| `check_suite_gate_failed`        | The git SHA/authorship gate failed before queueing a CI wake                                  | See `metadata.gateReason` in `github-webhook-ignored` worklog                                       |
+| `push_sync_failed`               | Gateway could not complete the rev-parse, fetch, ancestry check, or reset for a push sync     | Inspect `metadata.exitCode` / `metadata.errorMessage`; resolve dirty checkout or remote-cli issues  |
+| `push_delete_cleanup_failed`     | Gateway could not check status or remove a clean deleted-branch worktree                      | Inspect `metadata.exitCode`; clean up manually if safe                                              |
 
 `check_suite_gate_failed` includes `metadata.gateReason`:
 

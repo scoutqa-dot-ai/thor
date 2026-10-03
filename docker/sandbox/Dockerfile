@@ -1,4 +1,4 @@
-# Daytona sandbox image for Thor.
+# Daytona sandbox image for Neo.
 #
 # Polyglot image with version managers: nvm (Node), SDKMAN (Java), pyenv (Python),
 # plus Docker CE for running containers (docker compose, testcontainers, etc.).

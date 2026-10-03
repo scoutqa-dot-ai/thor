@@ -21,7 +21,7 @@ test.sh
 .idea/
 .vscode/
 
-# Thor
+# Neo
 /docker-volumes/
 
 # Python

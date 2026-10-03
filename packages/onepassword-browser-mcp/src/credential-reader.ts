@@ -89,7 +89,7 @@ async function createSdkClient(serviceAccountToken: RedactedString): Promise<One
   return withRedactedString(serviceAccountToken, (auth) =>
     createClient({
       auth,
-      integrationName: "Thor 1Password Browser Broker",
+      integrationName: "Neo 1Password Browser Broker",
       integrationVersion: "v0.0.1",
     }),
   );

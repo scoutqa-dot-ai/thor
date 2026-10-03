@@ -1,7 +1,7 @@
 /**
  * Generic command execution for git and gh.
  *
- * Authentication is resolved per-invocation by the Thor git/gh wrapper
+ * Authentication is resolved per-invocation by the Neo git/gh wrapper
  * binaries (see bin/git, bin/gh). When workspace config includes
  * `owners.<owner>.github_app_installation_id`, wrappers mint installation
  * tokens for the resolved owner.

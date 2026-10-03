@@ -1,11 +1,11 @@
 ---
 name: using-gh
-description: "GitHub CLI surface allowed by Thor's remote-cli server policy. Append-only: Thor can create PRs, comments, and non-approval reviews but cannot approve, merge, edit, or delete prior artifacts."
+description: "GitHub CLI surface allowed by Neo's remote-cli server policy. Append-only: Neo can create PRs, comments, and non-approval reviews but cannot approve, merge, edit, or delete prior artifacts."
 ---
 
 ## Posture
 
-All `gh` commands go through Thor's remote-cli which enforces:
+All `gh` commands go through Neo's remote-cli which enforces:
 
 - **Append-only writes.** Create PRs/issues, post PR/issue comments, submit `--comment`/`--request-changes` reviews. Approval, merge, edit, and delete are human gates.
 - **`cd` into the target worktree** before running write commands — repo-targeting flags aren't part of the supported surface. For cross-repo API reads, use explicit REST endpoints such as `repos/<owner>/<repo>/...`.
@@ -29,7 +29,7 @@ Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--base`/`-B`, `--head`/`
 
 ### `gh issue create`
 
-Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable). Successful creates receive Thor's traceability footer and bind the created `github:issue:` session for later issue comments.
+Required: `--title`/`-t` plus `--body`/`-b`. Optional: `--label`/`-l` (repeatable), `--assignee`/`-a` (repeatable). Successful creates receive Neo's traceability footer and bind the created `github:issue:` session for later issue comments.
 
 ### `gh pr comment`
 
@@ -37,7 +37,7 @@ Required: numeric PR selector plus `--body`/`-b`. Use this for PR conversation-l
 
 ### `gh issue comment`
 
-Required: numeric issue selector plus `--body`/`-b`. For PR conversation comments, prefer `gh pr comment`; both comment paths receive Thor's traceability footer.
+Required: numeric issue selector plus `--body`/`-b`. For PR conversation comments, prefer `gh pr comment`; both comment paths receive Neo's traceability footer.
 
 ### `gh pr review`
 

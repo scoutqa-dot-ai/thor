@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Auth helper for Thor git/gh wrappers.
+ * Auth helper for Neo git/gh wrappers.
  *
  * Usage:
  *   node auth-helper.js <binary> [args...]

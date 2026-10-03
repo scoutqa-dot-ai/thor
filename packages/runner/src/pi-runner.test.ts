@@ -503,6 +503,8 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
     });
     expect(frames).toContainEqual({ type: "tool", tool: "load_skill", status: "completed" });
     const prompt = JSON.stringify(requests[0]);
+    expect(prompt).toContain("You are Neo");
+    expect(prompt).not.toContain("You are Thor");
     expect(prompt).toContain("Demonstrate skill loading");
     expect(prompt).toContain("root memory fixture");
     expect(prompt).toContain("repo memory fixture");

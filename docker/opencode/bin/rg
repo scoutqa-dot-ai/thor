@@ -63,7 +63,7 @@ done
 
 if [[ "$absolute_glob" == 1 ]]; then
 	if [[ "$unsafe_positional_path" == 1 ]] || { [[ "$has_positional_path" == 0 ]] && is_broad_root "$CURRENT_CWD"; }; then
-		printf '%s\n' "Thor rg guardrail: absolute --glob with a broad search root is blocked. Search from /workspace/<segment> and use a relative --glob." >&2
+		printf '%s\n' "Neo rg guardrail: absolute --glob with a broad search root is blocked. Search from /workspace/<segment> and use a relative --glob." >&2
 		exit 2
 	fi
 fi

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Sandbox e2e tests for Thor (extracted from test-e2e.sh).
+# Sandbox e2e tests for Neo (extracted from test-e2e.sh).
 #
 # Tests the full sandbox lifecycle via direct remote-cli calls (no LLM):
 #   bundle sync, dirty overlay, pull-back, toolchain, version switching,

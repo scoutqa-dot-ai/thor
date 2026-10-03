@@ -51,7 +51,7 @@ class ThorMitmAddon:
             return
 
         if not self._store.get().allows_host(host):
-            flow.response = _response(403, f"thor proxy denied host: {host}")
+            flow.response = _response(403, f"Neo proxy denied host: {host}")
 
     def request(self, flow: Any) -> None:
         request = flow.request
@@ -68,10 +68,10 @@ class ThorMitmAddon:
             if host == "slack.com" and path == "/api/chat.postMessage":
                 flow.response = _response(
                     403,
-                    "thor proxy denied slack.com/api/chat.postMessage; use slack-post-message instead",
+                    "Neo proxy denied slack.com/api/chat.postMessage; use slack-post-message instead",
                 )
                 return
-            flow.response = _response(403, f"thor proxy denied host/path: {host}{path}")
+            flow.response = _response(403, f"Neo proxy denied host/path: {host}{path}")
             return
 
         if decision.action == "passthrough":
@@ -84,7 +84,7 @@ class ThorMitmAddon:
         if decision.rule.readonly and not is_readonly_method(request.method):
             flow.response = _response(
                 403,
-                f"thor proxy readonly rule blocked method {request.method} for host: {host}",
+                f"Neo proxy readonly rule blocked method {request.method} for host: {host}",
             )
             return
 

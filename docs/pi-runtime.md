@@ -1,4 +1,4 @@
-# Testing Thor on Pi Durable
+# Testing Neo on Pi Durable
 
 Pi mode embeds `@earendil-works/pi-durable` in runner. File/process tools run only in `pi-executor`; integration credentials and approvals remain in remote-cli. OpenCode is still the default deployment and is retained for rollback.
 
@@ -62,7 +62,7 @@ For non-streamed acceptance, omit `stream`; the response includes `anchorId` and
 3. Expose ingress port 8080 through your HTTPS reverse proxy or a development tunnel. In the Slack app set Event Subscriptions to `https://HOST/slack/events` and Interactivity to `https://HOST/slack/interactivity`. Slack's URL verification should succeed. This is HTTP Events API, not Socket Mode.
 4. Install the [Slack manifest](examples/slack.json) scopes/events and reinstall the app if scopes changed. Include `app_mention` and `message.*` subscriptions for non-mention thread follow-ups. Private/DM/shared test channels need their ID in `slack.private_channel_allowlist` in `thor.json`.
 5. Open `/dashboard`, connect your codex-lb subscription(s), and select an available model using `PI_MODEL_ID`; this setting is independent of legacy OpenCode's model config. Pi defaults to `gpt-5.4`; use `gpt-5.6-sol` only if your pool advertises it. Do not assume the named `codex-lb-data` volume contains accounts from the previous bind mount or another Compose project—migrate/restore privately or reconnect them.
-6. Mention the bot: `@Thor Read README and summarize this repository in three bullets. Reply here; do not modify files or call external write tools.` Expect a substantive in-thread reply, not merely a viewer entry. Fast runs can finish before the progress-card threshold; no progress card is not itself a failure.
+6. Mention the bot: `@Neo Read README and summarize this repository in three bullets. Reply here; do not modify files or call external write tools.` Expect a substantive in-thread reply, not merely a viewer entry. Fast runs can finish before the progress-card threshold; no progress card is not itself a failure.
 7. Reply in that same thread without mentioning the bot: `What setup step should I try first?` Check that the conversation resumes. In `/admin/sessions`, its current runtime ID should start with `pi-`; the trigger viewer should show Pi model/tool history.
 8. Test human ownership with a low-risk GWS command after configuring Google OAuth, `SLACK_TEAM_ID` and the Slack app's Messages Tab. The trusted requester receives a private OAuth DM without a profile-email lookup or Google mapping. Confirm the Google account/Slack recipient, connect, retry and approve as that same user. An optional `google_workspace_email` restricts account choice. Another user must not reuse that grant/result; reusing an approval must not execute again. See [Google Workspace](google-workspace.md). Read-only GWS commands still require approval.
 
@@ -82,7 +82,7 @@ The runner's Pi settings are also listed in README Deployment Configuration and 
 | `PI_MODEL_API_KEY`         | `codex-lb-local`            | Runner-only model auth; never sent to executor                       |
 | `PI_MODEL_CONTEXT_WINDOW`  | `272000`                    | Model context limit for compaction/progress                          |
 | `PI_MODEL_SUPPORTS_IMAGES` | `true`                      | Inline image input; false disables inspection for text-only backends |
-| `PI_SKILLS_DIR`            | `/etc/thor/skills`          | Skill catalog inside executor; image carries existing Thor skills    |
+| `PI_SKILLS_DIR`            | `/etc/thor/skills`          | Skill catalog inside executor; image carries existing Neo skills     |
 | `PI_MEMORY_DIR`            | `/workspace/memory`         | Shared root/repo memory path                                         |
 
 Use the **standard Responses API**, not the ChatGPT-specific Codex transport. The default GPT model supports text, tools and inline images. Custom models must support text and tools; validate reasoning compatibility and set `PI_MODEL_SUPPORTS_IMAGES=false` for text-only backends (image inspection then fails explicitly). Cost rates are not configured in this initial mode; consult codex-lb for spend rather than treating zero rate metadata as free usage.

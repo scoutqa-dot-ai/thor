@@ -19,7 +19,7 @@ export const piTriggerRequestSchema = z.object({
   directory: z.string().min(1),
   stream: z.boolean().default(false),
 });
-/** Thor trigger input retained inside the conversation for admission recovery. */
+/** Neo trigger input retained inside the conversation for admission recovery. */
 export type PiTriggerRequest = z.infer<typeof piTriggerRequestSchema>;
 
 const receiptSchema = z.object({
@@ -34,7 +34,7 @@ const receiptSchema = z.object({
 /** Durable admission receipt is written before submit; the same request ID bridges the two commits. */
 export type PiAdmissionReceipt = z.infer<typeof receiptSchema>;
 
-/** Parse persisted Thor metadata before trusting it for identity or recovery. */
+/** Parse persisted Neo metadata before trusting it for identity or recovery. */
 export const piConversationMetadataSchema = z.object({
   anchorId: z.string().regex(UUID_V7_RE),
   directory: z.string(),

@@ -1,5 +1,5 @@
 /**
- * gh policy — explicit allowlist of Thor-supported workflows.
+ * gh policy — explicit allowlist of Neo-supported workflows.
  *
  * The policy is intentionally small: read-only commands are allowed by command
  * tuple, mutating commands must match exact non-interactive templates, and
@@ -78,7 +78,7 @@ const ALLOWED_GH_COMMANDS: ReadonlySet<string> = new Set([
 const HELP_FLAGS: ReadonlySet<string> = new Set(["-h", "--help"]);
 
 const DEFAULT_GH_DENY_GUIDANCE: DenyGuidance = {
-  reason: "this command shape is outside Thor's allowed gh workflows.",
+  reason: "this command shape is outside Neo's allowed gh workflows.",
 };
 
 const REPO_OVERRIDE_DENY_GUIDANCE: DenyGuidance = {
@@ -104,7 +104,7 @@ const GH_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
   },
   "gh issue create": {
     reason:
-      "issue creation requires an explicit non-interactive title and body so Thor can inject the trigger viewer link.",
+      "issue creation requires an explicit non-interactive title and body so Neo can inject the trigger viewer link.",
     instead: "gh issue create --title <title> --body <body>",
   },
   "gh pr comment": {
@@ -141,7 +141,7 @@ const GH_DENY_GUIDANCE: Readonly<Record<string, DenyGuidance>> = {
   },
   "gh release download": {
     reason:
-      "release download has local filesystem side effects and is outside Thor's release surface.",
+      "release download has local filesystem side effects and is outside Neo's release surface.",
     instead: "gh release view <tag|latest>",
   },
   "gh api": {
@@ -314,7 +314,7 @@ function validateGhPrCreateArgs(args: string[], cwd?: string): string | null {
     }
     if (head.includes(":")) {
       return denyMessage("gh pr create", {
-        reason: `--head "${head}" uses a cross-fork selector, which Thor blocks.`,
+        reason: `--head "${head}" uses a cross-fork selector, which Neo blocks.`,
         instead: "cd into the local branch worktree and omit --head",
       });
     }
@@ -334,12 +334,12 @@ function validateGhPrCreateArgs(args: string[], cwd?: string): string | null {
     }
   }
 
-  // --fill is denied: PR creation must include an explicit body so Thor can
+  // --fill is denied: PR creation must include an explicit body so Neo can
   // inject the trigger viewer link as a disclaimer footer.
   if (fill) {
     return denyMessage("gh pr create", {
       reason:
-        "--fill is denied: PR creation must include an explicit --body so Thor can inject the trigger viewer link.",
+        "--fill is denied: PR creation must include an explicit --body so Neo can inject the trigger viewer link.",
       instead: "gh pr create --title <title> --body <body>",
     });
   }
@@ -403,7 +403,7 @@ function validateGhIssueCreateArgs(args: string[]): string | null {
   if (bodies.length !== 1) {
     return denyMessage("gh issue create", {
       reason:
-        "issue creation requires exactly one explicit --body value so Thor can inject the trigger viewer link.",
+        "issue creation requires exactly one explicit --body value so Neo can inject the trigger viewer link.",
       instead: "provide exactly one --body value",
     });
   }

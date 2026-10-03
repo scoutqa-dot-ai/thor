@@ -1,6 +1,6 @@
 # 1Password authenticated browser
 
-Thor uses one dedicated 1Password vault as Neo's browser credential store. Neo can start at an HTTPS application, discover a same-origin login or one delegated OAuth/OIDC credential origin, ask for Slack approval of the complete origin chain, autofill inside a broker-owned Chromium process, and continue through restricted application-origin controls.
+Neo uses one dedicated 1Password vault as Neo's browser credential store. Neo can start at an HTTPS application, discover a same-origin login or one delegated OAuth/OIDC credential origin, ask for Slack approval of the complete origin chain, autofill inside a broker-owned Chromium process, and continue through restricted application-origin controls.
 
 The service-account token, username, password, TOTP secret/current code, cookies, browser storage, and browser debugging connection are never returned to Neo or Slack. The website's normal visible content is returned in sanitized accessibility snapshots, so request only data the Slack task is authorized to access.
 
@@ -13,8 +13,8 @@ The broker is a sandboxed stdio MCP child of `remote-cli`. It is intentionally *
 Browser sessions:
 
 - stay entirely inside the broker process;
-- are bound to the Thor session that obtained approval;
-- are limited to one active browser per Thor session and eight globally;
+- are bound to the Neo session that obtained approval;
+- are limited to one active browser per Neo session and eight globally;
 - expire after ten minutes of inactivity;
 - are destroyed on explicit close, broker disconnect, or process shutdown.
 
@@ -26,14 +26,14 @@ Browser sessions:
 4. For each Login item:
    - keep exactly one Website URL;
    - use HTTPS and omit query parameters and fragments;
-   - prefer **Only on this exact domain**; **Fill anywhere on this website** is also accepted, but Thor still matches only the Website URL's exact origin;
+   - prefer **Only on this exact domain**; **Fill anywhere on this website** is also accepted, but Neo still matches only the Website URL's exact origin;
    - use the built-in `username` field and built-in concealed `password` field;
    - optionally add exactly one 1Password one-time-password field for approval-gated automated TOTP; do not add recovery codes, another MFA field, or another website.
 5. Record the 26-character vault ID and the owner/rotation procedure for the service account.
 
-The Website URL identifies the origin where credentials may be filled. For a delegated login, such as `application.example` redirecting to `login.example`, set the Login Website to the credential origin (`https://login.example/...`), not the application origin. Standard one-page and username-then-password forms are detected semantically; Thor does not accept selectors, redirect origins, callback URLs, or secret references from the model.
+The Website URL identifies the origin where credentials may be filled. For a delegated login, such as `application.example` redirecting to `login.example`, set the Login Website to the credential origin (`https://login.example/...`), not the application origin. Standard one-page and username-then-password forms are detected semantically; Neo does not accept selectors, redirect origins, callback URLs, or secret references from the model.
 
-Adding or changing a Login item in this vault does **not** require a Thor configuration change or restart. Changing the vault or service-account token does.
+Adding or changing a Login item in this vault does **not** require a Neo configuration change or restart. Changing the vault or service-account token does.
 
 ## 2. Configure the vault ID
 
@@ -96,7 +96,7 @@ Before posting the Slack card, `remote-cli` asks the broker to bind the selected
 
 When `automate_totp` is true, the approved item must contain exactly one TOTP field. The broker submits username/password first, requires the password control to disappear, validates one semantic same-origin TOTP form, revalidates the active item, obtains a fresh SDK-computed 6–8 digit code, and injects it once. The code remains wrapped in broker memory solely to redact browser output until session cleanup. Omitting or setting `automate_totp` to false keeps TOTP items denied.
 
-The 1Password full-item API returns all item fields together, so the approved initial credential read necessarily brings the TOTP field into broker memory. Thor first revalidates the active overview and does not use the initial code; after the challenge, it revalidates active status again and performs a second full read to minimize expiry risk. There is no field-level separation when password and TOTP share the item and service-account vault permission.
+The 1Password full-item API returns all item fields together, so the approved initial credential read necessarily brings the TOTP field into broker memory. Neo first revalidates the active overview and does not use the initial code; after the challenge, it revalidates active status again and performs a second full read to minimize expiry risk. There is no field-level separation when password and TOTP share the item and service-account vault permission.
 
 Automated TOTP places the password and TOTP generator behind the same service-account token. Use it only for dedicated low-privilege automation accounts; it is approval-gated automation, not an independent second factor against broker or token compromise.
 
@@ -132,10 +132,10 @@ Browser action responses expose only the opaque session ID and approved origin, 
 For every approved open, the broker:
 
 1. Starts credential-free discovery at the application URL, records at most one HTTPS credential origin, and derives an exact application callback path only from one standard `redirect_uri` on the credential page.
-2. Issues an opaque two-minute login plan bound to the Thor owner session, application origin, credential origin, exact callback path, and transition order; a newer plan replaces the owner's older plan.
+2. Issues an opaque two-minute login plan bound to the Neo owner session, application origin, credential origin, exact callback path, and transition order; a newer plan replaces the owner's older plan.
 3. Lists safe Login overviews from only the configured vault and credential origin, then binds one selected item/title to the plan before Slack approval.
 4. Revalidates the selected active overview and fetches the full item only after approval has succeeded and the plan has been consumed.
-5. Revalidates vault, item ID, title, Login category, one allowed Website, built-in username/concealed password fields, and zero TOTP fields unless automated TOTP was explicitly approved, in which case exactly one is required. `ExactDomain` and `AnywhereOnWebsite` are accepted, but Thor independently restricts filling to the exact credential origin.
+5. Revalidates vault, item ID, title, Login category, one allowed Website, built-in username/concealed password fields, and zero TOTP fields unless automated TOTP was explicitly approved, in which case exactly one is required. `ExactDomain` and `AnywhereOnWebsite` are accepted, but Neo independently restricts filling to the exact credential origin.
 6. Launches headless Chromium with TLS verification enabled and a credential-free environment, replays the planned application-to-credential transition, and rejects route changes before filling.
 7. Allows credential forms and submissions only as self-targeting POSTs on the credential origin. Every response is fetched without automatically following redirects; only a validated top-level 301/302/303 transition is reissued as an isolated GET, while 307/308 and resource redirects are blocked so request bodies cannot cross origins. During delegated authentication, only an authorization-code callback with the exact approved application origin/path and bounded `code`/`state` parameters may cross origins.
 8. After callback consumption, blocks the credential origin and retains browsing only on the exact application origin. Service workers, WebSockets, WebRTC/WebTransport, downloads, dialogs, popups, and all other origins remain blocked.
@@ -144,9 +144,9 @@ For every approved open, the broker:
 11. Clears attached credential/TOTP fields before retaining the session and retains their wrapped values only for output redaction.
 12. Rechecks the application origin and absence of login/MFA fields before and after every continued action.
 
-Raw Playwright accessibility output is never returned. Thor allowlists accessibility properties, removes all editable values, replaces link targets with same-origin/blocked markers, redacts known username/password substrings, bounds output size/depth, and issues short-lived opaque element refs. Sessions that used TOTP additionally redact all decimal text and numeric accessibility values so formatted or split code reflections cannot cross the boundary.
+Raw Playwright accessibility output is never returned. Neo allowlists accessibility properties, removes all editable values, replaces link targets with same-origin/blocked markers, redacts known username/password substrings, bounds output size/depth, and issues short-lived opaque element refs. Sessions that used TOTP additionally redact all decimal text and numeric accessibility values so formatted or split code reflections cannot cross the boundary.
 
-Thor exposes no tool for page HTML/source, arbitrary selectors, JavaScript evaluation, screenshots, tracing, console/network capture, headers, cookies, local/session storage, IndexedDB, downloads, profiles, or CDP.
+Neo exposes no tool for page HTML/source, arbitrary selectors, JavaScript evaluation, screenshots, tracing, console/network capture, headers, cookies, local/session storage, IndexedDB, downloads, profiles, or CDP.
 
 ## Unsupported flows
 
@@ -162,7 +162,7 @@ Do not solve unsupported cases by allowing every redirect, adding model-supplied
 
 ## Audit and verification
 
-Broker audit events contain only timestamp, action, outcome, configured vault ID, an approved origin, safe item/browser IDs, Thor session ID, and a classified error code. Credential-browser worklogs discard item titles, login-plan IDs, typed text, snapshots, full URLs, redirect and callback parameters, upstream errors, and unexpected fields.
+Broker audit events contain only timestamp, action, outcome, configured vault ID, an approved origin, safe item/browser IDs, Neo session ID, and a classified error code. Credential-browser worklogs discard item titles, login-plan IDs, typed text, snapshots, full URLs, redirect and callback parameters, upstream errors, and unexpected fields.
 
 After a non-production test:
 
