@@ -392,39 +392,5 @@ remoteCli.app.get("/fixture-state", (_req, res) =>
     drataTokenRequests,
   }),
 );
-remoteCli.app.post("/fixture-approve", async (req, res) => {
-  const actionId = req.body?.actionId;
-  assert.equal(typeof actionId, "string");
-  const resolution = await fetch("http://127.0.0.1:3004/exec/mcp", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-thor-internal-secret": "fixture-internal-secret",
-    },
-    body: JSON.stringify({ args: ["resolve", actionId, "approved", owner.slackUserId] }),
-  });
-  const resolutionResult = await resolution.json();
-  let summary;
-  try {
-    summary = JSON.parse(resolutionResult.stdout);
-  } catch {
-    summary = undefined;
-  }
-  if (summary?.result_available === true) {
-    assert.equal(typeof summary.result_capability, "string");
-    const status = await fetch("http://127.0.0.1:3004/exec/approval", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-thor-session-id": owner.sessionId,
-      },
-      body: JSON.stringify({
-        args: ["result", actionId, summary.result_capability],
-      }),
-    });
-    res.status(status.status).send(await status.text());
-    return;
-  }
-  res.status(resolution.status).json(resolutionResult);
-});
+// Connected Google commands execute directly; no fixture approval backdoor.
 createServer(remoteCli.app).listen(3004, "0.0.0.0");

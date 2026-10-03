@@ -8,28 +8,7 @@ const exec = promisify(execFile);
 const baseUrl = process.env.THOR_REMOTE_CLI_URL;
 const state = async () => (await fetch(`${baseUrl}/fixture-state`)).json();
 async function gws(args) {
-  const pending = await exec("gws", args);
-  const event = JSON.parse(pending.stdout);
-  assert.equal(event.type, "approval_required");
-  assert.equal(event.tool, "google_workspace_command");
-  assert.match(event.args.command_fingerprint, /^[a-f0-9]{64}$/);
-  assert.equal(event.args.google_workspace_email, "person@example.com");
-
-  const response = await fetch(`${baseUrl}/fixture-approve`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ actionId: event.actionId }),
-  });
-  assert.equal(response.status, 200);
-  const result = await response.json();
-  if (result.exitCode !== 0) {
-    const error = new Error(result.stderr || result.stdout || "gws fixture command failed");
-    error.code = result.exitCode;
-    error.stdout = result.stdout;
-    error.stderr = result.stderr;
-    throw error;
-  }
-  return result.stdout;
+  return (await exec("gws", args)).stdout;
 }
 
 assert.match(await gws(["--version"]), /0\.22\.5/);
@@ -41,7 +20,7 @@ await assert.rejects(
   exec("gws", ["auth", "--help"]),
   (error) => error.code === 1 && /auth commands are disabled/.test(error.stderr),
 );
-assert.ok((await state()).tokenRequests > 0, "approved commands must refresh user OAuth");
+assert.ok((await state()).tokenRequests > 0, "direct commands must refresh user OAuth");
 
 // Even a repo-local dotenv cannot select credentials/token/cache for the server.
 await writeFile(
@@ -190,5 +169,5 @@ assert.match(
   /includeTabsContent/,
 );
 console.log(
-  "PASS: per-user GWS OAuth/approval, reads/writes, caller formatting/pagination, upstream denials, and private mounts",
+  "PASS: per-user GWS OAuth/direct execution, reads/writes, caller formatting/pagination, upstream denials, and private mounts",
 );

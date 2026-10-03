@@ -9,10 +9,17 @@ import {
 } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { ExecResultSchema, type ExecResult } from "@thor/common";
+import {
+  ExecResultSchema,
+  GoogleAuthContinuationSchema,
+  type GoogleAuthContinuation,
+  type ExecResult,
+} from "@thor/common";
 import { z } from "zod";
+import { parseGwsArgs } from "./gws-args.js";
 
 const REQUEST_TTL_MS = 10 * 60 * 1000;
+const READY_TTL_MS = 24 * 60 * 60 * 1000;
 const OAUTH_HTTP_TIMEOUT_MS = 15_000;
 const OAUTH_RESPONSE_MAX_BYTES = 64 * 1024;
 const AES_GCM_IV_BYTES = 12;
@@ -104,6 +111,23 @@ const PendingCommandSchema = z.object({
 });
 
 type PendingCommand = z.infer<typeof PendingCommandSchema>;
+
+const ContinuationBaseSchema = z.object({
+  version: z.literal(1),
+  id: z.string().regex(/^[A-Za-z0-9_-]{20,200}$/),
+  owner: RequestOwnerSchema,
+  args: z.array(z.string().refine((arg) => !arg.includes("\0"))),
+  createdAtMs: z.number().int().nonnegative(),
+  expiresAtMs: z.number().int().positive(),
+});
+const ContinuationSchema = z.discriminatedUnion("status", [
+  ContinuationBaseSchema.extend({ status: z.enum(["awaiting_dm", "waiting"]) }),
+  ContinuationBaseSchema.extend({
+    status: z.enum(["authorized_unconfirmed", "ready", "acked"]),
+    connectionId: z.uuid(),
+  }),
+]);
+type ContinuationRecord = z.infer<typeof ContinuationSchema>;
 
 const ConnectionSchema = z.object({
   version: z.literal(1),
@@ -201,7 +225,8 @@ export class GwsOAuthError extends Error {
       | "provider_rejected"
       | "invalid_provider_response"
       | "connection_missing"
-      | "connection_invalid",
+      | "connection_invalid"
+      | "credentials_revoked",
     readonly httpStatus?: number,
     readonly configurationFields?: readonly OAuthSettingName[],
   ) {
@@ -238,6 +263,7 @@ export interface GwsConsumedCommand {
 }
 
 export interface GwsConnectionRequest {
+  readonly reused?: boolean;
   readonly requestId: string;
   readonly connectUrl: string;
   readonly expiresAtMs: number;
@@ -325,7 +351,8 @@ export class GwsOAuthService {
   /** Create a private, expiring connection request for one active Slack turn. */
   createConnectionRequest(input: GwsConnectionRequestInput): GwsOAuthResult<GwsConnectionRequest> {
     if (!this.#config.ok) return this.#config;
-    this.#pruneExpiredTransientRecords();
+    const pruned = this.#pruneExpiredTransientRecords();
+    if (!pruned.ok) return pruned;
     const config = this.#config.value;
     const parsedOwner = RequestOwnerSchema.safeParse({
       slackTeamId: config.slackTeamId,
@@ -359,6 +386,187 @@ export class GwsOAuthService {
         expiresAtMs: request.expiresAtMs,
       },
     };
+  }
+
+  /** Persist an unexecuted Google operation; reuse only a confirmed identical current invitation. */
+  createAuthContinuation(
+    input: GwsConnectionRequestInput & { readonly args: readonly string[] },
+  ): GwsOAuthResult<GwsConnectionRequest> {
+    if (!this.#config.ok) return this.#config;
+    const pruned = this.#pruneExpiredTransientRecords();
+    if (!pruned.ok) return pruned;
+    const owner = RequestOwnerSchema.safeParse({
+      ...input,
+      slackTeamId: this.#config.value.slackTeamId,
+      expectedGoogleEmail: input.expectedGoogleEmail?.toLowerCase(),
+    });
+    if (!owner.success || !parseGwsArgs([...input.args]).ok)
+      return failure("request", "unavailable");
+    const records = this.#readContinuations();
+    if (!records.ok) return records;
+    for (const record of records.value) {
+      if (
+        record.status !== "waiting" ||
+        record.expiresAtMs <= this.#now() ||
+        JSON.stringify(record.owner) !== JSON.stringify(owner.data) ||
+        JSON.stringify(record.args) !== JSON.stringify(input.args)
+      )
+        continue;
+      const request = this.#readRequest(record.id);
+      if (!request.ok) return request;
+      if (request.value.phase === "completed" || request.value.phase === "failed") continue;
+      const connectUrl = new URL("/google-workspace/connect", this.#config.value.publicBaseUrl);
+      connectUrl.searchParams.set("request", record.id);
+      return {
+        ok: true,
+        value: {
+          requestId: record.id,
+          connectUrl: connectUrl.toString(),
+          expiresAtMs: record.expiresAtMs,
+          reused: true,
+        },
+      };
+    }
+    const request = this.createConnectionRequest(input);
+    if (!request.ok) return request;
+    const written = this.#writeEncrypted(this.#continuationPath(request.value.requestId), {
+      version: 1,
+      id: request.value.requestId,
+      owner: owner.data,
+      args: [...input.args],
+      status: "awaiting_dm",
+      createdAtMs: this.#now(),
+      expiresAtMs: request.value.expiresAtMs,
+    } satisfies ContinuationRecord);
+    return written.ok ? request : written;
+  }
+
+  /** Confirm private DM delivery before a wait can ever become resumable. */
+  confirmAuthContinuation(id: string): GwsOAuthResult<void> {
+    if (!this.#config.ok) return this.#config;
+    if (!/^[A-Za-z0-9_-]{20,200}$/.test(id)) return failure("request", "not_found");
+    const record = this.#readEncrypted(this.#continuationPath(id), ContinuationSchema);
+    if (!record.ok) return record;
+    if (
+      record.value.id !== id ||
+      record.value.owner.slackTeamId !== this.#config.value.slackTeamId
+    ) {
+      return failure("identity", "identity_mismatch");
+    }
+    if (record.value.expiresAtMs <= this.#now()) return failure("request", "expired");
+    if (record.value.status === "waiting" || record.value.status === "ready")
+      return { ok: true, value: undefined };
+    if (record.value.status === "awaiting_dm") {
+      return this.#writeEncrypted(this.#continuationPath(id), {
+        ...record.value,
+        status: "waiting",
+      });
+    }
+    if (record.value.status === "authorized_unconfirmed") {
+      return this.#writeEncrypted(this.#continuationPath(id), { ...record.value, status: "ready" });
+    }
+    return failure("request", "already_used");
+  }
+
+  /** Remove unconfirmed work after failed delivery; later OAuth may connect but cannot resume it. */
+  cancelAuthContinuation(id: string): GwsOAuthResult<void> {
+    if (!this.#config.ok) return this.#config;
+    if (!/^[A-Za-z0-9_-]{20,200}$/.test(id)) return failure("request", "not_found");
+    try {
+      rmSync(this.#continuationPath(id), { force: true });
+      return { ok: true, value: undefined };
+    } catch {
+      return failure("storage", "unavailable");
+    }
+  }
+
+  /** List confirmed ready work for the secret-gated runner outbox, surviving service reconstruction. */
+  listReadyContinuations(): GwsOAuthResult<GoogleAuthContinuation[]> {
+    const pruned = this.#pruneExpiredTransientRecords();
+    if (!pruned.ok) return pruned;
+    const records = this.#readContinuations();
+    if (!records.ok) return records;
+    const ready: GoogleAuthContinuation[] = [];
+    for (const record of records.value) {
+      if (record.status !== "ready" || record.expiresAtMs <= this.#now()) continue;
+      const parsed = GoogleAuthContinuationSchema.safeParse({
+        id: record.id,
+        ...record.owner,
+        args: record.args,
+        connectionId: record.connectionId,
+        createdAtMs: record.createdAtMs,
+        expiresAtMs: record.expiresAtMs,
+      });
+      if (!parsed.success) return failure("storage", "connection_invalid");
+      ready.push(parsed.data);
+    }
+    return { ok: true, value: ready };
+  }
+
+  /** Retire matching ready work before a direct dispatch, including uncertain outcomes. */
+  retireMatchingContinuation(
+    input: GwsConnectionRequestInput & { readonly args: readonly string[] },
+  ): GwsOAuthResult<void> {
+    const records = this.#readContinuations();
+    if (!records.ok) return records;
+    for (const record of records.value) {
+      if (
+        record.status !== "ready" ||
+        record.owner.slackUserId !== input.slackUserId ||
+        record.owner.sessionId !== input.sessionId ||
+        record.owner.anchorId !== input.anchorId ||
+        record.owner.triggerId !== input.triggerId ||
+        JSON.stringify(record.args) !== JSON.stringify(input.args)
+      )
+        continue;
+      const retired = this.acknowledgeContinuation(record.id);
+      if (!retired.ok) return retired;
+    }
+    return { ok: true, value: undefined };
+  }
+  /** Idempotent durable acknowledgement; terminal records are never listed again. */
+  acknowledgeContinuation(id: string): GwsOAuthResult<void> {
+    if (!this.#config.ok) return this.#config;
+    if (!/^[A-Za-z0-9_-]{20,200}$/.test(id)) return failure("request", "not_found");
+    const record = this.#readEncrypted(this.#continuationPath(id), ContinuationSchema);
+    if (!record.ok)
+      return record.error.code === "not_found" ? { ok: true, value: undefined } : record;
+    if (
+      record.value.id !== id ||
+      record.value.owner.slackTeamId !== this.#config.value.slackTeamId
+    ) {
+      return failure("identity", "identity_mismatch");
+    }
+    if (record.value.status === "acked") return { ok: true, value: undefined };
+    if (record.value.status !== "ready") return failure("request", "already_used");
+    return this.#writeEncrypted(this.#continuationPath(id), { ...record.value, status: "acked" });
+  }
+
+  #readContinuations(): GwsOAuthResult<ContinuationRecord[]> {
+    if (!this.#config.ok) return this.#config;
+    const directory = join(this.#config.value.storageDir, "continuations");
+    let names: string[];
+    try {
+      names = readdirSync(directory).filter((name) => /^[A-Za-z0-9_-]+\.json$/.test(name));
+    } catch (error) {
+      return error instanceof Error && "code" in error && error.code === "ENOENT"
+        ? { ok: true, value: [] }
+        : failure("storage", "unavailable");
+    }
+    const records: ContinuationRecord[] = [];
+    for (const name of names) {
+      const record = this.#readEncrypted(join(directory, name), ContinuationSchema);
+      if (!record.ok) return record;
+      if (
+        name !== `${record.value.id}.json` ||
+        !parseGwsArgs(record.value.args).ok ||
+        record.value.owner.slackTeamId !== this.#config.value.slackTeamId
+      ) {
+        return failure("storage", "connection_invalid");
+      }
+      records.push(record.value);
+    }
+    return { ok: true, value: records };
   }
 
   /** Trusted provider origin for the browser's form-redirect CSP; never derived from request input. */
@@ -549,6 +757,38 @@ export class GwsOAuthService {
       this.#markRequestFailed(exchanging);
       return connectionWrite;
     }
+    // A callback can race private delivery confirmation. Preserve verified
+    // readiness privately, but expose it only after confirmed DM delivery.
+    const continuation = this.#readEncrypted(
+      this.#continuationPath(request.requestId),
+      ContinuationSchema,
+    );
+    if (!continuation.ok && continuation.error.code !== "not_found") return continuation;
+    if (continuation.ok) {
+      const record = continuation.value;
+      if (
+        record.id !== request.requestId ||
+        record.owner.slackTeamId !== request.owner.slackTeamId ||
+        record.owner.slackUserId !== request.owner.slackUserId ||
+        record.owner.sessionId !== request.owner.sessionId ||
+        record.owner.anchorId !== request.owner.anchorId ||
+        record.owner.triggerId !== request.owner.triggerId ||
+        (record.owner.expectedGoogleEmail !== undefined &&
+          record.owner.expectedGoogleEmail !== request.owner.expectedGoogleEmail)
+      ) {
+        return failure("identity", "identity_mismatch");
+      }
+      if (record.status !== "waiting" && record.status !== "awaiting_dm") {
+        return failure("request", "already_used");
+      }
+      const readyWrite = this.#writeEncrypted(this.#continuationPath(record.id), {
+        ...record,
+        status: record.status === "waiting" ? "ready" : "authorized_unconfirmed",
+        connectionId: connection.connectionId,
+        expiresAtMs: now + READY_TTL_MS,
+      } satisfies ContinuationRecord);
+      if (!readyWrite.ok) return readyWrite;
+    }
     const completed: PendingRequest = {
       version: 1,
       requestId: request.requestId,
@@ -652,7 +892,8 @@ export class GwsOAuthService {
   /** Persist a private command payload separately from its safe approval summary. */
   storePendingCommand(input: GwsPendingCommandInput): GwsOAuthResult<void> {
     if (!this.#config.ok) return this.#config;
-    this.#pruneExpiredTransientRecords();
+    const pruned = this.#pruneExpiredTransientRecords();
+    if (!pruned.ok) return pruned;
     const owner = OwnerSchema.safeParse({
       slackTeamId: this.#config.value.slackTeamId,
       slackUserId: input.slackUserId,
@@ -771,7 +1012,11 @@ export class GwsOAuthService {
     const refreshed = await this.#refreshAccessToken(new Redacted(connection.refreshToken));
     if (!refreshed.ok) return refreshed;
     const currentIdentity = await this.#loadUserInfo(refreshed.value);
-    if (!currentIdentity.ok) return currentIdentity;
+    if (!currentIdentity.ok) {
+      return currentIdentity.error.stage === "identity" && currentIdentity.error.httpStatus === 401
+        ? failure("identity", "credentials_revoked", 401)
+        : currentIdentity;
+    }
     if (
       !currentIdentity.value.email_verified ||
       currentIdentity.value.email.toLowerCase() !== connection.googleEmail ||
@@ -793,12 +1038,16 @@ export class GwsOAuthService {
   /** Remove the local grant for one Slack user; provider revocation remains an operator/user action. */
   disconnect(slackUserId: string): GwsOAuthResult<void> {
     if (!this.#config.ok) return this.#config;
-    rmSync(this.#connectionPath(slackUserId), { force: true });
-    return { ok: true, value: undefined };
+    try {
+      rmSync(this.#connectionPath(slackUserId), { force: true });
+      return { ok: true, value: undefined };
+    } catch {
+      return failure("storage", "unavailable");
+    }
   }
 
-  #pruneExpiredTransientRecords(): void {
-    if (!this.#config.ok) return;
+  #pruneExpiredTransientRecords(): GwsOAuthResult<void> {
+    if (!this.#config.ok) return this.#config;
     const now = this.#now();
     const transientStores: ReadonlyArray<{
       directory: string;
@@ -816,6 +1065,10 @@ export class GwsOAuthService {
         directory: join(this.#config.value.storageDir, "commands"),
         schema: PendingCommandSchema,
       },
+      {
+        directory: join(this.#config.value.storageDir, "continuations"),
+        schema: ContinuationSchema,
+      },
     ];
     for (const store of transientStores) {
       let names: string[];
@@ -827,9 +1080,16 @@ export class GwsOAuthService {
       for (const name of names) {
         const path = join(store.directory, name);
         const record = this.#readEncrypted(path, store.schema);
-        if (record.ok && record.value.expiresAtMs <= now) rmSync(path, { force: true });
+        if (record.ok && record.value.expiresAtMs <= now) {
+          try {
+            rmSync(path, { force: true });
+          } catch {
+            return failure("storage", "unavailable");
+          }
+        }
       }
     }
+    return { ok: true, value: undefined };
   }
 
   #markRequestFailed(
@@ -900,6 +1160,14 @@ export class GwsOAuthService {
     });
     if (!response.ok) return response;
     if (response.value.status !== 200) {
+      // Only the trusted refresh endpoint's structured invalid_grant response
+      // establishes revoked credentials. CLI stderr and other failures do not.
+      if (response.value.status === 400 || response.value.status === 401) {
+        const rejection = await parseJsonResponse(response.value, z.object({ error: z.string() }));
+        if (rejection.ok && rejection.value.error === "invalid_grant") {
+          return failure("token", "credentials_revoked", response.value.status);
+        }
+      }
       return failure("token", "provider_rejected", response.value.status);
     }
     const parsed = await parseJsonResponse(response.value, TokenResponseSchema);
@@ -956,6 +1224,11 @@ export class GwsOAuthService {
     const config = this.#config.ok ? this.#config.value : undefined;
     const ownerKey = sha256Hex(`${config?.slackTeamId ?? ""}\0${slackUserId}`);
     return join(config?.storageDir ?? "/invalid", "connections", `${ownerKey}.json`);
+  }
+
+  #continuationPath(id: string): string {
+    const config = this.#config.ok ? this.#config.value : undefined;
+    return join(config?.storageDir ?? "/invalid", "continuations", `${id}.json`);
   }
 
   #commandPath(actionId: string): string {

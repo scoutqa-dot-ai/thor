@@ -226,3 +226,13 @@ export type {
   ApprovalPresentation,
   ApprovalSlackMessage,
 } from "./approval-presentation.js";
+export {
+  GoogleAuthContinuationSchema,
+  GoogleAuthWaitSchema,
+  GoogleWorkspaceExecResultSchema,
+} from "./google-auth-continuation.js";
+export type {
+  GoogleAuthContinuation,
+  GoogleAuthWait,
+  GoogleWorkspaceExecResult,
+} from "./google-auth-continuation.js";

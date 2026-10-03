@@ -14,6 +14,7 @@ import {
 } from "@thor/common";
 import { createRemoteCliApp } from "./index.js";
 import { GwsOAuthService, type GwsAccessToken } from "./gws-oauth.js";
+import { ApprovalStore } from "./approval-store.js";
 
 const sessionId = "gws-owner-session";
 const slackUserId = "U123";
@@ -116,7 +117,7 @@ async function post(path: string, body: unknown, headers: Record<string, string>
 
 describe("per-user Google Workspace execution", () => {
   it.each([true, false])(
-    "requires owner approval, executes once and disconnects (explicit pin: %s)",
+    "executes directly, retains historic approval/results, and disconnects (explicit pin: %s)",
     async (explicitPin) => {
       const oauth = new GwsOAuthService(oauthEnv(), {
         fetch: providerFetch(),
@@ -243,6 +244,45 @@ describe("per-user Google Workspace execution", () => {
       expect(authorized.headers.get("location")).toContain("https://provider.example.test/auth");
       expect(authorized.headers.get("location")).not.toContain(browserRequest.value.requestId);
 
+      // Simulate historic persisted approvals; new /exec/gws calls cannot create them.
+      function legacyApproval(args: string[]): ApprovalRequiredEventPayload {
+        const connected = oauth.findConnectedIdentity(slackUserId);
+        const fingerprint = oauth.fingerprintCommand(args);
+        if (!connected.ok || !fingerprint.ok) throw new Error("Legacy fixture connection missing");
+        const approvalArgs = {
+          operation: args.slice(0, 3).join("."),
+          argument_count: args.length,
+          command_fingerprint: fingerprint.value,
+          google_workspace_email: googleEmail,
+          slack_user_id: slackUserId,
+          connection_id: connected.value.connectionId,
+        };
+        const store = new ApprovalStore(join(root, "approvals", "gws"), "gws");
+        const action = store.buildPending(
+          "google_workspace_command",
+          approvalArgs,
+          { sessionId, trigger: { anchorId, triggerId } },
+          { provider: "slack", channel: "C123", threadTs: "1710000000.001" },
+        );
+        const stored = oauth.storePendingCommand({
+          actionId: action.id,
+          args,
+          slackUserId,
+          expectedGoogleEmail: googleEmail,
+          sessionId,
+          anchorId,
+          triggerId,
+        });
+        if (!stored.ok) throw stored.error;
+        store.update(action);
+        return ApprovalRequiredEventPayloadSchema.parse({
+          type: "approval_required",
+          actionId: action.id,
+          tool: "google_workspace_command",
+          proxyName: "gws",
+          args: approvalArgs,
+        });
+      }
       const args = ["drive", "files", "update", "--json", '{"name":"private title"}'];
       const pending = await post(
         "/exec/gws",
@@ -250,8 +290,11 @@ describe("per-user Google Workspace execution", () => {
         { "x-thor-session-id": sessionId, "x-thor-call-id": "call-1" },
       );
       expect(pending.status).toBe(200);
-      expect(executions).toHaveLength(0);
-      const event = JSON.parse(pending.result.stdout) as ApprovalRequiredEventPayload;
+      expect(pending.result).toEqual({ stdout: "fixture command output", stderr: "", exitCode: 0 });
+      expect(executions).toEqual([{ args, token: "fixture-command-token" }]);
+      expect(slackBodies).toHaveLength(0);
+      executions.length = 0;
+      const event = legacyApproval(args);
       expect(event).toMatchObject({
         type: "approval_required",
         tool: "google_workspace_command",
@@ -353,10 +396,7 @@ describe("per-user Google Workspace execution", () => {
       });
       expect(executions).toHaveLength(1);
 
-      const beforeReconnect = await post("/exec/gws", { args }, { "x-thor-session-id": sessionId });
-      const oldConnectionAction = ApprovalRequiredEventPayloadSchema.parse(
-        JSON.parse(beforeReconnect.result.stdout),
-      );
+      const oldConnectionAction = legacyApproval(args);
       await connect(oauth);
       const replaced = await post(
         "/exec/mcp",
@@ -366,14 +406,7 @@ describe("per-user Google Workspace execution", () => {
       expect(replaced.result.exitCode).toBe(1);
       expect(executions).toHaveLength(1);
 
-      const changedPending = await post(
-        "/exec/gws",
-        { args: ["drive", "files", "list"] },
-        { "x-thor-session-id": sessionId },
-      );
-      const changedEvent = ApprovalRequiredEventPayloadSchema.parse(
-        JSON.parse(changedPending.result.stdout),
-      );
+      const changedEvent = legacyApproval(["drive", "files", "list"]);
       currentEmail = "changed@example.com";
       restrictEmailAfterApproval = true;
       await post(

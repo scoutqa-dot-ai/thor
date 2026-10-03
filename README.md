@@ -84,7 +84,7 @@ Neo is an internal AI teammate for engineering and product work; it is not meant
 - **Slack** — [`docs/slack.md`](docs/slack.md). Events API intake, signing-secret verification, private-channel allowlist, per-channel repo override, app manifest.
 - **GitHub App** — [`docs/github.md`](docs/github.md). Webhook intake, App permissions and event subscriptions, installation IDs, bot commit identity, CI wake gate.
 - **Daytona sandboxes** — [`docs/daytona.md`](docs/daytona.md). On-demand cloud sandboxes for project builds/tests/lints. Custom snapshot publishing.
-- **Google Workspace** — [`docs/google-workspace.md`](docs/google-workspace.md). Per-Slack-user OAuth with same-user command approval and short-lived token injection.
+- **Google Workspace** — [`docs/google-workspace.md`](docs/google-workspace.md). Per-Slack-user OAuth, automatic auth continuation and short-lived token injection.
 - **Outbound HTTP(S) (mitmproxy)** — [`docs/feat/security-model.md`](docs/feat/security-model.md) Layer 1a. Routing path, built-in defaults (Atlassian/Slack/OpenAI), custom credential rules.
 - **1Password browser login** — [`docs/onepassword-browser.md`](docs/onepassword-browser.md). Approval-gated credential injection into an ephemeral local Chromium session.
 - **Codex subscription pool** — [`docs/codex-lb.md`](docs/codex-lb.md). Multiple ChatGPT subscriptions behind the Vouch-protected dashboard at `/dashboard`.
@@ -104,7 +104,7 @@ Runtime integration paths:
 | LaunchDarkly     | `remote-cli /exec/ldcli`                           | Access token             | Read-only feature flag inspection                             |
 | Metabase         | `remote-cli /exec/metabase`                        | API key                  | Read-only warehouse access                                    |
 | Drata            | `remote-cli /exec/drata`                           | OAuth client credentials | API reads/writes; permissions managed by Drata                |
-| Google Workspace | `remote-cli /exec/gws`                             | Per-Slack-user OAuth     | Same-user approval; encrypted grants; no global fallback      |
+| Google Workspace | `remote-cli /exec/gws`                             | Per-Slack-user OAuth     | Direct execution; encrypted grants; no global fallback        |
 | 1Password        | `remote-cli /exec/mcp`                             | Service-account token    | Approved one-item, one-origin browser login and optional TOTP |
 
 Common usage patterns:
@@ -175,10 +175,11 @@ First use sends the trusted requesting Slack user a private OAuth DM. No Google 
 | `GOOGLE_WORKSPACE_PROJECT_ID`            | No       | `remote-cli` only       | Optional upstream GCP quota/billing project override                          |
 | workspace user `google_workspace_email`  | Optional | workspace config        | Restrict Google account choice; otherwise learn identity during private OAuth |
 
-Every GWS call requires the latest active Slack actor, that user's connected Google
-identity, and same-user Slack approval. Neo stores raw argv only in encrypted
-private state and shows a secret-free operation summary plus exact command
-fingerprint. It blocks `gws auth` and local-file command surfaces, has no global credential fallback, and injects
+Every GWS call requires the latest active Slack actor and that user's connected
+Google identity. Connected commands execute directly without a command approval.
+Missing or definitively revoked credentials pause the task through a confirmed
+private OAuth DM and encrypted continuation. It blocks `gws auth` and local-file
+command surfaces, has no global credential fallback, and injects
 only a refreshed `GOOGLE_WORKSPACE_CLI_TOKEN` into a fresh isolated child cwd.
 See [Google Workspace OAuth](docs/google-workspace.md).
 

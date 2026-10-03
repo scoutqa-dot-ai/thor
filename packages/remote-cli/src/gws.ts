@@ -19,7 +19,7 @@ export interface GwsServiceDeps {
   readonly discoveryCacheSeedDir?: string;
 }
 
-/** Runs an already-approved upstream gws command with a broker-issued token. */
+/** Runs a parsed upstream gws command with the active Slack requester's broker-issued token. */
 export interface IGwsService {
   /** Returns configuration failures as an ExecResult, without exposing credential contents. */
   execute(args: string[], accessToken: GwsAccessToken): Promise<GwsResponse>;
@@ -39,7 +39,7 @@ export class GwsService implements IGwsService {
     });
   }
 
-  /** Run one approved command with only its owner's short-lived access token. */
+  /** Run one command with only its owner's refreshed and verified short-lived access token. */
   async execute(args: string[], accessToken: GwsAccessToken): Promise<GwsResponse> {
     if (!this.config.success) {
       return unavailable(

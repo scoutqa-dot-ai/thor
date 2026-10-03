@@ -262,7 +262,7 @@ try {
   await page.getByRole("heading", { name: "Google account selection fixture" }).waitFor();
   await page.getByRole("link", { name: "Choose fixture Google account and consent" }).click();
   await page.getByRole("heading", { name: "Google Workspace connected" }).waitFor();
-  assert.match(await page.locator("body").innerText(), /Neo will ask you to approve/);
+  assert.match(await page.locator("body").innerText(), /Neo will automatically continue/);
   assert.equal(oauth.findConnectedIdentity("U123").ok, true);
   console.log(
     "PASS: real Chromium/shipped Nginx cold SSO login, scoped cookies, Google chooser/consent and verified owner callback grant",

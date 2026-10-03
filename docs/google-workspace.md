@@ -14,13 +14,13 @@ Each command is owned by the human who started the **currently active Slack turn
 2. The trigger must be Slack-only. Cron, GitHub, missing, ended, superseded, or ambiguous triggers fail closed.
 3. The trusted Slack user ID selects the DM recipient and account slot in `SLACK_TEAM_ID`. Neither a directory entry, a Slack profile email nor email-read permissions are required. An explicit `google_workspace_email` is an optional restriction on account choice; conflicting pins fail closed. Jira `email`, agent argv and browser query parameters never choose the credential owner.
 4. Neo loads only that Slack user's encrypted Google grant. There is no global account or service-account fallback.
-5. Neo stores exact argv in encrypted private state and posts a secret-free Slack approval containing the operation, argument count, expected Google account, Slack user, and keyed HMAC-SHA-256 command fingerprint.
-6. Only the same Slack user can approve or reject the action. The private command is consumed before execution, so an uncertain result is never replayed from the same approval.
+5. Connected commands execute directly, without per-command approval cards. Missing or definitively revoked credentials create an encrypted continuation containing only the exact parsed, unexecuted Google argv and the requesting workspace/user/session/anchor/trigger.
+6. A confirmed private OAuth DM is required before a wait is resumable. Identical requests in the same turn reuse the current invitation. An uncertain provider execution is reported, never automatically retried as an auth failure.
 7. `remote-cli` refreshes one short-lived access token, revalidates its Google email and subject, and injects only `GOOGLE_WORKSPACE_CLI_TOKEN` into a fresh private `gws` cwd. The cwd is deleted after execution.
 
 `gws auth`, including login, logout, and credential export, is blocked at the agent-facing boundary. Local file input/output flags, absolute/file-URI/response-file arguments, and upload/download/import/export/send helpers are also blocked so the credential-bearing child cannot be used to read or export other `remote-cli` files. OAuth client credentials, refresh tokens, authorization codes, PKCE verifiers, state, cookies, raw argv, and OAuth response bodies are not returned to OpenCode or Slack and are not written to normal worklogs.
 
-Outside those credential and local-filesystem exclusions, Neo does not reinterpret upstream Google API commands. Google OAuth scopes, Google resource permissions, Workspace policy, and the explicit Slack approval jointly define authority. Command output still reaches the requesting session and can contain sensitive Workspace data.
+Outside those credential and local-filesystem exclusions, Neo does not reinterpret upstream Google API commands. The active Slack requester, Google OAuth scopes, Google resource permissions and Workspace policy define authority. Command output still reaches the requesting session and can contain sensitive Workspace data.
 
 ## Configure Google OAuth
 
@@ -90,7 +90,13 @@ The verified Google grant is encrypted under that Slack user's account slot. Lat
 
 For an unpinned account, the expected sequence is browser SSO → confirm the displayed Google/Slack association → Google's account picker and consent → **Google Workspace connected**. The authorization request explicitly uses `prompt=select_account consent`. The confirmation page's CSP permits only same-origin form submission and the trusted Google authorization origin for its redirect. A Resume/error page is not completed authorization; connection-required tool responses remain authoritative.
 
-After the page reports success, return to Slack and retry the original request. Neo then posts the command approval in the originating thread. The command fingerprint binds the card and audit trail to the exact encrypted argv without putting argv or document contents in Slack. After resolution, the trusted gateway gives the re-entered turn a short-lived, single-use result capability. The agent retrieves command output with `approval result <action-id> <capability>`; output remains encrypted until that retrieval and never enters the Slack card or gateway resolution log. The capability is not returned by approval list/status and must never be quoted to Slack or reused.
+After the page reports success, Neo automatically continues the waiting task once the runner admits its matching original request. No manual command approval or retry notification is sent. The broker saves the verified grant before publishing readiness. Browser completion does not itself prove the Google operation succeeded.
+
+The secret-gated broker outbox uses only `x-thor-internal-secret`: `GET /internal/google-workspace/continuations` returns `{continuations: [...]}`, and `POST /internal/google-workspace/continuations/:id/ack` returns `{acknowledged: true}`. A ready record contains `id` (the invitation request ID), `slackTeamId`, `slackUserId`, `sessionId`, `anchorId`, `triggerId`, `args`, `connectionId`, `createdAtMs` and `expiresAtMs`. Readiness expires 24 hours after successful authorization; acknowledgement is durable and idempotent. These private records authorize runner admission, not blind shell replay. The informational 428 exec response adds `authWait: {type: "google_auth_wait", id, expiresAtMs}` alongside the existing ExecResult fields; model/tool output is not readiness authority.
+
+Historic approvals and encrypted results remain readable through the existing same-owner handlers and single-use result capabilities. New Google calls never create those approvals.
+
+If the original still-running turn dispatches its exact blocked operation after sign-in but before runner admission, the broker retires that matching ready record before execution. Even an uncertain execution cannot leave the old wait available for later replay.
 
 ## Disconnect and revoke
 
@@ -106,7 +112,7 @@ An operator responding to compromise should revoke the OAuth client or user gran
 
 ## Storage, execution, and audit
 
-- Encrypted requests, OAuth state, grants, and pending commands live in the remote-cli-only `google-workspace-oauth-data` volume. Files are mode 0600 under mode 0700 directories and use AES-256-GCM with path-bound additional authenticated data.
+- Encrypted requests, OAuth state, grants, auth continuations and historic pending commands live in the remote-cli-only `google-workspace-oauth-data` volume. Files are mode 0600 under mode 0700 directories and use AES-256-GCM with path-bound additional authenticated data.
 - The named volume and encryption key are both required to decrypt a grant. Neither is mounted into OpenCode.
 - Refresh tokens stay encrypted at rest and are revealed only inside the broker during refresh. Only the resulting short-lived access token enters the isolated `gws` child environment.
 - Request cwd is ignored. `gws` receives a fresh empty HOME/config directory, selected PATH, optional project ID, and the access token—no Slack token, OAuth client secret, credential file, inherited cached auth, or shared `.env`.
@@ -118,11 +124,10 @@ An operator responding to compromise should revoke the OAuth client or user gran
 
 - **No OAuth DM was sent:** the turn is not an active Slack request, optional pins conflict, or OAuth setup is incomplete. Do not look for a nonexistent link. `/health` → `googleWorkspaceOAuth` reports missing/invalid variable names, never values.
 - **Private OAuth DM delivery unconfirmed:** check `chat:write`, the installed bot token and App Home → Messages Tab. A public-channel response or incomplete Slack response is not accepted as confirmed DM delivery.
-- **Google Workspace connection required / link sent:** open the private DM, verify the displayed Google account and Slack recipient, authorize, then retry from Slack. No Slack email or Google mapping is needed.
+- **Google Workspace connection required / link sent:** open the private DM, verify the displayed Google account and Slack recipient, and authorize. Neo will continue the waiting task automatically. No Slack email or Google mapping is needed.
 - **Connection link rejected:** request expired, was already used, violates an optional pin, has a mismatched confirmation proof/browser, or returned without the same-browser cookie. Request a new link; do not reuse callback URLs.
 - **Resume connection after sign-in:** click **Continue securely in this browser**. A login return can temporarily withhold a stored Lax cookie; the same-site click retries without deleting it or bypassing authorization. If the cookie remains absent, open a fresh original DM link in the same browser and check cookie blocking/browser switching. `gws_oauth_browser_context_missing` logs only cookie/SSO presence booleans. A missing SSO identity needs ingress/Vouch investigation. Never share the link or cookie values.
-- **Approval rejected:** only the Slack user who owns the connected account can approve.
-- **Account access unavailable:** refresh failed or the stored grant is invalid. Disconnect/revoke, reconnect, and submit a new command.
+- **Account access unavailable:** only the trusted OAuth refresh response's `invalid_grant` or a 401 identity probe starts reconnection. Permission 403, network/provider failure, malformed responses and CLI stderr do not authorize an automatic retry.
 - **503 / exit 2:** check OAuth environment, exact public HTTPS origin, fixed scopes, encryption-key length, named-volume permissions, and UID/GID 1001 ownership.
 
 An operator can probe a member's optional pin/connection status without triggering OAuth, reading profile email or revealing credentials:
