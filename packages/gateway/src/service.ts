@@ -9,6 +9,8 @@ import {
   resolveCorrelationKeys,
   resolveRepoDirectory,
   type ConfigLoader,
+  PiTaskRoutingOverridesSchema,
+  type PiTaskRoutingOverrides,
 } from "@thor/common";
 import type { ExecResult } from "@thor/common";
 import {
@@ -25,7 +27,8 @@ import {
   type GitHubWebhookEvent,
   type IssueCommentEvent,
 } from "./github.js";
-import { addReaction, updateMessage, type SlackDeps } from "./slack-api.js";
+import { addReaction, postMessage, updateMessage, type SlackDeps } from "./slack-api.js";
+import { extractSlackModelRouting } from "./slack-model-routing.js";
 import {
   addSlackGateRejectedReaction,
   evaluateSlackChannelGate,
@@ -47,7 +50,10 @@ export interface RunnerDeps {
 export type BatchSource = "slack" | "cron" | "github" | "approval";
 export type BatchLogPrefix = BatchSource | "mixed";
 
-export interface RunnerTriggerOptions {
+export interface RunnerTriggerOptions extends Pick<
+  PiTaskRoutingOverrides,
+  "modelProfile" | "modelId" | "thinkingLevel" | "routingTask"
+> {
   /** Stable queued batch identity, retained across uncertain delivery. */
   requestId?: string;
   prompt: string;
@@ -550,6 +556,17 @@ function resolveApprovalBatchDirectory(
 }
 
 async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<TriggerResult> {
+  const routing = PiTaskRoutingOverridesSchema.safeParse({
+    modelProfile: options.modelProfile,
+    modelId: options.modelId,
+    thinkingLevel: options.thinkingLevel,
+    routingTask: options.routingTask,
+  });
+  if (!routing.success) {
+    const reason = "Neo model routing overrides invalid";
+    options.onRejected?.(reason);
+    return { busy: false, rejected: true, reason };
+  }
   const response = await getFetch(options.deps.fetchImpl)(`${options.deps.runnerUrl}/trigger`, {
     method: "POST",
     headers: {
@@ -560,6 +577,7 @@ async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<Trigg
     },
     body: JSON.stringify({
       prompt: options.prompt,
+      ...routing.data,
       ...(options.requestId ? { requestId: options.requestId } : {}),
       correlationKey: options.correlationKey,
       interrupt: options.interrupt,
@@ -741,6 +759,29 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     return { kind: "drop", logPrefix, reason };
   }
 
+  const routing = extractSlackModelRouting({
+    events: input.slackEvents,
+    triggerSlackId: input.triggerSlackId,
+  });
+  if (!routing.ok) {
+    const event = [...input.slackEvents]
+      .reverse()
+      .find((event) => event.user === input.triggerSlackId);
+    if (event && input.slackDeps) {
+      try {
+        await postMessage(
+          event.channel,
+          routing.error.message,
+          event.thread_ts ?? event.ts,
+          input.slackDeps,
+        );
+      } catch (error) {
+        logError(log, "slack_model_directive_notice_failed", error);
+      }
+    }
+    return { kind: "drop", logPrefix, reason: routing.error.message };
+  }
+
   const prompt =
     parts.length === 1 ? parts[0].singlePrompt : parts.map((part) => part.mixedPrompt).join("\n\n");
 
@@ -751,6 +792,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
       ...(input.requestId ? { requestId: input.requestId } : {}),
       prompt,
       correlationKey: input.correlationKey,
+      ...routing.value,
       ...(input.triggerSlackId ? { triggerSlackId: input.triggerSlackId } : {}),
       ...(input.triggerGithubLogin ? { triggerGithubLogin: input.triggerGithubLogin } : {}),
       directory: directories[0],

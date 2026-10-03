@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   loadWorkspaceConfig,
+  validateWorkspaceConfig,
   createConfigLoader,
   extractRepoFromCwd,
   getInstallationIdForOwner,
@@ -393,5 +394,64 @@ describe("getInstallationIdForOwner", () => {
     expect(
       getInstallationIdForOwner({ owners: { other: { github_app_installation_id: 1 } } }, "acme"),
     ).toBeUndefined();
+  });
+});
+
+describe("Pi workspace model routing config", () => {
+  it("preserves routing and existing operator fields through the shared admin validator and disk loader", () => {
+    const document = {
+      owners: { acme: { github_app_installation_id: 123 } },
+      users: [
+        {
+          email: "alice@example.com",
+          name: "Alice",
+          slack: "U123",
+          google_workspace_email: "alice@example.com",
+        },
+      ],
+      slack: { private_channel_allowlist: ["C123"] },
+      mitmproxy: [
+        { host: "api.example.com", headers: { Authorization: "${UNCHANGED}" }, readonly: true },
+      ],
+      mitmproxy_passthrough: ["api.openai.com"],
+      pi: {
+        modelRouting: {
+          profiles: {
+            fast: { modelId: "configured-fast", thinkingLevel: "minimal" },
+            strong: { thinkingLevel: "high" },
+          },
+          autoSelect: false,
+          defaultProfile: "fast",
+          allowEscalation: false,
+        },
+      },
+    };
+    expect(validateWorkspaceConfig(document)).toEqual({ ok: true, data: document });
+    expect(loadWorkspaceConfig(writeConfig("routing.json", document))).toEqual(document);
+    expect(validateWorkspaceConfig({ pi: {} })).toEqual({ ok: true, data: { pi: {} } });
+  });
+
+  it.each([
+    [{ modelRounting: {} }, "pi"],
+    [{ modelRouting: { autoSelec: true } }, "pi.modelRouting"],
+    [
+      { modelRouting: { profiles: { fast: { modelID: "fast" } } } },
+      "pi.modelRouting.profiles.fast",
+    ],
+    [{ modelRouting: { profiles: { faster: {} } } }, "pi.modelRouting.profiles"],
+    [
+      { modelRouting: { profiles: { balanced: { modelId: "   " } } } },
+      "pi.modelRouting.profiles.balanced.modelId",
+    ],
+    [
+      { modelRouting: { profiles: { strong: { thinkingLevel: "max" } } } },
+      "pi.modelRouting.profiles.strong.thinkingLevel",
+    ],
+    [{ modelRouting: { defaultProfile: "turbo" } }, "pi.modelRouting.defaultProfile"],
+  ])("rejects routing typos and invalid declared pool with useful field paths %j", (pi, path) => {
+    const result = validateWorkspaceConfig({ pi });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.some((issue) => issue.path === path)).toBe(true);
+    expect(() => loadWorkspaceConfig(writeConfig("bad-routing.json", { pi }))).toThrow(path);
   });
 });

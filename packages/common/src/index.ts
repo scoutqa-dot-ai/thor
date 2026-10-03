@@ -238,3 +238,21 @@ export type {
   GoogleAuthWait,
   GoogleWorkspaceExecResult,
 } from "./google-auth-continuation.js";
+
+export {
+  PiModelProfileSchema,
+  PiThinkingLevelSchema,
+  PiModelRoutingConfigSchema,
+  PiTaskRoutingFields,
+  PiTaskRoutingOverridesSchema,
+  PiModelRoutingPoolSchema,
+  PiModelSelectionSchema,
+} from "./pi-model-routing.js";
+export type {
+  PiModelProfile,
+  PiThinkingLevel,
+  PiModelRoutingConfig,
+  PiTaskRoutingOverrides,
+  PiModelRoutingPool,
+  PiModelSelection,
+} from "./pi-model-routing.js";

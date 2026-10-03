@@ -194,3 +194,94 @@ describe("gateway durable batch delivery over real HTTP", () => {
     }
   });
 });
+
+it.each([{ modelProfile: "strong" as const }, { modelId: "configured-id" }])(
+  "keeps absent legacy frozen selectors/actor/interrupt absent on real HTTP retry: %j",
+  async (selector) => {
+    const directory = await mkdtemp(join(tmpdir(), "neo-legacy-routing-"));
+    const received: Record<string, unknown>[] = [];
+    const server = createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      received.push(JSON.parse(Buffer.concat(chunks).toString()));
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ accepted: true }));
+    });
+    const runnerUrl = await serverUrl(server);
+    let retryAcknowledged = 0;
+    try {
+      const original = {
+        requestId: "legacy-before-routing",
+        prompt: "legacy task",
+        correlationKey: "cron:legacy",
+        directory: "/workspace/repos/fixture",
+        deps: { runnerUrl },
+      };
+      const frozen = persistBatchRunnerRequest(directory, original);
+      await executeBatchDispatchPlan({ kind: "dispatch", logPrefix: "cron", options: frozen });
+      // Same representation as a pre-routing record: the optional keys do not exist.
+      const file = (await readdir(join(directory, ".runner-requests")))[0];
+      const saved = JSON.parse(await readFile(join(directory, ".runner-requests", file), "utf8"));
+      expect(Object.keys(saved).sort()).toEqual(["correlationKey", "directory", "prompt"]);
+      const retry = persistBatchRunnerRequest(directory, {
+        ...original,
+        prompt: "fresh rendering",
+        ...selector,
+        thinkingLevel: "high",
+        routingTask: "new evidence must not leak",
+        triggerSlackId: "U_FRESH",
+        triggerGithubLogin: "fresh-login",
+        interrupt: true,
+        onAccepted: () => retryAcknowledged++,
+      });
+      await executeBatchDispatchPlan({ kind: "dispatch", logPrefix: "cron", options: retry });
+      expect(received).toHaveLength(2);
+      expect(received[1]).toEqual(received[0]);
+      for (const key of [
+        "modelProfile",
+        "modelId",
+        "thinkingLevel",
+        "routingTask",
+        "triggerSlackId",
+        "triggerGithubLogin",
+        "interrupt",
+      ]) {
+        expect(received[1]).not.toHaveProperty(key);
+        expect(retry).not.toHaveProperty(key);
+      }
+      expect(retryAcknowledged).toBe(1);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it("rejects conflicting API routing options before real delivery or queue persistence", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "neo-invalid-routing-"));
+  let rejected = "";
+  const options = {
+    requestId: "conflict",
+    prompt: "task",
+    correlationKey: "cron:invalid",
+    directory: "/workspace/repos/fixture",
+    deps: { runnerUrl: "http://127.0.0.1:1" },
+    modelProfile: "fast" as const,
+    modelId: "configured-id",
+    onRejected: (reason: string) => {
+      rejected = reason;
+    },
+  };
+  try {
+    expect(() => persistBatchRunnerRequest(directory, options)).toThrow(
+      "cannot combine modelProfile and modelId",
+    );
+    const result = await executeBatchDispatchPlan({ kind: "dispatch", logPrefix: "cron", options });
+    expect(result).toMatchObject({ rejected: true, reason: "Neo model routing overrides invalid" });
+    expect(rejected).toBe("Neo model routing overrides invalid");
+    expect(await readdir(join(directory, ".runner-requests"))).toEqual([]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

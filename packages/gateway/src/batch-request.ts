@@ -2,17 +2,24 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { PiTaskRoutingFields } from "@thor/common";
 import type { QueuedEvent } from "./queue.js";
 import type { RunnerTriggerOptions } from "./service.js";
 
-const batchRequestPayloadSchema = z.object({
-  prompt: z.string(),
-  correlationKey: z.string(),
-  directory: z.string(),
-  triggerSlackId: z.string().optional(),
-  triggerGithubLogin: z.string().optional(),
-  interrupt: z.boolean().optional(),
-});
+const batchRequestPayloadSchema = z
+  .object({
+    ...PiTaskRoutingFields,
+    prompt: z.string(),
+    correlationKey: z.string(),
+    directory: z.string(),
+    triggerSlackId: z.string().optional(),
+    triggerGithubLogin: z.string().optional(),
+    interrupt: z.boolean().optional(),
+  })
+  .refine(
+    (value) => value.modelProfile === undefined || value.modelId === undefined,
+    "Gateway frozen model routing selectors cannot combine modelProfile and modelId",
+  );
 
 /** Deterministic request identity uses event IDs, not arrival time or rendered prompts. */
 export function queuedBatchRequestId(events: QueuedEvent[]): string {
@@ -43,5 +50,13 @@ export function persistBatchRunnerRequest(
     writeFileSync(`${file}.tmp`, JSON.stringify(payload), "utf8");
     renameSync(`${file}.tmp`, file);
   }
-  return { ...options, ...payload };
+  // Reattach only live delivery mechanics. Missing frozen fields are authoritative
+  // too, including records written before model routing existed.
+  return {
+    ...payload,
+    requestId: options.requestId,
+    deps: options.deps,
+    onAccepted: options.onAccepted,
+    onRejected: options.onRejected,
+  };
 }

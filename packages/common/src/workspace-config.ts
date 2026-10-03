@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { PiModelRoutingConfigSchema } from "./pi-model-routing.js";
 import { WORKSPACE_REPOS_ROOT, isPathWithin } from "./paths.js";
 import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve, normalize } from "node:path";
@@ -64,6 +65,7 @@ const SlackConfigSchema = z.object({
 });
 
 export const WorkspaceConfigSchema = z.object({
+  pi: z.strictObject({ modelRouting: PiModelRoutingConfigSchema.optional() }).optional(),
   owners: z.record(z.string(), OwnerConfigSchema).optional(),
   users: z.array(UserRecordSchema).optional(),
   slack: SlackConfigSchema.optional(),
