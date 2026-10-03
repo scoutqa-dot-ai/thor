@@ -6,6 +6,7 @@ const httpUrlSchema = z.url().refine((value) => {
 });
 const piRunnerConfigSchema = z.object({
   internalSecret: z.string().min(1),
+  slackTeamId: z.string().trim().min(1).optional(),
   executorUrl: httpUrlSchema.refine((value) => {
     const url = new URL(value);
     return url.pathname === "/" && !url.search && !url.hash;
@@ -29,6 +30,7 @@ export function parsePiRunnerConfig(
 ): { ok: true; value: PiRunnerConfig } | { ok: false; error: "pi_configuration_invalid" } {
   const result = piRunnerConfigSchema.safeParse({
     internalSecret: env.THOR_INTERNAL_SECRET,
+    slackTeamId: env.SLACK_TEAM_ID?.trim() || undefined,
     executorUrl: env.PI_EXECUTOR_URL ?? "http://pi-executor:3002",
     storagePath: env.PI_STORAGE_PATH ?? "/var/lib/runner/pi.sqlite",
     modelBaseUrl: env.PI_MODEL_BASE_URL ?? "http://codex-lb:2455/v1",

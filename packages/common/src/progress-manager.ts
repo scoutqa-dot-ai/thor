@@ -528,7 +528,7 @@ class ProgressSession {
     }
   }
 
-  async finish(status: "completed" | "error", errorMsg?: string): Promise<void> {
+  async finish(status: "completed" | "error" | "waiting", errorMsg?: string): Promise<void> {
     logInfo(log, "session_finish", {
       channel: this.channel,
       threadTs: this.threadTs,
@@ -557,6 +557,12 @@ class ProgressSession {
       });
       status = "completed";
       errorMsg = undefined;
+    }
+
+    if (status === "waiting") {
+      if (this.messageTs)
+        await this.update("⏳ Waiting for Google sign-in — the task will automatically continue.");
+      return;
     }
 
     // Always post errors so failures are never invisible in Slack.
@@ -755,9 +761,16 @@ export async function handleProgressEvent(
         });
         return;
       }
-      await session.finish(event.status === "completed" ? "completed" : "error", event.error);
+      await session.finish(
+        event.authWait === "google"
+          ? "waiting"
+          : event.status === "completed"
+            ? "completed"
+            : "error",
+        event.error,
+      );
       activeSessions.delete(key);
-      await onSessionEnd(target.key, target.key);
+      if (!event.authWait) await onSessionEnd(target.key, target.key);
       break;
     }
     case "error":

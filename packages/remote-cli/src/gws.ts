@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { ExecResult } from "@thor/common";
 import { execCommand } from "./exec.js";
 import type { GwsAccessToken } from "./gws-oauth.js";
+import { isGwsPublicDiscoveryCommand } from "./gws-args.js";
 
 const AbsolutePathSchema = z.string().trim().min(1).refine(isAbsolute);
 const ConfigSchema = z.object({
@@ -23,6 +24,8 @@ export interface GwsServiceDeps {
 export interface IGwsService {
   /** Returns configuration failures as an ExecResult, without exposing credential contents. */
   execute(args: string[], accessToken: GwsAccessToken): Promise<GwsResponse>;
+  /** Optional public discovery capability; it never executes an account operation. */
+  executePublicDiscovery?(args: string[]): Promise<GwsResponse>;
 }
 
 /** Owns the private cwd and reduced child environment for upstream execution. */
@@ -41,6 +44,20 @@ export class GwsService implements IGwsService {
 
   /** Run one command with only its owner's refreshed and verified short-lived access token. */
   async execute(args: string[], accessToken: GwsAccessToken): Promise<GwsResponse> {
+    return this.#executeInPrivateDirectory(args, accessToken);
+  }
+
+  /** CLI help/schema only; no broker or ambient credential is provided. */
+  async executePublicDiscovery(args: string[]): Promise<GwsResponse> {
+    if (!isGwsPublicDiscoveryCommand(args))
+      return unavailable("Google Workspace public discovery cannot execute account operations.");
+    return this.#executeInPrivateDirectory(args);
+  }
+
+  async #executeInPrivateDirectory(
+    args: string[],
+    accessToken?: GwsAccessToken,
+  ): Promise<GwsResponse> {
     if (!this.config.success) {
       return unavailable(
         "Google Workspace configuration is invalid; ask an operator to check the private execution path.",
@@ -75,7 +92,7 @@ export class GwsService implements IGwsService {
           PATH: config.path,
           HOME: executionDir,
           GOOGLE_WORKSPACE_CLI_CONFIG_DIR: executionDir,
-          GOOGLE_WORKSPACE_CLI_TOKEN: accessToken.reveal(),
+          GOOGLE_WORKSPACE_CLI_TOKEN: accessToken?.reveal(),
           GOOGLE_WORKSPACE_PROJECT_ID: config.projectId,
         },
       });

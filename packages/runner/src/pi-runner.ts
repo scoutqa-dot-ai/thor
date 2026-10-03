@@ -43,6 +43,10 @@ import { resolveSlackProgressTarget, type SlackProgressTransportTarget } from ".
 import type { ProgressTransport } from "@thor/common";
 import type { PiRunnerConfig } from "./pi-runner-config.js";
 import { GoogleWorkspaceConnectionStatusClient } from "./google-workspace-connection-status.js";
+import {
+  startGoogleAuthContinuationCoordinator,
+  GoogleAuthContinuationClient,
+} from "./google-auth-continuation-poller.js";
 
 const context = BACKGROUND_CONTEXT;
 type ConversationMetadata = ReturnType<typeof piConversationMetadataSchema.parse>;
@@ -174,6 +178,10 @@ export async function createPiRunnerApp(
       throw new Error("Pi startup failed");
     }
     const runtime = harness;
+    const continuationClient = new GoogleAuthContinuationClient(
+      options.remoteCliUrl ?? "http://remote-cli:3004",
+      config.internalSecret,
+    );
     const owners = new Map<string, ConversationOwner>();
     const requests = new Map<string, ConversationOwner>();
     const monitors = new Map<
@@ -308,6 +316,7 @@ export async function createPiRunnerApp(
         correlationKey: receipt.request.correlationKey,
         resumed: receipt.resumed,
         status: receipt.status === "completed" ? "completed" : "error",
+        ...(receipt.googleAuthWaiting ? { authWait: "google" as const } : {}),
         ...(receipt.status === "completed"
           ? {}
           : { error: receipt.status === "aborted" ? "Run aborted" : "Pi run failed" }),
@@ -439,15 +448,26 @@ export async function createPiRunnerApp(
               : settled.reason === "aborted"
                 ? "aborted"
                 : "error";
+          const authWaiting =
+            status === "completed" &&
+            !!receipt.slackTeamId &&
+            !!receipt.request.triggerSlackId &&
+            (await continuationClient.waiting(sessionId(owner), owner.metadata.anchorId, receipt));
           await owner.conversation.commit(async (tx) => {
             const metadata = await tx.doc(piConversationMetadataDoc, owner.conversation.id);
             const stored = metadata.receipts.find((item) => item.requestId === receipt.requestId);
-            if (stored) stored.status = status;
+            if (stored) {
+              stored.status = status;
+              if (authWaiting) stored.googleAuthWaiting = true;
+            }
             if (metadata.activeRequestId === receipt.requestId) delete metadata.activeRequestId;
           }, context);
           await reload(owner);
           reconcileLogs(owner);
-          await emit(await doneFrame(owner, { ...receipt, status }));
+          const settledReceipt = owner.metadata.receipts.find(
+            (item) => item.requestId === receipt.requestId,
+          );
+          await emit(await doneFrame(owner, settledReceipt ?? { ...receipt, status }));
         } catch {
           if (!closing) await emit({ type: "error", error: "Pi run unavailable" });
         } finally {
@@ -457,7 +477,29 @@ export async function createPiRunnerApp(
       })();
       monitors.set(receipt.requestId, { completion, listeners });
     };
-    const startAccepted = async (owner: ConversationOwner, receipt: PiAdmissionReceipt) => {
+    const startAccepted = async (
+      owner: ConversationOwner,
+      receipt: PiAdmissionReceipt,
+    ): Promise<"started" | "deferred" | "retired"> => {
+      if (receipt.googleAuthSource) {
+        if (
+          receipt.googleAuthSource.expiresAtMs <= Date.now() ||
+          owner.metadata.receipts.at(-1)?.requestId !== receipt.requestId
+        ) {
+          await owner.conversation.commit(async (tx) => {
+            const metadata = await tx.doc(piConversationMetadataDoc, owner.conversation.id);
+            const stored = metadata.receipts.find((item) => item.requestId === receipt.requestId);
+            if (stored) stored.status = "aborted";
+            if (metadata.activeRequestId === receipt.requestId) delete metadata.activeRequestId;
+          }, context);
+          await reload(owner);
+          reconcileLogs(owner);
+          return "retired";
+        }
+        if (!(await continuationClient.acknowledge(receipt.googleAuthSource.id, receipt.triggerId)))
+          return "deferred";
+      }
+      if (closing) return "deferred"; // A durable admission remains pending; shutdown never starts another model turn.
       const submission = await owner.conversation.submit(
         {
           type: "input",
@@ -468,6 +510,7 @@ export async function createPiRunnerApp(
         context,
       );
       await monitor(owner, receipt, submission);
+      return "started";
     };
 
     // No scheduler is resumed until the persisted identity/log projection has been restored.
@@ -486,8 +529,28 @@ export async function createPiRunnerApp(
     } while (cursor !== undefined);
     for (const owner of owners.values())
       for (const receipt of owner.metadata.receipts)
-        if (receipt.status === "accepted") await startAccepted(owner, receipt);
+        if (receipt.status === "accepted") {
+          try {
+            await startAccepted(owner, receipt);
+          } catch {
+            if (!receipt.googleAuthSource) throw new Error("Pi recovery admission failed");
+          }
+        }
     runtime.resume();
+
+    const continuationPoller = startGoogleAuthContinuationCoordinator({
+      client: continuationClient,
+      runtime,
+      owners,
+      serialAdmission,
+      isClosing: () => closing,
+      hasMonitor: (requestId) => monitors.has(requestId),
+      reload,
+      reconcileLogs,
+      startAccepted,
+      fingerprintRequest: fingerprintPiRequest,
+      now: Date.now,
+    });
 
     const app = express();
     // Actor identity may enter only through the trusted gateway, never from agent shell tools.
@@ -563,7 +626,17 @@ export async function createPiRunnerApp(
           if (owner) {
             const live = await runtime.snapshot(LiveDoc, owner.conversation.id, context);
             if (live?.run || owner.metadata.activeRequestId) {
-              if (!request.interrupt) return { kind: "busy", sessionId: sessionId(owner) } as const;
+              const activeRequestId = owner.metadata.activeRequestId;
+              const waitingAdmission =
+                !live?.run &&
+                owner.metadata.receipts.some(
+                  (item) =>
+                    item.requestId === activeRequestId &&
+                    item.googleAuthSource &&
+                    !monitors.has(item.requestId),
+                );
+              if (!request.interrupt && !waitingAdmission)
+                return { kind: "busy", sessionId: sessionId(owner) } as const;
               await owner.conversation.abort(context);
               const active = owner.metadata.activeRequestId;
               if (active) {
@@ -594,6 +667,7 @@ export async function createPiRunnerApp(
             startedAt: Date.now(),
             resumed,
             request,
+            ...(config.slackTeamId ? { slackTeamId: config.slackTeamId } : {}),
             status: "accepted",
           };
           if (!owner) {
@@ -732,7 +806,7 @@ export async function createPiRunnerApp(
                   return "<pre>Pi model request failed</pre>";
                 const heading =
                   message.role === "toolResult"
-                    ? `${message.toolName} · ${message.isError ? "error" : "completed"}`
+                    ? `${message.toolName} · ${message.isError ? "error" : "finished"}`
                     : message.role === "assistant"
                       ? `${message.provider}/${message.model}`
                       : message.role;
@@ -744,10 +818,30 @@ export async function createPiRunnerApp(
         const current = owner.metadata.receipts.find(
           (item) => item.triggerId === receipt.triggerId,
         );
+        const continuation = owner.metadata.receipts.find(
+          (item) => item.googleAuthSource?.originalRequestId === receipt.requestId,
+        );
+        let displayStatus =
+          (current?.status ?? receipt.status) === "completed"
+            ? "Model turn completed"
+            : (current?.status ?? receipt.status);
+        if (current?.googleAuthWaiting) {
+          displayStatus = continuation
+            ? `Google authorization continued in trigger ${continuation.triggerId}`
+            : owner.metadata.receipts.at(-1)?.requestId !== receipt.requestId
+              ? "Google authorization wait superseded by a newer request"
+              : (await continuationClient.waiting(
+                    sessionId(owner),
+                    owner.metadata.anchorId,
+                    current,
+                  ))
+                ? "Waiting for Google authorization · model turn finished, Google operation not completed"
+                : "Google authorization wait is no longer confirmed · model turn finished";
+        }
         res
           .type("html")
           .send(
-            `<!doctype html><html><head><meta charset="utf-8"><link rel="icon" type="image/svg+xml" href="/favicon-v4.svg"><link rel="manifest" href="/site.webmanifest"><title>Neo Pi trigger</title></head><body><h1>Neo Pi trigger</h1><p>${escapePiHtml(current?.status ?? receipt.status)} · ${escapePiHtml(sessionId(owner))} · ${escapePiHtml(config.modelId)}</p>${body}${liveTools}<h3>Conversation usage</h3><pre>${escapePiHtml(usage)}</pre></body></html>`,
+            `<!doctype html><html><head><meta charset="utf-8"><link rel="icon" type="image/svg+xml" href="/favicon-v4.svg"><link rel="manifest" href="/site.webmanifest"><title>Neo Pi trigger</title></head><body><h1>Neo Pi trigger</h1><p>${escapePiHtml(displayStatus)} · ${escapePiHtml(sessionId(owner))} · ${escapePiHtml(config.modelId)}</p>${body}${liveTools}<h3>Conversation usage</h3><pre>${escapePiHtml(usage)}</pre></body></html>`,
           );
       } catch {
         res.status(503).send("Pi history unavailable");
@@ -765,6 +859,7 @@ export async function createPiRunnerApp(
       app,
       close: async () => {
         closing = true;
+        await continuationPoller.close();
         await admissionLine;
         await runtime.close(context); // Leaves work pending, unlike abort().
         await Promise.allSettled([...monitors.values()].map((item) => item.completion));

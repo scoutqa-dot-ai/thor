@@ -228,11 +228,13 @@ export type {
 } from "./approval-presentation.js";
 export {
   GoogleAuthContinuationSchema,
+  GoogleAuthWaitBindingSchema,
   GoogleAuthWaitSchema,
   GoogleWorkspaceExecResultSchema,
 } from "./google-auth-continuation.js";
 export type {
   GoogleAuthContinuation,
+  GoogleAuthWaitBinding,
   GoogleAuthWait,
   GoogleWorkspaceExecResult,
 } from "./google-auth-continuation.js";

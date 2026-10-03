@@ -20,7 +20,7 @@ await assert.rejects(
   exec("gws", ["auth", "--help"]),
   (error) => error.code === 1 && /auth commands are disabled/.test(error.stderr),
 );
-assert.ok((await state()).tokenRequests > 0, "direct commands must refresh user OAuth");
+assert.equal((await state()).tokenRequests, 0, "public discovery must not refresh user OAuth");
 
 // Even a repo-local dotenv cannot select credentials/token/cache for the server.
 await writeFile(

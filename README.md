@@ -277,7 +277,7 @@ Neo contains untrusted input — agent, OpenCode wrappers, external webhooks —
 - codex-lb holds pooled ChatGPT OAuth credentials. Its direct host ports bind to loopback, while `/dashboard` is exposed through the ingress Vouch/admin-email gate.
 - Inbound webhooks are HMAC-verified (Slack signing secret, GitHub `X-Hub-Signature-256`); internal gateway↔remote-cli routes are gated with `x-thor-internal-secret`.
 - Channel/mention/self-loop gates filter authenticated traffic before it wakes the agent.
-- `remote-cli` owns tool policy and upstream credentials. GWS uses per-Slack-user encrypted OAuth grants and same-user approval; Drata delegates operation authorization to its OAuth app/API. OpenCode receives neither integration's long-lived credential.
+- `remote-cli` owns tool policy and upstream credentials. GWS uses per-Slack-user encrypted OAuth grants and direct requester-owned execution; Pi resumes missing-credential waits automatically after private OAuth. Drata delegates operation authorization to its OAuth app/API. Neither runtime receives either integration's long-lived credential.
 - Repos mount read-only into OpenCode; edits happen in `/workspace/worktrees`. Tool calls are audit-logged under `/workspace/worklog`.
 
 See [`docs/feat/security-model.md`](docs/feat/security-model.md) for the full layered breakdown.

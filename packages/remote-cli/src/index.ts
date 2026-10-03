@@ -25,13 +25,14 @@ import {
   writeToolCallLog,
   withKeyLock,
   WORKSPACE_CONFIG_PATH,
+  UUID_V7_RE,
   type ExecStreamEvent,
   type ConfigLoader,
   type ToolCallLogEntry,
 } from "@thor/common";
 import { execCommand, execCommandStream } from "./exec.js";
 import { GwsService, type IGwsService } from "./gws.js";
-import { parseGwsArgs } from "./gws-args.js";
+import { parseGwsArgs, isGwsPublicDiscoveryCommand } from "./gws-args.js";
 import {
   GWS_OAUTH_BROWSER_COOKIE,
   GwsOAuthService,
@@ -1079,6 +1080,20 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
     });
   });
 
+  app.get("/internal/google-workspace/waits", (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    if (!matchesInternalSecret(internalSecret, getInternalSecretHeader(req))) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const waits = gwsOAuth.listAuthWaitBindings();
+    if (!waits.ok) {
+      res.status(503).json({ error: "Google Workspace wait storage unavailable" });
+      return;
+    }
+    res.json({ waits: waits.value });
+  });
+
   app.get("/internal/google-workspace/continuations", (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     if (!matchesInternalSecret(internalSecret, getInternalSecretHeader(req))) {
@@ -1106,14 +1121,26 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       res.status(400).json({ error: "Invalid continuation identity" });
       return;
     }
-    const acknowledged = gwsOAuth.acknowledgeContinuation(id.data);
+    const binding = z
+      .object({ dispatchTriggerId: z.string().regex(UUID_V7_RE).optional() })
+      .safeParse(req.body ?? {});
+    if (!binding.success) {
+      res.status(400).json({ error: "Invalid continuation dispatch binding" });
+      return;
+    }
+    const acknowledged = gwsOAuth.acknowledgeContinuation(id.data, binding.data.dispatchTriggerId);
     if (!acknowledged.ok) {
       res
         .status(acknowledged.error.code === "already_used" ? 409 : 503)
         .json({ error: "Google Workspace continuation cannot be acknowledged" });
       return;
     }
-    res.json({ acknowledged: true });
+    res.json({
+      acknowledged: true,
+      ...(binding.data.dispatchTriggerId
+        ? { dispatchTriggerId: binding.data.dispatchTriggerId }
+        : {}),
+    });
   });
 
   app.post("/internal/google-workspace/diagnostics", async (req, res) => {
@@ -1843,6 +1870,27 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
         res.status(400).json({ stdout: "", stderr: `${parsed.error.message}\n`, exitCode: 1 });
         return;
       }
+      if (isGwsPublicDiscoveryCommand(parsed.args)) {
+        try {
+          const response = await gws.executePublicDiscovery?.(parsed.args);
+          if (!response) {
+            res.status(503).json({
+              stdout: "",
+              stderr: "Google Workspace public discovery is unavailable.\n",
+              exitCode: 2,
+            });
+            return;
+          }
+          res.status(response.status).json(response.result);
+        } catch {
+          res.status(503).json({
+            stdout: "",
+            stderr: "Google Workspace public discovery failed.\n",
+            exitCode: 2,
+          });
+        }
+        return;
+      }
       if (!gwsOAuth.setupStatus().configured) {
         logInfo(log, "exec_gws_oauth_setup_required", { ...gwsOAuth.setupStatus(), ...ids });
         res.status(503).json({
@@ -2015,6 +2063,26 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       // No retry is inferred from CLI output: the provider operation may have run.
       try {
         if (!token?.ok) throw new Error("Google Workspace token invariant failed");
+        const currentGrant = gwsOAuth.findConnectedIdentity(
+          activeUser.slackUserId,
+          activeUser.googleEmailPin,
+        );
+        const dispatchBinding = gwsOAuth.validateContinuationDispatch(
+          activeUser,
+          token.value.connectionId,
+        );
+        if (
+          !currentGrant.ok ||
+          currentGrant.value.connectionId !== token.value.connectionId ||
+          !dispatchBinding.ok
+        ) {
+          res.status(403).json({
+            stdout: "",
+            stderr: "Google Workspace connection changed before execution.\n",
+            exitCode: 1,
+          });
+          return;
+        }
         // A still-running turn may use the newly connected grant before the
         // runner admits its wait. Retire that exact wait before any side effect.
         const retired = gwsOAuth.retireMatchingContinuation({ ...activeUser, args: parsed.args });

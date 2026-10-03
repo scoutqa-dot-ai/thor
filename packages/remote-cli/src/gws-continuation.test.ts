@@ -38,6 +38,7 @@ let identityStatus: number;
 let identityBody: unknown;
 let networkFailure: boolean;
 let supersedeOnRefresh: boolean;
+let grantRace: "none" | "disconnect" | "replace";
 let executedResult: { stdout: string; stderr: string; exitCode: number };
 let messages: Array<{ channel: string; text: string }>;
 let executions: Array<{ args: string[]; token: string }>;
@@ -89,6 +90,7 @@ beforeEach(async () => {
   identityBody = { sub: "subject-123", email, email_verified: true };
   networkFailure = false;
   supersedeOnRefresh = false;
+  grantRace = "none";
   refreshBody = { access_token: "fixture-command-token" };
   executedResult = { stdout: "Google output", stderr: "", exitCode: 0 };
   provider = await listen(
@@ -113,6 +115,8 @@ beforeEach(async () => {
               triggerSlackId: "U999",
               correlationKey: "slack:thread:C123/1710000000.001",
             });
+          if (grantRace === "disconnect") oauth.disconnect(owner.slackUserId);
+          if (grantRace === "replace") await connect();
           if (networkFailure) {
             req.socket.destroy();
             return;
@@ -449,4 +453,101 @@ it("fails closed on corrupt durable readiness without erasing the evidence", asy
   });
   expect(response.status).toBe(503);
   expect(await readFile(path, "utf8")).toBe(corrupt);
+});
+
+it.each(["disconnect", "replace"] as const)(
+  "does not expose a ready continuation after grant %s",
+  async (race) => {
+    const wait = (await exec()).result.authWait;
+    if (!wait) throw new Error("Auth wait missing");
+    await authorize(wait.id);
+    expect(await ready()).toHaveLength(1);
+    if (race === "disconnect") oauth.disconnect(owner.slackUserId);
+    else await connect();
+    await start();
+    expect(await ready()).toEqual([]);
+    expect(executions).toHaveLength(0);
+  },
+);
+
+it.each(["disconnect", "replace"] as const)(
+  "never dispatches a retired token when refresh races grant %s",
+  async (race) => {
+    await connect();
+    grantRace = race;
+    const response = await exec();
+    expect(response.status).toBe(503);
+    expect(response.result.authWait).toBeUndefined();
+    expect(executions).toHaveLength(0);
+    expect(messages).toHaveLength(0);
+    if (race === "replace")
+      expect(oauth.findConnectedIdentity(owner.slackUserId, email).ok).toBe(true);
+  },
+);
+
+it("binds resumed dispatch to its original grant and keeps expiry negative authority after pruning", async () => {
+  const wait = (await exec()).result.authWait;
+  if (!wait) throw new Error("Auth wait missing");
+  await authorize(wait.id);
+  const record = (await ready())[0];
+  const dispatchTriggerId = "019d0000-0000-7000-8000-000000000004";
+  const acknowledged = await fetch(
+    `${base}/internal/google-workspace/continuations/${wait.id}/ack`,
+    {
+      method: "POST",
+      headers: { "x-thor-internal-secret": secret, "content-type": "application/json" },
+      body: JSON.stringify({ dispatchTriggerId }),
+    },
+  );
+  expect(acknowledged.status).toBe(200);
+  for (const trigger of [dispatchTriggerId, "019d0000-0000-7000-8000-000000000005"]) {
+    const replay = await fetch(`${base}/internal/google-workspace/continuations/${wait.id}/ack`, {
+      method: "POST",
+      headers: { "x-thor-internal-secret": secret, "content-type": "application/json" },
+      body: JSON.stringify({ dispatchTriggerId: trigger }),
+    });
+    expect(replay.status).toBe(trigger === dispatchTriggerId ? 200 : 503);
+  }
+  appendSessionEvent(owner.sessionId, {
+    type: "trigger_start",
+    triggerId: dispatchTriggerId,
+    triggerSlackId: owner.slackUserId,
+  });
+  await connect(); // Same verified email, but a replaced grant must not execute the old task.
+  expect((await exec()).status).toBe(403);
+  now = record.expiresAtMs + 1;
+  expect(await ready()).toEqual([]); // Executes expiry pruning.
+  await start();
+  expect((await exec()).status).toBe(403);
+  expect(executions).toHaveLength(0);
+});
+
+it("a revoked old refresh cannot disconnect a replacement grant or create a spurious wait", async () => {
+  await connect();
+  grantRace = "replace";
+  refreshStatus = 400;
+  refreshBody = { error: "invalid_grant" };
+  const response = await exec();
+  expect(response.status).toBe(503);
+  expect(response.result.authWait).toBeUndefined();
+  expect(oauth.findConnectedIdentity(owner.slackUserId, email).ok).toBe(true);
+  expect(executions).toHaveLength(0);
+  expect(messages).toHaveLength(0);
+});
+
+it("never revives an unbound retired outbox record as a resumed dispatch", async () => {
+  const wait = (await exec()).result.authWait;
+  if (!wait) throw new Error("Auth wait missing");
+  await authorize(wait.id);
+  expect(oauth.acknowledgeContinuation(wait.id).ok).toBe(true);
+  expect(oauth.acknowledgeContinuation(wait.id, "019d0000-0000-7000-8000-000000000004").ok).toBe(
+    false,
+  );
+  expect(
+    oauth.acknowledgeContinuation(
+      "unknown_invitation_fixture",
+      "019d0000-0000-7000-8000-000000000004",
+    ).ok,
+  ).toBe(false);
+  expect(executions).toHaveLength(0);
 });

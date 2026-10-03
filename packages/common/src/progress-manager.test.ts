@@ -835,3 +835,54 @@ describe("onSessionEnd (via handleProgressEvent done)", () => {
     expect(getRegistrySize()).toBe(0);
   });
 });
+
+it("renders authenticated Google auth wait instead of Done and stops ticking until a resumed turn", async () => {
+  const updates: string[] = [];
+  const posts: string[] = [];
+  const reactions: string[] = [];
+  const target = { key: "auth-wait-recording", sourceTs: "source", transportTarget: {} };
+  const recording: ProgressTransport = {
+    async post(_target, text) {
+      posts.push(text);
+      return { ts: "wait-progress" };
+    },
+    async update(_target, _ts, text) {
+      updates.push(text);
+    },
+    async delete() {},
+    async addReaction(_target, _ts, name) {
+      reactions.push(name);
+    },
+  };
+  await handleProgressEvent(
+    target,
+    { type: "start", sessionId: "pi-auth-wait", resumed: false },
+    recording,
+  );
+  for (let index = 0; index < 3; index++)
+    await handleProgressEvent(
+      target,
+      { type: "tool", tool: "bash", status: "completed" },
+      recording,
+    );
+  await handleProgressEvent(
+    target,
+    {
+      type: "done",
+      sessionId: "pi-auth-wait",
+      resumed: false,
+      status: "completed",
+      authWait: "google",
+      response: "Waiting",
+      toolCalls: [],
+      durationMs: 1,
+    },
+    recording,
+  );
+  expect(updates.at(-1)).toContain("Waiting for Google sign-in");
+  expect([...posts, ...updates].join("\n")).not.toContain("Done");
+  expect(reactions).toEqual([]);
+  const count = updates.length;
+  await vi.advanceTimersByTimeAsync(120000);
+  expect(updates).toHaveLength(count);
+});

@@ -1,6 +1,6 @@
 import { defineDoc } from "@earendil-works/pi-durable";
 import { z } from "zod";
-import { UUID_V7_RE } from "@thor/common";
+import { GoogleAuthContinuationSchema, UUID_V7_RE } from "@thor/common";
 
 /** Validated trigger request; stream delivery is not part of durable work identity. */
 export const piTriggerRequestSchema = z.object({
@@ -9,7 +9,7 @@ export const piTriggerRequestSchema = z.object({
     .string()
     .min(1)
     .max(512)
-    .refine((value) => !/[\x00-\x1f]/.test(value))
+    .refine((value) => !/[\x00-\x1f]/.test(value) && !value.startsWith("google-auth:"))
     .optional(),
   correlationKey: z.string().min(1).max(512).optional(),
   sessionId: z.string().min(1).optional(),
@@ -29,6 +29,11 @@ const receiptSchema = z.object({
   startedAt: z.number(),
   resumed: z.boolean(),
   request: piTriggerRequestSchema,
+  slackTeamId: z.string().optional(),
+  googleAuthWaiting: z.boolean().optional(),
+  googleAuthSource: GoogleAuthContinuationSchema.safeExtend({
+    originalRequestId: z.string(),
+  }).optional(),
   status: z.enum(["accepted", "completed", "error", "aborted"]),
 });
 /** Durable admission receipt is written before submit; the same request ID bridges the two commits. */

@@ -12,7 +12,9 @@ import { dirname, join } from "node:path";
 import {
   ExecResultSchema,
   GoogleAuthContinuationSchema,
+  GoogleAuthWaitBindingSchema,
   type GoogleAuthContinuation,
+  type GoogleAuthWaitBinding,
   type ExecResult,
 } from "@thor/common";
 import { z } from "zod";
@@ -125,6 +127,7 @@ const ContinuationSchema = z.discriminatedUnion("status", [
   ContinuationBaseSchema.extend({
     status: z.enum(["authorized_unconfirmed", "ready", "acked"]),
     connectionId: z.uuid(),
+    dispatchTriggerId: z.string().optional(),
   }),
 ]);
 type ContinuationRecord = z.infer<typeof ContinuationSchema>;
@@ -480,6 +483,36 @@ export class GwsOAuthService {
     }
   }
 
+  /** Informational, authenticated waits for UI; never an authority to dispatch work. */
+  listAuthWaitBindings(): GwsOAuthResult<GoogleAuthWaitBinding[]> {
+    const records = this.#readContinuations();
+    if (!records.ok) return records;
+    const waits: GoogleAuthWaitBinding[] = [];
+    for (const record of records.value) {
+      if (
+        (record.status !== "waiting" && record.status !== "ready") ||
+        record.expiresAtMs <= this.#now()
+      )
+        continue;
+      if (record.status === "ready") {
+        const connection = this.findConnectedIdentity(
+          record.owner.slackUserId,
+          record.owner.expectedGoogleEmail,
+        );
+        if (!connection.ok || connection.value.connectionId !== record.connectionId) continue;
+      }
+      const parsed = GoogleAuthWaitBindingSchema.safeParse({
+        id: record.id,
+        ...record.owner,
+        createdAtMs: record.createdAtMs,
+        expiresAtMs: record.expiresAtMs,
+      });
+      if (!parsed.success) return failure("storage", "connection_invalid");
+      waits.push(parsed.data);
+    }
+    return { ok: true, value: waits };
+  }
+
   /** List confirmed ready work for the secret-gated runner outbox, surviving service reconstruction. */
   listReadyContinuations(): GwsOAuthResult<GoogleAuthContinuation[]> {
     const pruned = this.#pruneExpiredTransientRecords();
@@ -489,6 +522,11 @@ export class GwsOAuthService {
     const ready: GoogleAuthContinuation[] = [];
     for (const record of records.value) {
       if (record.status !== "ready" || record.expiresAtMs <= this.#now()) continue;
+      const connected = this.findConnectedIdentity(
+        record.owner.slackUserId,
+        record.owner.expectedGoogleEmail,
+      );
+      if (!connected.ok || connected.value.connectionId !== record.connectionId) continue;
       const parsed = GoogleAuthContinuationSchema.safeParse({
         id: record.id,
         ...record.owner,
@@ -525,23 +563,64 @@ export class GwsOAuthService {
     return { ok: true, value: undefined };
   }
   /** Idempotent durable acknowledgement; terminal records are never listed again. */
-  acknowledgeContinuation(id: string): GwsOAuthResult<void> {
+  acknowledgeContinuation(id: string, dispatchTriggerId?: string): GwsOAuthResult<void> {
     if (!this.#config.ok) return this.#config;
     if (!/^[A-Za-z0-9_-]{20,200}$/.test(id)) return failure("request", "not_found");
     const record = this.#readEncrypted(this.#continuationPath(id), ContinuationSchema);
     if (!record.ok)
-      return record.error.code === "not_found" ? { ok: true, value: undefined } : record;
+      return record.error.code === "not_found" && !dispatchTriggerId
+        ? { ok: true, value: undefined }
+        : record;
     if (
       record.value.id !== id ||
       record.value.owner.slackTeamId !== this.#config.value.slackTeamId
     ) {
       return failure("identity", "identity_mismatch");
     }
+    if (record.value.status !== "ready" && record.value.status !== "acked")
+      return failure("request", "already_used");
+    if (dispatchTriggerId) {
+      const connected = this.findConnectedIdentity(
+        record.value.owner.slackUserId,
+        record.value.owner.expectedGoogleEmail,
+      );
+      if (
+        record.value.expiresAtMs <= this.#now() ||
+        !connected.ok ||
+        connected.value.connectionId !== record.value.connectionId ||
+        ((record.value.status === "acked" || record.value.dispatchTriggerId) &&
+          record.value.dispatchTriggerId !== dispatchTriggerId)
+      )
+        return failure("identity", "identity_mismatch");
+    }
     if (record.value.status === "acked") return { ok: true, value: undefined };
-    if (record.value.status !== "ready") return failure("request", "already_used");
-    return this.#writeEncrypted(this.#continuationPath(id), { ...record.value, status: "acked" });
+    return this.#writeEncrypted(this.#continuationPath(id), {
+      ...record.value,
+      status: "acked",
+      ...(dispatchTriggerId ? { dispatchTriggerId, args: [] } : {}),
+    });
   }
 
+  /** A resumed trigger may use only the grant that authorized its original blocked operation. */
+  validateContinuationDispatch(
+    input: { sessionId: string; anchorId: string; triggerId: string; slackUserId: string },
+    connectionId: string,
+  ): GwsOAuthResult<void> {
+    const records = this.#readContinuations();
+    if (!records.ok) return records;
+    for (const record of records.value) {
+      if (record.status !== "acked" || record.dispatchTriggerId !== input.triggerId) continue;
+      if (
+        record.expiresAtMs <= this.#now() ||
+        record.owner.sessionId !== input.sessionId ||
+        record.owner.anchorId !== input.anchorId ||
+        record.owner.slackUserId !== input.slackUserId ||
+        record.connectionId !== connectionId
+      )
+        return failure("identity", "identity_mismatch");
+    }
+    return { ok: true, value: undefined };
+  }
   #readContinuations(): GwsOAuthResult<ContinuationRecord[]> {
     if (!this.#config.ok) return this.#config;
     const directory = join(this.#config.value.storageDir, "continuations");
@@ -559,7 +638,8 @@ export class GwsOAuthService {
       if (!record.ok) return record;
       if (
         name !== `${record.value.id}.json` ||
-        !parseGwsArgs(record.value.args).ok ||
+        (!(record.value.status === "acked" && record.value.dispatchTriggerId) &&
+          !parseGwsArgs(record.value.args).ok) ||
         record.value.owner.slackTeamId !== this.#config.value.slackTeamId
       ) {
         return failure("storage", "connection_invalid");
@@ -1010,8 +1090,19 @@ export class GwsOAuthService {
     }
 
     const refreshed = await this.#refreshAccessToken(new Redacted(connection.refreshToken));
-    if (!refreshed.ok) return refreshed;
+    if (!refreshed.ok) {
+      const current = this.findConnectedIdentity(slackUserId, expectedGoogleEmail);
+      return current.ok && current.value.connectionId === connection.connectionId
+        ? refreshed
+        : failure("identity", "identity_mismatch");
+    }
     const currentIdentity = await this.#loadUserInfo(refreshed.value);
+    const postIdentityConnection = this.findConnectedIdentity(slackUserId, expectedGoogleEmail);
+    if (
+      !postIdentityConnection.ok ||
+      postIdentityConnection.value.connectionId !== connection.connectionId
+    )
+      return failure("identity", "identity_mismatch");
     if (!currentIdentity.ok) {
       return currentIdentity.error.stage === "identity" && currentIdentity.error.httpStatus === 401
         ? failure("identity", "credentials_revoked", 401)
@@ -1080,6 +1171,17 @@ export class GwsOAuthService {
       for (const name of names) {
         const path = join(store.directory, name);
         const record = this.#readEncrypted(path, store.schema);
+        // Minimal encrypted dispatch tombstones retain negative authority after expiry.
+        // Otherwise pruning could authorize a resumed trigger under a different future account.
+        if (store.directory === join(this.#config.value.storageDir, "continuations") && record.ok) {
+          const continuation = ContinuationSchema.safeParse(record.value);
+          if (
+            continuation.success &&
+            continuation.data.status === "acked" &&
+            continuation.data.dispatchTriggerId
+          )
+            continue;
+        }
         if (record.ok && record.value.expiresAtMs <= now) {
           try {
             rmSync(path, { force: true });

@@ -3,6 +3,9 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { createServer } from "node:http";
+import { once } from "node:events";
+import { createRemoteCliApp } from "./index.js";
 
 import type { GwsAccessToken } from "./gws-oauth.js";
 import { GwsService } from "./gws.js";
@@ -97,6 +100,52 @@ process.stdout.write('upstream output');
       expect(call.credentials).toBeUndefined();
       expect(call.envKeys).not.toContain("SLACK_BOT_TOKEN");
       expect(call.envKeys).not.toContain("GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET");
+    }
+  });
+
+  it("serves public help/schema through HTTP without Google setup, actor, token or auth DM", async () => {
+    vi.stubEnv("GOOGLE_WORKSPACE_OAUTH_CLIENT_ID", "");
+    const service = new GwsService(process.env);
+    const remote = createRemoteCliApp({ gws: service, configLoader: () => ({ users: [] }) });
+    const server = createServer(remote.app);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Public GWS fixture unavailable");
+    try {
+      for (const args of [
+        ["--help"],
+        ["--version"],
+        ["schema", "drive.files.get"],
+        ["docs", "documents", "get", "--help"],
+      ]) {
+        const response = await fetch(`http://127.0.0.1:${address.port}/exec/gws`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ args }),
+        });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({
+          stdout: "upstream output",
+          stderr: "",
+          exitCode: 0,
+        });
+      }
+      expect(await service.executePublicDiscovery(["drive", "files", "delete"])).toMatchObject({
+        status: 503,
+      });
+      const recorded = await calls();
+      expect(recorded).toHaveLength(4);
+      for (const call of recorded) {
+        expect(call.token).toBeUndefined();
+        expect(call.credentials).toBeUndefined();
+        expect(call.envKeys).not.toContain("SLACK_BOT_TOKEN");
+        expect(call.envKeys).not.toContain("GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET");
+      }
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await remote.close();
     }
   });
 

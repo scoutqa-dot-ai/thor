@@ -6,6 +6,11 @@ security list may retain the legacy name until that operator-side display update
 
 Neo installs [`@googleworkspace/cli`](https://github.com/googleworkspace/cli), pinned in `Dockerfile`. The agent's `gws` wrapper sends argv to trusted `remote-cli`; Pi and OpenCode never receive Google refresh credentials, OAuth client secrets or connection storage.
 
+Public CLI discovery (`gws --help`, `--version`, scoped help and `gws schema`)
+runs without a Google grant or an authentication DM. Account API operations alone
+use the requester-owned credential flow below. Automatic task continuation is
+provided by the Pi runtime; legacy OpenCode does not consume the auth outbox.
+
 ## Security and ownership model
 
 Each command is owned by the human who started the **currently active Slack turn**:
@@ -92,6 +97,10 @@ For an unpinned account, the expected sequence is browser SSO → confirm the di
 
 After the page reports success, Neo automatically continues the waiting task once the runner admits its matching original request. No manual command approval or retry notification is sent. The broker saves the verified grant before publishing readiness. Browser completion does not itself prove the Google operation succeeded.
 
+Pi polls a secret-gated durable outbox and admits only the still-current persisted original request with the same workspace, Slack requester, session, anchor and trigger. Busy original turns defer admission; a newer human turn or interrupt abandons the old wait. Its deterministic continuation receipt is stored before acknowledgement and normal model submission, allowing retry of admission/acknowledgement after restart without creating another task. The model receives original history plus exact blocked `gws` argv as scoped system context; it never replays a compound shell command or an uncertain earlier effect. This is at-most-once task admission, not an exactly-once Google mutation guarantee. Automatic continuation is implemented in Pi mode; legacy OpenCode keeps direct execution and historical handlers but has no automatic runner poller.
+
+Readiness is withdrawn when its connected grant is disconnected or replaced. A resumed trigger remains bound to the original `connectionId`; refresh/identity and dispatch recheck that binding. Encrypted minimal dispatch tombstones retain negative authority beyond outbox expiry (with argv removed), so a later replacement account cannot execute an expired resumed trigger. Protect and retain these tombstones alongside broker ownership records; do not delete them while that Pi conversation can still execute.
+
 The secret-gated broker outbox uses only `x-thor-internal-secret`: `GET /internal/google-workspace/continuations` returns `{continuations: [...]}`, and `POST /internal/google-workspace/continuations/:id/ack` returns `{acknowledged: true}`. A ready record contains `id` (the invitation request ID), `slackTeamId`, `slackUserId`, `sessionId`, `anchorId`, `triggerId`, `args`, `connectionId`, `createdAtMs` and `expiresAtMs`. Readiness expires 24 hours after successful authorization; acknowledgement is durable and idempotent. These private records authorize runner admission, not blind shell replay. The informational 428 exec response adds `authWait: {type: "google_auth_wait", id, expiresAtMs}` alongside the existing ExecResult fields; model/tool output is not readiness authority.
 
 Historic approvals and encrypted results remain readable through the existing same-owner handlers and single-use result capabilities. New Google calls never create those approvals.
@@ -116,8 +125,8 @@ An operator responding to compromise should revoke the OAuth client or user gran
 - The named volume and encryption key are both required to decrypt a grant. Neither is mounted into OpenCode.
 - Refresh tokens stay encrypted at rest and are revealed only inside the broker during refresh. Only the resulting short-lived access token enters the isolated `gws` child environment.
 - Request cwd is ignored. `gws` receives a fresh empty HOME/config directory, selected PATH, optional project ID, and the access token—no Slack token, OAuth client secret, credential file, inherited cached auth, or shared `.env`.
-- Audit records contain action ID, reviewer Slack ID, owner Slack ID, Google email/subject connection ID, operation category, argument count, command fingerprint, approval/outcome status, and Neo correlation IDs. They omit raw argv, tokens, OAuth parameters/responses, and document contents.
-- OAuth requests/state expire after 10 minutes; encrypted private command payloads, results, and result capabilities expire after 30 minutes and are pruned during broker activity. Result retrieval is single-use. Wrong-user review does not execute or consume the command; successful dispatch consumes it before the external side effect.
+- Direct execution audit records contain requester Slack ID, connection ID, argument count, status/exit code and Neo correlation IDs. Historic approval records additionally retain reviewer/action IDs and keyed command fingerprints. Logs omit raw argv, tokens, OAuth parameters/responses and document contents.
+- OAuth requests/state expire after 10 minutes; successful auth readiness lasts up to 24 hours. Encrypted dispatch tombstones retain only identity/grant/lease bindings, without argv, to reject late resumed operations after expiry or account replacement. Historic private commands/results expire after 30 minutes; their result retrieval remains single-use and same-owner-bound.
 - Secret-free approval summaries and structural outcome logs follow the deployment's normal approval/worklog retention policy. Operators should set that policy to their audit requirement; increasing it does not retain raw argv or OAuth material.
 
 ## Troubleshooting
@@ -137,7 +146,7 @@ An operator can probe a member's optional pin/connection status without triggeri
 docker compose exec -T remote-cli node -e 'fetch("http://127.0.0.1:3004/internal/google-workspace/diagnostics", {method:"POST", headers:{"content-type":"application/json","x-thor-internal-secret":process.env.THOR_INTERNAL_SECRET},body:JSON.stringify({slackUserId:"U01234567"})}).then(r=>r.json()).then(r=>console.log(JSON.stringify(r,null,2)))'
 ```
 
-Focused tests cover PKCE/state/cookie ownership, replay, expiry, identity mismatch, encrypted storage, redirect rejection, same-user command consumption, blocked auth commands, child environment isolation, approval presentation, and active-trigger fail-closed behavior. Live Google verification remains an operator deployment step; no production OAuth credential belongs in tests, Slack messages, repository files, or agent memory.
+Tests cover PKCE/state/cookie ownership, replay, expiry, identity mismatch, encrypted storage, redirects, confirmed DM delivery, automatic Pi continuation/restart/deduplication, superseded turns, grant replacement, public credential-free discovery, blocked auth commands, child environment isolation and historic approval compatibility. Live Google verification remains an operator deployment step; no production OAuth credential belongs in tests, Slack messages, repository files or agent memory.
 
 Real browser cookie regression (requires Chromium and `openssl`, uses only local HTTPS fixtures):
 

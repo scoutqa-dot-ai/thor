@@ -81,3 +81,21 @@ export function parseGwsArgs(input: unknown):
   }
   return { ok: true, args: parsed.data };
 }
+
+/** Public CLI discovery shapes cannot execute a Google account operation. */
+export function isGwsPublicDiscoveryCommand(args: readonly string[]): boolean {
+  if (args.length === 0) return true;
+  if (args.length === 1 && ["--help", "-h", "--version", "-V"].includes(args[0])) return true;
+  if (
+    args[0] === "schema" &&
+    /^[a-z][a-z0-9]*\.[A-Za-z0-9_.]+$/.test(args[1] ?? "") &&
+    (args.length === 2 || (args.length === 3 && args[2] === "--resolve-refs"))
+  )
+    return true;
+  return (
+    args.length >= 2 &&
+    args.length <= 5 &&
+    ["--help", "-h"].includes(args.at(-1) ?? "") &&
+    args.slice(0, -1).every((arg) => /^[A-Za-z][A-Za-z0-9_-]*$/.test(arg))
+  );
+}

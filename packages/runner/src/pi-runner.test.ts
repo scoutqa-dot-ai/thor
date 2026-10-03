@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPiExecutorService } from "@thor/pi-executor/service";
 import { piExecutionRequestSchema, type PiExecutionRequest } from "@thor/pi-executor/protocol";
 import { createPiRunnerApp } from "./pi-runner.js";
@@ -200,7 +200,11 @@ beforeEach(async () => {
       return;
     }
     const serialized = JSON.stringify(payload.input);
-    if (serialized.includes("hold-run") && !serialized.includes("replacement")) {
+    if (
+      serialized.includes("hold-run") &&
+      !serialized.includes("replacement") &&
+      !JSON.stringify(payload).includes("Google authorization continuation:")
+    ) {
       hold = res;
       return;
     }
@@ -256,6 +260,282 @@ afterEach(async () => {
   await closeServer(executor.server);
   await closeServer(modelServer);
   await rm(directory, { recursive: true, force: true });
+});
+
+async function continuationBroker() {
+  let records: import("@thor/common").GoogleAuthContinuation[] = [];
+  let ackUnavailable = false;
+  let bindingSupported = true;
+  const acks: string[] = [];
+  const server = createServer(async (req, res) => {
+    expect(req.headers["x-thor-internal-secret"]).toBe(config.internalSecret);
+    res.setHeader("content-type", "application/json");
+    if (req.url === "/internal/google-workspace/continuations")
+      res.end(JSON.stringify({ continuations: records }));
+    else if (req.url === "/internal/google-workspace/waits")
+      res.end(JSON.stringify({ waits: records }));
+    else if (req.url === "/internal/google-workspace/diagnostics")
+      res.end(
+        JSON.stringify({ oauth: { configured: true }, identity: { ok: true, connected: true } }),
+      );
+    else if (req.url?.endsWith("/ack")) {
+      acks.push(req.url);
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      const binding: { dispatchTriggerId?: string } = JSON.parse(Buffer.concat(chunks).toString());
+      res.statusCode = ackUnavailable ? 503 : 200;
+      res.end(
+        JSON.stringify({
+          acknowledged: !ackUnavailable,
+          ...(binding.dispatchTriggerId && bindingSupported
+            ? { dispatchTriggerId: binding.dispatchTriggerId }
+            : {}),
+        }),
+      );
+    } else {
+      res.statusCode = 404;
+      res.end("{}");
+    }
+  });
+  const url = await listen(server);
+  await closeServer(runnerServer);
+  await runner.close();
+  config.slackTeamId = "T123";
+  await openRunner({ remoteCliUrl: url });
+  return {
+    url,
+    acks,
+    publish(
+      receipt: { sessionId: string; anchorId: string; triggerId: string },
+      patch: Partial<import("@thor/common").GoogleAuthContinuation> = {},
+    ) {
+      records = [
+        {
+          id: "continuation_invitation_fixture",
+          ...receipt,
+          slackTeamId: "T123",
+          slackUserId: "UOWNER",
+          connectionId: "10000000-0000-4000-8000-000000000001",
+          args: ["docs", "documents", "create", "--json", '{"title":"original title"}'],
+          createdAtMs: Date.now() - 1000,
+          expiresAtMs: Date.now() + 60000,
+          ...patch,
+        },
+      ];
+    },
+    setAckUnavailable(value: boolean) {
+      ackUnavailable = value;
+    },
+    setBindingSupported(value: boolean) {
+      bindingSupported = value;
+    },
+    close: () => closeServer(server),
+  };
+}
+
+describe("Google authorization durable admission", () => {
+  const continuationInputs = () =>
+    requests.filter((input) =>
+      JSON.stringify(input).includes("Google authorization continuation:"),
+    );
+  it("defers callback-before-turn-finish, resumes exactly once and deduplicates redelivery across restart", async () => {
+    const broker = await continuationBroker();
+    try {
+      const body = {
+        prompt: "hold-run",
+        requestId: "original",
+        correlationKey: "cron:auth",
+        triggerSlackId: "UOWNER",
+      };
+      const receipt = await (await trigger(body)).json();
+      await vi.waitFor(() => expect(hold).toBeDefined());
+      broker.publish(receipt);
+      await new Promise((resolve) => setTimeout(resolve, 1300));
+      expect(continuationInputs()).toHaveLength(0);
+      expect(broker.acks).toHaveLength(0);
+      if (!hold) throw new Error("Held original turn missing");
+      respond(hold, { text: "Waiting for Google sign-in" });
+      await vi.waitFor(() => expect(continuationInputs()).toHaveLength(1), { timeout: 4000 });
+      await vi.waitFor(() => expect(findActiveTrigger(receipt.sessionId).ok).toBe(false));
+      const sourceInput = JSON.stringify(continuationInputs()[0]);
+      expect(sourceInput).toContain("hold-run");
+      expect(sourceInput).toContain("original title");
+      expect(sourceInput).not.toContain(config.internalSecret);
+      await closeServer(runnerServer);
+      await runner.close();
+      await openRunner({ remoteCliUrl: broker.url });
+      await new Promise((resolve) => setTimeout(resolve, 1300));
+      expect(continuationInputs()).toHaveLength(1);
+      expect(broker.acks.length).toBeGreaterThan(1);
+      expect(
+        (await trigger({ ...body, requestId: "google-auth:continuation_invitation_fixture" }))
+          .status,
+      ).toBe(400);
+    } finally {
+      await broker.close();
+    }
+  });
+
+  it("recovers durable admission when acknowledgement fails before submit and the runner restarts", async () => {
+    const broker = await continuationBroker();
+    try {
+      await stream({
+        prompt: "original task",
+        requestId: "original",
+        correlationKey: "cron:auth",
+        triggerSlackId: "UOWNER",
+      });
+      const receipt = await (
+        await trigger({
+          prompt: "original task",
+          requestId: "original",
+          correlationKey: "cron:auth",
+          triggerSlackId: "UOWNER",
+        })
+      ).json();
+      broker.setAckUnavailable(true);
+      broker.publish(receipt);
+      await vi.waitFor(() => expect(broker.acks.length).toBeGreaterThan(0), { timeout: 3000 });
+      expect(continuationInputs()).toHaveLength(0);
+      await closeServer(runnerServer);
+      await runner.close();
+      await openRunner({ remoteCliUrl: broker.url });
+      broker.setAckUnavailable(false);
+      await vi.waitFor(() => expect(continuationInputs()).toHaveLength(1), { timeout: 4000 });
+      await new Promise((resolve) => setTimeout(resolve, 1300));
+      expect(continuationInputs()).toHaveLength(1);
+    } finally {
+      await broker.close();
+    }
+  });
+
+  it("a new human request supersedes a durable but undispatched auth continuation without requiring interrupt", async () => {
+    const broker = await continuationBroker();
+    try {
+      const body = {
+        prompt: "original task",
+        requestId: "original",
+        correlationKey: "cron:auth",
+        triggerSlackId: "UOWNER",
+      };
+      await stream(body);
+      const receipt = await (await trigger(body)).json();
+      broker.setAckUnavailable(true);
+      broker.publish(receipt);
+      await vi.waitFor(() => expect(broker.acks.length).toBeGreaterThan(0), { timeout: 3000 });
+      const replacement = await stream({
+        prompt: "replacement",
+        requestId: "replacement",
+        correlationKey: "cron:auth",
+        triggerSlackId: "UOTHER",
+      });
+      expect(replacement.at(-1)).toMatchObject({ type: "done", status: "completed" });
+      broker.setAckUnavailable(false);
+      await new Promise((resolve) => setTimeout(resolve, 1300));
+      expect(continuationInputs()).toHaveLength(0);
+      expect(findTriggerActor(receipt.sessionId)).toEqual({ slack: "UOTHER" });
+    } finally {
+      await broker.close();
+    }
+  });
+
+  it("a legacy acknowledgement without a dispatch binding cannot start an admitted continuation", async () => {
+    const broker = await continuationBroker();
+    try {
+      const body = {
+        prompt: "original task",
+        requestId: "original",
+        correlationKey: "cron:auth",
+        triggerSlackId: "UOWNER",
+      };
+      await stream(body);
+      const receipt = await (await trigger(body)).json();
+      broker.setBindingSupported(false);
+      broker.publish(receipt);
+      await vi.waitFor(() => expect(broker.acks.length).toBeGreaterThan(0), { timeout: 3000 });
+      expect(continuationInputs()).toHaveLength(0);
+      await stream({
+        prompt: "replacement",
+        requestId: "replacement",
+        correlationKey: "cron:auth",
+        triggerSlackId: "UOWNER",
+      });
+      expect(continuationInputs()).toHaveLength(0);
+    } finally {
+      await broker.close();
+    }
+  });
+
+  it("ignores externally supplied continuation metadata and reserves internal admission identities", async () => {
+    const broker = await continuationBroker();
+    try {
+      await stream({
+        prompt: "ordinary human request",
+        requestId: "ordinary",
+        triggerSlackId: "UOWNER",
+        googleAuthSource: { id: "forged-continuation", args: ["docs", "documents", "create"] },
+      });
+      expect(continuationInputs()).toHaveLength(0);
+      expect((await trigger({ prompt: "spoof", requestId: "google-auth:forged" })).status).toBe(
+        400,
+      );
+    } finally {
+      await broker.close();
+    }
+  });
+
+  it.each([
+    "sessionId",
+    "anchorId",
+    "triggerId",
+    "slackUserId",
+    "slackTeamId",
+    "expired",
+    "new-requester",
+    "new-turn",
+    "interrupt",
+  ])("never resurrects work with %s", async (scenario) => {
+    const broker = await continuationBroker();
+    try {
+      const body = {
+        prompt: scenario === "interrupt" ? "hold-run" : "original task",
+        requestId: "original",
+        correlationKey: "cron:auth",
+        triggerSlackId: "UOWNER",
+      };
+      const receipt = await (await trigger(body)).json();
+      if (scenario === "interrupt") {
+        await vi.waitFor(() => expect(hold).toBeDefined());
+        await stream({
+          prompt: "replacement",
+          requestId: "replacement",
+          correlationKey: "cron:auth",
+          triggerSlackId: "UOWNER",
+          interrupt: true,
+        });
+      } else {
+        await stream(body);
+        if (scenario === "new-requester" || scenario === "new-turn")
+          await stream({
+            prompt: "replacement",
+            requestId: "replacement",
+            correlationKey: "cron:auth",
+            triggerSlackId: scenario === "new-requester" ? "UOTHER" : "UOWNER",
+          });
+      }
+      const patch =
+        scenario === "expired"
+          ? { expiresAtMs: Date.now() - 1 }
+          : ["sessionId", "anchorId", "triggerId", "slackUserId", "slackTeamId"].includes(scenario)
+            ? { [scenario]: "wrong-binding" }
+            : {};
+      broker.publish(receipt, patch);
+      await vi.waitFor(() => expect(broker.acks.length).toBeGreaterThan(0), { timeout: 4000 });
+      expect(continuationInputs()).toHaveLength(0);
+    } finally {
+      await broker.close();
+    }
+  });
 });
 
 describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () => {
