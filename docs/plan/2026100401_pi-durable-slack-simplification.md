@@ -13,6 +13,8 @@ The biggest cuts are separating OpenCode execution from historical viewing, deri
 
 This is a substantial follow-on to [the embedded migration](2026100201_pi-durable-runtime-migration.md), not a replacement for its security decisions. Preserve [Google automatic continuation](2026100302_google-auth-pause-resume.md), [task routing](2026100303_pi-task-model-routing.md), and [the activity/footer contract](2026100304_neo-slack-progress-design.md).
 
+The user's additional MCP flow request is covered by [Configurable MCP catalog and native Durable tools](2026100402_mcp-catalog-and-native-tools.md): operator-owned HTTP server additions, broker-only credential references, two native discovery/call tools and versioned generic approvals. It shares this plan's single-owner and credential boundaries; it does not require a new runtime, Pi upgrade or arbitrary plugin loading.
+
 ## What the release actually supplies
 
 Neo currently pins Pi Durable, Pi AI and Chord **1.0.0**. npm's latest published Durable version at review time is **1.0.2**. Capability authority is the released tag, not unreleased main or the interactive CLI's extension API.
