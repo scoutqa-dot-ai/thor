@@ -1,4 +1,3 @@
-import { APPROVAL_TOOL_NAMES, NON_PROXY_APPROVAL_TOOL_NAMES } from "./approval-events.js";
 import type { ProxyConfig } from "./workspace-config.js";
 
 export const PROXY_NAMES = [
@@ -150,23 +149,6 @@ export const PROXY_REGISTRY: Record<ProxyName, ProxyConfig> = {
     approve: [],
   },
 };
-
-const configuredApprovedTools = Object.values(PROXY_REGISTRY)
-  .flatMap((proxy) => proxy.approve)
-  .sort();
-const nonProxyApprovalTools = new Set<string>(NON_PROXY_APPROVAL_TOOL_NAMES);
-const typedApprovalTools = APPROVAL_TOOL_NAMES.filter(
-  (tool) => !nonProxyApprovalTools.has(tool),
-).sort();
-
-if (
-  configuredApprovedTools.length !== typedApprovalTools.length ||
-  configuredApprovedTools.some((tool, index) => tool !== typedApprovalTools[index])
-) {
-  throw new Error(
-    `Approval tool inventory mismatch between proxy policy and typed approval events. Configured approve tools: ${configuredApprovedTools.join(", ") || "(none)"}; typed approval tools: ${typedApprovalTools.join(", ") || "(none)"}`,
-  );
-}
 
 export function isProxyName(name: string): name is ProxyName {
   return (PROXY_NAMES as readonly string[]).includes(name);

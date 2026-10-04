@@ -4,6 +4,7 @@
   "packageManager": "pnpm@10.33.4",
   "scripts": {
     "build": "pnpm -r build",
+    "build:mcp-fixture": "esbuild scripts/fixtures/mcp-generic-compose.mjs --bundle --platform=node --format=esm --packages=external --outfile=packages/remote-cli/dist/mcp-generic-compose.mjs",
     "dev": "pnpm -r --parallel dev",
     "clean": "pnpm -r clean",
     "format": "prettier --write .",

@@ -21,6 +21,7 @@ services:
       start_period: 0s
 
   remote-cli:
+    # Inherits the same broker-only generic approval state volume from base.
     # CI-only: command children now require rootless mounts, denied by docker-default AppArmor.
     # Keep the filesystem/PID/credential sandbox and seccomp; this is NOT the production MAC policy.
     # Credential browser bundle remains disabled in these legacy suites.

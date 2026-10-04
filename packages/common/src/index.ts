@@ -273,3 +273,6 @@ export * from "./mcp-broker.js";
 
 export { parseMcpOperatorCatalog, mcpOperatorCatalogJsonSchema } from "./mcp-catalog.js";
 export type { McpOperatorCatalog, McpProxyCatalog, McpCatalogParseResult } from "./mcp-catalog.js";
+
+export * from "./mcp-approval.js";
+export { findLatestMcpApprovalProjection } from "./event-log.js";

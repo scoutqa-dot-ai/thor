@@ -1,3 +1,5 @@
+import { McpApprovalClickSchema } from "@thor/common";
+import { resolveGenericMcpApproval, readGenericMcpApproval } from "./service.js";
 import express, { type Express, type Request, type Response } from "express";
 import {
   appendJsonlWorklog,
@@ -560,6 +562,7 @@ interface ApprovalReentryContext extends ApprovalDeps {
   reviewer: string;
   channel: string | undefined;
   messageTs: string | undefined;
+  teamId?: string;
   threadTs: string;
 }
 
@@ -610,6 +613,7 @@ function handleApprovalAction(ctx: ApprovalActionContext): void {
     channel,
     messageTs,
     threadTs,
+    teamId: payload.team?.id,
   }).catch((error) => {
     logError(log, "approval_background_error", error, { actionId: route.actionId });
   });
@@ -629,6 +633,65 @@ async function resolveApprovalAndReenter(ctx: ApprovalReentryContext): Promise<v
     fetchImpl,
     queue,
   } = ctx;
+
+  if (route.upstreamName === "genericMcp") {
+    if (!ctx.teamId || !channel || !messageTs) return;
+    const click = McpApprovalClickSchema.safeParse({
+      actionId: route.actionId,
+      decision,
+      userId: reviewer,
+      teamId: ctx.teamId,
+      channel,
+      messageTs,
+    });
+    if (!click.success) return;
+    const projection = await resolveGenericMcpApproval(
+      click.data,
+      remoteCliUrl,
+      internalSecret,
+      fetchImpl,
+    );
+    if (
+      !projection?.threadTs ||
+      projection.channel !== channel ||
+      projection.requester !== reviewer
+    )
+      return;
+    const disposition = projection.disposition;
+    const payload: ApprovalOutcomeEventPayload = {
+      actionId: projection.actionId,
+      decision,
+      reviewer: projection.requester,
+      channel: projection.channel,
+      threadTs: projection.threadTs,
+      messageTs: projection.threadTs,
+      upstreamName: projection.server,
+      tool: projection.tool,
+      resolutionStatus: disposition,
+      resolutionSummary: `MCP approval ${disposition}. Do not replay this mutation.`,
+      resolutionExitCode: disposition === "completed" ? 0 : 1,
+      genericMcp: projection,
+    };
+    // Private generic continuations never adopt a thread alias pointing into a public audience.
+    await queue.enqueue({
+      id: `approval-${projection.actionId}-${decision}-${Date.now()}`,
+      source: "approval",
+      correlationKey: `slack:thread:${projection.channel}/${projection.threadTs}`,
+      payload,
+      receivedAt: new Date().toISOString(),
+      sourceTs: Date.now(),
+      readyAt: Date.now(),
+      delayMs: 0,
+      interrupt: false,
+    });
+    await updateSlackMessage(
+      projection.channel,
+      projection.threadTs,
+      `MCP approval ${disposition}. Do not replay this mutation.`,
+      slackDeps,
+    );
+    return;
+  }
 
   const resolved = await resolveApproval(
     route.actionId,
@@ -1120,6 +1183,36 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       };
 
       try {
+        for (const event of approvalEvents) {
+          const generic = event.payload.genericMcp;
+          if (!generic) continue;
+          const projection = await readGenericMcpApproval(
+            event.payload.actionId,
+            generic.reader,
+            remoteCliUrl,
+            config.internalSecret,
+            config.fetchImpl,
+          );
+          if (
+            !projection ||
+            projection.requester !== event.payload.reviewer ||
+            projection.reader.teamId !== config.slackTeamId ||
+            projection.channel !== event.payload.channel ||
+            projection.threadTs !== event.payload.threadTs ||
+            correlationKey !== `slack:thread:${projection.channel}/${projection.threadTs}` ||
+            slackEvents.length ||
+            githubEvents.length ||
+            cronEvents.length ||
+            approvalEvents.some((event) => !event.payload.genericMcp)
+          ) {
+            reject("MCP continuation reader or audience denied");
+            return;
+          }
+          event.payload.genericMcp = projection;
+          event.payload.resolutionSummary = `MCP approval ${projection.disposition}. Do not replay this mutation.`;
+          event.payload.resolutionStatus = projection.disposition;
+        }
+
         const plan = await planBatchDispatch({
           requestId: queuedBatchRequestId(events),
           // Old/mixed queues have no reply authority. Privacy reroutes preserve signed proof.
@@ -1129,7 +1222,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
               (event) => event.slackTeamId && event.slackTeamId === config.slackTeamId,
             )
               ? config.slackTeamId
-              : undefined,
+              : approvalEvents.length > 0 &&
+                  approvalEvents.every(
+                    (event) => event.payload.genericMcp?.reader.teamId === config.slackTeamId,
+                  )
+                ? config.slackTeamId
+                : undefined,
           slackEvents: slackEvents.map((event) => event.payload),
           cronEvents: cronEvents.map((event) => event.payload),
           githubEvents: githubEvents.map((event) => event.payload),

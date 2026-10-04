@@ -4,6 +4,7 @@ const root = "/etc/thor/mcp-catalog";
 for (const path of [
   root,
   "/run/secrets/thor-mcp",
+  "/var/lib/remote-cli/mcp-approvals",
   "/workspace",
   "/workspace/config",
   "/workspace/repos",
@@ -13,6 +14,13 @@ for (const path of [
   fs.chownSync(path, 1001, 1001);
 }
 fs.chmodSync("/run/secrets/thor-mcp", 0o700);
+fs.chmodSync("/var/lib/remote-cli/mcp-approvals", 0o700);
+fs.writeFileSync(
+  "/var/lib/remote-cli/mcp-approvals/privacy-canary",
+  "dummy-private-approval-sentinel",
+  { mode: 0o600 },
+);
+fs.chownSync("/var/lib/remote-cli/mcp-approvals/privacy-canary", 1001, 1001);
 fs.writeFileSync("/run/secrets/thor-mcp/dummy-token", "dummy-private-file-sentinel\n", {
   mode: 0o600,
 });
@@ -29,7 +37,7 @@ const server = {
   description: "Local fixture",
   auth: { type: "none" },
   http: { type: "internal-unauthenticated", operatorReviewed: true },
-  policy: { allow: ["echo"], approve: [] },
+  policy: { allow: ["echo"], approve: ["write_doc"] },
 };
 const operation = process.argv[2] ?? "add";
 if (operation === "foreign-owner") fs.chownSync("/run/secrets/thor-mcp/dummy-token", 0, 0);

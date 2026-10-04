@@ -35,7 +35,7 @@ export async function runMcpCatalogCommand(args: string[]): Promise<number> {
     process.stderr.write("MCP catalog check denied: unknown or disabled alias\n");
     return 1;
   }
-  const service = createMcpService({ catalog: loaded.value });
+  const service = createMcpService({ catalog: loaded.value, mode: "inventory-only" });
   // This operator diagnostic has a whole-check budget; it never invokes a tool.
   const timer = setTimeout(() => {
     void service.closeAll();

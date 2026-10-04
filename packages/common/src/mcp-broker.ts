@@ -72,10 +72,23 @@ export const McpSearchInputSchema = z
 export type McpSearchInput = z.infer<typeof McpSearchInputSchema>;
 /** A tool reference identifies one exact broker revision, not a capability or credential. */
 export const McpToolRefSchema = z.string().min(1).max(200).brand<"McpToolRef">();
+function hasExactMcpJsonKeys(value: unknown): boolean {
+  if (!value || typeof value !== "object") return true;
+  return Object.entries(value).every(
+    ([key, child]) => key !== "__proto__" && hasExactMcpJsonKeys(child),
+  );
+}
+// Zod records deliberately skip __proto__. Reject it at the raw JSON boundary rather
+// than silently changing the approved/outbound object (including nested business data).
+const McpArgumentsSchema = z
+  .unknown()
+  .refine(hasExactMcpJsonKeys)
+  .pipe(z.record(z.string(), z.json()));
+
 /** Call arguments are a JSON object, not argv or caller-selectable authority. */
 export const McpCallInputSchema = z.strictObject({
   toolRef: McpToolRefSchema,
-  arguments: z.record(z.string(), z.json()),
+  arguments: McpArgumentsSchema,
 });
 /** An exact revision reference is discovery identity, not authorization. */
 export type McpCallInput = z.infer<typeof McpCallInputSchema>;
@@ -111,7 +124,13 @@ export interface McpDiscoveryPage {
 }
 /** Pre-dispatch failures and dispatched uncertainty have distinct, secret-free dispositions. */
 export type McpBrokerFailure = {
-  readonly status: "denied" | "unavailable" | "stale" | "invalid_arguments" | "uncertain";
+  readonly status:
+    | "denied"
+    | "unavailable"
+    | "stale"
+    | "invalid_arguments"
+    | "uncertain"
+    | "review_not_supported";
   readonly isError: true;
   readonly message: string;
   readonly issues?: readonly { readonly path: string; readonly keyword: string }[];

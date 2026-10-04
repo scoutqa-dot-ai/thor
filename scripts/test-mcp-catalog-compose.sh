@@ -6,18 +6,19 @@ export COMPOSE_PROJECT_NAME="neo-mcp-catalog-test-${UID}-$$"
 compose=(docker compose --env-file /dev/null -f docker/mcp-test/compose.yml)
 cleanup() { local status=$?; if [[ $status != 0 ]]; then "${compose[@]}" logs --no-color remote-cli >&2 || true; fi; "${compose[@]}" down --volumes --remove-orphans --timeout 3 >/dev/null 2>&1 || true; }
 trap cleanup EXIT
-for image in "${MCP_TEST_BROKER_IMAGE:-thor-remote-cli:latest}" "${MCP_TEST_RUNNER_IMAGE:-thor-mcp-test-runner:latest}" "${MCP_TEST_EXECUTOR_IMAGE:-thor-mcp-test-executor:latest}" node:24-slim; do
+for image in "${MCP_TEST_BROKER_IMAGE:-thor-remote-cli:latest}" "${MCP_TEST_RUNNER_IMAGE:-thor-mcp-test-runner:latest}" "${MCP_TEST_EXECUTOR_IMAGE:-thor-mcp-test-executor:latest}" "${MCP_TEST_GATEWAY_IMAGE:-thor-mcp-test-gateway:latest}" "${MCP_TEST_ADMIN_IMAGE:-thor-mcp-test-admin:latest}" node:24-slim; do
   docker image inspect "$image" >/dev/null || { echo "Prepare the fixture image $image before running this offline check" >&2; exit 1; }
 done
 [[ -f packages/remote-cli/dist/index.js ]] || { echo 'Run pnpm build before this check' >&2; exit 1; }
+[[ -f packages/remote-cli/dist/mcp-generic-compose.mjs ]] || { echo 'Run pnpm build:mcp-fixture before this check' >&2; exit 1; }
 "${compose[@]}" up --no-build --pull never -d --wait --wait-timeout 60
 connections=$("${compose[@]}" exec -T remote-cli node -e 'fetch("http://fixture:8000/health").then(r=>r.json()).then(r=>console.log(r.connections))')
 "${compose[@]}" exec -T remote-cli node /app/packages/remote-cli/dist/index.js mcp-catalog validate
 "${compose[@]}" exec -T remote-cli node -e 'fetch("http://fixture:8000/health").then(r=>r.json()).then(r=>{if(r.connections!==Number(process.argv[1]))throw Error("local validation connected");console.log("local validation made no connection")})' "$connections"
 "${compose[@]}" exec -T remote-cli node /app/packages/remote-cli/dist/index.js mcp-catalog check localdocs
 "${compose[@]}" exec -T remote-cli node /app/packages/remote-cli/mcp-child-isolation.mjs
-for service in runner executor; do
-  "${compose[@]}" exec -T "$service" node -e 'const fs=require("fs");for(const p of ["/etc/thor/mcp-catalog/catalog.json","/run/secrets/thor-mcp/dummy-token","/workspace/repos/catalog-fixture/private-link"]){try{fs.readFileSync(p);throw Error("private mount exposed")}catch(e){if(e.message==="private mount exposed")throw e}}console.log("private mounts inaccessible")'
+for service in runner executor gateway admin; do
+  "${compose[@]}" exec -T "$service" node -e 'const fs=require("fs");for(const p of ["/var/lib/remote-cli/mcp-approvals/privacy-canary","/etc/thor/mcp-catalog/catalog.json","/run/secrets/thor-mcp/dummy-token","/workspace/repos/catalog-fixture/private-link"]){try{fs.readFileSync(p);throw Error("private mount exposed")}catch(e){if(e.message==="private mount exposed")throw e}}console.log("private mounts inaccessible")'
 done
 "${compose[@]}" exec -T remote-cli node -e '
 (async()=>{for(const args of [["localdocs","echo",JSON.stringify({text:"fixture-call"})],["localdocs","hidden_mutation",JSON.stringify({text:"denied"})]]){
@@ -25,6 +26,12 @@ const r=await fetch("http://localhost:3004/exec/mcp",{method:"POST",headers:{"co
 for(const path of ["/run/secrets/thor-mcp/dummy-token","/workspace/repos/catalog-fixture/private-link","/proc/1/environ"]){
 const r=await fetch("http://localhost:3004/internal/exec",{method:"POST",headers:{"content-type":"application/json","x-thor-internal-secret":"dummy-internal-secret"},body:JSON.stringify({bin:"git",args:["diff","--no-index","/dev/null",path],cwd:"/workspace/repos/catalog-fixture"})});const b=await r.json();if(b.stdout.includes("dummy-private-file-sentinel")||b.stdout.includes("dummy-broker-env-sentinel"))throw Error("private broker file/proc exposed")}
 const result=await (await fetch("http://fixture:8000/health")).json();if(result.effects!==1)throw Error("hidden tool effected");console.log("real HTTP broker effects and file/proc policy passed")})().catch(e=>{console.error(e.message);process.exit(1)})'
+"${compose[@]}" exec -T remote-cli node -e 'const fs=require("fs");const root="/var/lib/remote-cli/mcp-approvals";for(const [p,mode] of [[root,448],[root+"/owner.lock",384],[root+"/activation.json",384]]){if((fs.statSync(p).mode&4095)!==mode)throw Error("private approval modes")}console.log("private owner/fence modes passed")'
+before=$("${compose[@]}" exec -T remote-cli node -e 'process.stdout.write(require("fs").readFileSync("/var/lib/remote-cli/mcp-approvals/activation.json","utf8"))')
+if "${compose[@]}" run --rm --no-deps --pull never remote-cli; then echo 'second broker owner accepted' >&2; exit 1; fi
+after=$("${compose[@]}" exec -T remote-cli node -e 'process.stdout.write(require("fs").readFileSync("/var/lib/remote-cli/mcp-approvals/activation.json","utf8"))')
+[[ "$before" == "$after" ]] || { echo 'second owner changed activation' >&2; exit 1; }
+"${compose[@]}" exec -T remote-cli node /app/packages/common/mcp-generic-compose.mjs
 "${compose[@]}" stop remote-cli
 "${compose[@]}" run --rm --no-deps --pull never init node /init.mjs remove
 "${compose[@]}" up --no-build --no-deps --pull never -d --wait remote-cli

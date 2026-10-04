@@ -191,9 +191,9 @@ COPY packages/remote-cli/bin/git /usr/local/lib/thor/bin/git
 COPY packages/remote-cli/bin/gh /usr/local/lib/thor/bin/gh
 COPY packages/remote-cli/bin/git-askpass /usr/local/lib/thor/bin/git-askpass
 RUN chmod +x /usr/local/lib/thor/bin/git /usr/local/lib/thor/bin/gh /usr/local/lib/thor/bin/git-askpass
-RUN mkdir -p /var/lib/remote-cli/github-app/cache /var/lib/remote-cli/gws /var/lib/remote-cli/google-workspace-oauth \
+RUN mkdir -p /var/lib/remote-cli/github-app/cache /var/lib/remote-cli/gws /var/lib/remote-cli/google-workspace-oauth /var/lib/remote-cli/mcp-approvals \
     && chown -R thor:thor /var/lib/remote-cli \
-    && chmod 700 /var/lib/remote-cli/gws /var/lib/remote-cli/google-workspace-oauth
+    && chmod 700 /var/lib/remote-cli/gws /var/lib/remote-cli/google-workspace-oauth /var/lib/remote-cli/mcp-approvals
 USER thor
 RUN mkdir -p /workspace/repos
 WORKDIR /workspace/repos

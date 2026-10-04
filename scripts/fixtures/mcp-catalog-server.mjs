@@ -8,7 +8,24 @@ app.use(express.json());
 const sessions = new Map();
 let effects = 0;
 let connections = 0;
-app.get("/health", (_req, res) => res.json({ effects, connections }));
+const cards = [];
+app.get("/health", (_req, res) => res.json({ effects, connections, cards }));
+app.post("/slack/:method", (req, res) => {
+  if (req.get("authorization") !== "Bearer dummy-slack-token") return res.status(401).end();
+  switch (req.params.method) {
+    case "auth.test":
+      return res.json({ ok: true, team_id: "TFIXTURE" });
+    case "conversations.open":
+      return res.json({ ok: true, channel: { id: "DFIXTURE" } });
+    case "conversations.info":
+      return res.json({ ok: true, channel: { id: "DFIXTURE", is_im: true, user: "UFIXTURE" } });
+    case "chat.postMessage":
+      cards.push(req.body);
+      return res.json({ ok: true, channel: "DFIXTURE", ts: "1710000000.123" });
+    default:
+      return res.json({ ok: false });
+  }
+});
 app.all("/mcp", async (req, res) => {
   const id = req.get("mcp-session-id");
   if (id) {
@@ -23,7 +40,7 @@ app.all("/mcp", async (req, res) => {
     { capabilities: { tools: {} } },
   );
   sdk.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: ["echo", "hidden_mutation"].map((name) => ({
+    tools: ["echo", "write_doc", "hidden_mutation"].map((name) => ({
       name,
       inputSchema: {
         type: "object",

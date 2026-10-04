@@ -1,3 +1,10 @@
+import { z } from "zod/v4";
+import {
+  McpApprovalProjectionSchema,
+  type McpApprovalProjection,
+  type McpApprovalClick,
+  type McpApprovalReader,
+} from "@thor/common";
 import { SlackReplyAdmissionSchema, type SlackReplyAdmission } from "@thor/common";
 import {
   createLogger,
@@ -74,6 +81,8 @@ export interface RunnerTriggerOptions extends Pick<
 }
 
 export interface ApprovalOutcomeEventPayload {
+  /** Stored private scope from the authenticated broker, never a Slack button hint. */
+  genericMcp?: McpApprovalProjection;
   actionId: string;
   decision: "approved" | "rejected";
   reviewer: string;
@@ -398,6 +407,10 @@ function renderGitHubPromptSection(events: GitHubWebhookEvent[]): string {
 
 export function buildApprovalOutcomePrompt(events: ApprovalOutcomeEventPayload[]): string {
   const lines = events.map((event, index) => {
+    if (event.genericMcp) {
+      const result = event.genericMcp;
+      return `${index + 1}. MCP approval \`${result.actionId}\`: ${result.disposition}. Target: ${result.server}/${result.tool}.\nReport this disposition only in the requester's private DM ${result.channel}, thread ${result.threadTs}. The approved mutation may already have executed; do not replay or re-run it. Continue only with distinct safe work. No raw provider result is available through this continuation.`;
+    }
     const target = [event.upstreamName, event.tool].filter(Boolean).join("/") || "unknown tool";
     const resolutionFailed =
       typeof event.resolutionExitCode === "number" && event.resolutionExitCode !== 0;
@@ -556,6 +569,7 @@ function resolveApprovalBatchDirectory(
   slackDirectoryForChannel?: (channel: string) => SlackRoutingInfo,
 ): { directory?: string; reason?: string } {
   return collectBatchDirectory("Approval", events, (event) => {
+    if (event.genericMcp) return { directory: event.genericMcp.repositoryDirectory };
     if (!slackDirectoryForChannel) {
       return { reason: `channel ${event.channel} has no repo mapping` };
     }
@@ -797,7 +811,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
   );
 
   const source = selectSlackRequestSource(input.slackEvents, input.triggerSlackId);
-  const replyAdmission =
+  const slackReplyAdmission =
     source &&
     input.slackTeamId &&
     sourceTs.success &&
@@ -818,6 +832,35 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
         })
       : undefined;
 
+  const generic = input.approvalOutcomes[0]?.genericMcp;
+  const genericOnly =
+    generic &&
+    input.slackTeamId === generic.reader.teamId &&
+    input.slackEvents.length === 0 &&
+    input.githubEvents.length === 0 &&
+    input.cronEvents.length === 0 &&
+    input.correlationKey === `slack:thread:${generic.channel}/${generic.threadTs}` &&
+    input.approvalOutcomes.every(
+      (event) =>
+        event.genericMcp?.channel === generic.channel &&
+        event.genericMcp.threadTs === generic.threadTs &&
+        event.genericMcp.requester === generic.requester &&
+        event.genericMcp.reader.teamId === generic.reader.teamId &&
+        event.genericMcp.repositoryDirectory === generic.repositoryDirectory,
+    );
+  const genericReplyAdmission = genericOnly
+    ? SlackReplyAdmissionSchema.safeParse({
+        version: 1,
+        teamId: generic.reader.teamId,
+        channel: generic.channel,
+        threadTs: generic.threadTs,
+      })
+    : undefined;
+  const replyAdmission = genericReplyAdmission ?? slackReplyAdmission;
+  const approvalSourceTs = genericOnly
+    ? SlackMessageTsSchema.safeParse(generic.threadTs)
+    : undefined;
+
   const prompt =
     parts.length === 1 ? parts[0].singlePrompt : parts.map((part) => part.mixedPrompt).join("\n\n");
 
@@ -830,6 +873,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
       correlationKey: input.correlationKey,
       ...routing.value,
       ...(sourceTs.success ? { messageTs: sourceTs.data } : {}),
+      ...(approvalSourceTs?.success ? { messageTs: approvalSourceTs.data } : {}),
       ...(replyAdmission?.success ? { slackReplyAdmission: replyAdmission.data } : {}),
       ...(input.triggerSlackId ? { triggerSlackId: input.triggerSlackId } : {}),
       ...(input.triggerGithubLogin ? { triggerGithubLogin: input.triggerGithubLogin } : {}),
@@ -1083,6 +1127,59 @@ export function createInternalExecClient(input: {
 
 function renderGitHubPrompt(events: GitHubWebhookEvent[]): string {
   return JSON.stringify(events.length === 1 ? events[0] : events);
+}
+
+/** Generic resolution uses signed workspace/user/card evidence and returns no raw result fragments. */
+export async function resolveGenericMcpApproval(
+  click: McpApprovalClick,
+  remoteCliUrl: string,
+  internalSecret: string | undefined,
+  fetchImpl?: typeof fetch,
+): Promise<McpApprovalProjection | undefined> {
+  try {
+    const response = await getFetch(fetchImpl)(`${remoteCliUrl}/internal/mcp/approvals/resolve`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(internalSecret ? { "x-thor-internal-secret": internalSecret } : {}),
+      },
+      body: JSON.stringify(click),
+    });
+    if (!response.ok) return undefined;
+    const body = z
+      .object({ status: z.literal("generic"), value: McpApprovalProjectionSchema })
+      .safeParse(await response.json());
+    return body.success ? body.data.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Queued continuation projections are reauthorized against stored scope before entering a model prompt. */
+export async function readGenericMcpApproval(
+  actionId: string,
+  reader: McpApprovalReader,
+  remoteCliUrl: string,
+  internalSecret: string | undefined,
+  fetchImpl?: typeof fetch,
+): Promise<McpApprovalProjection | undefined> {
+  try {
+    const response = await getFetch(fetchImpl)(`${remoteCliUrl}/internal/mcp/approvals/read`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(internalSecret ? { "x-thor-internal-secret": internalSecret } : {}),
+      },
+      body: JSON.stringify({ actionId, reader }),
+    });
+    if (!response.ok) return undefined;
+    const body = z
+      .object({ status: z.literal("ok"), value: McpApprovalProjectionSchema })
+      .safeParse(await response.json());
+    return body.success ? body.data.value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const APPROVAL_RESOLVE_MAX_ATTEMPTS = 3;

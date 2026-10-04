@@ -76,7 +76,7 @@ services:
       retries: 10
 
   remote-cli:
-    # Inherits base broker-only catalog/secrets directory mounts; never mount these in runner/executor.
+    # Inherits broker-only catalog/secrets and mcp-approval-state from base; never share with runner/executor.
     networks: [default, pi-tools]
 
   mitmproxy:

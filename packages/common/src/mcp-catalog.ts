@@ -98,9 +98,6 @@ const ServerSchema = z
     const names = [...server.policy.allow, ...server.policy.approve];
     if (new Set(names).size !== names.length)
       ctx.addIssue({ code: "custom", message: "duplicate or overlapping policy" });
-    // Phase 3 must supply the generic approval contract before this can be enabled.
-    if (server.policy.approve.length)
-      ctx.addIssue({ code: "custom", message: "generic approvals unsupported" });
     let url: URL;
     try {
       url = new URL(server.url);

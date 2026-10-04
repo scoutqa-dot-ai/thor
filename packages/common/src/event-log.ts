@@ -8,6 +8,7 @@ import {
   statSync,
 } from "node:fs";
 import { randomBytes } from "node:crypto";
+import { isUtf8 } from "node:buffer";
 import { dirname, join, resolve, sep } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
@@ -200,8 +201,14 @@ interface AliasCacheState {
   /** "<aliasType>\0<aliasValue>" → anchorId. */
   forward: Map<string, string>;
   reverse: Map<string, InternalReverseEntry>;
+  /** Authority requires a readable, fully committed, valid alias log; viewers remain tolerant. */
+  hasCompleteEvidence: boolean;
 }
-const aliasCache: AliasCacheState = { forward: new Map(), reverse: new Map() };
+const aliasCache: AliasCacheState = {
+  forward: new Map(),
+  reverse: new Map(),
+  hasCompleteEvidence: false,
+};
 /** Last observed file signature for aliases.jsonl. */
 let aliasCacheLastSignature: string | null = null;
 
@@ -209,6 +216,7 @@ interface SessionRecordsCacheEntry {
   signature: string;
   records: SessionEventLogRecord[];
   skippedMalformed: number;
+  hasCompleteEvidence: boolean;
 }
 // Bounded LRU: the cache holds the full parsed records array per session, so
 // without a cap a long-running process accumulates every session it has ever
@@ -507,14 +515,21 @@ function* streamSessionRecords(sessionId: string): Generator<SessionEventLogReco
   }
 }
 
-function completeLines(path: string): string[] {
+/** Retain committed history, but incomplete bytes or lossy UTF-8 decoding cannot prove authority. */
+function readCompleteJsonlLines(path: string): {
+  lines: string[];
+  hasCompleteEvidence: boolean;
+} {
   const started = performance.now();
-  let text: string;
+  let bytes: Buffer;
   try {
-    text = readFileSync(path, "utf8");
+    bytes = readFileSync(path);
   } catch {
-    return [];
+    return { lines: [], hasCompleteEvidence: false };
   }
+  const text = bytes.toString("utf8");
+  // The writer commits every append with LF. Even valid JSON or whitespace without LF is incomplete.
+  const hasCompleteEvidence = isUtf8(bytes) && (bytes.length === 0 || bytes.at(-1) === 0x0a);
   const lines = text.split("\n");
   if (!text.endsWith("\n")) lines.pop();
   const filtered = lines.filter((line) => line.length > 0);
@@ -527,7 +542,7 @@ function completeLines(path: string): string[] {
       lines: filtered.length,
     });
   }
-  return filtered;
+  return { lines: filtered, hasCompleteEvidence };
 }
 
 function fileStat(path: string): { signature: string; size: number } | null {
@@ -539,25 +554,24 @@ function fileStat(path: string): { signature: string; size: number } | null {
   }
 }
 
-function readSessionRecords(sessionId: string): {
-  records: SessionEventLogRecord[];
-  skippedMalformed: number;
-} {
+function readSessionRecords(sessionId: string): Omit<SessionRecordsCacheEntry, "signature"> {
   const path = sessionLogPath(sessionId);
   const stat = fileStat(path);
   const signature = stat?.signature ?? `${path}:missing`;
   const cached = sessionRecordsCache.get(sessionId);
   if (cached && cached.signature === signature) {
     touchSessionRecordsCache(sessionId, cached);
-    return { records: cached.records, skippedMalformed: cached.skippedMalformed };
+    return cached;
   }
   if (!stat) {
-    touchSessionRecordsCache(sessionId, { signature, records: [], skippedMalformed: 0 });
-    return { records: [], skippedMalformed: 0 };
+    const empty = { records: [], skippedMalformed: 0, hasCompleteEvidence: false };
+    touchSessionRecordsCache(sessionId, { signature, ...empty });
+    return empty;
   }
   let skippedMalformed = 0;
   const records: SessionEventLogRecord[] = [];
-  for (const line of completeLines(path)) {
+  const { lines, hasCompleteEvidence } = readCompleteJsonlLines(path);
+  for (const line of lines) {
     try {
       const parsed = SessionEventLogRecordSchema.safeParse(JSON.parse(line));
       if (parsed.success) records.push(parsed.data);
@@ -566,8 +580,9 @@ function readSessionRecords(sessionId: string): {
       skippedMalformed++;
     }
   }
-  touchSessionRecordsCache(sessionId, { signature, records, skippedMalformed });
-  return { records, skippedMalformed };
+  const read = { records, skippedMalformed, hasCompleteEvidence };
+  touchSessionRecordsCache(sessionId, { signature, ...read });
+  return read;
 }
 
 export function readTriggerSlice(
@@ -688,13 +703,18 @@ function loadAliasCacheIfChanged(): void {
   if (currentSignature === aliasCacheLastSignature) return;
   aliasCache.forward.clear();
   aliasCache.reverse.clear();
+  aliasCache.hasCompleteEvidence = false;
   if (currentSize > 0) {
-    for (const line of completeLines(path)) {
+    const read = readCompleteJsonlLines(path);
+    aliasCache.hasCompleteEvidence = read.hasCompleteEvidence;
+    for (const line of read.lines) {
       try {
         const parsed = AliasRecordSchema.safeParse(JSON.parse(line));
         if (parsed.success) applyAliasRecord(parsed.data);
+        else aliasCache.hasCompleteEvidence = false;
       } catch {
         // ignored: malformed alias records are not routing facts
+        aliasCache.hasCompleteEvidence = false;
       }
     }
   }
@@ -982,13 +1002,13 @@ type ScannedTrigger = { triggerId: string; ts: string } & Pick<
   "correlationKey" | "triggerSlackId" | "triggerGithubLogin" | "nativeMcp"
 >;
 
-function scanTriggers(
-  sessionId: string,
+function scanTriggerRecords(
+  records: Iterable<SessionEventLogRecord>,
   accepts: (trigger: ScannedTrigger) => boolean = () => true,
 ): { open?: ScannedTrigger; latest?: ScannedTrigger } {
   let open: ScannedTrigger | undefined;
   let latest: ScannedTrigger | undefined;
-  for (const record of streamSessionRecords(sessionId)) {
+  for (const record of records) {
     if (record.type === "trigger_start") {
       const t: ScannedTrigger = {
         triggerId: record.triggerId,
@@ -1007,6 +1027,21 @@ function scanTriggers(
     }
   }
   return { open, latest };
+}
+
+function scanTriggers(
+  sessionId: string,
+  accepts?: (trigger: ScannedTrigger) => boolean,
+): ReturnType<typeof scanTriggerRecords> {
+  return scanTriggerRecords(streamSessionRecords(sessionId), accepts);
+}
+
+/** No skipped or uncommitted evidence may conceal supersession/rebinding from MCP authorization. */
+function readMcpAuthorityRecords(sessionId: string): SessionEventLogRecord[] | undefined {
+  loadAliasCacheIfChanged();
+  if (!aliasCache.hasCompleteEvidence) return undefined;
+  const read = readSessionRecords(sessionId);
+  return read.hasCompleteEvidence && read.skippedMalformed === 0 ? read.records : undefined;
 }
 
 export function findActiveTrigger(requestSessionId: string): ActiveTriggerResult {
@@ -1072,7 +1107,7 @@ export function findActiveSlackTriggerActor(
   };
 }
 
-/** Read the latest open native admission only; older/ended/legacy turns cannot authorize private MCP. */
+/** Require complete log evidence and the latest open native admission; never reuse older/ended turns. */
 export function findNativeMcpProjection(sessionId: string):
   | {
       readonly anchorId: string;
@@ -1080,6 +1115,8 @@ export function findNativeMcpProjection(sessionId: string):
       readonly nativeMcp: z.infer<typeof McpNativeProjectionSchema>;
     }
   | undefined {
+  const records = readMcpAuthorityRecords(sessionId);
+  if (!records) return undefined;
   const anchorId = resolveAlias({ aliasType: "pi.conversation", aliasValue: sessionId });
   if (
     !anchorId ||
@@ -1087,7 +1124,7 @@ export function findNativeMcpProjection(sessionId: string):
     resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId }) !== anchorId
   )
     return undefined;
-  const { open, latest } = scanTriggers(sessionId);
+  const { open, latest } = scanTriggerRecords(records);
   if (!open?.nativeMcp || latest?.triggerId !== open.triggerId) return undefined;
   if ((open.correlationKey ?? null) !== open.nativeMcp.sourceKey) return undefined;
   const requester = open.nativeMcp.requester;
@@ -1102,11 +1139,40 @@ export function findNativeMcpProjection(sessionId: string):
   return { anchorId, triggerId: open.triggerId, nativeMcp: open.nativeMcp };
 }
 
-/** Check operation-bound host tool proof inside the open admission; search cannot grant dispatch. */
+/** Latest original admission may finish awaiting approval; incomplete evidence or supersession revokes it. */
+export function findLatestMcpApprovalProjection(
+  sessionId: string,
+): ReturnType<typeof findNativeMcpProjection> {
+  const records = readMcpAuthorityRecords(sessionId);
+  if (!records) return undefined;
+  const anchorId = resolveAlias({ aliasType: "pi.conversation", aliasValue: sessionId });
+  if (
+    !anchorId ||
+    sessionId !== `pi-${anchorId}` ||
+    resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId }) !== anchorId
+  )
+    return undefined;
+  const { latest } = scanTriggerRecords(records);
+  if (!latest?.nativeMcp || (latest.correlationKey ?? null) !== latest.nativeMcp.sourceKey)
+    return undefined;
+  const slice = readTriggerSlice(sessionId, latest.triggerId);
+  if ("notFound" in slice || slice.skippedMalformed || slice.truncated) return undefined;
+  const requester = latest.nativeMcp.requester;
+  if (
+    requester.source !== "slack" ||
+    latest.triggerSlackId !== requester.id ||
+    latest.triggerGithubLogin
+  )
+    return undefined;
+  return { anchorId, triggerId: latest.triggerId, nativeMcp: latest.nativeMcp };
+}
+
+/** Require complete log evidence and operation-bound open host tool proof; search cannot grant dispatch. */
 export function hasNativeMcpCallProjection(
   claimed: McpNativeAuthority,
   operation: McpNativeOperation,
 ): boolean {
+  if (!readMcpAuthorityRecords(claimed.sessionId)) return false;
   const slice = readTriggerSlice(claimed.sessionId, claimed.triggerId);
   if (
     "notFound" in slice ||

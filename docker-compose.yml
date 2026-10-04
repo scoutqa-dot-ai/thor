@@ -81,6 +81,8 @@ services:
       - ./docker-volumes/workspace:/workspace
       - ./docker-volumes/github-app:/var/lib/remote-cli/github-app
       - google-workspace-oauth-data:/var/lib/remote-cli/google-workspace-oauth
+      # Generic approvals/fences are broker-only; historical workspace approvals are not private.
+      - mcp-approval-state:/var/lib/remote-cli/mcp-approvals
       # Optional directories: absent/empty catalog retains bundled defaults. Never share with tools.
       - ./docker-volumes/mcp-catalog:/etc/thor/mcp-catalog:ro
       - ./docker-volumes/mcp-secrets:/run/secrets/thor-mcp:ro
@@ -436,6 +438,7 @@ services:
         condition: service_healthy
 
 volumes:
+  mcp-approval-state:
   codex-lb-data:
   google-workspace-oauth-data:
   shared-tmp:

@@ -7,6 +7,7 @@ services:
     volumes:
       - catalog:/etc/thor/mcp-catalog
       - secrets:/run/secrets/thor-mcp
+      - mcp-approval-state:/var/lib/remote-cli/mcp-approvals
       - workspace:/workspace
       - ../../scripts/fixtures/mcp-catalog-init.mjs:/init.mjs:ro
     command: [node, /init.mjs]
@@ -30,6 +31,8 @@ services:
       GITHUB_APP_BOT_ID: "1"
       GITHUB_APP_PRIVATE_KEY_FILE: /var/lib/remote-cli/github-app/dummy.pem
       SLACK_BOT_TOKEN: dummy-slack-token
+      SLACK_API_BASE_URL: http://fixture:8000/slack
+      SLACK_TEAM_ID: TFIXTURE
       THOR_INTERNAL_SECRET: dummy-internal-secret
       RUNNER_BASE_URL: http://runner:3000
       OP_SERVICE_ACCOUNT_TOKEN: dummy-managed-token
@@ -45,11 +48,13 @@ services:
     volumes:
       - catalog:/etc/thor/mcp-catalog:ro
       - secrets:/run/secrets/thor-mcp:ro
+      - mcp-approval-state:/var/lib/remote-cli/mcp-approvals
       - workspace:/workspace
       - ../../packages/remote-cli/dist:/app/packages/remote-cli/dist:ro
       - ../../packages/remote-cli/src:/app/packages/remote-cli/src:ro
       - ../../packages/common/src:/app/packages/common/src:ro
       - ../../scripts/fixtures/mcp-child-isolation.mjs:/app/packages/remote-cli/mcp-child-isolation.mjs:ro
+      - ../../packages/remote-cli/dist/mcp-generic-compose.mjs:/app/packages/common/mcp-generic-compose.mjs:ro
     depends_on:
       init: { condition: service_completed_successfully }
       fixture: { condition: service_healthy }
@@ -67,10 +72,21 @@ services:
     entrypoint: [node, -e, "setInterval(()=>{},1000)"]
     volumes:
       - workspace:/workspace:ro
+  gateway:
+    image: ${MCP_TEST_GATEWAY_IMAGE:-thor-mcp-test-gateway:latest}
+    entrypoint: [node, -e, "setInterval(()=>{},1000)"]
+    volumes:
+      - workspace:/workspace:ro
+  admin:
+    image: ${MCP_TEST_ADMIN_IMAGE:-thor-mcp-test-admin:latest}
+    entrypoint: [node, -e, "setInterval(()=>{},1000)"]
+    volumes:
+      - workspace:/workspace:ro
 networks:
   default:
     internal: true
 volumes:
+  mcp-approval-state:
   catalog:
   secrets:
   workspace:

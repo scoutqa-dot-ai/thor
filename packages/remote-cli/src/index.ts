@@ -44,6 +44,7 @@ import { loadMcpCatalogSnapshot } from "./mcp-catalog-files.js";
 import { enableBrokerCommandIsolation } from "./broker-command-isolation.js";
 import { runMcpCatalogCommand } from "./mcp-catalog-command.js";
 import { registerMcpPrivateRoutes } from "./mcp-private-routes.js";
+import { McpApprovalOwner } from "./mcp-approval-owner.js";
 import { ApprovalStore, type ApprovalAction } from "./approval-store.js";
 import { sanitizeCredentialBrokerToolCallLog } from "./credential-broker-audit.js";
 import {
@@ -2355,7 +2356,18 @@ export async function startRemoteCliServer(): Promise<void> {
   const gitIdentity = deriveBotGitIdentity();
   const catalog = loadMcpCatalogSnapshot();
   if (!catalog.ok) throw new Error(`MCP catalog startup rejected: ${catalog.reason}`);
-  const remoteCli = createRemoteCliApp({ env: envConfig, mcp: { catalog: catalog.value } });
+  const ownership = await McpApprovalOwner.acquire();
+  if (!ownership.ok) throw new Error(`MCP approval startup rejected: ${ownership.reason}`);
+  let remoteCli: RemoteCliApp;
+  try {
+    remoteCli = createRemoteCliApp({
+      env: envConfig,
+      mcp: { catalog: catalog.value, genericApprovalOwner: ownership.value },
+    });
+  } catch (error) {
+    ownership.value.release();
+    throw error;
+  }
   logInfo(log, "remote_cli_starting", {
     port: envConfig.port,
     gitIdentityName: gitIdentity.name,

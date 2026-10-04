@@ -80,6 +80,7 @@ export const SlackUrlVerificationSchema = z.object({
 });
 
 export const SlackInteractivityPayloadSchema = z.object({
+  team: z.object({ id: z.string() }).optional(),
   type: z.string().optional(),
   user: z
     .object({

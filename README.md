@@ -120,7 +120,13 @@ with private bearer files in `docker-volumes/mcp-secrets/`. Both fixed read-only
 directory mounts belong only to `remote-cli`; no new runtime env variables or
 workspace config fields are needed. Missing/empty catalog uses the six bundled
 defaults; malformed present config fails before listen. Add/remove/rotate,
-validate locally, then restart the broker. Custom approvals remain unsupported.
+validate locally, then restart the broker. Custom `approve` requires trusted Slack
+requester-private review through the structured broker edge (native registration
+is a later phase; CLI attribution cannot request generic review). New generic
+records/fences use broker-only `mcp-approval-state` at
+`/var/lib/remote-cli/mcp-approvals` (0700/0600), not historical shared approvals.
+Every restart revokes pending generic authority, including identical catalogs and
+same-filename token/account replacement. Do not replay uncertain mutations.
 See [operator catalog and security contract](docs/mcp-catalog.md), including the
 important distinction between deleting the entire catalog and disabling an alias.
 
@@ -341,7 +347,8 @@ See [`docs/feat/security-model.md`](docs/feat/security-model.md) for the full la
 ```bash
 pnpm test
 pnpm test:mcp
-# Prebuilt dummy fixture images required; see docs/mcp-catalog.md:
+# Prebuilt dummy fixture images required; compile fixture before offline validation:
+pnpm build:mcp-fixture
 pnpm test:mcp-catalog-e2e
 REMOTE_CLI_GIT_REPO_URL=https://github.com/owner/repo \
 REMOTE_CLI_GITHUB_REPO=owner/repo \

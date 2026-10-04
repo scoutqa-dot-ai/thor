@@ -10,9 +10,11 @@ on:
       - docker/remote-cli/**
       - packages/common/**
       - packages/remote-cli/**
+      - packages/gateway/**
       - packages/runner/**
       - packages/pi-executor/**
       - pnpm-lock.yaml
+      - package.json
       - scripts/test-mcp-catalog-compose.sh
       - scripts/fixtures/mcp-*.mjs
   workflow_dispatch:
@@ -33,6 +35,8 @@ jobs:
       MCP_TEST_BROKER_IMAGE: thor-mcp-test-broker:ci
       MCP_TEST_RUNNER_IMAGE: thor-mcp-test-runner:ci
       MCP_TEST_EXECUTOR_IMAGE: thor-mcp-test-executor:ci
+      MCP_TEST_GATEWAY_IMAGE: thor-mcp-test-gateway:ci
+      MCP_TEST_ADMIN_IMAGE: thor-mcp-test-admin:ci
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
@@ -44,12 +48,16 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm typecheck
+          pnpm exec vitest run packages/remote-cli/src/mcp-generic-approval.integration.test.ts
           pnpm build
+          pnpm build:mcp-fixture
       - name: Prepare fixture images (separate from validation)
         run: |
           docker build --target remote-cli -t "$MCP_TEST_BROKER_IMAGE" .
           docker build --target runner -t "$MCP_TEST_RUNNER_IMAGE" .
           docker build --target pi-executor -t "$MCP_TEST_EXECUTOR_IMAGE" .
+          docker build --target gateway -t "$MCP_TEST_GATEWAY_IMAGE" .
+          docker build --target admin -t "$MCP_TEST_ADMIN_IMAGE" .
           docker pull node:24-slim
       - name: Run offline dummy-only real broker acceptance
         run: ./scripts/test-mcp-catalog-compose.sh

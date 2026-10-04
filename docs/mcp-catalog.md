@@ -1,9 +1,10 @@
 # Operator MCP HTTP catalog
 
-Phase 2 supports restart-only, allow-only custom MCP servers through the existing
-broker and legacy `mcp` wrapper. Native `mcp_search` / `mcp_call` registration and
-generic human approvals are later phases; custom `approve` entries currently fail
-validation, including entries for disabled servers. `allow` authorizes effects,
+Phases 2–3 support restart-only custom MCP servers through the existing broker.
+Allow-only tools retain the legacy `mcp` wrapper. Custom `approve` uses a versioned
+generic operation and the authenticated structured broker edge; CLI attribution
+cannot create generic review. Native `mcp_search` / `mcp_call` registration is a
+later phase, not installed by Phase 3. `allow` authorizes effects,
 not merely reads. Review the provider's business-argument and credential contract:
 tools needing credentials in arguments require a dedicated broker adapter.
 
@@ -146,6 +147,68 @@ successful result is unsupported: inventory stays unavailable; a dispatched
 result becomes uncertain, without returning the reflected bytes or retrying.
 This is a specific credential boundary, not general business-field redaction.
 
+## Generic approval safety contract
+
+Custom `approve` names need no source-defined tool enum and never select specialized
+Jira/browser/Google handlers by bare name. Operators must review business-argument
+contracts: credentials in tool arguments are unsupported and require a dedicated
+adapter, not field-name redaction. Bearer account/scope is service-owned, not proof
+of the requesting user's upstream identity.
+
+New generic records and stable fence files live in the broker-only named volume
+`mcp-approval-state`, mounted at `/var/lib/remote-cli/mcp-approvals`; directories
+are 0700, files 0600, broker-owned. Dockerfile provisions ownership for new volumes.
+Version 1 private records use the broker's canonical JSON encoding; manual rewrites,
+duplicate fields and decoder-stripped arguments fail closed rather than becoming
+weaker proof. Preserve record bytes when backing up/restoring; use the broker to
+request fresh review instead of editing pending files.
+Do not mount this volume in another service/child or share it through workspace.
+Historical `/workspace/data/approvals` remains shared and untouched; it is **not**
+private, encrypted or migrated by this feature. Private modes do not erase native
+history or make backups encrypted. Keep backup/restore access equally restricted.
+
+One Linux kernel owner fence is held for broker lifetime. A second broker fails
+before changing activation or listening. Every successful startup atomically
+flushes a fresh activation ID, revoking old generic references/pending approval
+authority even with identical aliases, endpoint, schema, policy or secret filename.
+Reconnect revisions likewise revoke affected pending authority. Editing credentials
+without restart never changes active clients; account replacement/rotation requires
+restart and fresh review. Provider-internal principal/behavior changes cannot be
+proven by schema equality: restart/reapprove incompatible changes.
+
+Only a host-admitted Slack requester with current workspace/repository/source proof
+can review generic operations. GitHub/system/cron and forgeable CLI attributes are
+insufficient. The broker confirms its Slack workspace and the requester's private
+DM, displays complete effective JSON as plain text (one section, conservative 2800
+UTF-16-code-unit budget including heading/repo), or returns `review_not_supported`.
+There is no truncated review, public raw payload, caller-selected reviewer/channel,
+or generic detailed UI. Private notification intent is durable **before** posting;
+missing receipt is uncertain, never an automatic second card for the same host call.
+
+On click the authenticated signed gateway supplies actual user/team/channel/card
+evidence, not button routing hints. The broker rechecks original latest request
+(including supersession), expiry (15 minutes), private audience, activation,
+endpoint/catalog/policy/schema/preparation and live pinned connection before a
+durably consumed claim under a stable action lock. It holds that lock through the
+dispatch/result window. Atomic record replacement flushes file and directory.
+Process loss, transport errors or missing confirmed results leave consumed state
+uncertain; approval clicks never automatically redispatch it. Revocation cannot
+undo an issued effect. This is tested on Linux local Docker volumes/process crashes,
+not universal power-loss, NFS/distributed lease or provider exactly-once proof.
+
+Authenticated reads/list/result projections check stored requester, team, canonical
+repo, original source/request/session even for removed servers. CLI returns denial
+for generic IDs and excludes generic records from legacy lists; no raw fallback.
+Generic result projection is deliberately the minimal completed/tool-error/uncertain
+disposition, not raw vendor content. The existing gateway approval continuation
+reauthorizes stored scope and routes only to its private DM thread/frozen repo; it
+does not create an outbox, task waiter or tool invocation ledger. Pending review is
+not successful execution and never instructs the agent to retry the mutation.
+
+Use local volume semantics supporting `flock`, atomic rename and directory `fsync`.
+Drain broker work before restart. Do not remove/recreate the state volume to bypass
+ownership or resolve uncertainty; investigate effects with the provider/operator.
+
 ## Child and container boundary
 
 Broker-owned command children run through fixed integration binaries and reduced
@@ -173,11 +236,17 @@ fail, never fall back to an unsandboxed child.
 
 ## Isolated acceptance
 
+Prepare current broker artifacts with `pnpm build`, then compile the authority
+fixture with `pnpm build:mcp-fixture` using existing pinned dependencies **before**
+offline validation. Preparation is separate; the acceptance script never builds.
+
 `pnpm test` includes local filesystem and real SDK/TLS/session cases. The separate
 `./scripts/test-mcp-catalog-compose.sh` fixture uses a real broker with current
 compiled artifacts, dummy private named volumes, an internal network and no host
 ports/deployment data. Supply prebuilt broker/runner/executor image names through
-its `MCP_TEST_*_IMAGE` test-only selectors; it never installs/builds/downloads.
-Runner/executor image probes run measurement processes, not a live Pi conversation;
+its `MCP_TEST_{BROKER,RUNNER,EXECUTOR,GATEWAY,ADMIN}_IMAGE` test-only selectors;
+it never installs/builds/downloads. All four consumer image probes and managed
+children check that private records/fences are inaccessible. These are measurement
+processes, not a live Pi conversation;
 full Pi native discovery/approval acceptance remains a later phase. CI explicitly
 prepares images before running that gate. All fixture resources are removed on exit.

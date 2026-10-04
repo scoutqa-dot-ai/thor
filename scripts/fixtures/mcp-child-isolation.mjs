@@ -5,7 +5,7 @@ import { prepareBrokerCommand } from "./src/broker-command-isolation.ts";
 
 const probe = String.raw`
 const fs=require('fs');
-for (const p of ['/etc/thor/mcp-catalog/catalog.json','/run/secrets/thor-mcp/dummy-token','/proc/1/root/run/secrets/thor-mcp/dummy-token','/workspace/repos/catalog-fixture/private-link']) {
+for (const p of ['/var/lib/remote-cli/mcp-approvals/privacy-canary','/etc/thor/mcp-catalog/catalog.json','/run/secrets/thor-mcp/dummy-token','/proc/1/root/run/secrets/thor-mcp/dummy-token','/workspace/repos/catalog-fixture/private-link']) {
   try { fs.readFileSync(p); throw new Error('private mount exposed'); } catch (e) { if(e.message==='private mount exposed') throw e; }
 }
 for (const pid of fs.readdirSync('/proc').filter(x=>/^\d+$/.test(x))) {

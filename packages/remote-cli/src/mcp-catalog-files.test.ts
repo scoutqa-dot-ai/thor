@@ -139,7 +139,7 @@ describe("operator MCP catalog startup authority and credentials", () => {
     if (failure === "public-directory") chmodSync(paths.secretsDirectory, 0o755);
     expect(load()).toEqual({ ok: false, reason: "credential_unavailable" });
   });
-  it("disabled custom credentials are not read, but unsupported approve is rejected even disabled", () => {
+  it("disabled custom credentials are not read and custom approve remains approval policy, never allow", () => {
     const value = catalog();
     value.disabled = ["mydocs", "grafana"];
     write(value);
@@ -149,7 +149,14 @@ describe("operator MCP catalog startup authority and credentials", () => {
     if (result.ok) expect(result.value.policies.mydocs).toBeUndefined();
     value.servers.mydocs.policy.approve.push("write_doc");
     write(value);
-    expect(load()).toEqual({ ok: false, reason: "invalid_catalog" });
+    expect(load().ok).toBe(true);
+    mkdirSync(paths.secretsDirectory, { mode: 0o700 });
+    writeFileSync(join(paths.secretsDirectory, "docs-token"), "dummy-token", { mode: 0o600 });
+    value.disabled = [];
+    write(value);
+    const enabled = load();
+    expect(enabled.ok).toBe(true);
+    if (enabled.ok) expect(enabled.value.policies.mydocs.approve).toEqual(["write_doc"]);
   });
   it("present unreadable/symlink/nonregular catalog fails, including dangling directory symlinks", () => {
     write();

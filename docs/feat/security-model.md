@@ -51,9 +51,19 @@ public OpenAI/ChatGPT rules are also available for ordinary agent-initiated
 HTTP reads.
 
 Bundled upstream defaults/policy remain in [`packages/common/src/proxies.ts`](../../packages/common/src/proxies.ts).
-The separate [operator MCP catalog](../mcp-catalog.md) adds complete allow-only
+The separate [operator MCP catalog](../mcp-catalog.md) adds complete HTTP
 definitions through broker-private files; it does not reuse mitmproxy environment
-interpolation or agent-controlled URLs/headers. Generic approvals are not enabled.
+interpolation or agent-controlled URLs/headers. Generic approvals use versioned,
+server-qualified frozen proof, trusted requester-only Slack DM review and a
+broker-lifetime kernel owner fence. Their new `mcp-approval-state` volume is mounted
+only in remote-cli at `/var/lib/remote-cli/mcp-approvals` (0700 directories / 0600
+files), including stable action lock inodes and atomically flushed replacements.
+Every activation invalidates pending generic authority; consumed records lacking
+confirmed results are uncertain, never retryable. Private read/result/continuation
+edges authenticate host/gateway readers and check stored requester/team/repo/source.
+Legacy CLI attribution grants no generic reader/reviewer authority or raw fallback.
+These protections do not retroactively make `/workspace/data/approvals` private,
+encrypt/erase native history, or establish provider exactly-once execution.
 
 ### Custom rules
 

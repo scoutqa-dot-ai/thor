@@ -1,7 +1,24 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  constants,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+  openSync,
+  closeSync,
+  fstatSync,
+} from "node:fs";
 import { join } from "node:path";
 import { ExecResultSchema, isUuidV7, mintAnchor, type ExecResult } from "@thor/common";
 import { z } from "zod/v4";
+import { GenericMcpApprovalSchema, type GenericMcpApproval } from "@thor/common";
+import {
+  acquireApprovalFileLock,
+  ensurePrivateApprovalDirectory,
+  replacePrivateApprovalJson,
+  flushApprovalDirectory,
+} from "./mcp-approval-owner.js";
 
 const ApprovalActionSchema = z
   .object({
@@ -85,7 +102,10 @@ export class ApprovalStore {
     for (const dateDir of dateDirs) {
       const filePath = join(this.baseDir, dateDir, `${id}.json`);
       if (existsSync(filePath)) {
-        return ApprovalActionSchema.parse(JSON.parse(readFileSync(filePath, "utf-8")));
+        const raw: unknown = JSON.parse(readFileSync(filePath, "utf-8"));
+        if (typeof raw === "object" && raw !== null && ("version" in raw || "operation" in raw))
+          throw new Error("Versioned approval cannot use legacy reader");
+        return ApprovalActionSchema.parse(raw);
       }
     }
     return undefined;
@@ -141,9 +161,10 @@ export class ApprovalStore {
       }
       for (const file of files) {
         try {
-          const action = ApprovalActionSchema.parse(
-            JSON.parse(readFileSync(join(dirPath, file), "utf-8")),
-          );
+          const raw: unknown = JSON.parse(readFileSync(join(dirPath, file), "utf-8"));
+          if (typeof raw === "object" && raw !== null && ("version" in raw || "operation" in raw))
+            continue;
+          const action = ApprovalActionSchema.parse(raw);
           if (action.status === "pending") pending.push(action);
         } catch {
           // Skip corrupt files.
@@ -151,6 +172,83 @@ export class ApprovalStore {
       }
     }
     return pending;
+  }
+
+  /** New representation selection is explicit; malformed versioned records never parse as legacy. */
+  getGeneric(id: string): GenericMcpApproval | undefined {
+    if (!isUuidV7(id)) return undefined;
+    ensurePrivateApprovalDirectory(this.baseDir);
+    for (const date of this.listDateDirsIn(this.baseDir)) {
+      ensurePrivateApprovalDirectory(join(this.baseDir, date));
+      const path = join(this.baseDir, date, `${id}.json`);
+      if (!existsSync(path)) continue;
+      const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        const stat = fstatSync(fd);
+        if (
+          !stat.isFile() ||
+          stat.size > 128 * 1024 ||
+          stat.nlink !== 1 ||
+          stat.uid !== process.getuid?.() ||
+          (stat.mode & 0o7777) !== 0o600
+        )
+          throw new Error("MCP approval record permissions invalid");
+        const text = readFileSync(fd, "utf8");
+        const raw: unknown = JSON.parse(text);
+        const record = GenericMcpApprovalSchema.parse(raw);
+        // Version 1 private records are emitted only by this canonical writer. Duplicate
+        // fields or a decoder-stripped payload cannot downgrade consumed proof to pending.
+        if (text !== JSON.stringify(record) + "\n")
+          throw new Error("MCP approval record encoding invalid");
+        if (record.id !== id || record.dateSegment !== date)
+          throw new Error("MCP approval record identity invalid");
+        return record;
+      } finally {
+        closeSync(fd);
+      }
+    }
+    return undefined;
+  }
+
+  /** Atomic file/directory-flushed writes belong only to the new private root. */
+  updateGeneric(action: GenericMcpApproval): void {
+    const record = GenericMcpApprovalSchema.parse(action);
+    ensurePrivateApprovalDirectory(this.baseDir);
+    const dir = join(this.baseDir, record.dateSegment);
+    ensurePrivateApprovalDirectory(dir);
+    flushApprovalDirectory(this.baseDir);
+    replacePrivateApprovalJson(join(dir, `${record.id}.json`), record);
+  }
+
+  /** One stable inode guards read, durable claim, I/O and result replacement. Busy never grants dispatch. */
+  async withGenericLock<T>(
+    id: string,
+    work: () => Promise<T>,
+  ): Promise<{ status: "ok"; value: T } | { status: "busy" }> {
+    if (!isUuidV7(id)) return { status: "busy" };
+    const locks = join(this.baseDir, "locks");
+    ensurePrivateApprovalDirectory(locks);
+    const release = await acquireApprovalFileLock(join(locks, `${id}.lock`));
+    if (!release) return { status: "busy" };
+    try {
+      return { status: "ok", value: await work() };
+    } finally {
+      release();
+    }
+  }
+
+  /** Private storage listing is internal; the service must filter every returned projection by reader scope. */
+  listGeneric(): GenericMcpApproval[] {
+    const records: GenericMcpApproval[] = [];
+    for (const date of this.listDateDirsIn(this.baseDir)) {
+      for (const file of readdirSync(join(this.baseDir, date)).filter((file) =>
+        file.endsWith(".json"),
+      )) {
+        const record = this.getGeneric(file.slice(0, -5));
+        if (record) records.push(record);
+      }
+    }
+    return records;
   }
 
   private write(action: ApprovalAction): void {

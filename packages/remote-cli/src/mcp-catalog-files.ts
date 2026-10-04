@@ -173,7 +173,7 @@ export function loadMcpCatalogSnapshot(
       policies[alias] = {
         upstream: { url: server.url, transport: "streamable-http" },
         allow: [...server.policy.allow],
-        approve: [],
+        approve: [...server.policy.approve],
       };
       upstreams.set(
         alias,

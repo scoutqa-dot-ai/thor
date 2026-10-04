@@ -60,6 +60,15 @@ import {
 import { attributionFields, resolveTriggerUser } from "./attribution.js";
 import { postSlackMessageApi } from "./slack-post-message.js";
 import type { McpCatalogSnapshot } from "./mcp-catalog-files.js";
+import { GenericMcpApprovals, type GenericMcpPreparedCall } from "./mcp-generic-approval.js";
+import type { McpApprovalOwner } from "./mcp-approval-owner.js";
+import type {
+  GenericMcpApproval,
+  McpApprovalClick,
+  McpApprovalReader,
+  McpApprovalProjection,
+  McpApprovalResolution,
+} from "@thor/common";
 
 const log = createLogger("mcp");
 const DEFAULT_APPROVALS_DIR = "/workspace/data/approvals";
@@ -83,6 +92,15 @@ const LoginPlanApprovalResultSchema = z
     callback_origin: z.string().url(),
   })
   .strict();
+
+const builtinApprovalHandlers = new Set([
+  "atlassian/createJiraIssue",
+  "atlassian/addCommentToJiraIssue",
+  "atlassian/editJiraIssue",
+  "atlassian/transitionJiraIssue",
+  "posthog/create-feature-flag",
+  "onepassword-browser/browser_open_authenticated",
+]);
 
 function isBuiltinDisclaimerTool(server: string, tool: string): boolean {
   return (
@@ -196,8 +214,12 @@ export type CustomApprovalReviewerAuthorizer = (input: {
 }) => boolean;
 
 export interface McpServiceDeps {
+  /** Operator connection checks may inspect approve inventory but cannot prepare or dispatch calls. */
+  mode?: "inventory-only";
   /** Immutable operator activation loaded before the production listener starts. */
   catalog?: McpCatalogSnapshot;
+  /** Production holds this capability before listen; custom approve cannot activate without it. */
+  genericApprovalOwner?: McpApprovalOwner;
   approvalsDir?: string;
   isProduction?: boolean;
   connectUpstreamFn?: typeof connectUpstream;
@@ -289,6 +311,12 @@ export interface McpService {
   ): Promise<McpDescribeOutcome>;
   /** Exact call revalidates policy, schema and native authority before any effect. No call retry. */
   callTool(input: McpCallInput, context: McpAccessContext): Promise<McpServiceCallOutcome>;
+  /** Signed Slack gateway evidence, independently authenticated at the HTTP edge. */
+  resolvePrivateApproval(click: McpApprovalClick): Promise<McpApprovalResolution>;
+  /** Authenticated scoped projections never fall back to legacy raw records. */
+  readPrivateApproval(id: string, reader: McpApprovalReader): McpApprovalProjection | undefined;
+  /** Authenticated scope-filtered list, independent of active aliases. */
+  listPrivateApprovals(reader: McpApprovalReader): McpApprovalProjection[];
   getHealth(): Record<string, unknown>;
   warmUpstreams(): Promise<void>;
   closeAll(): Promise<void>;
@@ -307,6 +335,23 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   const getConfig = deps.configLoader ?? createConfigLoader(WORKSPACE_CONFIG_PATH);
   const fetchImpl = deps.fetchImpl;
   const slackConfig = deps.slack;
+  const genericApprovals = deps.genericApprovalOwner
+    ? new GenericMcpApprovals(deps.genericApprovalOwner, slackConfig ?? {}, fetchImpl)
+    : undefined;
+  for (const name of proxyNames) {
+    if (
+      BUILTIN_PROXY_NAMES.some((builtin) => builtin === name) &&
+      lookupProxy(name)?.approve.some((tool) => !builtinApprovalHandlers.has(`${name}/${tool}`))
+    )
+      throw new Error("MCP builtin approval policy has no qualified handler");
+    if (
+      !BUILTIN_PROXY_NAMES.some((builtin) => builtin === name) &&
+      lookupProxy(name)?.approve.length &&
+      !genericApprovals &&
+      deps.mode !== "inventory-only"
+    )
+      throw new Error("MCP custom approve requires private state ownership");
+  }
   const instances = new Map<string, ProxyInstance>();
   const activatedInventories = new Map<string, string>();
   const connecting = new Map<string, Promise<ProxyInstance | undefined>>();
@@ -404,7 +449,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         onDisconnect,
         startupCancellation.signal,
       );
-      const revision = randomUUID();
+      const revision = `${deps.genericApprovalOwner?.activationId ?? "legacy"}:${randomUUID()}`;
       const inventory = buildMcpInventory(name, proxyDef, upstream, revision);
       // A reconnect may re-establish transport, not silently adopt changed permitted schemas.
       const signature = createHash("sha256")
@@ -666,6 +711,8 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     access: McpAccessContext,
   ): Promise<McpServiceCallOutcome> {
     let context = commandContext(access, "mcp_call");
+    if (deps.mode === "inventory-only")
+      return brokerFailure("denied", "MCP inventory-only owner cannot execute tools.");
     if ("status" in context) return context;
     const server = input.toolRef.split(".")[0];
     if (!hasActiveProxy(server))
@@ -840,6 +887,69 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     };
   }
 
+  function genericPreparedCall(
+    instance: ProxyInstance,
+    tool: McpInventoryTool,
+    args: GenericMcpApproval["arguments"],
+  ): GenericMcpPreparedCall {
+    return {
+      server: instance.name,
+      tool: tool.descriptor.name,
+      toolRef: tool.descriptor.toolRef,
+      connectionRevision: instance.revision,
+      catalogFingerprint: instance.fingerprint,
+      arguments: args,
+      isCurrent: () => isCurrentMcpInstance(instance),
+      dispatch: () =>
+        dispatchUpstreamCall({
+          instance,
+          toolName: tool.descriptor.name,
+          args,
+          logEvent: "generic_mcp_approved",
+          decision: "approved",
+        }),
+    };
+  }
+
+  function genericRevisionCurrent(action: GenericMcpApproval): boolean {
+    const instance = instances.get(action.server);
+    return (
+      !!instance &&
+      isCurrentMcpInstance(instance) &&
+      instance.revision === action.connectionRevision &&
+      instance.fingerprint === action.catalogFingerprint &&
+      instance.inventory.some(
+        (tool) =>
+          tool.descriptor.toolRef === action.toolRef && tool.descriptor.policy === "approve",
+      )
+    );
+  }
+
+  async function prepareStoredGeneric(
+    action: GenericMcpApproval,
+  ): Promise<GenericMcpPreparedCall | undefined> {
+    const instance = await getInstance(action.server);
+    if (
+      !instance ||
+      instance.revision !== action.connectionRevision ||
+      instance.fingerprint !== action.catalogFingerprint
+    )
+      return undefined;
+    const tool = instance.inventory.find(
+      (tool) =>
+        tool.descriptor.toolRef === action.toolRef &&
+        tool.descriptor.name === action.tool &&
+        tool.descriptor.policy === "approve",
+    );
+    if (
+      !tool ||
+      !tool.validator.validate(action.arguments) ||
+      !tool.validator.validate(action.effectiveArguments)
+    )
+      return undefined;
+    return genericPreparedCall(instance, tool, action.effectiveArguments);
+  }
+
   async function callVisibleTool(
     instance: ProxyInstance,
     tool: McpInventoryTool,
@@ -848,6 +958,21 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     access: McpAccessContext,
   ): Promise<McpServiceCallOutcome> {
     const toolInfo = tool.descriptor;
+    if (toolInfo.policy === "approve" && deps.catalog?.customUpstream(instance.name)) {
+      if (!genericApprovals || access.kind !== "native")
+        return brokerFailure(
+          "denied",
+          "MCP generic approval requires authenticated host Slack context, not CLI attribution.",
+        );
+      const parsed = McpCallInputSchema.safeParse({ toolRef: toolInfo.toolRef, arguments: args });
+      if (!parsed.success)
+        return brokerFailure("invalid_arguments", "MCP generic business arguments invalid.");
+      return genericApprovals.prepare(
+        genericPreparedCall(instance, tool, parsed.data.arguments),
+        access.authority,
+        () => !("status" in commandContext(access, "mcp_call")),
+      );
+    }
 
     if (instance.name === "onepassword-browser" && toolInfo.name === "find_login_items") {
       const findArgs = FindLoginItemsArgsSchema.safeParse(args);
@@ -992,7 +1117,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
 
   function findApproval(actionId: string): ApprovalLookup | undefined {
     const approvalNames = new Set([
-      // Catalog additions are allow-only and cannot adopt shared legacy approval records.
+      // Catalog additions use private generic records, never shared legacy approval records.
       // Disabled built-ins retain historical status lookup, without regaining execution.
       ...BUILTIN_PROXY_NAMES,
       ...Object.keys(deps.customApprovalExecutors ?? {}),
@@ -1101,6 +1226,8 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     }
 
     const pendingAction = lookup.action;
+    if (deps.mode === "inventory-only")
+      return fail("MCP inventory-only owner cannot resolve approvals.");
     const customExecutor = deps.customApprovalExecutors?.[lookup.upstreamName];
     if (customExecutor) {
       const execution = await customExecutor({ action: pendingAction, reviewer, reason });
@@ -1131,6 +1258,26 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     if (!instance) {
       return fail(`Unknown upstream "${lookup.upstreamName}".`);
     }
+
+    // Historical proof is not manufactured: only the unchanged qualified typed handler and
+    // currently approved inventory can resolve a legacy pending record.
+    if (
+      !builtinApprovalHandlers.has(`${instance.name}/${pendingAction.tool}`) ||
+      !instance.inventory.some(
+        (tool) =>
+          tool.descriptor.name === pendingAction.tool && tool.descriptor.policy === "approve",
+      ) ||
+      !ApprovalRequiredEventPayloadSchema.safeParse({
+        type: "approval_required",
+        actionId: pendingAction.id,
+        proxyName: instance.name,
+        tool: pendingAction.tool,
+        args: pendingAction.args,
+      }).success
+    )
+      return fail(
+        "Legacy MCP approval no longer has a valid qualified handler; request fresh review.",
+      );
 
     let upstreamArgs: Record<string, unknown>;
     try {
@@ -1257,6 +1404,20 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     searchTools,
     describeTool,
     callTool: callExactTool,
+    async resolvePrivateApproval(click): Promise<McpApprovalResolution> {
+      try {
+        if (genericApprovals?.contains(click.actionId))
+          return genericApprovals.resolve(click, prepareStoredGeneric);
+        return {
+          status: "denied",
+          message: "MCP generic approval not found; legacy resolution is a separate operation.",
+        };
+      } catch {
+        return { status: "denied", message: "MCP approval record invalid or unavailable." };
+      }
+    },
+    readPrivateApproval: (id, reader) => genericApprovals?.read(id, reader, genericRevisionCurrent),
+    listPrivateApprovals: (reader) => genericApprovals?.list(reader, genericRevisionCurrent) ?? [],
     getHealth(): Record<string, unknown> {
       return {
         configured: proxyNames.length,
@@ -1289,15 +1450,25 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     async closeAll(): Promise<void> {
       closed = true;
       startupCancellation.abort();
+      await genericApprovals?.close();
       await Promise.allSettled([...connecting.values()]);
       await Promise.allSettled(
         [...instances.values()].map((instance) => instance.upstream.client.close()),
       );
       instances.clear();
+      deps.genericApprovalOwner?.release();
     },
 
     async executeMcp(args: string[], context: McpCommandContext): Promise<McpExecResult> {
       if (args[0] === "resolve") {
+        try {
+          if (genericApprovals?.contains(args[1]))
+            return fail(
+              "MCP generic approval requires authenticated signed Slack gateway evidence.",
+            );
+        } catch {
+          return fail("MCP generic approval record unavailable.");
+        }
         if (args.length < 4) {
           return fail("Usage: mcp resolve <action-id> <approved|rejected> <reviewer> [reason]\n");
         }
@@ -1381,6 +1552,16 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     },
 
     async executeApproval(args: string[], context: McpCommandContext = {}): Promise<McpExecResult> {
+      if ((args[0] === "status" || args[0] === "result") && args[1]) {
+        try {
+          if (genericApprovals?.contains(args[1]))
+            return fail(
+              "MCP generic approval read denied: CLI attribution is not reader authority.",
+            );
+        } catch {
+          return fail("MCP generic approval read denied.");
+        }
+      }
       if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
         return fail(
           "Usage:\n  approval status <action-id>\n  approval result <action-id> <capability>\n  approval list\n",

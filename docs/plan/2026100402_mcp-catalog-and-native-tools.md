@@ -1,6 +1,6 @@
 # Neo — Configurable MCP catalog and native Durable tools
 
-**Status:** MCP phases 1–2 implemented and isolated locally validated after companion Slack phases 1–3 (`cc6c2b9`). Phase 2 follows `fa72c0e`; MCP phases 3–5 and live deployment remain pending, separately approval-gated. Custom approvals and native tool registration are not enabled.
+**Status:** MCP phases 1–3 implemented and isolated locally validated after companion Slack phases 1–3 (`cc6c2b9`), including the Phase 3 incomplete-authority-evidence correction below. Phase 3 follows `3ba5b80`; phases 4–5 and live deployment remain pending, separately approval-gated. Custom approvals now have a private versioned broker contract; native tool registration is not enabled.
 **Reviewed:** 2026-10-04, Neo `33ada49`; released Pi Durable/MCP `v1.0.2` (`cd32f7725fdbddbaecdff5b1e68491563394e0ca`).
 **Companion:** [Pi Durable Slack simplification](2026100401_pi-durable-slack-simplification.md). This plan adds operator MCP onboarding and agent discovery; it does not change the single-owner admission/security architecture.
 
@@ -204,6 +204,8 @@ Update Compose base/Pi/test fixtures, `.env.example` explanatory deployment surf
 
 ### Phase 3 — Versioned generic approvals and safe dispatch
 
+**Implemented:** private versioned generic operation, requester DM review, lifetime owner/activation fence, action dispatch claims and authenticated minimal result/continuation projections. Isolated evidence below; no Phase 4 registration or live cutover.
+
 Add generic operation schemas and private requester review, immutable approval preparation/revision checks, safe notification/dispatch claim and status/error dispositions. Keep legacy readers and specialized built-in execution. Remove the global static-approve equality assumption only after both paths are covered; replace it with complete runtime policy/handler/schema validation.
 
 **Exit:** custom approved tools require no code-defined tool enum. Broker-only record/fence permissions and second-owner refusal, concurrent/restarted/late clicks, source supersession, identical removal/re-addition, same-secret-file account replacement, token rotation, schema/policy drift, malformed records, failed private delivery and dispatch-before-result crashes preserve authority and cannot automatically redispatch consumed/uncertain approvals. Cross-requester status/list/result reads and raw CLI fallback are denied; full review is possible or explicitly denied. Removed actions remain readable only to authorized readers. Legacy behavior and Google no-command-approval policy remain intact.
@@ -399,3 +401,177 @@ One Phase 2 commit only; no push, dispatch, PR, next-phase implementation or liv
 deployment/provider/private-data changes. Follow-up Phase 3 must supply the private
 versioned generic approval contract before changing this phase's startup/read/resolve
 denials or static built-in approval coverage.
+
+## Phase 3 implementation decisions and evidence — 2026-10-05
+
+Implemented only MCP Phase 3 after `3ba5b80`. No native tool registrations,
+Durable/OpenCode/dependency upgrades, new runtime environment variables, deployment,
+push, workflow dispatch, PR, private mounted-data access or historical record move.
+
+| Decision / owner                                                                      | Boundary / reason                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Strict version 1 `genericMcp` representation in `mcp-approval.ts`                     | Server-qualified operation, branded action/activation IDs and immutable validated/effective JSON, preparation version, schema/connection reference, endpoint/catalog/policy fingerprint, activation, original requester/team/repo/source/request/session, private destination and expiry. Generic preparation v1 does not rewrite arguments. New malformed/hybrid representations never fall back to legacy parsing.                                                                                                                                                                           |
+| Reuse `ApprovalStore` at the explicit new private root                                | New 0700/0600 broker-owned records/fences in `mcp-approval-state` at `/var/lib/remote-cli/mcp-approvals`. Existing `/workspace/data/approvals` writes/modes/paths remain historical and shared, not retroactively private. Atomic JSON replacement flushes file and containing directory; new date entries flush their root. Stable action lock inodes guard read/claim/I/O/result windows. The store's established synchronous storage exceptions are contained at the startup/private broker boundaries and become bounded denial/uncertainty values, never raw parser/filesystem fragments. |
+| `McpApprovalOwner` owns Linux filesystem mechanics, not a second store                | Private constructor capability is minted only after util-linux `flock` acquisition on an inherited open description retained by the broker. Second startup fails before activation replacement/listen. Fresh activation is atomically durable every startup. Deleting this module would duplicate FD ownership, private mode checks and file/directory flushing across startup/store; records remain owned by the existing store. No PID recovery, lease, scheduler or distributed/power-loss guarantee.                                                                                       |
+| `GenericMcpApprovals` coordinates policy/effects inside `McpService`                  | Deleting it would mix private Slack confirmation, publication ordering, frozen proof, readers and consumption into the legacy handler. No second MCP client or invocation ledger: notification and dispatch dispositions are fields in the approval record. Same host call cannot automatically resend a card after receipt loss/reconstruction. A distinct newly issued call is not provider deduplication.                                                                                                                                                                                   |
+| Confirmed requester DM and full plain-text JSON review                                | Only admitted Slack requesters; bot workspace and `conversations.info` prove the stored DM user/privacy. Complete review (including heading/repo) fits a conservative 2800 UTF-16-code-unit section budget or returns `review_not_supported`. Intent is flushed before posting. Unconfirmed/failed receipt is uncertain, with no automatic duplicate card. GitHub/system/cron and CLI attribution cannot select reviewers/destinations. Business-argument-only tools are an operator contract, not heuristic credential field redaction.                                                       |
+| Latest original admission, not a permanently started native tool                      | Original tool/request may have finished while waiting, but supersession/malformed projection/expiry prevents dispatch. Click compares signed gateway user/team/actual card channel/timestamp to stored delivery, then rechecks private audience, complete frozen authority, current approved inventory/schema/policy/reference/preparation and live pinned connection immediately before the consumed claim and dispatch. Reconnect revokes the affected revision even if inventory is identical.                                                                                              |
+| Consumed claim before any upstream I/O                                                | Missing confirmed result after transport loss/process death stays consumed/uncertain forever. Concurrent, contradictory and late clicks cannot redispatch. A completed MCP `isError` is a confirmed tool-error disposition, not pre-dispatch denial or pending. Revocation after dispatch cannot undo effects.                                                                                                                                                                                                                                                                                 |
+| Minimal authorized result projection                                                  | Persist/return completed, tool-error, rejected or uncertain disposition, not raw vendor output. This v1 result projection intentionally does not retain provider text/business result bodies or introduce a detailed result UI/capability. All private status/list/result reads check stored requester/team/canonical repo/original source/request/session, even after server removal. CLI status/result/resolve deny generic records and list excludes them; no raw ordinary-action fallback.                                                                                                 |
+| Existing gateway continuation, with stored private host reply admission               | Signed interactivity supplies evidence over the internal-secret edge; button hints cannot choose authority. Generic resolution is not retried through legacy `/exec/mcp`. Queued projections are reauthorized before prompts; cross-reader, mixed/public audience and workspace mismatches deny. Frozen repo/private DM thread and stored requester determine continuation and host-owned reply admission. Prompts report disposition and prohibit mutation replay, without raw argument/result/vendor fragments or unsupported polling instructions. No waiter/outbox/native signal API.      |
+| Qualified runtime handler coverage replaces global bare-name equality                 | Bundled approve policies must have explicit server-qualified specialized handlers; legacy pending records also require current approved inventory plus the historical typed schema. Custom approve requires owned private state and the complete generic path. Operator inventory-only checks can inspect policy without owner/activation changes but cannot execute/resolve tools. Jira attribution/disclaimers, credential browser consumption and GWS requester OAuth/routine approval-free execution remain separate.                                                                      |
+| Finite independent corruption/transition cases rather than a new generator dependency | The relevant authority/disposition discriminants and named failure gates have bounded table-driven cases through real edges. Arbitrary-schema validation/pagination remains covered by earlier real SDK suites. No schema-echo/helper-only count target or module mock added.                                                                                                                                                                                                                                                                                                                  |
+
+### Permanent isolated regression gates
+
+`packages/remote-cli/src/mcp-generic-approval.integration.test.ts` uses the installed
+SDK client/server with local trusted TLS/bearer auth, real session/list-change HTTP,
+real Slack HTTP, actual worklog/approval files and kernel flock helpers:
+
+- Complete private business review and exact dispatch of a custom same-bare Jira
+  name without attribution/disclaimer hooks; ended original tool/trigger can await
+  review, while supersession/expiry/reconnect schema drift deny with zero effects.
+- Full review budget/private audience failure; GitHub and CLI reviewer denial;
+  wrong user/team/channel/card and unauthenticated clicks/readers; concurrent
+  preparation, failed publication and receipt loss create no duplicate cards.
+- Stable action inode across JSON replacements; concurrent/contradictory/late clicks,
+  owner refusal without activation modification, identical restart/removal/re-add,
+  policy approve-to-allow changes and same-secret-file account replacement/token
+  rotation. Actual upstream authorization stays pinned until restart; fresh review
+  uses the replacement snapshot, never the old pending authority.
+- Real broker child **SIGKILL** after upstream dispatch before result, and after Slack
+  card publication before receipt; ownership recovery leaves consumed/uncertain or
+  unconfirmed state, with no second upstream effect/card. These are real process
+  crashes, not just reconstructing an in-memory service.
+- All stored reader scope dimensions deny cross-reader status/list/result access;
+  removed-server confirmed actions remain inspectable by authorized readers. CLI
+  attribution/capability/raw fallback denies. Malformed versioned files stay intact
+  and cannot dispatch or leak parsing fragments.
+- Real signed gateway HTTP rejects forged signatures/readers/public card hints;
+  real queue → authenticated broker reread → local runner HTTP carries only safe
+  private disposition, stored repo/requester and host-owned private reply admission.
+  Tampering queued reader scope denies before any runner continuation.
+- Supersession after dispatch does not claim to undo the effect; MCP tool errors
+  and dispatched transport failure retain confirmed-error/uncertain state across
+  restart rather than returning to pending.
+
+Existing broker/legacy/browser/Jira/GWS, requester isolation, arbitrary-schema,
+Durable/SQLite/image and gateway suites remain part of the full test gate.
+
+The real-broker `scripts/test-mcp-catalog-compose.sh` now exercises custom approve
+discovery, trusted fixture admission, full private Slack card, approved upstream
+effect, durable confirmed record, authorized result and raw CLI denial on current
+compiled broker artifacts in cached images. It also checks second **container**
+startup cannot change activation, private owner/action/record modes and absent
+mounts for runner/executor/gateway/admin and production managed browser/command
+child namespaces/procfs. Existing local-only validation, add/remove/default boot,
+hidden effect, malformed/foreign-token startup and cleanup gates remain. Fixture
+authority code is compiled separately with `pnpm build:mcp-fixture` before offline
+validation (not installed/rebuilt inside the audit script). No production data,
+host ports, external gateway, download or image/dependency installation/build.
+
+**Verification environment:** sandbox preflight found approved `node:24-bookworm`
+base runtime but no prepared repository image/dependencies. As explicitly delegated,
+checks used installed host Node 24.21.0/dependencies and already cached Docker
+images, with dummy/local fixtures only. Runtime/image/dependency availability are
+not conflated. Initial fixture packaging probes failed on TS `.js` resolution and
+external dependency placement; the final separately bundled fixture, mounted at
+its common dependency owner, passes without any installation.
+
+Final commands/counts and cleanup evidence are recorded below before the one
+Phase 3 commit. Live Slack/provider behavior, Ubuntu loaded AppArmor/power-loss
+storage guarantees, GitHub integration checks and full native Durable discovery/
+approval conversation remain explicitly **unverified** Phase 4–5/operator gates,
+not claims of this isolated Phase 3 acceptance.
+
+**Encoding correction:** private v1 records must match the owning canonical writer;
+duplicate dispatch fields cannot downgrade consumed proof, and JSON keys the Zod
+envelope would silently strip are rejected before review/effects (including nested
+`__proto__`). Private record reads are bounded to 128 KiB; full review and minimal
+result records fit this storage contract. Independent malformed/duplicate-key
+regressions leave source bytes intact and prove no repeated dispatch. This is not
+heuristic credential redaction. Slack notification credentials stay wrapped/private
+until the final HTTP boundary.
+
+### Original Phase 3 gates (superseded by correction below)
+
+- `pnpm test` — **75 files / 1,241 tests pass**, including **32** new real
+  HTTP/SDK/Slack/process approval regressions and unchanged legacy/browser/Jira/GWS
+  and Pi runtime coverage.
+- `pnpm typecheck`, `pnpm build`, `pnpm build:mcp-fixture` — **pass** using existing
+  pinned dependencies (no installation/upgrade).
+- `MCP_TEST_BROKER_IMAGE=thor-gws-remote-cli:e2e MCP_TEST_RUNNER_IMAGE=thor-pi-e2e-1000-3364098-runner:latest MCP_TEST_EXECUTOR_IMAGE=thor-pi-e2e-1000-3364098-pi-executor:latest MCP_TEST_GATEWAY_IMAGE=thor-pi-e2e-1000-3364098-gateway:latest MCP_TEST_ADMIN_IMAGE=thor-pi-e2e-1000-3364098-admin:latest ./scripts/test-mcp-catalog-compose.sh`
+  — **exit 0**, current compiled broker, including actual custom approve/private
+  Slack review/claim/result, CLI/reader gates, second container refusal with unchanged
+  active activation, private record/fence modes and all four consumer/managed-child
+  mount/proc isolation probes. Post-close Docker container/volume/network queries
+  show **no fixture resources left**; existing images/deployment remain untouched.
+- Dummy-only `docker compose --env-file /dev/null ... config --no-env-resolution
+--format json` for base/Pi/CI/no-AppArmor — **pass**; exactly one
+  `mcp-approval-state` mount, on remote-cli only. Required values were dummy-only;
+  optional unset values remained blank, no private env-file resolution.
+- Changed-source Prettier, `bash -n scripts/test-mcp-catalog-compose.sh` and
+  `git diff --check` — **pass**.
+
+The original implementation passed these suites, but independent verification found
+the required incomplete-authority-evidence defect below; that acceptance was
+insufficient. Live provider/Slack, loaded production AppArmor, GitHub workflows and
+Phase 4 native conversation gates remain unverified. One Phase 3 commit only;
+no push/deploy/cutover/retirement or `.pi`/private data staged.
+
+## Phase 3 P1 correction — complete authority evidence — 2026-10-05
+
+Corrected before Phase 4 and amended into the original Phase 3 commit `f9026fd`.
+An admitted pending approval followed by an unterminated
+`{"type":"trigger_start","triggerId":"` session tail previously completed on an
+authenticated click. The streaming trigger scan skipped the fragment; the cached
+slice discarded it without counting malformed evidence. Malformed/incomplete alias
+records could similarly hide rebinding. Permanent real MCP SDK/TLS/Slack HTTP tests
+reproduced `completed` instead of `rejected` against the original source; the initial
+focused regression run had 22 failures and 3 passes before the fix.
+
+| Decision / owner                                                           | Reason / boundary                                                                                                                                                                                                                                                                                                                                                                        |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `event-log.ts` retains byte completeness alongside tolerant parsed history | Authority requires readable UTF-8 and a terminal LF for every nonempty log. Valid JSON without LF, whitespace-only unterminated tails, partial UTF-8 and invalid UTF-8 inside otherwise parseable JSON are not committed evidence. Validate the whole byte buffer, not individual read chunks. No dependency, writer format or public viewer contract changes.                           |
+| All three MCP admission/approval/call-proof readers use complete evidence  | Require both the session and global alias log to be complete, with no skipped malformed/schema-invalid records. An ambiguous alias record cannot safely be classified as unrelated to the active binding. Restrict denial to MCP authority readers; historical viewer/routing readers keep their valid records and existing tolerant behavior. No fallback to an older admitted trigger. |
+| Reuse cached session records and one trigger-record scan                   | Authority scans the same complete parsed evidence instead of the tolerant streaming path. The shared private guard avoids three divergent byte/alias checks; the existing scanner serves both strict authority and tolerant historical consumers. No second log store, public abstraction or approval ledger.                                                                            |
+
+### Corrected isolated evidence
+
+- `event-log-authority.test.ts`: 18 real-file cases cover session/alias corruption,
+  valid JSON without LF, whitespace, malformed complete/schema-invalid records,
+  split/invalid UTF-8, cache invalidation and authority restoration only on valid
+  newline commit. Every nonempty prefix of a superseding record denies all three
+  authority readers, including a valid final JSON object lacking LF. Committed
+  Unicode across a 64 KiB streaming boundary preserves native call/search proof;
+  ended original admission still permits approval. Historical slices/actors/aliases
+  remain readable and rejected bytes remain intact.
+- `mcp-generic-approval.integration.test.ts`: 11 added real authenticated broker
+  regressions. Pending private review plus incomplete/malformed/invalid-UTF-8 or
+  newline-less session/alias evidence yields durable rejection, no upstream
+  mutation, no extra private card and denied native search/call. Complete tails
+  still create review and dispatch exactly once. Existing 32 approval/process/
+  gateway tests and legacy compatibility remain covered.
+- Focused new regression command: `pnpm exec vitest run
+packages/common/src/event-log-authority.test.ts
+packages/remote-cli/src/mcp-generic-approval.integration.test.ts -t
+'complete append evidence|fail closed on incomplete|valid final JSON'` —
+  **29 pass / 32 intentionally unselected**.
+- `pnpm test` — **76 files / 1,270 tests pass**. `pnpm typecheck`, `pnpm build`
+  and `pnpm build:mcp-fixture` — **pass**, installed Node 24.21.0/dependencies only.
+- Same cached-image command listed in the original Phase 3 gates,
+  `./scripts/test-mcp-catalog-compose.sh` — **exit 0**. Current compiled real
+  broker plus local MCP/Slack now also prove six incomplete/malformed/newline-less
+  session/alias cases reject authenticated clicks/calls with zero added upstream
+  effects, while the healthy approved path and private mount/owner gates pass.
+  Post-cleanup Docker queries found **no fixture containers, volumes or networks**.
+- Dummy-only base/Pi/CI/no-AppArmor Compose renders with `--env-file /dev/null
+--no-env-resolution --format json` — **pass**: exactly one broker-private approval
+  mount and both catalog/token mounts broker-only/read-only. Changed-source
+  Prettier, `bash -n scripts/test-mcp-catalog-compose.sh` and `git diff --check` pass.
+
+Sandbox preflight confirmed an approved Node base runtime but no prepared repository
+image/dependencies; delegated local checks used existing host dependencies/cached
+Docker images, not installation, download or audit preparation. No private mounted
+data or `.env` files were read. No Phase 4 work, push, deployment, workflow or live
+Slack/provider acceptance; those gates remain explicitly pending.
