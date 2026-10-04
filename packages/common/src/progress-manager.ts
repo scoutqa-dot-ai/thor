@@ -1,6 +1,6 @@
 import { createLogger, logInfo, logError } from "./logger.js";
 import { formatDuration, formatTokens } from "./format.js";
-import type { ProgressEvent } from "./progress-events.js";
+import type { ProgressEvent, ProgressModel } from "./progress-events.js";
 
 const log = createLogger("progress");
 
@@ -185,7 +185,7 @@ function formatMemoryFileLabels(shortPaths: string[]): string {
 const BLOCK_TEXT_LIMIT = 3000;
 
 /** Wrap text in a context block for compact, muted rendering in Slack. */
-function contextBlocks(text: string, imageUrl?: string): ProgressBlock[] {
+function contextBlocks(text: string, imageUrl?: string, model?: ProgressModel): ProgressBlock[] {
   const truncated =
     text.length > BLOCK_TEXT_LIMIT ? text.slice(0, BLOCK_TEXT_LIMIT - 1) + "…" : text;
   return [
@@ -194,6 +194,18 @@ function contextBlocks(text: string, imageUrl?: string): ProgressBlock[] {
       elements: [
         ...(imageUrl ? [{ type: "image", image_url: imageUrl, alt_text: "Neo activity" }] : []),
         { type: "mrkdwn", text: truncated },
+        ...(model
+          ? [
+              {
+                type: "plain_text",
+                text: `Model: ${model.modelId} · Thinking: ${model.thinkingLevel}`.slice(
+                  0,
+                  BLOCK_TEXT_LIMIT,
+                ),
+                emoji: false,
+              },
+            ]
+          : []),
       ],
     },
   ];
@@ -208,6 +220,8 @@ export interface ProgressTransport<TTarget = unknown> {
   update(target: TTarget, messageTs: string, text: string, blocks?: ProgressBlock[]): Promise<void>;
   delete(target: TTarget, messageTs: string): Promise<void>;
   addReaction(target: TTarget, timestamp: string, name: string): Promise<void>;
+  /** Remove only the transport owner's own reaction; optional for historical adapters. */
+  removeReaction?(target: TTarget, timestamp: string, name: string): Promise<void>;
 }
 
 export type ProgressBlock = { type: string; [key: string]: unknown };
@@ -369,6 +383,7 @@ class ProgressSession {
   private recentMemory: MemoryActivity[] = [];
   private recentDelegates: DelegateActivity[] = [];
   private latestContext?: ContextStatus;
+  private model?: ProgressModel;
   private activity: "thinking" | "working" | "responding" = "thinking";
   private startTime = Date.now();
   private lastUpdateTime = 0;
@@ -424,6 +439,16 @@ class ProgressSession {
   setSourceTs(sourceTs: string): void {
     // Scoped receipts own their source; later events cannot retarget a reaction.
     if (!this.requestId) this.sourceTs = sourceTs;
+  }
+
+  async onModel(model: ProgressModel): Promise<void> {
+    if (
+      this.finished ||
+      (this.model?.modelId === model.modelId && this.model.thinkingLevel === model.thinkingLevel)
+    )
+      return;
+    this.model = model;
+    if (this.thresholdMet) await this.flush();
   }
 
   async onActivity(activity: "thinking" | "working" | "responding"): Promise<void> {
@@ -514,6 +539,16 @@ class ProgressSession {
       if (this.messageTs) await this.sendText(completedText, "terminal");
       if (!this.abandoned && this.sourceTs) {
         try {
+          await this.transport.removeReaction?.(
+            this.progressTarget.transportTarget,
+            this.sourceTs,
+            "eyes",
+          );
+        } catch {
+          logError(log, "reaction_error", "Progress receipt reaction cleanup unavailable");
+        }
+        try {
+          if (this.abandoned) return;
           await this.transport.addReaction(
             this.progressTarget.transportTarget,
             this.sourceTs,
@@ -593,6 +628,7 @@ class ProgressSession {
     const blocks = contextBlocks(
       text,
       publicProgressAssetUrl(this.progressTarget.assetBaseUrl, path),
+      this.model,
     );
     this.inFlight = (async () => {
       try {
@@ -643,6 +679,7 @@ class ProgressSession {
         contextBlocks(
           stoppedText,
           publicProgressAssetUrl(this.progressTarget.assetBaseUrl, "/neo-ai-still-v1.png"),
+          this.model,
         ),
       );
     } catch {
@@ -766,6 +803,9 @@ export async function handleProgressEvent(
   session.setSourceTs(target.sourceTs);
 
   switch (event.type) {
+    case "model":
+      await session.onModel(event);
+      break;
     case "activity":
       await session.onActivity(event.activity);
       break;

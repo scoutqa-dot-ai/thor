@@ -353,3 +353,34 @@ Existing common/native checks passed (120 cases, unchanged test count), as did
 all workspace typechecks/builds and diff checks. Logs:
 `/tmp/neo-hourglass-{tests,types,build}.log`. No asset, auth, model or deployment
 configuration changes; local commit only, no push or production verification.
+
+### Completion reaction and task model footer
+
+The user requested clearing Neo's own eyes reaction on normal completion and
+showing model/thinking level in the existing activity footer. Keep gateway
+receipt acknowledgement, footer grace/cleanup, Google waits, other users'
+reactions and task authority unchanged. Remove only Neo's own reaction on the
+exact current request message; missing reactions are idempotent and transport
+failures must not change task success.
+
+Publish request-scoped model observations from the validated persisted receipt,
+not startup defaults or caller/model text. Refresh after native escalation and
+at model start; legacy work uses its captured native configuration. Render model
+IDs as plain text beside the animation/labels, also on a static auth wait. No
+new env/dependency or model-routing policy. Extend existing real Slack SDK,
+OAuth and native escalation coverage rather than add helper/schema-echo tests;
+run focused/full tests, types/build and Pi container gate before one local commit.
+
+Implemented with one request-scoped `model` progress variant, not a new service
+or guessed catalog. Existing SDK checks prove source-specific eyes removal,
+no removal during auth wait, original-source removal after resume, absent/error
+reaction idempotence and model/effort footer payloads. Existing native escalation
+checks prove fast/low → balanced/medium → strong/high observations; common
+lifecycle checks cover same-ID thinking changes, plain-text model IDs and stale
+model events. No test cases added: the full suite remains **1,018 / 67 files**.
+Full tests, types/build and rebuilt Pi container gate passed; it verifies actual
+footer metadata, SDK eyes removal, signed follow-ups, model/effort routing,
+isolation, viewers and SIGKILL recovery. Fixture cleanup confirmed. Logs:
+`/tmp/neo-footer-model-{focused,tests,types,build,container}.log`.
+Local only; no push, CI or live Slack claim. Rebuild runner after syncing this
+delta; existing public artwork/config and gateway permissions are unchanged.

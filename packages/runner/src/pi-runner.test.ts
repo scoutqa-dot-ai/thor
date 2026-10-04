@@ -1256,8 +1256,14 @@ describe("native Pi activity through the real Slack SDK", () => {
       res.setHeader("content-type", "application/json");
       res.end(
         JSON.stringify(
-          req.url === "/reactions.add" && reactionError
-            ? { ok: false, error: reactionError }
+          (req.url === "/reactions.add" || req.url === "/reactions.remove") && reactionError
+            ? {
+                ok: false,
+                error:
+                  req.url === "/reactions.remove" && reactionError === "already_reacted"
+                    ? "no_reaction"
+                    : reactionError,
+              }
             : { ok: true, ts: `footer-${deliveries.length}` },
         ),
       );
@@ -1300,6 +1306,8 @@ describe("native Pi activity through the real Slack SDK", () => {
     fixture.deliveries.filter((entry) => entry.method === "/chat.postMessage");
   const checks = (fixture: Awaited<ReturnType<typeof slackFixture>>) =>
     fixture.deliveries.filter((entry) => entry.method === "/reactions.add");
+  const removals = (fixture: Awaited<ReturnType<typeof slackFixture>>) =>
+    fixture.deliveries.filter((entry) => entry.method === "/reactions.remove");
 
   it("shows delayed zero-tool model activity, replaces animation on text output, and checks successive current messages", async () => {
     const fixture = await slackFixture();
@@ -1315,6 +1323,11 @@ describe("native Pi activity through the real Slack SDK", () => {
       await vi.waitFor(() => expect(hold).toBeDefined());
       await vi.waitFor(() => expect(posts(fixture)).toHaveLength(1), { timeout: 3000 });
       const footer = posts(fixture)[0].form;
+      expect(JSON.parse(footer.get("blocks") ?? "[]")[0].elements).toContainEqual({
+        type: "plain_text",
+        text: "Model: fixture-model · Thinking: medium",
+        emoji: false,
+      });
       expect(footer.get("thread_ts")).toBe("1710000000.001");
       expect(footer.get("text")).toMatch(/^Neo thinking\.\.\. 0 tool calls/);
       expect(JSON.parse(footer.get("blocks") ?? "[]")[0].elements[0].image_url).toBe(
@@ -1331,6 +1344,9 @@ describe("native Pi activity through the real Slack SDK", () => {
       await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
       expect(checks(fixture)[0].form.get("timestamp")).toBe("1710000000.002");
       expect(checks(fixture)[0].form.get("name")).toBe("white_check_mark");
+      expect(removals(fixture)[0].form.get("timestamp")).toBe("1710000000.002");
+      expect(removals(fixture)[0].form.get("channel")).toBe("C_CURRENT");
+      expect(removals(fixture)[0].form.get("name")).toBe("eyes");
       const updates = fixture.deliveries.filter((entry) => entry.method === "/chat.update");
       expect(
         updates.some(
@@ -1355,6 +1371,7 @@ describe("native Pi activity through the real Slack SDK", () => {
       expect(followup[0].sessionId).toBe(frames[0].sessionId);
       await vi.waitFor(() => expect(checks(fixture)).toHaveLength(2));
       expect(checks(fixture)[1].form.get("timestamp")).toBe("1710000000.003");
+      expect(removals(fixture)[1].form.get("timestamp")).toBe("1710000000.003");
       expect(posts(fixture)).toHaveLength(1);
     } finally {
       await fixture.close();
@@ -1484,13 +1501,16 @@ describe("native Pi activity through the real Slack SDK", () => {
         ).toBe(true),
       );
       expect(checks(fixture)).toHaveLength(0);
+      expect(removals(fixture)).toHaveLength(0);
       const waiting = fixture.deliveries.findLast((entry) =>
         entry.form.get("text")?.includes("Neo waiting for Google sign-in"),
       );
       expect(waiting?.form.get("blocks")).toContain("neo-ai-still-v1.png");
+      expect(waiting?.form.get("blocks")).toContain("Model: fixture-model · Thinking: medium");
       broker.setAckUnavailable(false);
       await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1), { timeout: 4000 });
       expect(checks(fixture)[0].form.get("timestamp")).toBe("1710000000.007");
+      expect(removals(fixture)[0].form.get("timestamp")).toBe("1710000000.007");
       expect(fixture.events).toContainEqual(
         expect.objectContaining({
           type: "start",
@@ -1836,7 +1856,8 @@ describe("per-task native model routing", () => {
   });
 
   it("promotes exactly twice, denies skip/self-loop/downgrade/third promotion, and saves truthful response models", async () => {
-    await reopenRouting();
+    const progressModels: ProgressEvent[] = [];
+    await reopenRouting({ progressEventSink: (event) => progressModels.push(event) });
     modelActions = [
       { tool: "escalate_model", args: { profile: "strong", reason: "skip" } },
       { tool: "escalate_model", args: { profile: "balanced", reason: "Need more reasoning" } },
@@ -1848,6 +1869,15 @@ describe("per-task native model routing", () => {
     ];
     const body = { prompt: "Read a Google document", requestId: "promoted" };
     const frames = await stream(body);
+    expect(
+      progressModels
+        .filter((event) => event.type === "model")
+        .map((event) => [event.modelId, event.thinkingLevel]),
+    ).toEqual([
+      ["fixture-fast", "low"],
+      ["fixture-balanced", "medium"],
+      ["fixture-strong", "high"],
+    ]);
     expect(
       frames.filter((frame) => frame.type === "tool" && frame.status === "completed"),
     ).toHaveLength(2);

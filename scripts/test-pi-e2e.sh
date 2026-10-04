@@ -53,6 +53,7 @@ const waitProgress=async(predicate)=>{
 };
 const initialDeliveries=await waitProgress(deliveries=>deliveries.some(d=>d.method==='/slack/reactions.add'&&d.timestamp==='1710000000.002'));
 assert(initialDeliveries.some(d=>d.name==='white_check_mark'&&d.channel==='C_FIXTURE'&&d.timestamp==='1710000000.002'));
+assert(initialDeliveries.some(d=>d.method==='/slack/reactions.remove'&&d.name==='eyes'&&d.channel==='C_FIXTURE'&&d.timestamp==='1710000000.002'));
 assert(!initialDeliveries.some(d=>d.name==='white_check_mark'&&d.timestamp==='1710000000.001'));
 assert(frames.filter(frame=>frame.type!=='text').every(frame=>frame.requestId==='container-tool'&&frame.sessionId===frames[0].sessionId));
 const probe=await (await fetch('http://model-fixture:8000/probe')).json();
@@ -71,6 +72,7 @@ const delayedDeliveries=await waitProgress(deliveries=>deliveries.some(d=>d.meth
 const delayedFooter=delayedDeliveries.find(d=>d.method==='/slack/chat.postMessage'&&d.channel==='C_DELAYED');
 assert(delayedFooter.text.includes('Neo thinking... 0 tool calls'));
 assert.equal(delayedFooter.blocks[0].elements[0].image_url,'http://ingress:8080/neo-thinking-v1.gif');
+assert(delayedFooter.blocks[0].elements.some(element=>element.type==='plain_text'&&element.text==='Model: fixture-balanced · Thinking: medium'));
 assert(delayedDeliveries.some(d=>d.channel==='C_DELAYED'&&d.text?.includes('Neo responding')&&d.blocks[0].elements[0].image_url==='http://ingress:8080/neo-ai-still-v1.png'));
 assert(delayedDeliveries.some(d=>d.name==='white_check_mark'&&d.timestamp==='1710000000.003'));
 for(const [path,mime] of [['/neo-thinking-v1.gif','image/gif'],['/neo-working-v1.gif','image/gif'],['/neo-ai-still-v1.png','image/png']]){

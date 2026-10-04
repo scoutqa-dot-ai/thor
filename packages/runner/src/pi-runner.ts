@@ -27,8 +27,10 @@ import {
   resolveAlias,
   resolveAnchorForCorrelationKey,
   handleProgressEvent,
+  ProgressModelSchema,
   matchesInternalSecret,
   type ProgressEvent,
+  type ProgressModel,
   type ConfigLoader,
 } from "@thor/common";
 import { PiExecutionEnv } from "./pi-execution-env.js";
@@ -374,6 +376,31 @@ export async function createPiRunnerApp(
         for (const listener of listeners) listener(event);
         if (event.type !== "text") await progress(event, receipt);
       };
+      let displayedModel: ProgressModel | undefined;
+      // Legacy tasks cannot escalate; capture their native choice before a later task can replace it.
+      const legacyAgent = receipt.modelSelection
+        ? undefined
+        : await runtime.snapshot(AgentDoc, owner.conversation.id, context);
+      const refreshTaskModel = async () => {
+        await reload(owner);
+        const selected = owner.metadata.receipts.find(
+          (item) => item.requestId === receipt.requestId,
+        )?.modelSelection;
+        const model = ProgressModelSchema.safeParse({
+          type: "model",
+          modelId: selected?.modelId ?? legacyAgent?.model?.modelId,
+          thinkingLevel: selected?.thinkingLevel ?? legacyAgent?.thinkingLevel ?? "off",
+        });
+        if (
+          !model.success ||
+          (displayedModel?.modelId === model.data.modelId &&
+            displayedModel.thinkingLevel === model.data.thinkingLevel)
+        )
+          return;
+        displayedModel = model.data;
+        await emit(model.data);
+      };
+
       let activity: "thinking" | "working" | "responding" = "thinking";
       const runningTools = new Set<string>();
       const setActivity = async (next: typeof activity) => {
@@ -430,6 +457,8 @@ export async function createPiRunnerApp(
               event.type === "tool_execution_start" ? "running" : failed ? "error" : "completed",
           });
           // The next phase footer includes this just-completed call, not the previous count.
+          if (event.type === "tool_execution_end" && event.toolName === "escalate_model")
+            await refreshTaskModel();
           if (event.type === "tool_execution_end")
             await setActivity(runningTools.size ? "working" : "thinking");
           if (
@@ -452,7 +481,10 @@ export async function createPiRunnerApp(
               await emit({ type: "text", text: change.delta });
             }
         } else if (event.type === "message_start") {
-          if (event.message.role === "assistant") await setActivity("thinking");
+          if (event.message.role === "assistant") {
+            await refreshTaskModel();
+            await setActivity("thinking");
+          }
           emittedText = "";
         } else if (event.type === "message_end") {
           for (const message of event.entry.model ?? []) {
@@ -487,6 +519,7 @@ export async function createPiRunnerApp(
         },
         receipt,
       );
+      await refreshTaskModel();
       await project(stream.snapshot);
       stream.start(async (events) => {
         for (const event of events) await project(event);

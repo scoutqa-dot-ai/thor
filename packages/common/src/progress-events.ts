@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { PiThinkingLevelSchema } from "./pi-model-routing.js";
 
 /** Slack message timestamp metadata is optional for historical requests, never parsed from prompts. */
 export const SlackMessageTsSchema = z
@@ -80,6 +81,14 @@ export const ProgressHeartbeatSchema = z.object({
   type: z.literal("heartbeat"),
 });
 
+/** Selected task model observation; never contains provider settings or reasoning content. */
+export const ProgressModelSchema = z.object({
+  ...progressScopeFields,
+  type: z.literal("model"),
+  modelId: z.string().min(1),
+  thinkingLevel: PiThinkingLevelSchema.or(z.literal("off")),
+});
+
 // --- Discriminated union ---
 
 /** Observable phase only: never carries model reasoning or text deltas. */
@@ -90,6 +99,7 @@ export const ProgressActivitySchema = z.object({
 });
 
 export const ProgressEventSchema = z.union([
+  ProgressModelSchema,
   ProgressActivitySchema,
   ProgressStartSchema,
   ProgressToolSchema,
@@ -104,6 +114,8 @@ export const ProgressEventSchema = z.union([
 // --- Inferred types ---
 
 export type ProgressStart = z.infer<typeof ProgressStartSchema>;
+/** Model and reasoning effort selected for this task, scoped like other progress events. */
+export type ProgressModel = z.infer<typeof ProgressModelSchema>;
 export type ProgressTool = z.infer<typeof ProgressToolSchema>;
 export type ProgressMemory = z.infer<typeof ProgressMemorySchema>;
 export type ProgressDelegate = z.infer<typeof ProgressDelegateSchema>;

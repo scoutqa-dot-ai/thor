@@ -932,9 +932,16 @@ describe("scoped Neo activity lifecycle", () => {
     },
   );
 
-  it("counts each completed native tool once and switches to working on start without counting it", async () => {
+  it("counts each tool once and keeps the selected model and thinking level current through activity changes", async () => {
     const deps = mockSlackDeps();
     const target = await begin(deps);
+    const model = {
+      ...scope,
+      type: "model" as const,
+      modelId: "configured<alias>",
+      thinkingLevel: "low" as const,
+    };
+    await handleProgressEvent(target, model, transport);
     await vi.advanceTimersByTimeAsync(1500);
     const event = { ...scope, type: "tool" as const, tool: "read", toolCallId: "call-1" };
     await handleProgressEvent(target, { ...event, status: "running" }, transport);
@@ -942,6 +949,12 @@ describe("scoped Neo activity lifecycle", () => {
     expect(JSON.stringify(chat(deps).update.mock.calls.at(-1))).toContain("neo-working-v1.gif");
     await handleProgressEvent(target, { ...event, status: "completed" }, transport);
     await handleProgressEvent(target, { ...event, status: "completed" }, transport);
+    await handleProgressEvent(target, { ...model, thinkingLevel: "high" }, transport);
+    expect(chat(deps).update.mock.calls.at(-1)?.[0].blocks[0].elements).toContainEqual({
+      type: "plain_text",
+      text: "Model: configured<alias> · Thinking: high",
+      emoji: false,
+    });
     await handleProgressEvent(
       target,
       { ...scope, type: "activity", activity: "thinking" },
@@ -1046,6 +1059,7 @@ describe("scoped Neo activity lifecycle", () => {
     );
     for (const event of [
       { ...scope, type: "tool", tool: "stale-tool", status: "completed" },
+      { ...scope, type: "model", modelId: "stale-model", thinkingLevel: "high" },
       { ...scope, type: "activity", activity: "working" },
       { ...scope, type: "memory", action: "write", path: "/stale", source: "tool" },
       {

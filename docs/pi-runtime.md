@@ -75,9 +75,16 @@ calls. Its original DS mark animates beside **Neo thinking** during model work
 and **Neo working** during tool execution. Visible output switches it to a still
 **Neo responding** mark; Google sign-in waits stay static and do not get a check.
 Completed turns react ✅ to the current request message, including thread
-follow-ups and short/zero-tool turns. Errors, interruption and superseded turns
-do not get a completion check. A check marks normal turn completion; read the
-reply for the actual Google/provider operation outcome.
+follow-ups and short/zero-tool turns. Normal completion also removes Neo's own 👀
+acknowledgement on that exact message; other users' reactions remain. Errors,
+interruption, superseded turns and Google sign-in waits do not get a completion
+check. A check marks normal turn completion; read the reply for the actual
+Google/provider operation outcome.
+
+The activity footer includes the saved task's **Model** and **Thinking** values,
+updated when escalation changes them, rather than a global startup-model label.
+Model IDs render as plain text; provider settings and reasoning content are not
+included. Historical Pi tasks use their captured native model configuration.
 
 After syncing this change, rebuild `ingress`, `gateway` and `runner`, then use
 the existing `docker compose up -d`. Keep `RUNNER_BASE_URL` pointed at the public
@@ -94,7 +101,8 @@ the latest current-requester timestamp. Historical requests without it fall back
 to the thread root. OAuth resumes retain the original human source. Pi NDJSON
 frames now carry `requestId` and `sessionId`, with an additional `activity` frame
 whose value is `thinking`, `working` or `responding`; it contains no reasoning
-content. Tool start/end frames share `toolCallId` and represent one call.
+content. Request-scoped `model` observations supply `modelId` and `thinkingLevel`
+from saved task state. Tool start/end frames share `toolCallId` and represent one call.
 
 ## Configuration
 

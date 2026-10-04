@@ -56,6 +56,15 @@ export function createSlackProgressTransport(opts: {
     async delete(target, messageTs) {
       await client.chat.delete({ channel: target.channel, ts: messageTs });
     },
+    async removeReaction(target, timestamp, name) {
+      try {
+        await client.reactions.remove({ channel: target.channel, timestamp, name });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("no_reaction") || message.includes("message_not_found")) return;
+        throw error;
+      }
+    },
     async addReaction(target, timestamp, name) {
       try {
         await client.reactions.add({ channel: target.channel, timestamp, name });
