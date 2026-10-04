@@ -104,6 +104,20 @@ whose value is `thinking`, `working` or `responding`; it contains no reasoning
 content. Request-scoped `model` observations supply `modelId` and `thinkingLevel`
 from saved task state. Tool start/end frames share `toolCallId` and represent one call.
 
+Native attach/reconnect snapshots rebuild tool accounting through a
+`tools_snapshot` frame; they are not new tool-completion events. Completion
+duration is fixed at settlement observation, not recomputed when history or a
+duplicate is read.
+
+Slack-request completion requires an authenticated broker answer about matching
+Google waits. Confirmed waits return `status: "error", authWait: "google"` in
+NDJSON (a finished model turn, not a successful task). Unavailable/non-OK,
+malformed or timed-out broker responses, and receipts without a frozen
+`SLACK_TEAM_ID`, return `authWait: "unconfirmed"` and a static degraded footer,
+keeping eyes without a check. A previously confirmed hold cannot become success
+merely because its wait disappears. Rechecking observation does not replay tools
+or Slack completion effects; a newer admitted human request supersedes the hold.
+
 ## Configuration
 
 The runner's Pi settings are also listed in README Deployment Configuration and `.env.example`. The override fixes `THOR_RUNTIME=pi`; ordinary Compose defaults to OpenCode.
@@ -175,6 +189,7 @@ Runner's trusted Slack SDK bypasses the agent-tool proxy policy for `slack.com`.
 ## Persistence and safety
 
 - One runner owns SQLite, enforced by a Linux kernel lock (`flock`). Keep the complete SQLite/WAL files on persistent storage. Never delete `.owner` while a runner is live.
+- Neo metadata now uses version 2 of `thor.pi.conversation`. The supported Durable 1.0.0 document migration preserves version-1 identity, policy and authorization evidence; native submissions decide execution status. Prompt copies are retired only once native admission exists. Invalid/hybrid authority fails startup without being erased. Back up before upgrading; do not point an older Pi runner at migrated SQLite or assume a database downgrade is supported. The OpenCode rollback below does not read this database.
 - Graceful stop leaves unfinished work pending. Reopening can retry an interrupted model request; this may incur another provider charge.
 - Google auth continuation polling uses the existing internal broker URL/secret and `SLACK_TEAM_ID`. Only broker readiness matching the persisted original session/anchor/trigger/requester/workspace may resume; receipts predating workspace binding fail closed. Busy original turns defer admission. A deterministic runner-owned receipt is persisted before binding/acknowledging the broker and submitting normal Pi input. Redelivery and restart reuse that receipt; this is at-most-once admission, not exactly-once Google effects. The resumed model gets original history and the exact blocked Google argv, never a shell replay or a new broad human task.
 - Auth-wait progress distinguishes a finished model turn from a completed Google operation using authenticated broker wait evidence. Missing/legacy/unavailable brokers do not authorize work; pending admissions recover when the broker returns. Polling stops and is awaited on shutdown.

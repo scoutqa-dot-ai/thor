@@ -100,6 +100,17 @@ async function handle(req, res) {
     });
     return;
   }
+  if (
+    req.url === "/internal/google-workspace/waits" ||
+    req.url === "/internal/google-workspace/continuations"
+  ) {
+    if (req.headers["x-thor-internal-secret"] !== "runner-internal-sentinel") {
+      json(res, { error: "unauthorized" }, 401);
+      return;
+    }
+    json(res, req.url.endsWith("/waits") ? { waits: [] } : { continuations: [] });
+    return;
+  }
   if (req.url === "/dashboard") {
     res.end("fixture dashboard");
     return;

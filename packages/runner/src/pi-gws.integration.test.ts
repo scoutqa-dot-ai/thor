@@ -381,7 +381,10 @@ it.each([true, false])(
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line));
-      expect(frames.at(-1)).toMatchObject({ type: "done", status: "completed" });
+      expect(frames.at(-1)).toMatchObject({
+        type: "done",
+        status: frames.at(-1)?.authWait ? "error" : "completed",
+      });
       return frames;
     };
     // A real Pi GWS tool call with no Google pin must initiate private OAuth onboarding.

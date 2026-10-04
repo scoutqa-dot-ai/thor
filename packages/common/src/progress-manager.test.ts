@@ -1172,3 +1172,54 @@ it.each(["waiting", "error"] as const)(
     expect(reactions(deps).add).not.toHaveBeenCalled();
   },
 );
+
+it("replaces native tool snapshots without inventing new completions and uses fixed terminal duration", async () => {
+  const texts: string[] = [];
+  const recorded: ProgressTransport = {
+    async post(_target, text) {
+      texts.push(text);
+      return { ts: "snapshot-footer" };
+    },
+    async update(_target, _ts, text) {
+      texts.push(text);
+    },
+    async delete() {},
+    async addReaction() {},
+  };
+  const target: ProgressTarget = { key: "native-snapshot", sourceTs: "", transportTarget: {} };
+  const scope = { requestId: "native-request", sessionId: "pi-snapshot" };
+  await handleProgressEvent(target, { ...scope, type: "start", resumed: false }, recorded);
+  const tools = [
+    { tool: "read", toolCallId: "old-1" },
+    { tool: "read", toolCallId: "old-2" },
+  ];
+  await handleProgressEvent(target, { ...scope, type: "tools_snapshot", tools }, recorded);
+  await handleProgressEvent(target, { ...scope, type: "tools_snapshot", tools }, recorded);
+  expect(texts).toEqual([]); // Reattach/overflow does not trigger the fresh-completion threshold.
+  await vi.advanceTimersByTimeAsync(1500);
+  expect(texts.at(-1)).toContain("2 tool calls");
+  await handleProgressEvent(
+    target,
+    { ...scope, type: "tool", tool: "read", toolCallId: "old-1", status: "completed" },
+    recorded,
+  );
+  await handleProgressEvent(
+    target,
+    { ...scope, type: "tool", tool: "write", toolCallId: "new-1", status: "completed" },
+    recorded,
+  );
+  await handleProgressEvent(
+    target,
+    {
+      ...scope,
+      type: "done",
+      resumed: false,
+      status: "completed",
+      response: "answer",
+      toolCalls: [],
+      durationMs: 12000,
+    },
+    recorded,
+  );
+  expect(texts.at(-1)).toContain("3 tool calls in 12s");
+});

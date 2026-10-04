@@ -29,10 +29,13 @@ import {
   AgentDoc,
   configure,
   createRegistry,
+  defineDoc,
+  type JsonObject,
   type Tx,
   type ConversationId,
 } from "@earendil-works/pi-durable";
-import { createModels } from "@earendil-works/pi-ai/models";
+import { createModels, createProvider } from "@earendil-works/pi-ai/models";
+import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { piConversationMetadataDoc } from "./pi-runner-state.js";
 import { executeBatchDispatchPlan, planBatchDispatch } from "../../gateway/src/service.js";
@@ -164,6 +167,8 @@ function respondAfterThinking(res: ServerResponse) {
 let directory: string;
 let config: PiRunnerConfig;
 let modelServer: Server;
+let noWaitBroker: Server;
+let noWaitBrokerUrl: string;
 let executor: ReturnType<typeof createPiExecutorService>;
 let executorProxy: Server;
 let executorRequests: PiExecutionRequest[];
@@ -181,7 +186,11 @@ let failImageRead: boolean;
 const triggerDirectory = "/workspace/repos/pi-fixture";
 
 async function openRunner(options?: Parameters<typeof createPiRunnerApp>[1]) {
-  const result = await createPiRunnerApp(config, options);
+  const result = await createPiRunnerApp(config, {
+    ...options,
+    // Undefined is not an override of the authenticated no-wait fixture.
+    remoteCliUrl: options?.remoteCliUrl ?? noWaitBrokerUrl,
+  });
   if (!result.ok) throw new Error(result.error);
   runner = result;
   runnerServer = createServer(runner.app);
@@ -216,6 +225,16 @@ beforeEach(async () => {
   imagePath = "remote-image.bin";
   holdImageRead = false;
   failImageRead = false;
+  noWaitBroker = createServer((req, res) => {
+    expect(req.headers["x-thor-internal-secret"]).toBe(config.internalSecret);
+    res.setHeader("content-type", "application/json");
+    res.end(
+      JSON.stringify(
+        req.url === "/internal/google-workspace/waits" ? { waits: [] } : { continuations: [] },
+      ),
+    );
+  });
+  noWaitBrokerUrl = await listen(noWaitBroker);
   executor = createPiExecutorService({
     shellEnvironment: {
       PATH: process.env.PATH,
@@ -322,6 +341,7 @@ beforeEach(async () => {
   });
   config = {
     internalSecret: "fixture-gateway-secret",
+    slackTeamId: "T123",
     executorUrl,
     modelBaseUrl: `${await listen(modelServer)}/v1`,
     modelId: "fixture-model",
@@ -343,6 +363,7 @@ afterEach(async () => {
   await executor.dispose();
   await closeServer(executor.server);
   await closeServer(modelServer);
+  await closeServer(noWaitBroker);
   await rm(directory, { recursive: true, force: true });
 });
 
@@ -350,12 +371,13 @@ async function continuationBroker() {
   let records: import("@thor/common").GoogleAuthContinuation[] = [];
   let ackUnavailable = false;
   let bindingSupported = true;
+  let ready = true;
   const acks: string[] = [];
   const server = createServer(async (req, res) => {
     expect(req.headers["x-thor-internal-secret"]).toBe(config.internalSecret);
     res.setHeader("content-type", "application/json");
     if (req.url === "/internal/google-workspace/continuations")
-      res.end(JSON.stringify({ continuations: records }));
+      res.end(JSON.stringify({ continuations: ready ? records : [] }));
     else if (req.url === "/internal/google-workspace/waits")
       res.end(JSON.stringify({ waits: records }));
     else if (req.url === "/internal/google-workspace/diagnostics")
@@ -406,6 +428,12 @@ async function continuationBroker() {
           ...patch,
         },
       ];
+    },
+    clearRecords() {
+      records = [];
+    },
+    setReady(value: boolean) {
+      ready = value;
     },
     setAckUnavailable(value: boolean) {
       ackUnavailable = value;
@@ -1010,6 +1038,648 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
       status: "completed",
     });
   });
+  it("bounds success, error and aborted history to exact native inputs and fixes completion duration across reads and restart", async () => {
+    const body = {
+      prompt: "first unique answer",
+      requestId: "bounded-first",
+      correlationKey: "cron:bounded",
+    };
+    modelActions = [{ text: "FIRST_ONLY" }];
+    const first = await stream(body);
+    const duration = first.at(-1)?.durationMs;
+    const binding = await (await trigger(body)).json();
+    modelFailure = true;
+    const failedBody = {
+      prompt: "FAIL_INPUT_ONLY",
+      requestId: "bounded-error",
+      correlationKey: body.correlationKey,
+    };
+    const failed = await stream(failedBody);
+    expect(failed.at(-1)).toMatchObject({ status: "error", response: "" });
+    const failure = await (await trigger(failedBody)).json();
+    modelFailure = false;
+    const abortBody = {
+      prompt: "hold-run ABORT_INPUT_ONLY",
+      requestId: "bounded-abort",
+      correlationKey: body.correlationKey,
+    };
+    const aborted = await (await trigger(abortBody)).json();
+    await vi.waitFor(() => expect(hold).toBeDefined());
+    modelActions = [{ text: "LAST_ONLY" }];
+    await stream({
+      prompt: "replacement",
+      requestId: "bounded-last",
+      correlationKey: body.correlationKey,
+      interrupt: true,
+    });
+    expect((await stream(abortBody)).at(-1)).toMatchObject({
+      status: "error",
+      error: "Run aborted",
+      response: "",
+    });
+    for (const [receipt, present, absent] of [
+      [binding, "FIRST_ONLY", "LAST_ONLY"],
+      [failure, "FAIL_INPUT_ONLY", "FIRST_ONLY"],
+      [aborted, "ABORT_INPUT_ONLY", "LAST_ONLY"],
+    ] as const) {
+      const page = await (
+        await fetch(`${runnerUrl}/runner/v/${receipt.anchorId}/${receipt.triggerId}`)
+      ).text();
+      expect(page).toContain(present);
+      expect(page).not.toContain(absent);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect((await stream(body)).at(-1)?.durationMs).toBe(duration);
+    await editPiNativeDocuments(async (tx, id) => {
+      const metadata = await tx.doc(piConversationMetadataDoc, id);
+      expect(metadata.version).toBe(2);
+      for (const receipt of metadata.receipts) {
+        expect(receipt.admission).toEqual({ state: "submitted" });
+        expect(receipt).not.toHaveProperty("status");
+        expect(receipt.request).not.toHaveProperty("prompt");
+        expect(receipt.request).not.toHaveProperty("routingTask");
+      }
+    });
+    await rm(join(directory, "worklog"), { recursive: true, force: true });
+    const count = requests.length;
+    await openRunner();
+    expect((await stream(body)).at(-1)).toMatchObject({
+      status: "completed",
+      response: "FIRST_ONLY",
+      durationMs: duration,
+    });
+    expect(requests).toHaveLength(count);
+    const slice = readTriggerSlice(binding.sessionId, binding.triggerId);
+    expect(
+      "notFound" in slice ? undefined : slice.records.find((event) => event.type === "trigger_end"),
+    ).toMatchObject({ durationMs: duration });
+  });
+
+  it("recovers native admission and settlement gaps without trusting a receipt mirror or replaying model/tool work", async () => {
+    const body = {
+      prompt: "write-round",
+      requestId: "projection-gap",
+      correlationKey: "slack:thread:C_GAP/1710000000.001",
+      triggerSlackId: "U_ORIGINAL",
+    };
+    const frames = await stream(body);
+    const binding = await (await trigger(body)).json();
+    const nativeModelCount = requests.length;
+    const nativeToolCount = executorRequests.filter(
+      (request) => request.operation.type === "writeFile",
+    ).length;
+    expect(nativeToolCount).toBe(1);
+    await editPiNativeDocuments(async (tx, id) => {
+      const metadata = await tx.doc(piConversationMetadataDoc, id);
+      const receipt = metadata.receipts[0];
+      if (!receipt) throw new Error("Native gap fixture missing receipt");
+      // Both native commits already happened; Neo never recorded them before process loss.
+      receipt.admission = { state: "intent", prompt: body.prompt };
+      delete receipt.observation;
+      delete receipt.authorization;
+      metadata.activeRequestId = body.requestId;
+    });
+    await rm(join(directory, "worklog"), { recursive: true, force: true });
+    await openRunner();
+    expect((await stream(body)).at(-1)).toMatchObject({
+      status: "completed",
+      response: frames.at(-1)?.response,
+    });
+    await vi.waitFor(() =>
+      expect(readTriggerSlice(binding.sessionId, binding.triggerId)).toMatchObject({
+        status: "completed",
+      }),
+    );
+    expect(requests).toHaveLength(nativeModelCount);
+    expect(
+      executorRequests.filter((request) => request.operation.type === "writeFile"),
+    ).toHaveLength(nativeToolCount);
+    expect(findTriggerActor(binding.sessionId, binding.triggerId)).toMatchObject({
+      slack: "U_ORIGINAL",
+    });
+  });
+
+  it("drains an in-flight native callback even when released watch stop resolves before the listener", async () => {
+    await closeServer(runnerServer);
+    await runner.close();
+    let release: () => void = () => undefined;
+    let signalPost: () => void = () => undefined;
+    let signalUpdate: () => void = () => undefined;
+    const delayed = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const posted = new Promise<void>((resolve) => {
+      signalPost = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      signalUpdate = resolve;
+    });
+    const events: ProgressEvent[] = [];
+    let delayedOnce = false;
+    await openRunner({
+      progressEventSink: (event) => events.push(event),
+      progressTransport: {
+        async post() {
+          signalPost();
+          return { ts: "callback-footer" };
+        },
+        async update() {
+          if (!delayedOnce) {
+            delayedOnce = true;
+            signalUpdate();
+            await delayed;
+          }
+        },
+        async delete() {},
+        async addReaction() {},
+      },
+    });
+    const correlationKey = "slack:thread:C_CALLBACK/1710000000.001";
+    try {
+      const first = stream({
+        prompt: "hold-run",
+        requestId: "callback-A",
+        correlationKey,
+        triggerSlackId: "U_A",
+      });
+      await vi.waitFor(() => expect(hold).toBeDefined());
+      await posted;
+      if (!hold) throw new Error("Callback drain fixture missing model response");
+      respond(hold, { text: "finished A" });
+      await blocked;
+      const replacement = stream({
+        prompt: "replacement",
+        requestId: "callback-B",
+        correlationKey,
+        triggerSlackId: "U_B",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(events.some((event) => event.type === "done")).toBe(false);
+      expect(requests).toHaveLength(1);
+      release();
+      expect((await first).at(-1)).toMatchObject({ status: "completed" });
+      expect((await replacement).at(-1)).toMatchObject({ status: "completed" });
+      const newStart = events.findIndex(
+        (event) => event.type === "start" && event.requestId === "callback-B",
+      );
+      expect(events.slice(newStart).every((event) => event.requestId === "callback-B")).toBe(true);
+    } finally {
+      release();
+    }
+  });
+
+  it("drains delayed terminal presentation before installing a replacement actor, model or observer", async () => {
+    await closeServer(runnerServer);
+    await runner.close();
+    let release: () => void = () => undefined;
+    let signal: () => void = () => undefined;
+    const delayed = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      signal = resolve;
+    });
+    const events: ProgressEvent[] = [];
+    await openRunner({
+      progressEventSink: (event) => events.push(event),
+      progressTransport: {
+        async post() {
+          return { ts: "terminal-footer" };
+        },
+        async update() {},
+        async delete() {},
+        async addReaction() {},
+        async removeReaction() {
+          signal();
+          await delayed;
+        },
+      },
+    });
+    const correlationKey = "slack:thread:C_DRAIN/1710000000.001";
+    try {
+      const first = await stream({
+        prompt: "first",
+        requestId: "old-owner",
+        correlationKey,
+        triggerSlackId: "U_A",
+        messageTs: "1710000000.002",
+        modelProfile: "strong",
+      });
+      await blocked;
+      const before = requests.length;
+      const next = stream({
+        prompt: "replacement write-round",
+        requestId: "new-owner",
+        correlationKey,
+        triggerSlackId: "U_B",
+        messageTs: "1710000000.003",
+        modelProfile: "fast",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(requests).toHaveLength(before);
+      expect(events.some((event) => event.requestId === "new-owner")).toBe(false);
+      release();
+      expect((await next).at(-1)).toMatchObject({ status: "completed" });
+      const newStart = events.findIndex(
+        (event) => event.type === "start" && event.requestId === "new-owner",
+      );
+      expect(events.slice(newStart).every((event) => event.requestId === "new-owner")).toBe(true);
+      expect(requests.at(-1)).toMatchObject({ reasoning: { effort: "low" } });
+      expect(JSON.stringify(requests.at(-1))).toContain("slack: U_B");
+      expect(findActiveSlackTriggerActor(String(first[0].sessionId))).toMatchObject({ ok: false });
+    } finally {
+      release();
+    }
+  });
+
+  it.each([
+    "settled legacy",
+    "corrupt hybrid",
+    "live legacy aborted",
+    "live legacy error",
+    "live legacy completed",
+    "live current withdrawn",
+    "live current withdrawn queued",
+  ])(
+    "validates native execution before migrating or scheduling persisted authority (%s)",
+    async (scenario) => {
+      const live = scenario.startsWith("live");
+      const hybrid = scenario === "corrupt hybrid";
+      const current = scenario.startsWith("live current withdrawn");
+      const queued = scenario.endsWith("queued");
+      const status =
+        scenario === "live legacy aborted"
+          ? "aborted"
+          : scenario === "live legacy completed"
+            ? "completed"
+            : "error";
+      await closeServer(runnerServer);
+      await runner.close();
+      const anchorId = mintAnchor(),
+        triggerId = mintTriggerId();
+      const request = {
+        prompt: live ? "hold-run legacy native input" : "legacy native answer",
+        requestId: "legacy-native",
+        directory: triggerDirectory,
+        correlationKey: "slack:thread:C_LEGACY/1710000000.001",
+        triggerSlackId: "U_ORIGINAL",
+        interrupt: false,
+        stream: false,
+      };
+      const oldReceipt = {
+        requestId: request.requestId,
+        fingerprint: "legacy-fingerprint",
+        triggerId,
+        startedAt: Date.now(),
+        resumed: false,
+        request,
+        status: "accepted",
+        slackTeamId: "T123",
+        ...(live
+          ? {
+              googleAuthSource: {
+                id: "continuation_invitation_fixture",
+                sessionId: `pi-${anchorId}`,
+                anchorId,
+                triggerId,
+                slackTeamId: "T123",
+                slackUserId: "U_ORIGINAL",
+                connectionId: "10000000-0000-4000-8000-000000000001",
+                args: ["docs", "documents", "create"],
+                createdAtMs: Date.now() - 2000,
+                expiresAtMs: Date.now() - 1000,
+                originalRequestId: "original-google-request",
+              },
+            }
+          : {}),
+        ...(hybrid ? { admission: { state: "submitted" } } : {}),
+      };
+      const oldMetadata = {
+        anchorId,
+        directory: triggerDirectory,
+        correlationKey: request.correlationKey,
+        activeRequestId: request.requestId,
+        receipts: [oldReceipt],
+      };
+      const legacyDoc = defineDoc<JsonObject>({
+        kind: "thor.pi.conversation",
+        version: 1,
+        scope: "conversation",
+        history: "latest",
+        fork: "initial",
+        initial: () => ({ anchorId: "", directory: "", receipts: [] }),
+      });
+      const { status: _status, request: legacyRequest, ...binding } = oldReceipt;
+      const { prompt: _prompt, ...authority } = legacyRequest;
+      const currentMetadata = {
+        ...oldMetadata,
+        version: 2,
+        receipts: [
+          {
+            ...binding,
+            request: authority,
+            admission: { state: "withdrawn", at: oldReceipt.startedAt },
+          },
+        ],
+      };
+      const models = createModels();
+      models.setProvider(
+        createProvider({
+          id: "codex-lb",
+          baseUrl: config.modelBaseUrl,
+          auth: {
+            apiKey: { name: "dummy key", resolve: async () => ({ auth: { apiKey: "dummy-key" } }) },
+          },
+          api: openAIResponsesApi(),
+          models: [
+            {
+              id: config.modelId,
+              name: config.modelId,
+              provider: "codex-lb",
+              api: "openai-responses",
+              baseUrl: config.modelBaseUrl,
+              input: ["text"],
+              reasoning: true,
+              contextWindow: 65536,
+              maxTokens: 16384,
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            },
+          ],
+        }),
+      );
+      const runtime = await Harness.open(
+        await openNodeSqliteStorage(config.storagePath),
+        {
+          models,
+          registry: createRegistry(),
+          settings: { retry: { enabled: false }, stream: { maxRetries: 0 } },
+        },
+        BACKGROUND_CONTEXT,
+      );
+      const conversation = await runtime.createConversation(
+        {
+          ownership: { kind: "ownerless" },
+          agent: {
+            model: { provider: "codex-lb", modelId: config.modelId },
+            cwd: triggerDirectory,
+          },
+          init: async (tx, id) => {
+            if (current)
+              Object.assign(await tx.doc(piConversationMetadataDoc, id), currentMetadata);
+            else Object.assign(await tx.doc(legacyDoc, id), oldMetadata);
+          },
+        },
+        BACKGROUND_CONTEXT,
+      );
+      if (queued)
+        await conversation.submit(
+          { type: "input", content: "hold-run queued blocker", requestId: "queued-blocker" },
+          BACKGROUND_CONTEXT,
+        );
+      const submission = await conversation.submit(
+        { type: "input", content: request.prompt, requestId: request.requestId },
+        BACKGROUND_CONTEXT,
+      );
+      if (live) {
+        await vi.waitFor(() => expect(hold).toBeDefined());
+        expect((await submission.status(BACKGROUND_CONTEXT)).status).toBe(
+          queued ? "queued" : "placed",
+        );
+      } else expect((await submission.wait(BACKGROUND_CONTEXT)).status).toBe("done");
+      // The prior Google expiry path could retire Neo's mirror without retiring native input.
+      // Incorrect terminal mirrors cannot decide execution or supply a missing active requester.
+      await conversation.commit(async (tx) => {
+        if (current) {
+          const metadata = await tx.doc(piConversationMetadataDoc, conversation.id);
+          delete metadata.activeRequestId;
+        } else {
+          const metadata = await tx.doc(legacyDoc, conversation.id);
+          metadata.receipts = [{ ...oldReceipt, status }];
+          delete metadata.activeRequestId;
+        }
+      }, BACKGROUND_CONTEXT);
+      const preservedMetadata = structuredClone(
+        await runtime.snapshot(
+          current ? piConversationMetadataDoc : legacyDoc,
+          conversation.id,
+          BACKGROUND_CONTEXT,
+        ),
+      );
+      const preservedSubmission = await submission.status(BACKGROUND_CONTEXT);
+      const preservedAgent = structuredClone(
+        await runtime.snapshot(AgentDoc, conversation.id, BACKGROUND_CONTEXT),
+      );
+      await runtime.close(BACKGROUND_CONTEXT);
+      requests = [];
+      executorRequests = [];
+      if (hybrid || live) {
+        const result = await createPiRunnerApp(config, { remoteCliUrl: noWaitBrokerUrl });
+        if (result.ok) await result.close();
+        expect(result).toEqual({
+          ok: false,
+          error: "pi_startup_failed",
+        });
+        const inspect = await Harness.open(
+          await openNodeSqliteStorage(config.storagePath),
+          { models: createModels(), registry: createRegistry() },
+          BACKGROUND_CONTEXT,
+        );
+        try {
+          // Reading with the v1 token also proves no metadata-version migration committed.
+          expect(
+            await inspect.snapshot(
+              current ? piConversationMetadataDoc : legacyDoc,
+              conversation.id,
+              BACKGROUND_CONTEXT,
+            ),
+          ).toEqual(preservedMetadata);
+          expect(
+            await inspect.commit(
+              (tx) => tx.submissionByRequest(conversation.id, request.requestId),
+              BACKGROUND_CONTEXT,
+            ),
+          ).toEqual(preservedSubmission);
+          expect(await inspect.snapshot(AgentDoc, conversation.id, BACKGROUND_CONTEXT)).toEqual(
+            preservedAgent,
+          );
+          expect(readTriggerSlice(`pi-${anchorId}`, triggerId)).toMatchObject({ notFound: true });
+        } finally {
+          await inspect.close(BACKGROUND_CONTEXT);
+        }
+        // Restore an empty runner for fixture shutdown without erasing the rejected database.
+        config.storagePath = join(directory, "after-rejection.sqlite");
+        await openRunner();
+      } else {
+        await openRunner();
+        const page = await (await fetch(`${runnerUrl}/runner/v/${anchorId}/${triggerId}`)).text();
+        expect(page).toContain("Model turn completed");
+        expect(page).toContain("legacy native answer");
+        await editPiNativeDocuments(async (tx, id) => {
+          const metadata = await tx.doc(piConversationMetadataDoc, id);
+          expect(metadata).toMatchObject({
+            version: 2,
+            receipts: [{ admission: { state: "submitted" } }],
+          });
+          expect(metadata.receipts[0]).not.toHaveProperty("status");
+          expect(metadata.receipts[0]?.request).not.toHaveProperty("prompt");
+        });
+        await openRunner();
+      }
+      expect(requests).toHaveLength(0);
+      expect(executorRequests).toHaveLength(0);
+    },
+  );
+
+  it("recovers a pre-submit intent under its original actor before any model dispatch", async () => {
+    const frames = await stream({
+      prompt: "finished",
+      requestId: "before-gap",
+      correlationKey: "cron:before-gap",
+    });
+    const sessionId = String(frames[0].sessionId);
+    const nextId = "persisted-intent",
+      nextTrigger = mintTriggerId();
+    await editPiNativeDocuments(async (tx, id) => {
+      const metadata = await tx.doc(piConversationMetadataDoc, id);
+      const original = metadata.receipts[0];
+      if (!original) throw new Error("Intent fixture missing saved policy");
+      const { observation: _observation, authorization: _authorization, ...policy } = original;
+      metadata.receipts.push({
+        ...policy,
+        requestId: nextId,
+        triggerId: nextTrigger,
+        startedAt: Date.now(),
+        resumed: true,
+        request: {
+          directory: triggerDirectory,
+          interrupt: false,
+          stream: false,
+          correlationKey: "slack:thread:C_INTENT/1710000000.001",
+          triggerSlackId: "U_INTENT",
+        },
+        admission: { state: "intent", prompt: "INTENT_ONLY" },
+      });
+      metadata.activeRequestId = nextId;
+    });
+    await rm(join(directory, "worklog"), { recursive: true, force: true });
+    const actors: ReturnType<typeof findActiveSlackTriggerActor>[] = [];
+    modelServer.removeAllListeners("request");
+    modelServer.on("request", async (req, res) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      requests.push(JSON.parse(Buffer.concat(chunks).toString()));
+      actors.push(findActiveSlackTriggerActor(sessionId));
+      respond(res, { text: "intent recovered" });
+    });
+    await openRunner();
+    await vi.waitFor(() =>
+      expect(readTriggerSlice(sessionId, nextTrigger)).toMatchObject({ status: "completed" }),
+    );
+    expect(actors).toEqual([
+      expect.objectContaining({ ok: true, triggerId: nextTrigger, slackUserId: "U_INTENT" }),
+    ]);
+    expect(JSON.stringify(requests.at(-1))).toContain("INTENT_ONLY");
+    const count = requests.length;
+    await closeServer(runnerServer);
+    await runner.close();
+    await openRunner();
+    expect(requests).toHaveLength(count);
+  });
+
+  it("keeps a busy requester and cwd authoritative while rejecting cross-conversation request rebinding", async () => {
+    const body = {
+      prompt: "hold-run",
+      requestId: "actor-A",
+      correlationKey: "slack:thread:C_ACTOR/1710000000.001",
+      triggerSlackId: "U_A",
+      modelProfile: "strong",
+    };
+    const accepted = await (await trigger(body)).json();
+    await vi.waitFor(() => expect(hold).toBeDefined());
+    expect(
+      await (
+        await trigger({
+          ...body,
+          prompt: "request B",
+          requestId: "actor-B",
+          triggerSlackId: "U_B",
+          modelProfile: "fast",
+        })
+      ).json(),
+    ).toMatchObject({ busy: true, accepted: false });
+    expect(findActiveSlackTriggerActor(accepted.sessionId)).toMatchObject({
+      ok: true,
+      slackUserId: "U_A",
+      triggerId: accepted.triggerId,
+    });
+    expect(
+      (
+        await trigger({
+          prompt: "request B",
+          sessionId: accepted.sessionId,
+          requestId: "foreign-cwd",
+          directory: "/workspace/repos/foreign",
+          interrupt: true,
+        })
+      ).status,
+    ).toBe(409);
+    const other = await stream({
+      prompt: "other conversation",
+      requestId: "other",
+      correlationKey: "cron:other",
+    });
+    expect((await trigger({ ...body, sessionId: other[0].sessionId })).status).toBe(409);
+    expect(JSON.stringify(requests[0])).toContain("slack: U_A");
+    expect(requests[0]).toMatchObject({ reasoning: { effort: "high" } });
+    const replacement = await stream({
+      prompt: "replacement bash-round",
+      requestId: "actor-B",
+      correlationKey: body.correlationKey,
+      triggerSlackId: "U_B",
+      modelProfile: "fast",
+      interrupt: true,
+    });
+    expect(replacement.at(-1)).toMatchObject({ status: "completed" });
+    expect(requests.at(-1)).toMatchObject({ reasoning: { effort: "low" } });
+    expect(JSON.stringify(requests.at(-1))).toContain("slack: U_B");
+    expect(
+      executorRequests
+        .filter((request) => request.operation.type === "exec")
+        .every((request) => request.cwd === triggerDirectory),
+    ).toBe(true);
+    expect(findTriggerActor(accepted.sessionId)).toMatchObject({ slack: "U_B" });
+  });
+
+  it("stops a failed observer and settles native abort facts before replacing its unobserved request", async () => {
+    await closeServer(runnerServer);
+    await runner.close();
+    let failed = false;
+    await openRunner({
+      progressEventSink: (event) => {
+        if (!failed && event.type === "model") {
+          failed = true;
+          throw new Error("Fixture presentation unavailable");
+        }
+      },
+    });
+    const body = { prompt: "hold-run", requestId: "unobserved", correlationKey: "cron:unobserved" };
+    const frames = await stream(body);
+    expect(frames.at(-1)).toMatchObject({ type: "error", error: "Pi run unavailable" });
+    const binding = findActiveTrigger(String(frames[0].sessionId));
+    if (!binding.ok) throw new Error("Unobserved fixture missing active binding");
+    await vi.waitFor(() => expect(hold).toBeDefined());
+    await stream({
+      prompt: "replacement",
+      requestId: "observed-replacement",
+      correlationKey: body.correlationKey,
+      interrupt: true,
+    });
+    expect(readTriggerSlice(binding.sessionId, binding.triggerId)).toMatchObject({
+      status: "aborted",
+    });
+    expect((await stream(body)).at(-1)).toMatchObject({ status: "error", error: "Run aborted" });
+  });
+
   it("keeps legacy viewer history read-only and never forwards Pi session IDs to OpenCode", async () => {
     await closeServer(runnerServer);
     await runner.close();
@@ -1684,6 +2354,128 @@ describe("native Pi activity through the real Slack SDK", () => {
     },
   );
 
+  it.each(["non-ok", "malformed", "disconnect", "timeout", "missing-team"] as const)(
+    "fails closed on %s authorization observation without checking the source or replaying effects",
+    async (failure) => {
+      let healthy = false;
+      const broker = createServer((req, res) => {
+        expect(req.headers["x-thor-internal-secret"]).toBe(config.internalSecret);
+        if (req.url !== "/internal/google-workspace/waits") {
+          res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify({ continuations: [] }));
+          return;
+        }
+        if (!healthy && failure === "timeout") return;
+        if (!healthy && failure === "disconnect") {
+          res.destroy();
+          return;
+        }
+        res.setHeader("content-type", "application/json");
+        if (!healthy && failure === "non-ok") res.statusCode = 503;
+        res.end(
+          JSON.stringify(
+            !healthy && failure === "malformed" ? { waits: [{ malformed: true }] } : { waits: [] },
+          ),
+        );
+      });
+      const brokerUrl = await listen(broker);
+      const fixture = await slackFixture();
+      if (failure === "missing-team") delete config.slackTeamId;
+      try {
+        await reopenProgress(fixture, brokerUrl);
+        const body = {
+          prompt: "write-round",
+          requestId: `unknown-auth-${failure}`,
+          correlationKey,
+          triggerSlackId: "U_CURRENT",
+          messageTs: "1710000000.002",
+        };
+        const frames = await stream(body);
+        expect(frames.at(-1)).toMatchObject({ status: "error", authWait: "unconfirmed" });
+        await vi.waitFor(() =>
+          expect(
+            fixture.deliveries.some((delivery) =>
+              delivery.form.get("text")?.includes("completion is unconfirmed"),
+            ),
+          ).toBe(true),
+        );
+        const terminal = fixture.deliveries.find((delivery) =>
+          delivery.form.get("text")?.includes("completion is unconfirmed"),
+        );
+        expect(terminal?.form.get("blocks")).toContain("neo-ai-still-v1.png");
+        expect(terminal?.form.get("blocks")).not.toMatch(/neo-(working|thinking)-v1.gif/);
+        expect(checks(fixture)).toHaveLength(0);
+        expect(removals(fixture)).toHaveLength(0);
+        const modelCount = requests.length;
+        const tools = executorRequests.filter(
+          (request) => request.operation.type === "writeFile",
+        ).length;
+        expect(tools).toBe(1);
+        healthy = true;
+        const duplicate = (await stream(body)).at(-1);
+        expect(duplicate).toMatchObject(
+          failure === "missing-team"
+            ? { status: "error", authWait: "unconfirmed" }
+            : { status: "completed" },
+        );
+        expect(duplicate?.durationMs).toBe(frames.at(-1)?.durationMs);
+        expect(requests).toHaveLength(modelCount);
+        expect(
+          executorRequests.filter((request) => request.operation.type === "writeFile"),
+        ).toHaveLength(tools);
+        expect(checks(fixture)).toHaveLength(0); // Observation recovery never repeats Slack completion effects.
+      } finally {
+        await fixture.close();
+        await closeServer(broker);
+      }
+    },
+  );
+
+  it("retains original hold evidence when a confirmed wait disappears, including repeated reads and restart", async () => {
+    const broker = await continuationBroker();
+    broker.setReady(false);
+    const fixture = await slackFixture();
+    try {
+      await reopenProgress(fixture, broker.url);
+      const body = {
+        prompt: "hold-run",
+        requestId: "lost-wait",
+        correlationKey,
+        triggerSlackId: "UOWNER",
+        messageTs: "1710000000.002",
+      };
+      const binding = await (await trigger(body)).json();
+      await vi.waitFor(() => expect(hold).toBeDefined());
+      broker.publish(binding);
+      if (!hold) throw new Error("Lost-wait fixture missing response");
+      respond(hold, { text: "Waiting for authorization" });
+      expect((await stream(body)).at(-1)).toMatchObject({ status: "error", authWait: "google" });
+      broker.clearRecords();
+      for (let read = 0; read < 2; read++)
+        expect((await stream(body)).at(-1)).toMatchObject({
+          status: "error",
+          authWait: "unconfirmed",
+        });
+      expect(checks(fixture)).toHaveLength(0);
+      expect(removals(fixture)).toHaveLength(0);
+      const count = requests.length;
+      await reopenProgress(fixture, broker.url);
+      expect((await stream(body)).at(-1)).toMatchObject({
+        status: "error",
+        authWait: "unconfirmed",
+      });
+      expect(requests).toHaveLength(count);
+      const page = await (
+        await fetch(`${runnerUrl}/runner/v/${binding.anchorId}/${binding.triggerId}`)
+      ).text();
+      expect(page).toContain("wait is no longer confirmed");
+      expect(checks(fixture)).toHaveLength(0);
+    } finally {
+      await fixture.close();
+      await broker.close();
+    }
+  });
+
   it("never sends a success reaction for a failed native model turn", async () => {
     const fixture = await slackFixture();
     try {
@@ -2136,8 +2928,8 @@ describe("per-task native model routing", () => {
       const selected = selectPiTaskModel({pool,routingTask:request.prompt}).value;
       const conversation = await runtime.createConversation({ownership:{kind:'ownerless'},agent:{model:{provider:'codex-lb',modelId:selected.modelId},thinkingLevel:selected.thinkingLevel,cwd:request.directory},
         init:async(tx,id)=>Object.assign(await tx.doc(piConversationMetadataDoc,id),{
-          anchorId:mintAnchor(),directory:request.directory,activeRequestId:request.requestId,
-          receipts:[{requestId:request.requestId,fingerprint:'fixture-unused',triggerId:mintTriggerId(),startedAt:Date.now(),resumed:false,status:'accepted',request,modelSelection:selected}]
+          version:2,anchorId:mintAnchor(),directory:request.directory,activeRequestId:request.requestId,
+          receipts:[{requestId:request.requestId,fingerprint:'fixture-unused',triggerId:mintTriggerId(),startedAt:Date.now(),resumed:false,admission:{state:'intent',prompt:request.prompt},request:(({prompt,...authority})=>authority)(request),modelSelection:selected}]
         })},context);
       await conversation.submit({type:'input',content:request.prompt,requestId:request.requestId},context);
     `;

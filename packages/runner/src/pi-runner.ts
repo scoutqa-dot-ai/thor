@@ -14,6 +14,8 @@ import {
   type Submission,
   type AgentEvent,
   type Cursor,
+  type SubmissionRecord,
+  type EntryId,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import {
@@ -27,6 +29,7 @@ import {
   resolveAlias,
   resolveAnchorForCorrelationKey,
   handleProgressEvent,
+  stopProgressRequest,
   ProgressModelSchema,
   matchesInternalSecret,
   type ProgressEvent,
@@ -223,8 +226,16 @@ export async function createPiRunnerApp(
     };
     const sessionId = (owner: ConversationOwner) => `pi-${owner.metadata.anchorId}`;
     const remember = (owner: ConversationOwner) => {
+      const previousOwner = owners.get(sessionId(owner));
+      if (previousOwner && previousOwner.conversation.id !== owner.conversation.id)
+        throw new Error("Pi public session binding conflict");
       owners.set(sessionId(owner), owner);
-      for (const receipt of owner.metadata.receipts) requests.set(receipt.requestId, owner);
+      for (const receipt of owner.metadata.receipts) {
+        const previous = requests.get(receipt.requestId);
+        if (previous && previous.conversation.id !== owner.conversation.id)
+          throw new Error("Pi runner-wide request binding conflict");
+        requests.set(receipt.requestId, owner);
+      }
     };
     const reload = async (owner: ConversationOwner) => {
       owner.metadata = piConversationMetadataSchema.parse(
@@ -232,7 +243,27 @@ export async function createPiRunnerApp(
       );
       remember(owner);
     };
-    const reconcileLogs = (owner: ConversationOwner) => {
+    const nativeRecord = async (owner: ConversationOwner, requestId: string) => {
+      const record = await owner.conversation.commit(
+        (tx) => tx.submissionByRequest(owner.conversation.id, requestId),
+        context,
+      );
+      if (record && record.type !== "input") throw new Error("Pi native request type mismatch");
+      return record;
+    };
+    const executionStatus = async (owner: ConversationOwner, receipt: PiAdmissionReceipt) => {
+      const record = await nativeRecord(owner, receipt.requestId);
+      if (record?.status === "done") return "completed" as const;
+      if (record?.status === "unanswered")
+        return record.reason === "aborted" ? ("aborted" as const) : ("error" as const);
+      // Withdrawal is only pre-submit evidence; live native input still requires validated requester authority.
+      if (record) return "accepted" as const;
+      if (receipt.admission.state === "withdrawn") return "aborted" as const;
+      if (!record && receipt.admission.state === "submitted")
+        throw new Error("Pi submitted binding missing native record");
+      return "accepted" as const;
+    };
+    const reconcileLogs = async (owner: ConversationOwner) => {
       const id = sessionId(owner);
       for (const aliasType of ["opencode.session", "pi.conversation"] as const) {
         if (resolveAlias({ aliasType, aliasValue: id }) !== owner.metadata.anchorId)
@@ -250,6 +281,7 @@ export async function createPiRunnerApp(
           appendCorrelationAliasForAnchor(owner.metadata.anchorId, correlationKey);
       }
       for (const receipt of owner.metadata.receipts) {
+        const status = await executionStatus(owner, receipt);
         let slice = readTriggerSlice(id, receipt.triggerId);
         if ("notFound" in slice) {
           appendSessionEvent(id, {
@@ -262,15 +294,22 @@ export async function createPiRunnerApp(
           slice = readTriggerSlice(id, receipt.triggerId);
         }
         if (
-          receipt.status !== "accepted" &&
+          status !== "accepted" &&
+          (receipt.observation !== undefined || receipt.admission.state === "withdrawn") &&
           !("notFound" in slice) &&
           !slice.records.some((record) => record.type === "trigger_end")
         )
           appendSessionEvent(id, {
             type: "trigger_end",
             triggerId: receipt.triggerId,
-            status: receipt.status,
-            durationMs: Date.now() - receipt.startedAt,
+            status,
+            durationMs: Math.max(
+              0,
+              (receipt.observation?.settledAt ??
+                (receipt.admission.state === "withdrawn"
+                  ? receipt.admission.at
+                  : receipt.startedAt)) - receipt.startedAt,
+            ),
           });
       }
     };
@@ -289,35 +328,53 @@ export async function createPiRunnerApp(
       }
     };
     const submissionFor = async (owner: ConversationOwner, requestId: string) => {
-      const record = await owner.conversation.commit(
-        (tx) => tx.submissionByRequest(owner.conversation.id, requestId),
-        context,
-      );
+      const record = await nativeRecord(owner, requestId);
       return record ? runtime.submission(record.id, context) : undefined;
     };
     const entriesFor = async (
       owner: ConversationOwner,
       receipt: PiAdmissionReceipt,
+      snapshotEnd?: EntryId,
     ): Promise<EntryRecord[]> => {
-      const submitted = await submissionFor(owner, receipt.requestId);
-      const record = await submitted?.status(context);
+      const record = await nativeRecord(owner, receipt.requestId);
       const firstEntry = record?.entry;
       if (firstEntry === undefined) return [];
       const index = owner.metadata.receipts.findIndex(
         (item) => item.requestId === receipt.requestId,
       );
-      const next = owner.metadata.receipts[index + 1];
-      const nextRecord = next
-        ? await (await submissionFor(owner, next.requestId))?.status(context)
-        : undefined;
+      let nextRecord: SubmissionRecord | undefined;
+      if (record?.status !== "done") {
+        for (const next of owner.metadata.receipts.slice(index + 1)) {
+          nextRecord = await nativeRecord(owner, next.requestId);
+          if (nextRecord?.entry !== undefined) break;
+        }
+      }
+      const historyEnd =
+        record?.type === "input" && record.status === "done"
+          ? record.answer
+          : (receipt.observation?.historyEnd ?? nextRecord?.entry);
+      const upper =
+        snapshotEnd === undefined
+          ? historyEnd
+          : historyEnd === undefined
+            ? snapshotEnd
+            : Math.min(historyEnd, snapshotEnd);
+      // SAFETY: historyEnd is a positive native entry ID captured at settlement and parsed on rehydration.
+      const maxEntryId = upper as EntryId | undefined;
       const entries: EntryRecord[] = [];
       let cursor: Cursor | undefined;
       do {
-        const page = await owner.conversation.entries({}, 200, cursor, context);
+        const page = await owner.conversation.entries(
+          { minEntryId: firstEntry, maxEntryId },
+          200,
+          cursor,
+          context,
+        );
         entries.push(
           ...page.items.filter(
             (entry) =>
               entry.id >= firstEntry &&
+              (upper === undefined || entry.id <= upper) &&
               (nextRecord?.entry === undefined || entry.id < nextRecord.entry),
           ),
         );
@@ -329,18 +386,30 @@ export async function createPiRunnerApp(
       owner: ConversationOwner,
       receipt: PiAdmissionReceipt,
     ): Promise<ProgressEvent> => {
+      await reload(owner);
+      receipt =
+        owner.metadata.receipts.find((item) => item.requestId === receipt.requestId) ?? receipt;
       const entries = await entriesFor(owner, receipt);
+      const status = await executionStatus(owner, receipt);
+      const authorization =
+        status === "completed"
+          ? (receipt.authorization ?? (receipt.request.triggerSlackId ? "unavailable" : "clear"))
+          : "clear";
       return {
         type: "done",
         requestId: receipt.requestId,
         sessionId: sessionId(owner),
         correlationKey: receipt.request.correlationKey,
         resumed: receipt.resumed,
-        status: receipt.status === "completed" ? "completed" : "error",
-        ...(receipt.googleAuthWaiting ? { authWait: "google" as const } : {}),
-        ...(receipt.status === "completed"
+        status: status === "completed" && authorization === "clear" ? "completed" : "error",
+        ...(authorization === "waiting"
+          ? { authWait: "google" as const }
+          : authorization === "unavailable" || authorization === "waiting_unconfirmed"
+            ? { authWait: "unconfirmed" as const }
+            : {}),
+        ...(status === "completed"
           ? {}
-          : { error: receipt.status === "aborted" ? "Run aborted" : "Pi run failed" }),
+          : { error: status === "aborted" ? "Run aborted" : "Pi run failed" }),
         response: textFromEntries(entries),
         toolCalls: entries
           .flatMap((entry) => entry.model ?? [])
@@ -349,8 +418,62 @@ export async function createPiRunnerApp(
             tool: message.toolName,
             state: message.isError ? "error" : "completed",
           })),
-        durationMs: Math.max(0, Date.now() - receipt.startedAt),
+        durationMs: Math.max(
+          0,
+          (receipt.observation?.settledAt ??
+            (receipt.admission.state === "withdrawn" ? receipt.admission.at : receipt.startedAt)) -
+            receipt.startedAt,
+        ),
       };
+    };
+    const observeSettlement = async (
+      owner: ConversationOwner,
+      receipt: PiAdmissionReceipt,
+      observedAt = Date.now(),
+    ) => {
+      const status = await executionStatus(owner, receipt);
+      if (status === "accepted")
+        throw new Error("Pi settlement observation before native settlement");
+      const end =
+        status === "completed" ? undefined : (await entriesFor(owner, receipt)).at(-1)?.id;
+      const slice = readTriggerSlice(sessionId(owner), receipt.triggerId);
+      const priorEnd =
+        "notFound" in slice
+          ? undefined
+          : slice.records.find((event) => event.type === "trigger_end");
+      // Old shared completion timestamps can fix migration duration; native records still decide status.
+      const priorTime = priorEnd ? Date.parse(priorEnd.ts) : NaN;
+      await owner.conversation.commit(async (tx) => {
+        const metadata = await tx.doc(piConversationMetadataDoc, owner.conversation.id);
+        const stored = metadata.receipts.find((item) => item.requestId === receipt.requestId);
+        if (stored) {
+          stored.admission = { state: "submitted" };
+          stored.observation ??= {
+            settledAt: Number.isFinite(priorTime) ? priorTime : observedAt,
+            ...(end === undefined ? {} : { historyEnd: end }),
+          };
+        }
+      }, context);
+      const brokerOutcome =
+        status === "completed"
+          ? await continuationClient.observeGoogleAuthWait(
+              sessionId(owner),
+              owner.metadata.anchorId,
+              receipt,
+            )
+          : "clear";
+      // Once a hold was confirmed, its disappearance is not proof the blocked operation completed.
+      const hadConfirmedWait =
+        receipt.authorization === "waiting" || receipt.authorization === "waiting_unconfirmed";
+      const authorization =
+        hadConfirmedWait && brokerOutcome !== "waiting" ? "waiting_unconfirmed" : brokerOutcome;
+      await owner.conversation.commit(async (tx) => {
+        const metadata = await tx.doc(piConversationMetadataDoc, owner.conversation.id);
+        const stored = metadata.receipts.find((item) => item.requestId === receipt.requestId);
+        if (stored) stored.authorization = authorization;
+      }, context);
+      await reload(owner);
+      await reconcileLogs(owner);
     };
     const monitor = async (
       owner: ConversationOwner,
@@ -359,8 +482,12 @@ export async function createPiRunnerApp(
     ) => {
       if (monitors.has(receipt.requestId)) return;
       const listeners = new Set<(frame: StreamFrame) => void>();
-      const submitted = await submission.status(context);
-      const firstEntry = submitted.entry;
+      let submitted = await submission.status(context);
+      let firstEntry = submitted.entry;
+      // Capture the legacy native choice before acquiring the owned observer.
+      const legacyAgent = receipt.modelSelection
+        ? undefined
+        : await runtime.snapshot(AgentDoc, owner.conversation.id, context);
       const stream = await watchEvents(runtime, owner.conversation.id, context);
       let emittedText = "";
       const emit = async (frame: StreamFrame) => {
@@ -377,11 +504,8 @@ export async function createPiRunnerApp(
         if (event.type !== "text") await progress(event, receipt);
       };
       let displayedModel: ProgressModel | undefined;
-      // Legacy tasks cannot escalate; capture their native choice before a later task can replace it.
-      const legacyAgent = receipt.modelSelection
-        ? undefined
-        : await runtime.snapshot(AgentDoc, owner.conversation.id, context);
       const refreshTaskModel = async () => {
+        // Legacy tasks cannot escalate; their captured native choice cannot follow a replacement.
         await reload(owner);
         const selected = owner.metadata.receipts.find(
           (item) => item.requestId === receipt.requestId,
@@ -410,19 +534,35 @@ export async function createPiRunnerApp(
       };
       const project = async (event: AgentEvent) => {
         if (event.type === "snapshot") {
-          for (const entry of event.entries) {
-            if (firstEntry !== undefined && entry.id < firstEntry) continue;
-            for (const message of entry.model ?? [])
-              if (message.role === "toolResult")
-                await emit({
-                  type: "tool",
-                  tool: message.toolName,
-                  toolCallId: message.toolCallId,
-                  status: message.isError ? "error" : "completed",
-                });
-          }
+          submitted = await submission.status(context);
+          firstEntry = submitted.entry;
+          if (event.run && !event.run.inputs.includes(submission.id)) return;
+          runningTools.clear();
+          // Native snapshots are active context, which can omit pre-compaction calls. Rebuild
+          // this request's accounting from immutable history, bounded to its last visible entry.
+          const snapshotEnd = event.entries.reduce<EntryId | undefined>(
+            (last, entry) => (last === undefined || entry.id > last ? entry.id : last),
+            undefined,
+          );
+          const toolEntries =
+            snapshotEnd === undefined ? [] : await entriesFor(owner, receipt, snapshotEnd);
+          await emit({
+            type: "tools_snapshot",
+            tools: toolEntries
+              .filter(
+                (entry) =>
+                  firstEntry !== undefined &&
+                  entry.id >= firstEntry &&
+                  (submitted.status !== "done" ||
+                    submitted.type !== "input" ||
+                    entry.id <= submitted.answer),
+              )
+              .flatMap((entry) => entry.model ?? [])
+              .filter((message) => message.role === "toolResult")
+              .map((message) => ({ tool: message.toolName, toolCallId: message.toolCallId })),
+          });
           for (const tool of event.tools)
-            if (tool.status !== "done") {
+            if (tool.status === "running") {
               runningTools.add(tool.callId);
               await emit({
                 type: "tool",
@@ -431,7 +571,7 @@ export async function createPiRunnerApp(
                 status: "running",
               });
             }
-          if (runningTools.size) await setActivity("working");
+          await setActivity(runningTools.size ? "working" : "thinking");
           const partial =
             event.generation?.message?.content
               .filter((block) => block.type === "text")
@@ -509,69 +649,93 @@ export async function createPiRunnerApp(
           emittedText = "";
         }
       };
-      await progress(
-        {
-          type: "start",
-          requestId: receipt.requestId,
-          sessionId: sessionId(owner),
-          correlationKey: receipt.request.correlationKey,
-          resumed: receipt.resumed,
-        },
-        receipt,
-      );
-      await refreshTaskModel();
-      await project(stream.snapshot);
-      stream.start(async (events) => {
-        for (const event of events) await project(event);
-      });
-      const completion = (async () => {
+      // Released 1.0.0 stop() detaches, but can resolve while its async listener is still running.
+      // This is the owned callback drain, not another observer or execution lifecycle.
+      let projectionLine = Promise.resolve();
+      // Register ownership before any presentation callback can await or fail.
+      const completion = Promise.resolve().then(async () => {
+        let settled = false;
         try {
-          const settled = await submission.wait(context);
           if (closing) return;
-          const status =
-            settled.status === "done"
-              ? "completed"
-              : settled.reason === "aborted"
-                ? "aborted"
-                : "error";
-          const authWaiting =
-            status === "completed" &&
-            !!receipt.slackTeamId &&
-            !!receipt.request.triggerSlackId &&
-            (await continuationClient.waiting(sessionId(owner), owner.metadata.anchorId, receipt));
-          await owner.conversation.commit(async (tx) => {
-            const metadata = await tx.doc(piConversationMetadataDoc, owner.conversation.id);
-            const stored = metadata.receipts.find((item) => item.requestId === receipt.requestId);
-            if (stored) {
-              stored.status = status;
-              if (authWaiting) stored.googleAuthWaiting = true;
-            }
-            if (metadata.activeRequestId === receipt.requestId) delete metadata.activeRequestId;
-          }, context);
-          await reload(owner);
-          reconcileLogs(owner);
+          await progress(
+            {
+              type: "start",
+              requestId: receipt.requestId,
+              sessionId: sessionId(owner),
+              correlationKey: receipt.request.correlationKey,
+              resumed: receipt.resumed,
+            },
+            receipt,
+          );
+          await refreshTaskModel();
+          await project(stream.snapshot);
+          stream.start(async (events) => {
+            projectionLine = projectionLine.then(async () => {
+              for (const event of events) await project(event);
+            });
+            await projectionLine;
+          });
+          await reconcileLogs(owner); // wait can schedule; current actor must already be restored.
+          await submission.wait(context);
+          settled = true;
+          const observedAt = Date.now();
+          await stream.stop();
+          await projectionLine;
+          if (closing) return;
+          await observeSettlement(owner, receipt, observedAt);
           const settledReceipt = owner.metadata.receipts.find(
             (item) => item.requestId === receipt.requestId,
           );
-          await emit(await doneFrame(owner, settledReceipt ?? { ...receipt, status }));
+          await emit(await doneFrame(owner, settledReceipt ?? receipt));
         } catch {
           if (!closing) await emit({ type: "error", error: "Pi run unavailable" });
         } finally {
           await stream.stop();
+          await projectionLine.catch(() => undefined);
+          if (!closing && settled) {
+            await owner.conversation.commit(async (tx) => {
+              const metadata = await tx.doc(piConversationMetadataDoc, owner.conversation.id);
+              if (metadata.activeRequestId === receipt.requestId) delete metadata.activeRequestId;
+            }, context);
+            await reload(owner);
+          }
+          if (closing) {
+            const target = resolveSlackProgressTarget(receipt.request.correlationKey, {
+              messageTs: receipt.request.messageTs,
+              runnerBaseUrl: config.runnerBaseUrl,
+            });
+            if (target) await stopProgressRequest(target, receipt.requestId);
+          }
           monitors.delete(receipt.requestId);
         }
-      })();
+      });
       monitors.set(receipt.requestId, { completion, listeners });
     };
     const startAccepted = async (
       owner: ConversationOwner,
       receipt: PiAdmissionReceipt,
     ): Promise<"started" | "deferred" | "retired"> => {
+      await reload(owner);
+      const current = owner.metadata.receipts.find((item) => item.requestId === receipt.requestId);
+      if (!current) throw new Error("Pi admission binding missing");
+      receipt = current;
+      await reconcileLogs(owner);
+      const existing = await submissionFor(owner, receipt.requestId);
+      const record = await existing?.status(context);
+      if (existing && (record?.status === "done" || record?.status === "unanswered")) {
+        if (owner.metadata.activeRequestId === receipt.requestId)
+          await monitor(owner, receipt, existing);
+        else if (!receipt.observation || receipt.authorization !== "clear")
+          await observeSettlement(owner, receipt);
+        return "started";
+      }
+      if (receipt.admission.state === "withdrawn") return "retired";
       // Validate frozen support and exact native admission choice before ack, scheduling or tool execution.
       const agent = await runtime.snapshot(AgentDoc, owner.conversation.id, context);
       if (!routing.nativeMatches(receipt, agent))
         throw new Error("Pi saved native model unavailable");
-      if (receipt.googleAuthSource) {
+      // A native submission proves the preceding bound ACK succeeded. Its recovery is not a new outbox admission.
+      if (receipt.googleAuthSource && !existing) {
         if (
           receipt.googleAuthSource.expiresAtMs <= Date.now() ||
           owner.metadata.receipts.at(-1)?.requestId !== receipt.requestId
@@ -579,26 +743,37 @@ export async function createPiRunnerApp(
           await owner.conversation.commit(async (tx) => {
             const metadata = await tx.doc(piConversationMetadataDoc, owner.conversation.id);
             const stored = metadata.receipts.find((item) => item.requestId === receipt.requestId);
-            if (stored) stored.status = "aborted";
+            if (stored) stored.admission = { state: "withdrawn", at: Date.now() };
             if (metadata.activeRequestId === receipt.requestId) delete metadata.activeRequestId;
           }, context);
           await reload(owner);
-          reconcileLogs(owner);
+          await reconcileLogs(owner);
           return "retired";
         }
         if (!(await continuationClient.acknowledge(receipt.googleAuthSource.id, receipt.triggerId)))
           return "deferred";
       }
       if (closing) return "deferred"; // A durable admission remains pending; shutdown never starts another model turn.
-      const submission = await owner.conversation.submit(
-        {
-          type: "input",
-          content: receipt.request.prompt,
-          requestId: receipt.requestId,
-          whenBusy: "reject",
-        },
-        context,
-      );
+      await reconcileLogs(owner);
+      if (!existing && receipt.admission.state !== "intent")
+        throw new Error("Pi native admission input missing");
+      const submission =
+        existing ??
+        (await owner.conversation.submit(
+          {
+            type: "input",
+            content: receipt.admission.state === "intent" ? receipt.admission.prompt : "",
+            requestId: receipt.requestId,
+            whenBusy: "reject",
+          },
+          context,
+        ));
+      await owner.conversation.commit(async (tx) => {
+        const metadata = await tx.doc(piConversationMetadataDoc, owner.conversation.id);
+        const stored = metadata.receipts.find((item) => item.requestId === receipt.requestId);
+        if (stored) stored.admission = { state: "submitted" };
+      }, context);
+      await reload(owner);
       await monitor(owner, receipt, submission);
       return "started";
     };
@@ -614,29 +789,51 @@ export async function createPiRunnerApp(
         const owner = { conversation, metadata: piConversationMetadataSchema.parse(persisted) };
         // Only executable admissions require current resources. Completed history is
         // immutable evidence, not a requirement to keep every retired model configured.
-        for (const receipt of owner.metadata.receipts)
+        for (const receipt of owner.metadata.receipts) {
+          if ((await executionStatus(owner, receipt)) !== "accepted") continue;
           if (
-            receipt.status === "accepted" &&
-            receipt.modelSelection &&
-            !routing.supported(receipt.modelSelection).ok
+            owner.metadata.activeRequestId !== receipt.requestId ||
+            owner.metadata.receipts.at(-1)?.requestId !== receipt.requestId
           )
+            throw new Error("Pi active requester binding invalid");
+          if (receipt.modelSelection && !routing.supported(receipt.modelSelection).ok)
             throw new Error("Pi saved model pool unavailable");
+        }
         const active = owner.metadata.receipts.find(
           (receipt) => receipt.requestId === owner.metadata.activeRequestId,
         );
         if (
           active &&
+          (await executionStatus(owner, active)) === "accepted" &&
           !routing.nativeMatches(active, await runtime.snapshot(AgentDoc, record.id, context))
         )
           throw new Error("Pi saved native model unavailable");
         remember(owner);
-        reconcileLogs(owner);
+        await reconcileLogs(owner);
       }
       cursor = page.next;
     } while (cursor !== undefined);
+    // Commit migration/input retirement only after every binding has passed recovery validation.
+    for (const owner of owners.values()) {
+      await owner.conversation.commit(async (tx) => {
+        const metadata = await tx.doc(piConversationMetadataDoc, owner.conversation.id);
+        for (const receipt of metadata.receipts) {
+          const record = await tx.submissionByRequest(owner.conversation.id, receipt.requestId);
+          if (record) receipt.admission = { state: "submitted" };
+        }
+      }, context);
+      await reload(owner);
+    }
     for (const owner of owners.values())
       for (const receipt of owner.metadata.receipts)
-        if (receipt.status === "accepted") {
+        if (
+          (await executionStatus(owner, receipt)) === "accepted" ||
+          (receipt.admission.state !== "withdrawn" && !receipt.observation) ||
+          (owner.metadata.receipts.at(-1)?.requestId === receipt.requestId &&
+            receipt.authorization !== "clear" &&
+            (await executionStatus(owner, receipt)) === "completed") ||
+          owner.metadata.activeRequestId === receipt.requestId
+        ) {
           try {
             await startAccepted(owner, receipt);
           } catch {
@@ -654,6 +851,7 @@ export async function createPiRunnerApp(
       hasMonitor: (requestId) => monitors.has(requestId),
       reload,
       reconcileLogs,
+      executionStatus,
       startAccepted,
       fingerprintRequest: fingerprintPiRequest,
       configureReceipt: (tx, id, receipt) => routing.configureReceipt(tx, id, receipt),
@@ -715,13 +913,20 @@ export async function createPiRunnerApp(
             if (!receipt || receipt.fingerprint !== fingerprint)
               return { kind: "error", status: 409, error: "request_id_payload_mismatch" } as const;
             if (
-              receipt.status === "accepted" &&
+              (await executionStatus(duplicate, receipt)) === "accepted" &&
               receipt.modelSelection &&
               !routing.supported(receipt.modelSelection).ok
             )
               return { kind: "error", status: 409, error: "pi_saved_model_unavailable" } as const;
-            if (receipt.status === "accepted" && !monitors.has(requestId))
-              await startAccepted(duplicate, receipt);
+            if (!monitors.has(requestId)) {
+              if ((await executionStatus(duplicate, receipt)) === "accepted")
+                await startAccepted(duplicate, receipt);
+              else if (
+                receipt.authorization !== "clear" &&
+                (await executionStatus(duplicate, receipt)) === "completed"
+              )
+                await observeSettlement(duplicate, receipt);
+            }
             return { kind: "accepted", owner: duplicate, receipt, duplicate: true } as const;
           }
           const selection = selectPiTaskModel({
@@ -761,8 +966,14 @@ export async function createPiRunnerApp(
                     item.googleAuthSource &&
                     !monitors.has(item.requestId),
                 );
-              if (!request.interrupt && !waitingAdmission)
+              const activeReceipt = owner.metadata.receipts.find(
+                (item) => item.requestId === activeRequestId,
+              );
+              const settled =
+                activeReceipt && (await executionStatus(owner, activeReceipt)) !== "accepted";
+              if (!request.interrupt && !waitingAdmission && !settled)
                 return { kind: "busy", sessionId: sessionId(owner) } as const;
+              await reconcileLogs(owner);
               await owner.conversation.abort(context);
               const active = owner.metadata.activeRequestId;
               if (active) {
@@ -770,6 +981,15 @@ export async function createPiRunnerApp(
                 if (pending) await pending.completion;
                 else {
                   const interruptedOwner = owner;
+                  const interruptedReceipt = owner.metadata.receipts.find(
+                    (item) => item.requestId === active,
+                  );
+                  const submitted = await submissionFor(owner, active);
+                  if (submitted && interruptedReceipt) {
+                    await reconcileLogs(owner);
+                    await submitted.wait(context);
+                    await observeSettlement(owner, interruptedReceipt);
+                  }
                   // An admission may have been persisted before submit/monitor failed. Interrupt withdraws that intent too.
                   await owner.conversation.commit(async (tx) => {
                     const metadata = await tx.doc(
@@ -777,15 +997,20 @@ export async function createPiRunnerApp(
                       interruptedOwner.conversation.id,
                     );
                     const receipt = metadata.receipts.find((item) => item.requestId === active);
-                    if (receipt) receipt.status = "aborted";
+                    if (
+                      receipt &&
+                      !(await tx.submissionByRequest(interruptedOwner.conversation.id, active))
+                    )
+                      receipt.admission = { state: "withdrawn", at: Date.now() };
                     if (metadata.activeRequestId === active) delete metadata.activeRequestId;
                   }, context);
                 }
               }
               await reload(owner);
-              reconcileLogs(owner);
+              await reconcileLogs(owner);
             }
           }
+          const { prompt: admittedPrompt, routingTask: _routingTask, ...authority } = request;
           const receipt: PiAdmissionReceipt = {
             modelSelection: { ...selection.value, history: [...selection.value.history] },
             requestId,
@@ -793,15 +1018,16 @@ export async function createPiRunnerApp(
             triggerId: mintTriggerId(),
             startedAt: Date.now(),
             resumed,
-            request,
+            request: authority,
             ...(config.slackTeamId ? { slackTeamId: config.slackTeamId } : {}),
-            status: "accepted",
+            admission: { state: "intent", prompt: admittedPrompt },
           };
           if (!owner) {
             const anchorId = request.correlationKey
               ? (resolveAnchorForCorrelationKey(request.correlationKey) ?? mintAnchor())
               : mintAnchor();
             const metadata: ConversationMetadata = {
+              version: 2,
               anchorId,
               directory: request.directory,
               ...(request.correlationKey ? { correlationKey: request.correlationKey } : {}),
@@ -838,7 +1064,7 @@ export async function createPiRunnerApp(
             await reload(owner);
           }
           remember(owner);
-          reconcileLogs(owner);
+          await reconcileLogs(owner);
           await startAccepted(owner, receipt);
           return { kind: "accepted", owner, receipt, duplicate: false } as const;
         });
@@ -878,9 +1104,7 @@ export async function createPiRunnerApp(
           resumed: receipt.resumed,
         });
         const pending = monitors.get(receipt.requestId);
-        if (receipt.status !== "accepted") {
-          write(await doneFrame(owner, receipt));
-        } else if (pending?.terminal) {
+        if (pending?.terminal) {
           write(pending.terminal);
         } else if (pending) {
           pending.listeners.add(write);
@@ -962,20 +1186,20 @@ export async function createPiRunnerApp(
         const routingHistory = selection
           ? `<h3>Task model routing</h3><pre>${escapePiHtml(JSON.stringify({ profile: selection.profile, modelId: selection.modelId, thinkingLevel: selection.thinkingLevel, source: selection.source, reason: selection.reason, escalationLocked: selection.escalationLocked, promotions: selection.promotions, history: selection.history }, null, 2))}</pre>`
           : "";
-        let displayStatus =
-          (current?.status ?? receipt.status) === "completed"
-            ? "Model turn completed"
-            : (current?.status ?? receipt.status);
-        if (current?.googleAuthWaiting) {
+        const status = await executionStatus(owner, current ?? receipt);
+        let displayStatus: string = status === "completed" ? "Model turn completed" : status;
+        const authorization =
+          current?.authorization ?? (receipt.request.triggerSlackId ? "unavailable" : "clear");
+        if (status === "completed" && authorization !== "clear") {
           displayStatus = continuation
             ? `Google authorization continued in trigger ${continuation.triggerId}`
             : owner.metadata.receipts.at(-1)?.requestId !== receipt.requestId
               ? "Google authorization wait superseded by a newer request"
-              : (await continuationClient.waiting(
+              : (await continuationClient.observeGoogleAuthWait(
                     sessionId(owner),
                     owner.metadata.anchorId,
-                    current,
-                  ))
+                    current ?? receipt,
+                  )) === "waiting"
                 ? "Waiting for Google authorization · model turn finished, Google operation not completed"
                 : "Google authorization wait is no longer confirmed · model turn finished";
         }
@@ -1004,6 +1228,15 @@ export async function createPiRunnerApp(
         await admissionLine;
         await runtime.close(context); // Leaves work pending, unlike abort().
         await Promise.allSettled([...monitors.values()].map((item) => item.completion));
+        for (const owner of owners.values()) {
+          const receipt = owner.metadata.receipts.at(-1);
+          if (!receipt) continue;
+          const target = resolveSlackProgressTarget(receipt.request.correlationKey, {
+            messageTs: receipt.request.messageTs,
+            runnerBaseUrl: config.runnerBaseUrl,
+          });
+          if (target) await stopProgressRequest(target, receipt.requestId);
+        }
         await ownerLock.release();
       },
     };

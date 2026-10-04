@@ -76,6 +76,7 @@ services:
       SLACK_BOT_TOKEN: runner-secret-sentinel
       THOR_INTERNAL_SECRET: runner-internal-sentinel
       SLACK_API_BASE_URL: http://model-fixture:8000/slack/
+      SLACK_TEAM_ID: T_FIXTURE
     volumes:
       - state:/var/lib/runner
       - repos:/workspace/repos:ro

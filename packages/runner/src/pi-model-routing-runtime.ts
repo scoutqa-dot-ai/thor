@@ -102,6 +102,7 @@ export class PiModelRoutingRuntime {
   nativeMatches(receipt: PiAdmissionReceipt, agent: Readonly<AgentState> | undefined): boolean {
     if (
       !agent ||
+      agent.cwd !== receipt.request.directory ||
       agent.model?.provider !== "codex-lb" ||
       !this.modelIds().includes(agent.model.modelId) ||
       !["off", "minimal", "low", "medium", "high"].includes(agent.thinkingLevel ?? "off")

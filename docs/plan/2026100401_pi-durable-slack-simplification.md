@@ -1,6 +1,6 @@
 # Neo — Pi Durable-native Slack simplification
 
-**Status:** In progress; Phase 1 implemented and locally verified. Phases 2–3 and the MCP companion remain unimplemented. Deployment, cutover and rollback retirement are not authorized by implementation approval.
+**Status:** In progress; Phases 1–2 implemented and locally verified. Phase 3 and the MCP companion remain unimplemented. Deployment, cutover and rollback retirement are not authorized by implementation approval.
 **Reviewed:** 2026-10-04, Neo `f8ce4b6`, released Pi `v1.0.2` (`cd32f7725fdbddbaecdff5b1e68491563394e0ca`).
 
 ## Goal and recommendation
@@ -251,16 +251,172 @@ Validation on Node 24:
 
 Independent source verification found no extraction regressions. Its bundled-entrypoint gap was closed by the compiled checks. Proposed extra per-call restoration edits were not retained: this phase preserves the existing admission ordering instead of introducing unverified recovery-policy changes. No live provider/Slack/OAuth/Ubuntu acceptance, Core E2E against real integrations, push, GitHub workflow or PR was performed. These results validate Phase 1 only, not the quiet-footer implementation or MCP catalog.
 
-**Next:** Phase 2, native execution truth and one request owner. Keep the previously identified watch/terminal-presentation and unconfirmed authorization risks in that phase; do not activate host replies or native Slack status before its gates pass.
+**Phase 1 handoff:** Phase 2 owns native execution truth, watch/terminal-presentation lifetime and unconfirmed authorization. Its implementation evidence follows; Phase 1 did not activate host replies or native Slack status.
 
-## Decision log (proposed)
+## Phase 2 implementation and isolated verification
+
+Implemented on the existing Durable/Pi AI/Chord **1.0.0** pins, using supported
+`defineDoc.migrate`, submission status/wait and inclusive native entry-query
+bounds. No internal admission API, package upgrade, runtime-default change,
+credential mount, live account call or ordinary-reply/native-status change.
+
+`thor.pi.conversation` now has an explicit version-2 representation. Version-1
+identity, fingerprints, requester/source/workspace, policy, escalation task-ID
+evidence and Google continuation bindings migrate without changing public IDs.
+Current/legacy/hybrid evidence selects one parser; malformed authority fails
+startup intact, without a weaker fallback. All bindings validate before native
+recovery starts or migration/input-retirement commits. Runner-wide request and
+public-session collisions fail closed. The remaining admission union describes
+only pre-submit input intent, native admission/input retirement or pre-submit
+withdrawal; it is not a second execution lifecycle.
+
+Removed receipt terminal `status` and `googleAuthWaiting` from the current
+representation. Native submission records decide completion/error/abort. Exact
+native input→answer bounds drive successful history, without searching later
+receipts; unanswered inputs keep a fixed observation fence and explicit next
+native-input fallback. Prompt and routing-text copies disappear once native
+admission exists. Completion duration is fixed at the first settlement
+observation, before terminal presentation drains, not at history retrieval. The
+released native record has no completion clock; migration uses existing shared
+trigger-end time where available, otherwise fixes the first recovery observation
+instead of inventing historical timing.
+
+Reader migration was traced through HTTP duplicate/stream/history responses,
+shared log reconciliation, Google coordinator admission/recovery, model-routing
+configuration/escalation and all actor/correlation/reply/Google prompt sections.
+The model/tool readers still use `activeRequestId` as serialized requester
+authority, not terminal status. Shared alias/current-trigger facts remain for
+gateway/admin/approval/disclaimer/broker readers. Every submit/wait/abort and
+startup resume path restores that projection first, including pre-submit,
+native-submit→Neo-retirement and native-settlement→projection gaps. Frozen native
+cwd joins the existing model/thinking recovery checks.
+
+One request-owned monitor covers setup, callbacks, settlement and terminal
+presentation. Ownership registers before awaited presentation; native watch
+stop detaches and the owned callback promise drains **before** terminal presentation, and active requester
+authority clears only after those writes drain. Released 1.0.0 watch stop can
+resolve while an asynchronous listener still runs; awaiting the owned callback
+is required, not a second observer or execution lifecycle. Replacements cannot install a
+new actor/model/footer while the old owner is delayed. A failed observer is
+disposed without withdrawing live execution; interruption of unobserved native
+work aborts/joins and projects its settlement before replacement. Graceful close
+also drains only this runner's scoped progress owners. Native attach/overflow
+rebuilds factual tool accounting from bounded immutable request history via
+`tools_snapshot`, rather than announcing old completions as fresh progress.
+
+Broker observation now parses **confirmed waiting / confirmed no matching wait /
+unavailable** outcomes. Timeout, disconnect, non-OK, malformed responses and a
+missing frozen team are not no-wait evidence. A prior confirmed hold retains
+`waiting_unconfirmed` provenance if it disappears or becomes unverifiable;
+repeated reads cannot erase it into success. Holds keep the original request
+latest until a newer admitted request or authenticated continuation supersedes
+it. NDJSON uses non-success status plus `authWait: google` or `unconfirmed`;
+Slack keeps eyes, skips checks and uses static wait/degraded presentation. Pure
+observation recovery does not replay model/tool/Slack completion effects or
+create OAuth invitations. Existing grant-bound continuation and escalation
+commit→memo recovery are preserved. A native continuation submission proves the
+preceding bound ACK already succeeded; lease checks still gate new outbox
+admission and broker grant/expiry/tombstone checks still gate actual dispatch.
+
+Validation on Node 24.21.0 with installed dependencies:
+
+- Full unit suite: **68 files / 1,037 tests passed**. Includes real HTTP/SQLite,
+  Responses/executor, Slack SDK and Pi→wrapper→Google OAuth continuation fixtures.
+- All eight workspace typechecks and all workspace builds passed.
+- New behavioral cases cover version-1 migration versus corrupt hybrid
+  preservation, native status precedence, native admission/settlement gaps,
+  pre-submit actor restoration, success/error/abort history bounds, stable
+  duration/restart, delayed terminal ownership, failed-observer abort, competing
+  actors/cwd/cross-conversation IDs, each unavailable/missing-team outcome,
+  disappearing holds and snapshot accounting without fresh-completion pulses.
+  Existing SIGKILL/escalation commit→memo, unsafe-tool, supersession and
+  grant/continuation cases remain green. Finite real-boundary/interleaving cases
+  were chosen over a new property-test dependency or schema echo tests.
+- Rebuilt `scripts/test-pi-e2e.sh` passed: signed intake, actor/model routing,
+  actual remote tools/wrappers, exact source eyes/check, Slack SDK activity,
+  image/isolation, admin/SSO viewers and SIGKILL recovery. Its dummy broker now
+  answers authenticated no-wait queries and the test runner freezes its existing
+  team setting; the fixture no longer relies on an unavailable broker looking
+  like success. Temporary containers/volumes were removed.
+- A full run concurrent with Docker builds/typechecks hit the existing 5-second
+  callback-before-turn-finish test timeout. The isolated serial full rerun passed
+  unchanged; no assertion or timeout was relaxed. Logs are in
+  `/tmp/phase2-final-tests-serial.log`, `/tmp/phase2-final-types.log`,
+  `/tmp/phase2-final-build.log` and `/tmp/phase2-final-e2e.log`.
+
+These are Phase 2 isolated gates, not live Slack/model/OAuth/Ubuntu acceptance.
+No push, CI workflow, PR, deployment/cutover, database downgrade or legacy
+retirement was performed. Existing browser/account proofs and broker credential
+ownership were not changed; live/Core/Google/browser acceptance remains Phase 4
+work. Back up before migrating deployed SQLite; do not run an older Pi runner
+against the version-2 metadata.
+
+### Phase 2 verification correction — 2026-10-04
+
+Independent verification reproduced a version-1 SQLite recovery defect: an
+expired Google continuation could leave a legacy `aborted` mirror and no
+`activeRequestId` while its native input remained `placed`. Migration translated
+that mirror to pre-submit `withdrawn`; status derivation incorrectly let it hide
+live native execution from requester validation. Startup then committed input
+retirement and resumed without the original requester in actor/model context.
+The initial Phase 2 validation above did not cover this interleaving.
+
+Native `placed`/`queued` input now takes precedence over withdrawal just as native
+settlement already takes precedence over terminal mirrors. Startup therefore
+requires the persisted active/latest requester and frozen native configuration
+before committing migration or enabling scheduling. Missing requester authority
+fails closed; it is not reconstructed by guessing from the continuation or
+thread. The version-1 aborted translation remains provisional until this
+native-aware validation passes; pre-submit withdrawal without native admission
+retains its existing behavior.
+
+Expanded the real SQLite/Responses/executor fixture to seven recovery cases:
+settled legacy history with an incorrect error mirror, corrupt hybrid metadata,
+live version-1 aborted/error/completed mirrors, and live version-2 withdrawn
+placed/queued inputs. The aborted case includes expired Google continuation
+evidence and absent active requester. Every rejection preserves the exact
+metadata (including version-1 prompt/status), native submission and agent
+configuration, creates no shared trigger projection, and issues **zero model or
+executor requests**. Valid settled history still migrates without replay.
+These finite native/status/version cases extend the existing boundary test;
+no new schema echo test, property-test dependency or abstraction was added.
+
+Correction validation on Node 24.21.0:
+
+- Relevant runner, Pi Google integration and progress behavior: **3 files / 144
+  tests passed**, including the seven recovery cases.
+- Full serial unit suite: **68 files / 1,042 tests passed**.
+- All eight workspace typechecks and all workspace builds passed.
+- Deliberately removing native-live precedence reproduced unsafe successful
+  startup in both the version-1 aborted and version-2 withdrawn placed cases;
+  both regression tests failed. The fix was restored before final verification.
+- Logs: `/tmp/phase2-correction-behavior.log`,
+  `/tmp/phase2-correction-full-tests.log`, `/tmp/phase2-correction-types.log`,
+  `/tmp/phase2-correction-build.log` and
+  `/tmp/phase2-correction-deliberate-regression.log`.
+
+This correction amends the Phase 2 commit, rather than adding a downstream
+phase commit. No push, CI, container E2E rerun, live acceptance, deployment or
+Phase 3 implementation was performed for the correction.
+
+**Next:** Phase 3 host-owned replies and the approved quiet-footer/native working
+effect, with its privacy/publication/pacing/lifecycle gates unchanged. Keep
+legacy execution/default OpenCode and the tool-owned reply instructions until
+that phase's new-admission-only policy is implemented.
+
+## Decision log
 
 | Decision                                                                       | Reason / approval boundary                                                                                                                                     |
 | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Keep runner-owned embedded Harness; no adapter/conversation server             | Native Durable should own execution, not sit beneath another runtime abstraction.                                                                              |
 | Keep gateway, executor and broker initially                                    | They own external custody/security, not alternate LLM lifecycles. Fewer containers alone would not delete those responsibilities.                              |
 | Prefer native settlement/history over mirrored receipt status                  | Removes disagreement/recovery machinery while keeping domain admission/authorization evidence.                                                                 |
+| Native live input also outranks pre-submit withdrawal                          | Legacy aborted/expired continuations can retain placed input; validate persisted active requester before migration/scheduling, never guess missing authority.  |
 | Retain two-commit admission recovery and fingerprints                          | Released public API cannot supply combined admission or changed-payload/global dedup guarantees.                                                               |
+| Version Neo metadata, retire input only after native admission                 | Preserves the public submit crash gap while removing prompt/status mirrors; malformed version/hybrid authority is not silently reinterpreted.                  |
+| Keep fixed observation time and unanswered-history fence                       | Durable 1.0.0 has exact successful answer IDs but no settlement clock or failed-input answer boundary; retain only evidence it cannot supply.                  |
+| Stop native watch before terminal sends; clear active requester after drain    | A settled submission does not mean the old footer callback has finished; new actor/model ownership must not race those callbacks.                              |
+| Preserve confirmed-hold provenance through unavailable observations            | A vanished wait or second no-wait read cannot prove the blocked Google operation completed; continuation and supersession remain separate authority.           |
 | Keep serialized active requester/model boundary                                | Native queued input does not freeze actor/model/cwd authority.                                                                                                 |
 | Make ordinary final reply host-owned                                           | Removes a basic chat dependency on model tool compliance; delivery/decoration contract needs approval.                                                         |
 | Adopt Junior's paced native working effect with Neo's AI mark (user requested) | Native loading + one compact animated footer, not token edits or a second progress runtime; current Slack lifecycle and fallback gates apply.                  |

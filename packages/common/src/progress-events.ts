@@ -62,7 +62,7 @@ export const ProgressDoneSchema = z.object({
   correlationKey: z.string().optional(),
   resumed: z.boolean(),
   status: z.enum(["completed", "error"]),
-  authWait: z.literal("google").optional(),
+  authWait: z.enum(["google", "unconfirmed"]).optional(),
   error: z.string().optional(),
   response: z.string(),
   toolCalls: z.array(z.object({ tool: z.string(), state: z.string() })),
@@ -89,6 +89,13 @@ export const ProgressModelSchema = z.object({
   thinkingLevel: PiThinkingLevelSchema.or(z.literal("off")),
 });
 
+/** Rebuild factual tool accounting after native attach/overflow; not new tool completion events. */
+export const ProgressToolsSnapshotSchema = z.object({
+  ...progressScopeFields,
+  type: z.literal("tools_snapshot"),
+  tools: z.array(z.object({ tool: z.string(), toolCallId: z.string() })),
+});
+
 // --- Discriminated union ---
 
 /** Observable phase only: never carries model reasoning or text deltas. */
@@ -99,6 +106,7 @@ export const ProgressActivitySchema = z.object({
 });
 
 export const ProgressEventSchema = z.union([
+  ProgressToolsSnapshotSchema,
   ProgressModelSchema,
   ProgressActivitySchema,
   ProgressStartSchema,

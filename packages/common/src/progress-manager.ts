@@ -457,6 +457,20 @@ class ProgressSession {
     if (this.thresholdMet) await this.flush();
   }
 
+  /** Snapshot replacement restores counts without reporting old completions as fresh progress. */
+  restoreTools(tools: Extract<ProgressEvent, { type: "tools_snapshot" }>["tools"]): void {
+    if (this.finished) return;
+    this.completedTools = new Set(tools.map((tool) => tool.toolCallId));
+    this.toolCallCount = this.completedTools.size;
+    this.lastToolGroups = [];
+    for (const tool of tools) {
+      const last = this.lastToolGroups.at(-1);
+      if (last?.name === tool.tool) last.count++;
+      else this.lastToolGroups.push({ name: tool.tool, count: 1 });
+    }
+    this.lastToolGroups = this.lastToolGroups.slice(-5);
+  }
+
   async onToolCall(event: Extract<ProgressEvent, { type: "tool" }>): Promise<void> {
     if (this.finished) return;
     if (event.status === "running") {
@@ -510,7 +524,11 @@ class ProgressSession {
       await this.flush();
   }
 
-  async finish(status: "completed" | "error" | "waiting", errorMsg?: string): Promise<void> {
+  async finish(
+    status: "completed" | "error" | "waiting" | "unconfirmed",
+    errorMsg?: string,
+    durationMs?: number,
+  ): Promise<void> {
     logInfo(log, "session_finish", {
       key: this.progressTarget.key,
       sessionId: this.sessionId,
@@ -525,17 +543,19 @@ class ProgressSession {
     this.stop();
     await this.sending;
     if (this.abandoned) return;
-    if (status === "waiting") {
+    if (status === "waiting" || status === "unconfirmed") {
       // Waiting is visible even for a short request, with no moving mark.
       const delivered = await this.sendText(
-        "Neo waiting for Google sign-in — the task will automatically continue.",
+        status === "waiting"
+          ? "Neo waiting for Google sign-in — the task will automatically continue."
+          : "Neo authorization status unavailable — completion is unconfirmed.",
         "terminal",
       );
       if (!delivered) await this.removeMessage();
       return;
     }
     if (status === "completed") {
-      const completedText = `✅ Done — ${this.toolCallCount} tool calls in ${formatDuration(Date.now() - this.startTime)}`;
+      const completedText = `✅ Done — ${this.toolCallCount} tool calls in ${formatDuration(durationMs ?? Date.now() - this.startTime)}`;
       if (this.messageTs) await this.sendText(completedText, "terminal");
       if (!this.abandoned && this.sourceTs) {
         try {
@@ -723,6 +743,17 @@ function publicProgressAssetUrl(base: string | undefined, path: string): string 
 // ---------------------------------------------------------------------------
 
 const activeSessions = new Map<string, ProgressSession>();
+
+/** Dispose only this request's progress owner and drain outstanding writes before shutdown/replacement. */
+export async function stopProgressRequest(
+  target: ProgressTarget,
+  requestId: string,
+): Promise<void> {
+  const session = activeSessions.get(target.key);
+  if (!session || session.requestId !== requestId) return;
+  activeSessions.delete(target.key);
+  await session.abandon();
+}
 // Bounded replay evidence also rejects late events after a terminal footer was removed.
 const latestScopes = new Map<string, { sessionId?: string; requestId?: string }>();
 const seenRequests = new Set<string>();
@@ -809,6 +840,9 @@ export async function handleProgressEvent(
     case "activity":
       await session.onActivity(event.activity);
       break;
+    case "tools_snapshot":
+      session.restoreTools(event.tools);
+      break;
     case "tool":
       await session.onToolCall(event);
       break;
@@ -840,12 +874,15 @@ export async function handleProgressEvent(
         return;
       }
       await session.finish(
-        event.authWait === "google"
-          ? "waiting"
+        event.authWait
+          ? event.authWait === "google"
+            ? "waiting"
+            : "unconfirmed"
           : event.status === "completed"
             ? "completed"
             : "error",
         event.error,
+        event.durationMs,
       );
       if (activeSessions.get(key) === session && !event.authWait) {
         activeSessions.delete(key);

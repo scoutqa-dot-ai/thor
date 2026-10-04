@@ -10,34 +10,39 @@ import {
   PiThinkingLevelSchema,
 } from "@thor/common";
 
+const triggerFieldsSchema = z.object({
+  ...PiTaskRoutingFields,
+  prompt: z.string(),
+  requestId: z
+    .string()
+    .min(1)
+    .max(512)
+    .refine((value) => !/[\x00-\x1f]/.test(value) && !value.startsWith("google-auth:"))
+    .optional(),
+  correlationKey: z.string().min(1).max(512).optional(),
+  sessionId: z.string().min(1).optional(),
+  triggerSlackId: z.string().trim().min(1).optional(),
+  messageTs: SlackMessageTsSchema.optional(),
+  triggerGithubLogin: z.string().trim().min(1).optional(),
+  interrupt: z.boolean().default(false),
+  directory: z.string().min(1),
+  stream: z.boolean().default(false),
+});
+function hasExclusivePiModelOverride(
+  value: Pick<z.infer<typeof triggerFieldsSchema>, "modelProfile" | "modelId">,
+): boolean {
+  return value.modelProfile === undefined || value.modelId === undefined;
+}
+
 /** Validated trigger request; stream delivery is not part of durable work identity. */
-export const piTriggerRequestSchema = z
-  .object({
-    ...PiTaskRoutingFields,
-    prompt: z.string(),
-    requestId: z
-      .string()
-      .min(1)
-      .max(512)
-      .refine((value) => !/[\x00-\x1f]/.test(value) && !value.startsWith("google-auth:"))
-      .optional(),
-    correlationKey: z.string().min(1).max(512).optional(),
-    sessionId: z.string().min(1).optional(),
-    triggerSlackId: z.string().trim().min(1).optional(),
-    messageTs: SlackMessageTsSchema.optional(),
-    triggerGithubLogin: z.string().trim().min(1).optional(),
-    interrupt: z.boolean().default(false),
-    directory: z.string().min(1),
-    stream: z.boolean().default(false),
-  })
-  .refine(
-    (value) => value.modelProfile === undefined || value.modelId === undefined,
-    "Pi model routing overrides cannot combine modelProfile and modelId",
-  );
+export const piTriggerRequestSchema = triggerFieldsSchema.refine(
+  hasExclusivePiModelOverride,
+  "Pi model routing overrides cannot combine modelProfile and modelId",
+);
 /** Neo trigger input retained inside the conversation for admission recovery. */
 export type PiTriggerRequest = z.infer<typeof piTriggerRequestSchema>;
 
-const receiptSchema = z
+const legacyReceiptSchema = z
   .object({
     requestId: z.string(),
     fingerprint: z.string(),
@@ -75,7 +80,7 @@ const receiptSchema = z
     triggerId: z.string().regex(UUID_V7_RE),
     startedAt: z.number(),
     resumed: z.boolean(),
-    request: piTriggerRequestSchema,
+    request: piTriggerRequestSchema.strict(),
     slackTeamId: z.string().optional(),
     googleAuthWaiting: z.boolean().optional(),
     googleAuthSource: GoogleAuthContinuationSchema.safeExtend({
@@ -83,36 +88,110 @@ const receiptSchema = z
     }).optional(),
     status: z.enum(["accepted", "completed", "error", "aborted"]),
   })
-  .superRefine((value, ctx) => {
-    const calls = value.escalationCalls ?? [];
-    if (
-      calls.length !== (value.modelSelection?.promotions ?? 0) ||
-      new Set(calls.map((call) => call.taskId)).size !== calls.length ||
-      calls.some(
-        (call, index) =>
-          call.profile !== value.modelSelection?.history[index]?.to ||
-          call.thinkingLevel !== value.modelSelection?.pool.profiles[call.profile].thinkingLevel,
-      )
+  .strict();
+function refineEscalationEvidence(
+  value: Pick<z.infer<typeof legacyReceiptSchema>, "modelSelection" | "escalationCalls">,
+  ctx: z.RefinementCtx,
+) {
+  const calls = value.escalationCalls ?? [];
+  if (
+    calls.length !== (value.modelSelection?.promotions ?? 0) ||
+    new Set(calls.map((call) => call.taskId)).size !== calls.length ||
+    calls.some(
+      (call, index) =>
+        call.profile !== value.modelSelection?.history[index]?.to ||
+        call.thinkingLevel !== value.modelSelection?.pool.profiles[call.profile].thinkingLevel,
     )
-      ctx.addIssue({ code: "custom", message: "Pi model escalation evidence is invalid" });
-  });
-/** Durable admission receipt is written before submit; the same request ID bridges the two commits. */
-export type PiAdmissionReceipt = z.infer<typeof receiptSchema>;
-
-/** Parse persisted Neo metadata before trusting it for identity or recovery. */
-export const piConversationMetadataSchema = z.object({
+  )
+    ctx.addIssue({ code: "custom", message: "Pi model escalation evidence is invalid" });
+}
+const legacyMetadataSchema = z.strictObject({
   anchorId: z.string().regex(UUID_V7_RE),
   directory: z.string(),
   correlationKey: z.string().optional(),
   activeRequestId: z.string().optional(),
-  receipts: z.array(receiptSchema),
+  receipts: z.array(legacyReceiptSchema.superRefine(refineEscalationEvidence)),
 });
+const receiptSchema = legacyReceiptSchema
+  .omit({
+    status: true,
+    googleAuthWaiting: true,
+    request: true,
+  })
+  .safeExtend({
+    request: triggerFieldsSchema
+      .omit({ prompt: true, routingTask: true })
+      .strict()
+      .refine(hasExclusivePiModelOverride),
+    admission: z.discriminatedUnion("state", [
+      z.strictObject({ state: z.literal("intent"), prompt: z.string() }),
+      z.strictObject({ state: z.literal("submitted") }),
+      z.strictObject({ state: z.literal("withdrawn"), at: z.number().finite() }),
+    ]),
+    // Completion observation fixes duration; it never decides native execution status.
+    observation: z
+      .strictObject({
+        settledAt: z.number().finite(),
+        historyEnd: z.number().int().positive().optional(),
+      })
+      .optional(),
+    authorization: z.enum(["waiting", "waiting_unconfirmed", "unavailable", "clear"]).optional(),
+  })
+  .strict()
+  .superRefine(refineEscalationEvidence);
+/** Admission intent retains input only until native submit; authorization is separate from execution. */
+export type PiAdmissionReceipt = z.infer<typeof receiptSchema>;
+
+/** Versioned Neo metadata rejects hybrid lifecycle authority instead of dropping malformed fields. */
+export const piConversationMetadataSchema = z
+  .strictObject({
+    version: z.literal(2),
+    anchorId: z.string().regex(UUID_V7_RE),
+    directory: z.string(),
+    correlationKey: z.string().optional(),
+    activeRequestId: z.string().optional(),
+    receipts: z.array(receiptSchema),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      value.receipts.some((receipt) => receipt.request.directory !== value.directory) ||
+      new Set(value.receipts.map((receipt) => receipt.requestId)).size !== value.receipts.length ||
+      (value.activeRequestId &&
+        !value.receipts.some((receipt) => receipt.requestId === value.activeRequestId))
+    )
+      ctx.addIssue({ code: "custom", message: "Pi request binding is invalid" });
+  });
 /** Persistent identity and admissions; no credential or provider error enters this document. */
 export const piConversationMetadataDoc = defineDoc<z.infer<typeof piConversationMetadataSchema>>({
   kind: "thor.pi.conversation",
-  version: 1,
+  version: 2,
   scope: "conversation",
   history: "latest",
   fork: "initial",
-  initial: () => ({ anchorId: "", directory: "", receipts: [] }),
+  initial: () => ({ version: 2, anchorId: "", directory: "", receipts: [] }),
+  migrate: (value, fromVersion) => {
+    if (fromVersion !== 1 || "version" in value)
+      throw new Error("Pi metadata migration version invalid");
+    const legacy = legacyMetadataSchema.parse(value);
+    return piConversationMetadataSchema.parse({
+      ...legacy,
+      version: 2,
+      receipts: legacy.receipts.map(({ status, googleAuthWaiting, request, ...receipt }) => {
+        const { prompt, routingTask: _routingTask, ...authority } = request;
+        return {
+          ...receipt,
+          request: authority,
+          // Legacy terminal fields are not execution evidence, including aborted. Startup must validate
+          // any live native input before committing this provisional pre-submit withdrawal.
+          admission:
+            status === "aborted"
+              ? { state: "withdrawn", at: receipt.startedAt }
+              : status === "accepted"
+                ? { state: "intent", prompt }
+                : { state: "submitted" },
+          ...(googleAuthWaiting ? { authorization: "waiting" } : {}),
+        };
+      }),
+    });
+  },
 });

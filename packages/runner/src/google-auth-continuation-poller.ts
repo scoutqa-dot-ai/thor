@@ -60,35 +60,37 @@ export class GoogleAuthContinuationClient {
       return [];
     }
   }
-  /** Informational UI evidence fetched from the broker, never interpreted from bash output. */
-  async waiting(
+  /** Google auth wait observation fails closed without a frozen workspace or authoritative broker response. */
+  async observeGoogleAuthWait(
     sessionId: string,
     anchorId: string,
     receipt: PiAdmissionReceipt,
-  ): Promise<boolean> {
+  ): Promise<"waiting" | "clear" | "unavailable"> {
+    if (!receipt.request.triggerSlackId) return "clear";
+    if (!receipt.slackTeamId) return "unavailable";
     try {
       const response = await fetch(new URL("/internal/google-workspace/waits", this.#url), {
         headers: this.#headers,
         redirect: "manual",
         signal: AbortSignal.timeout(2000),
       });
-      if (!response.ok) return false;
+      if (!response.ok) return "unavailable";
       const parsed = z
-        .object({ waits: z.array(GoogleAuthWaitBindingSchema) })
+        .strictObject({ waits: z.array(GoogleAuthWaitBindingSchema) })
         .safeParse(await response.json());
-      return (
-        parsed.success &&
-        parsed.data.waits.some(
-          (record) =>
-            record.sessionId === sessionId &&
-            record.anchorId === anchorId &&
-            record.triggerId === receipt.triggerId &&
-            record.slackUserId === receipt.request.triggerSlackId &&
-            record.slackTeamId === receipt.slackTeamId,
-        )
-      );
+      if (!parsed.success) return "unavailable";
+      return parsed.data.waits.some(
+        (record) =>
+          record.sessionId === sessionId &&
+          record.anchorId === anchorId &&
+          record.triggerId === receipt.triggerId &&
+          record.slackUserId === receipt.request.triggerSlackId &&
+          record.slackTeamId === receipt.slackTeamId,
+      )
+        ? "waiting"
+        : "clear";
     } catch {
-      return false;
+      return "unavailable";
     }
   }
 
@@ -187,7 +189,11 @@ export function startGoogleAuthContinuationCoordinator(options: {
   isClosing: () => boolean;
   hasMonitor: (requestId: string) => boolean;
   reload: (owner: GoogleAuthConversationOwner) => Promise<void>;
-  reconcileLogs: (owner: GoogleAuthConversationOwner) => void;
+  reconcileLogs: (owner: GoogleAuthConversationOwner) => Promise<void>;
+  executionStatus: (
+    owner: GoogleAuthConversationOwner,
+    receipt: PiAdmissionReceipt,
+  ) => Promise<"accepted" | "completed" | "aborted" | "error">;
   startAccepted: (
     owner: GoogleAuthConversationOwner,
     receipt: PiAdmissionReceipt,
@@ -209,7 +215,7 @@ export function startGoogleAuthContinuationCoordinator(options: {
           );
           if (
             receipt?.googleAuthSource &&
-            receipt.status === "accepted" &&
+            receipt.admission.state !== "withdrawn" &&
             !options.hasMonitor(receipt.requestId)
           ) {
             try {
@@ -232,7 +238,7 @@ export function startGoogleAuthContinuationCoordinator(options: {
           // Admission is already durable even if ack or submit failed. Never resurrect superseded work.
           if (duplicate.googleAuthSource?.id !== record.id) return "ack";
           if (
-            duplicate.status === "accepted" &&
+            duplicate.admission.state !== "withdrawn" &&
             owner.metadata.activeRequestId === requestId &&
             !options.hasMonitor(requestId)
           )
@@ -250,8 +256,7 @@ export function startGoogleAuthContinuationCoordinator(options: {
             anchorId: owner.metadata.anchorId,
           }) ||
           owner.metadata.receipts.at(-1)?.requestId !== original.requestId ||
-          original.status === "aborted" ||
-          original.status === "error"
+          ["aborted", "error"].includes(await options.executionStatus(owner, original))
         )
           return "ack";
         const live = await options.runtime.snapshot(LiveDoc, owner.conversation.id, context);
@@ -268,8 +273,8 @@ export function startGoogleAuthContinuationCoordinator(options: {
           triggerId: mintTriggerId(),
           startedAt: options.now(),
           resumed: true,
-          request,
-          status: "accepted",
+          request: original.request,
+          admission: { state: "intent", prompt: request.prompt },
           slackTeamId: record.slackTeamId,
           googleAuthSource: { ...record, originalRequestId: original.requestId },
           ...(original.modelSelection ? { modelSelection: original.modelSelection } : {}),
@@ -283,7 +288,7 @@ export function startGoogleAuthContinuationCoordinator(options: {
           metadata.activeRequestId = requestId;
         }, context);
         await options.reload(owner);
-        options.reconcileLogs(owner);
+        await options.reconcileLogs(owner);
         return (await options.startAccepted(owner, receipt)) === "deferred" ? "defer" : "ack";
       }),
   });
