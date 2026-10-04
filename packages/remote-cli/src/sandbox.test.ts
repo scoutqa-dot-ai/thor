@@ -54,6 +54,15 @@ vi.mock("./exec.js", () => ({
   execCommandStream: vi.fn(),
 }));
 
+// This legacy suite mocks git creation/files too; the real file/SDK boundary has its own regressions.
+vi.mock("./broker-shared-file.js", () => ({
+  withBrokerSharedFiles: async (
+    paths: string[],
+    _roots: string[],
+    _max: number,
+    consume: (paths: string[]) => Promise<unknown>,
+  ) => ({ ok: true, value: await consume(paths) }),
+}));
 vi.mock("@daytonaio/sdk", () => {
   class MockDaytona {
     create = hoisted.daytonaCreateMock;

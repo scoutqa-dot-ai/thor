@@ -1,6 +1,6 @@
 # Neo — Configurable MCP catalog and native Durable tools
 
-**Status:** MCP Phase 1 implemented and locally validated after companion Slack phases 1–3 (`cc6c2b9`). MCP phases 2–5 remain pending; deployment remains a separate approval gate.
+**Status:** MCP phases 1–2 implemented and isolated locally validated after companion Slack phases 1–3 (`cc6c2b9`). Phase 2 follows `fa72c0e`; MCP phases 3–5 and live deployment remain pending, separately approval-gated. Custom approvals and native tool registration are not enabled.
 **Reviewed:** 2026-10-04, Neo `33ada49`; released Pi Durable/MCP `v1.0.2` (`cd32f7725fdbddbaecdff5b1e68491563394e0ca`).
 **Companion:** [Pi Durable Slack simplification](2026100401_pi-durable-slack-simplification.md). This plan adds operator MCP onboarding and agent discovery; it does not change the single-owner admission/security architecture.
 
@@ -46,9 +46,9 @@ Durable does not read CLI `mcp.json` or provide `pi.registerMcpServer()`. Use na
 
 ## 1. Operator catalog: small, deny-default and broker-owned
 
-### Proposed configuration
+### Version 1 configuration (Phase 2)
 
-The following is a **proposed Neo format**, not a currently supported Pi/Neo file:
+The following Neo operator format is supported by Phase 2. See [operator instructions](../mcp-catalog.md) for strict parsing, private file modes, HTTP exception and activation:
 
 ```json
 {
@@ -82,7 +82,7 @@ The following is a **proposed Neo format**, not a currently supported Pi/Neo fil
 
 ### Files and credential custody
 
-Proposed fixed, optional **directory** mounts, broker only:
+Implemented fixed, optional **directory** mounts, broker only:
 
 | Host directory                | Broker mount               | Purpose                |
 | ----------------------------- | -------------------------- | ---------------------- |
@@ -194,6 +194,8 @@ Add typed filtered list/describe/call service operations, authenticated private 
 
 ### Phase 2 — Operator HTTP catalog and private credential references
 
+**Implemented:** restart-only allow-only catalog, private credential snapshots, exact dynamic lookup, SDK transport and broker child/file boundaries. Acceptance and trade-offs below. No Phase 3 generic approval/state/fencing or Phase 4 native registrations.
+
 Add the strict versioned parser/default-overlay semantics, broker-only optional directory mounts, local validation/safe diagnostics and restart activation. Dynamic lookup replaces the closed server enum for supported custom allow-only definitions; retain explicit built-in handler coverage. Reject unsupported custom approvals until phase 3.
 
 **Exit:** a fixture HTTP server can be added/removed without source changes; empty/missing optional directories boot plain Compose; invalid configured authority/secret paths/duplicates/overlap fail safely. Token/header/URL redirect/error paths, reconnect inventory/schema drift and server outage isolation pass. Directory replacement is observed on restart; catalog/secrets are inaccessible to runner tools/executor/browser children. Unlisted tools never become exposed. Custom `approve` cannot silently become allow.
@@ -299,3 +301,101 @@ Corrected the four required findings in the same Phase 1 commit before starting 
 - Deliberate regression copies fail these permanent tests: accepting either MCP proof dispatches `createIssueLink` using the search call ID; the old browser exit-code guard loses the confirmed provider rejection; the original unlimited-page upstream accepts the late inventory. These red probes are evidence of the tests' sensitivity, not failures of corrected source.
 
 **Corrected Phase 1 acceptance:** `pnpm test` passes (71 files, 1,121 tests); `pnpm typecheck` and `pnpm build` pass across the workspace. Targeted broker/legacy HTTP tests and changed-source formatting / `git diff --check` pass. Commands use the already installed Node 24.11.1 and host dependencies with only local/dummy fixtures, as authorized; sandbox preflight found the approved base runtime but no prepared repository image, and no sandbox installation/preparation was performed. Phases 2–5, native image decoding/registration, private generic approval fencing, real-container/GitHub verification and live deployment/provider acceptance remain explicitly unimplemented/unverified. No push or next-phase work.
+
+## Phase 2 implementation decisions and evidence — 2026-10-05
+
+Implemented only MCP Phase 2 after `fa72c0e`. The six bundled definitions/policies,
+their existing credentials/managed adapters, legacy CLI wrappers, runtime default,
+deployment identities and static built-in approval coverage remain unchanged.
+No new runtime dependency/version, environment family, downstream client/server,
+reload watcher, plugin, outbox or approval operation was introduced.
+
+| Implemented decision                                                                            | Reason / boundary                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Strict Zod version 1 parser plus bounded decoded-key JSON scan                                  | `JSON.parse` loses duplicate keys; Zod records skip `__proto__`. Validate original decoded keys before the owning schema. Unknown fields, prototype/reserved/CLI/path aliases, collisions, unknown disables, duplicate/overlapping/wildcard tool policy and custom approvals fail closed. The generated operator structural JSON Schema does not replace semantic/filesystem validation.                                                                                                                                  |
+| Complete defaults/additions snapshot; no custom credential overlay                              | `getProxyConfig` accepts an authoritative active policy map. Broker discovery/CLI/dispatch/warm-up/health use its exact aliases; built-in typed handlers remain server-qualified. Omission retains defaults, removal removes custom entries, and deleting the whole optional catalog restores bundled defaults. Present invalid/unreadable input fails before listen, never partially activates.                                                                                                                          |
+| Private enabled bearer basenames, pinned directory/file descriptors and immutable startup bytes | Require broker ownership, private readable modes, one regular link, no symlinks/traversal/special bits, bounded nonempty RFC6750 token bytes. Strip exactly one terminal LF; CR/CRLF and embedded LF/whitespace fail. Disabled credentials are not read. Wrap secret bytes through I/O and never expose references/values in diagnostics; file replacement does not mutate active clients.                                                                                                                                |
+| Explicit internal unauthenticated HTTP contract                                                 | New remote servers use HTTPS. Only `auth:none` plus `http:{type:internal-unauthenticated,operatorReviewed:true}` permits single-label internal DNS, localhost, private/loopback IPv4 or IPv6 loopback. This operator review is not a DNS/firewall guarantee. Bearer HTTP and public HTTP fail parsing; existing Grafana/Falcon defaults stay unchanged. No arbitrary headers, executables, environment selection/interpolation or OAuth/resource discovery.                                                               |
+| One SDK endpoint-pinned fetch for every HTTP method                                             | Installed SDK POST, GET/SSE/resume and DELETE all use the same fetch, including header injection at I/O. Refuse all redirects/endpoint changes and discard HTTP error headers/bodies before SDK exception construction. SDK automatic SSE resume is disabled; the broker owns reconnect/inventory revalidation. Teardown is bounded and never follows a redirected origin.                                                                                                                                                |
+| Credential reflection boundary                                                                  | Generic bearer `isError` is a confirmed error with bounded text, not raw vendor fragments. Exact known-token reflection in inventory fails that server closed; reflected successful output is unsupported/uncertain after dispatch, without exposing bytes or retrying. This is not heuristic business-field redaction or proof a malicious provider cannot exfiltrate its own credential.                                                                                                                                |
+| Activation inventory baseline plus fresh connection revisions                                   | Reconnect does not silently adopt changed permitted schemas/output schemas/metadata. Revalidate the entire permitted inventory against the activation baseline; unsupported/duplicate/missing/drifted inventory isolates that server. Fresh connections invalidate old refs/cursors even when unchanged. Restart explicitly adopts reviewed drift and credential replacements.                                                                                                                                            |
+| Catalog aliases cannot adopt shared legacy approval records                                     | Custom `approve` fails startup even when disabled. Legacy approval lookup/list remains restricted to bundled handlers and existing dedicated GWS hooks, not the dynamic HTTP catalog. A planted custom legacy record cannot dispatch hidden tools or fall through to raw status/list. Disabled built-ins retain historical lookup but cannot dispatch while disabled. Private generic records/fencing/read authorization remain Phase 3.                                                                                  |
+| Fixed integration command sandbox, reduced env and fresh child procfs                           | Broker command children grant only fixed binaries/integration env and explicit mounts. Catalog/MCP tokens/private OAuth state/parent procfs are absent; legacy GitHub wrappers keep only their dedicated key/cache, GWS only its execution directory/requester token. Internal exec is typed git/gh workspace repair, not arbitrary binaries/shells. No request/env selects an unsandboxed fallback. Production composition enables the launcher before listening; component exec fixtures do not claim kernel isolation. |
+| Broker-only Docker `systempaths=unconfined`, capabilities dropped, no-new-privileges            | A real container rejected fresh rootless procfs with Docker's masked parent procfs. The former bind of broker `/proc` was not isolated merely by `--unshare-pid`. Remove system-path masking only for broker so a fresh child procfs can be mounted; retain custom seccomp/AppArmor, UID1001 and drop all capabilities. This is not privileged or seccomp-unconfined. Local fixture verifies the no-AppArmor platform case; live Ubuntu profile/deployment remains a later gate.                                          |
+| Pinned shared files through SDK upload completion                                               | Auditing direct broker file surfaces found Slack block-file TOCTOU and cloud artifact/bundle upload path reopening. Verify opened regular inodes within allowed roots, retain descriptors through SDK streaming, reject symlinks/private/proc escapes, and preserve binary contents/names and existing size budgets. No generic output cap or new artifact memory-buffering layer.                                                                                                                                        |
+| Bundle the already pinned AJV/dialect implementation with broker artifacts                      | Keeps reviewed schema validators aligned with the current broker, including cached runtime images lacking Phase 1's new direct package aliases. No dependency upgrade/install. MCP transport still uses the installed SDK, not a substitute client.                                                                                                                                                                                                                                                                       |
+| Separate cohesive parser/files/HTTP/command/shared-file/diagnostic owners                       | Deleting them would spread duplicate-key/credential custody, all-method HTTP policy, launch grants or descriptor lifetime logic across CLI/native/SDK/file consumers. Extracted managed-browser launcher retains its existing adapter; these are boundaries around the existing service, not a universal mocked framework or another operation owner.                                                                                                                                                                     |
+
+### Isolated behavioral acceptance
+
+- `mcp-catalog-files.test.ts`: real local files/directories prove exact six-default
+  preservation; missing/empty directories; malformed/unreadable/symlinked input;
+  decoded duplicate keys; strict version/fields/aliases/authority; policy overlap,
+  wildcard/duplicate/collision/unknown-disable denial; disabled credential behavior;
+  terminal LF handling; CRLF/empty/bad token denial; private modes, special bits,
+  nonregular/FIFO/hardlink/symlink denial; and immutable snapshots/atomic replacement.
+- `mcp-catalog.integration.test.ts`: real installed SDK client/server, local TLS
+  trusted test CA, real sessions/SSE/DELETE and actual dispatched arguments/effects.
+  Adds/removes/re-adds by atomic config without source edits; rotates same filename
+  without altering the old client; denies stale refs, hidden/fuzzy calls and planted
+  custom legacy approvals; preserves disabled built-in historical status; proves
+  offline isolation, reconnect schema/inventory fail-closed behavior, same bare Jira
+  name isolation, 301/302/303/307/308 initialization and list/call/GET/DELETE redirect
+  refusal, server-selected SSE/OAuth origin refusal/ignore, zero requests/credentials
+  to redirect targets, safe transport/vendor/MCP token errors and metadata/result
+  reflection denial. Existing Phase 1 private authority/native/schema/legacy gates
+  also pass; no native tools were registered.
+- `sandbox-file-boundary.test.ts`: real git/files and a faithful external cloud
+  boundary prove ordinary binary/text names/content, mixed safe/private zero reads,
+  proc/parent-symlink denial and post-validation path replacement still uploading the
+  original pinned inode. Existing legacy sandbox suite already mocks git/file
+  production and now explicitly substitutes that file boundary; it is not the
+  security proof.
+- `test-mcp-catalog-compose.sh`: real broker with current compiled artifact and
+  cached broker/runner/executor images; unique private named volumes, dummy values,
+  internal network, no host ports, downloads/install/build or deployment data.
+  Local validation makes zero connections; explicit check lists only permitted
+  inventory; actual HTTP allow/hidden calls have exactly one effect. Real kernel
+  probes through production managed-browser/command launch args cannot read catalog,
+  MCP tokens, workspace symlink aliases or broker proc/env canaries. Runner/executor
+  image probes cannot read mounts. Remove/restart observes the directory replacement;
+  deleting the optional file boots six defaults. Malformed catalog and foreign-owned
+  enabled token fail both local validation/startup before listen. Cleanup removes all
+  fixture containers/network/volumes, leaving existing images/deployment untouched.
+  Runner/executor probes are measurement processes, not a live Pi conversation.
+- Base, Pi, CI and no-AppArmor Compose graphs rendered with dummy-only env and
+  `--env-file /dev/null --no-env-resolution`: both fixed mounts are read-only and
+  present only on remote-cli; broker namespace settings remain coherent. No private
+  `.env` or actual mounted catalogs/tokens were read/edited.
+- Updated `.env.example`, README Deployment/security, operator/browser docs, Compose
+  base/Pi/platform/CI/test fixtures and workflow setup together. A separate MCP Catalog
+  E2E workflow prepares images explicitly before offline validation; existing Pi/Core
+  remain distinct. No workflow was pushed/dispatched in this phase.
+
+Final exact commands/results are recorded below before the single Phase 2 commit.
+Sandbox preflight found the approved Node base runtime but no prepared repository
+image/dependencies; no preparation/download was attempted. Explicitly requested
+host Node 24.21.0/local fixtures and already available Docker images supplied these
+implementation checks. Live provider/Slack, loaded Ubuntu AppArmor, full Pi native
+conversation, generic approval fencing, GitHub integration and deployment acceptance
+remain Phase 3–5 / operator gates, not claims of this isolated Phase 2 acceptance.
+
+**Final local gates (Node 24.21.0, existing dependencies/images only):**
+
+- Targeted command: `pnpm exec vitest run packages/remote-cli/src/{mcp-catalog-files.test,mcp-catalog.integration.test,mcp-broker.integration.test,mcp-handler.test,sandbox-file-boundary.test,sandbox.test,slack-post-message.test,upstream.test}.ts` — **8 files / 179 tests pass**.
+- `pnpm test` — **74 files / 1,209 tests pass**.
+- `pnpm typecheck` and `pnpm build` — **all workspace packages pass**.
+- `MCP_TEST_BROKER_IMAGE=thor-gws-remote-cli:e2e MCP_TEST_RUNNER_IMAGE=thor-pi-e2e-1000-3364098-runner:latest MCP_TEST_EXECUTOR_IMAGE=thor-pi-e2e-1000-3364098-pi-executor:latest ./scripts/test-mcp-catalog-compose.sh` — **pass**, including zero-connect local validation, private mount/proc/env probes, real effect policy, removal, defaults restoration and both before-listen failures. All fixture resources cleaned; no dependency installation/image build/download.
+- Dummy-only Compose base/Pi/CI/no-AppArmor graph checks, changed-file Prettier, `bash -n scripts/test-mcp-catalog-compose.sh` and `git diff --check` — **pass**.
+
+**CI coherence correction:** all broker command children now require rootless mounts,
+not only the credential browser. Docker's default AppArmor profile denies these;
+the explicitly test-only Core override uses AppArmor-unconfined with the custom
+seccomp, capability drop, no-new-privileges and child namespace/mount/env policy.
+Production retains `thor-remote-cli`; no claim the CI relaxation is its equivalent.
+The separate offline catalog fixture already exercises these same test-only flags.
+
+One Phase 2 commit only; no push, dispatch, PR, next-phase implementation or live
+deployment/provider/private-data changes. Follow-up Phase 3 must supply the private
+versioned generic approval contract before changing this phase's startup/read/resolve
+denials or static built-in approval coverage.

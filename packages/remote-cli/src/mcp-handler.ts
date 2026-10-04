@@ -23,7 +23,6 @@ import {
   FindLoginItemsArgsSchema,
   getProxyConfig,
   injectApprovalDisclaimer,
-  isProxyName,
   getRunnerBaseUrl,
   ApprovalRequiredEventPayloadSchema,
   interpolateEnv,
@@ -31,7 +30,7 @@ import {
   logError,
   logInfo,
   logWarn,
-  PROXY_NAMES,
+  PROXY_NAMES as BUILTIN_PROXY_NAMES,
   resolveSlackThreadTargetFromTrigger,
   WORKSPACE_CONFIG_PATH,
   createConfigLoader,
@@ -60,6 +59,7 @@ import {
 } from "./upstream.js";
 import { attributionFields, resolveTriggerUser } from "./attribution.js";
 import { postSlackMessageApi } from "./slack-post-message.js";
+import type { McpCatalogSnapshot } from "./mcp-catalog-files.js";
 
 const log = createLogger("mcp");
 const DEFAULT_APPROVALS_DIR = "/workspace/data/approvals";
@@ -196,6 +196,8 @@ export type CustomApprovalReviewerAuthorizer = (input: {
 }) => boolean;
 
 export interface McpServiceDeps {
+  /** Immutable operator activation loaded before the production listener starts. */
+  catalog?: McpCatalogSnapshot;
   approvalsDir?: string;
   isProduction?: boolean;
   connectUpstreamFn?: typeof connectUpstream;
@@ -296,6 +298,9 @@ export interface McpService {
 
 /** Create the shared MCP owner; native context is checked independently of transport authentication. */
 export function createMcpService(deps: McpServiceDeps): McpService {
+  const proxyNames = deps.catalog ? Object.keys(deps.catalog.policies) : [...BUILTIN_PROXY_NAMES];
+  const lookupProxy = (name: string) => getProxyConfig(name, deps.catalog?.policies);
+  const hasActiveProxy = (name: string) => !!lookupProxy(name);
   const approvalsDir = deps.approvalsDir ?? DEFAULT_APPROVALS_DIR;
   const connectUpstreamFn = deps.connectUpstreamFn ?? connectUpstream;
   const writeToolCallLogFn = deps.writeToolCallLogFn ?? writeToolCallLog;
@@ -303,6 +308,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   const fetchImpl = deps.fetchImpl;
   const slackConfig = deps.slack;
   const instances = new Map<string, ProxyInstance>();
+  const activatedInventories = new Map<string, string>();
   const connecting = new Map<string, Promise<ProxyInstance | undefined>>();
   const startupCancellation = new AbortController();
   const approvalStores = new Map<string, ApprovalStore>();
@@ -363,7 +369,9 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     return "error" in result ? result : { ts: result.ts };
   }
 
-  function resolveUpstreamConfig(proxyDef: ProxyConfig): UpstreamConfig | undefined {
+  function resolveUpstreamConfig(name: string, proxyDef: ProxyConfig): UpstreamConfig | undefined {
+    const custom = deps.catalog?.customUpstream(name);
+    if (custom) return custom;
     if (proxyDef.upstream.transport === "onepassword-browser") {
       return resolveOnePasswordBrowserUpstream();
     }
@@ -398,10 +406,26 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       );
       const revision = randomUUID();
       const inventory = buildMcpInventory(name, proxyDef, upstream, revision);
+      // A reconnect may re-establish transport, not silently adopt changed permitted schemas.
+      const signature = createHash("sha256")
+        .update(
+          JSON.stringify(
+            inventory.map((tool) => ({
+              ...tool.descriptor,
+              toolRef: undefined,
+              outputSchema: tool.outputValidator?.schema,
+            })),
+          ),
+        )
+        .digest("hex");
+      const activated = activatedInventories.get(name);
+      if (deps.catalog && activated && activated !== signature)
+        throw new Error("MCP activated inventory drift");
       if (closed || disconnected) {
         await upstream.client.close();
         return undefined;
       }
+      if (deps.catalog) activatedInventories.set(name, signature);
       candidate = {
         name,
         upstream,
@@ -423,7 +447,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
 
   async function getInstance(name: string): Promise<ProxyInstance | undefined> {
     if (closed) return undefined;
-    const proxyDef = getProxyConfig(name);
+    const proxyDef = lookupProxy(name);
     if (!proxyDef) return undefined;
     const existing = instances.get(name);
     if (existing?.fingerprint === mcpPolicyFingerprint(proxyDef)) return existing;
@@ -435,7 +459,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     if (pending) return pending;
     let upstreamConfig: UpstreamConfig | undefined;
     try {
-      upstreamConfig = resolveUpstreamConfig(proxyDef);
+      upstreamConfig = resolveUpstreamConfig(name, proxyDef);
     } catch {
       return undefined;
     }
@@ -525,7 +549,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   ): Promise<McpDescribeOutcome> {
     const context = commandContext(access, "mcp_search");
     if ("status" in context) return context;
-    if (!isProxyName(server))
+    if (!hasActiveProxy(server))
       return brokerFailure("denied", "MCP tool unavailable or not permitted.");
     const instance = await getInstance(server);
     if (!instance)
@@ -544,9 +568,9 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   ): Promise<McpDiscoveryOutcome> {
     const context = commandContext(access, "mcp_search");
     if ("status" in context) return context;
-    if (input.server && !isProxyName(input.server))
+    if (input.server && !hasActiveProxy(input.server))
       return brokerFailure("denied", "MCP server unavailable or not permitted.");
-    const names = input.server ? [input.server] : [...PROXY_NAMES];
+    const names = input.server ? [input.server] : proxyNames;
     const selected = await Promise.all(names.map((name) => getInstance(name)));
     const current = commandContext(access, "mcp_search");
     if ("status" in current) return current;
@@ -629,7 +653,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   }
 
   function isCurrentMcpInstance(instance: ProxyInstance): boolean {
-    const config = getProxyConfig(instance.name);
+    const config = lookupProxy(instance.name);
     return (
       instances.get(instance.name) === instance &&
       !!config &&
@@ -644,7 +668,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     let context = commandContext(access, "mcp_call");
     if ("status" in context) return context;
     const server = input.toolRef.split(".")[0];
-    if (!isProxyName(server))
+    if (!hasActiveProxy(server))
       return brokerFailure(
         "stale",
         "MCP tool reference stale or unavailable; rediscover before calling.",
@@ -968,7 +992,9 @@ export function createMcpService(deps: McpServiceDeps): McpService {
 
   function findApproval(actionId: string): ApprovalLookup | undefined {
     const approvalNames = new Set([
-      ...PROXY_NAMES,
+      // Catalog additions are allow-only and cannot adopt shared legacy approval records.
+      // Disabled built-ins retain historical status lookup, without regaining execution.
+      ...BUILTIN_PROXY_NAMES,
       ...Object.keys(deps.customApprovalExecutors ?? {}),
       ...Object.keys(deps.customApprovalStatusReaders ?? {}),
       ...Object.keys(deps.customApprovalReviewerAuthorizers ?? {}),
@@ -1233,10 +1259,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     callTool: callExactTool,
     getHealth(): Record<string, unknown> {
       return {
-        configured: PROXY_NAMES.length,
-        connected: PROXY_NAMES.filter((name) => instances.has(name)).length,
+        configured: proxyNames.length,
+        connected: proxyNames.filter((name) => instances.has(name)).length,
         instances: Object.fromEntries(
-          PROXY_NAMES.map((name) => [
+          proxyNames.map((name) => [
             name,
             {
               connected: instances.has(name),
@@ -1248,11 +1274,14 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     },
 
     async warmUpstreams(): Promise<void> {
-      const results = await Promise.allSettled(PROXY_NAMES.map((name) => getInstance(name)));
-      for (let index = 0; index < PROXY_NAMES.length; index += 1) {
+      const results = await Promise.allSettled(proxyNames.map((name) => getInstance(name)));
+      for (let index = 0; index < proxyNames.length; index += 1) {
         const result = results[index];
         if (result.status === "rejected") {
-          logError(log, "upstream_connect_failed", result.reason, { name: PROXY_NAMES[index] });
+          logWarn(log, "upstream_connect_failed", {
+            name: proxyNames[index],
+            reason: "unavailable",
+          });
         }
       }
     },
@@ -1286,7 +1315,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         if (invalid) return invalid;
         return ok(
           stringify({
-            upstreams: PROXY_NAMES.map((name) => ({
+            upstreams: proxyNames.map((name) => ({
               name,
               toolCount: instances.get(name)?.inventory.length ?? 0,
               connected: instances.has(name),
@@ -1299,12 +1328,12 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       if (failure) return failure;
 
       const upstreamName = args[0];
-      if (!isProxyName(upstreamName)) {
+      if (!hasActiveProxy(upstreamName)) {
         return fail(
           `Unknown upstream "${upstreamName}". ${suggestMatch(
             upstreamName,
-            PROXY_NAMES.slice(),
-          )}Available upstreams: ${PROXY_NAMES.join(", ")}\n`,
+            proxyNames.slice(),
+          )}Available upstreams: ${proxyNames.join(", ")}\n`,
         );
       }
 
@@ -1405,7 +1434,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
 
       if (args[0] === "list") {
         const approvalNames = new Set([
-          ...PROXY_NAMES,
+          ...BUILTIN_PROXY_NAMES,
           ...Object.keys(deps.customApprovalExecutors ?? {}),
           ...Object.keys(deps.customApprovalStatusReaders ?? {}),
           ...Object.keys(deps.customApprovalReviewerAuthorizers ?? {}),

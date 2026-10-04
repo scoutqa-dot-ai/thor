@@ -1,0 +1,55 @@
+name: MCP Catalog E2E
+
+on:
+  push:
+    paths:
+      - .github/workflows/mcp-catalog-e2e.yml
+      - Dockerfile
+      - docker-compose*.yml
+      - docker/mcp-test/**
+      - docker/remote-cli/**
+      - packages/common/**
+      - packages/remote-cli/**
+      - packages/runner/**
+      - packages/pi-executor/**
+      - pnpm-lock.yaml
+      - scripts/test-mcp-catalog-compose.sh
+      - scripts/fixtures/mcp-*.mjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-catalog-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  catalog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      # Image selectors are fixture-only, not broker deployment configuration.
+      MCP_TEST_BROKER_IMAGE: thor-mcp-test-broker:ci
+      MCP_TEST_RUNNER_IMAGE: thor-mcp-test-runner:ci
+      MCP_TEST_EXECUTOR_IMAGE: thor-mcp-test-executor:ci
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Prepare pinned dependencies and current artifacts
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          pnpm build
+      - name: Prepare fixture images (separate from validation)
+        run: |
+          docker build --target remote-cli -t "$MCP_TEST_BROKER_IMAGE" .
+          docker build --target runner -t "$MCP_TEST_RUNNER_IMAGE" .
+          docker build --target pi-executor -t "$MCP_TEST_EXECUTOR_IMAGE" .
+          docker pull node:24-slim
+      - name: Run offline dummy-only real broker acceptance
+        run: ./scripts/test-mcp-catalog-compose.sh

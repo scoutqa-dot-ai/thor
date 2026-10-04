@@ -50,7 +50,10 @@ codex-lb then makes its upstream ChatGPT connection through mitmproxy; the
 public OpenAI/ChatGPT rules are also available for ordinary agent-initiated
 HTTP reads.
 
-The shared upstream registry and allow/approve policy are checked into [`packages/common/src/proxies.ts`](../../packages/common/src/proxies.ts).
+Bundled upstream defaults/policy remain in [`packages/common/src/proxies.ts`](../../packages/common/src/proxies.ts).
+The separate [operator MCP catalog](../mcp-catalog.md) adds complete allow-only
+definitions through broker-private files; it does not reuse mitmproxy environment
+interpolation or agent-controlled URLs/headers. Generic approvals are not enabled.
 
 ### Custom rules
 
@@ -86,7 +89,11 @@ Every external request that reaches the gateway must prove origin before any wor
 | GitHub webhooks                    | `X-Hub-Signature-256` HMAC over raw body, secret `GITHUB_WEBHOOK_SECRET` | n/a    |
 | Internal gateway↔remote-cli routes | `x-thor-internal-secret: $THOR_INTERNAL_SECRET`                          | n/a    |
 
-`THOR_INTERNAL_SECRET` authorizes policy-bypass internal operations — approval resolution (`POST /exec/mcp`) and arbitrary `POST /internal/exec`. Agents never receive it. Treat it with the same care as a root credential.
+`THOR_INTERNAL_SECRET` authorizes trusted internal operations — approval resolution
+(`POST /exec/mcp`) and typed git/gh workspace repair through `POST /internal/exec`.
+Internal exec does not accept arbitrary binaries, shells or leading global options;
+its children use the same filesystem/proc/environment sandbox as broker CLI tools.
+Agents never receive this secret. Treat it as a privileged service credential.
 
 ## Layer 3: Authorization gating
 
@@ -114,6 +121,17 @@ Approval creation **fails closed** when remote-cli cannot resolve or post to the
 `git`, `gh`, `langfuse`, `metabase`, `ldcli`, and `scoutqa` go through remote-cli `POST /exec/*` endpoints with server-side allowlists per command. The OpenCode-side wrappers are convenience — bypassing them by calling raw binaries inside OpenCode does not exist as a path because credentials live in remote-cli.
 
 ### Credential handling
+
+Custom MCP bearer files/catalog directories are remote-cli-only immutable startup
+snapshots. Enabled credential failures stop startup; offline servers are isolated.
+Endpoint-pinned SDK HTTP refuses redirects for initialization/call/SSE/session
+teardown and never performs OAuth/resource discovery. Broker children have no
+catalog/MCP-secret/private OAuth mounts or parent procfs and receive only their
+own integration environment. Shared file readers pin and check the opened inode.
+See [the operator security/activation contract](../mcp-catalog.md#child-and-container-boundary),
+including the broker-only rootless-proc Docker setting and dedicated legacy
+GitHub adapter grant. These controls are not a claim that unauthenticated internal
+services are unreachable directly from every runtime.
 
 - `git` uses GitHub App installation tokens minted on demand through `GIT_ASKPASS` when the target owner resolves from the command or repo remote.
 - `gh` resolves GitHub App auth before execution and exports `GH_TOKEN` only with the short-lived installation token for the resolved owner.

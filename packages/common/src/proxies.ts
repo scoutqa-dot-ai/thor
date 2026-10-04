@@ -172,6 +172,11 @@ export function isProxyName(name: string): name is ProxyName {
   return (PROXY_NAMES as readonly string[]).includes(name);
 }
 
-export function getProxyConfig(name: string): ProxyConfig | undefined {
+/** Lookup an exact active alias; a supplied catalog is authoritative, including disabled defaults. */
+export function getProxyConfig(
+  name: string,
+  catalog?: Readonly<Record<string, ProxyConfig>>,
+): ProxyConfig | undefined {
+  if (catalog) return Object.hasOwn(catalog, name) ? catalog[name] : undefined;
   return isProxyName(name) ? PROXY_REGISTRY[name] : undefined;
 }

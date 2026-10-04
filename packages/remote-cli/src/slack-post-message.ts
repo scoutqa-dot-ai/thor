@@ -8,7 +8,7 @@ import {
   type ExecResult,
 } from "@thor/common";
 import MarkdownIt from "markdown-it";
-import { readFileSync, statSync } from "node:fs";
+import { readBrokerSharedFile } from "./broker-shared-file.js";
 import { resolve } from "node:path";
 
 const markdownParser = new MarkdownIt("commonmark");
@@ -252,32 +252,12 @@ export async function handleSlackPostMessage(
     const blocksPath = resolveBlocksFilePath(parsed.blocksFile, request.cwd);
     if (typeof blocksPath !== "string") return result(`${blocksPath.error}\n`);
 
-    let blocksStat;
-    try {
-      blocksStat = statSync(blocksPath);
-    } catch (err) {
+    const read = readBrokerSharedFile(blocksPath, allowedBlocksFileRoots(), MAX_BLOCKS_FILE_BYTES);
+    if (!read.ok)
       return result(
-        `failed to read --blocks-file ${parsed.blocksFile}: ${err instanceof Error ? err.message : String(err)}\n`,
+        "--blocks-file must be a readable shared regular file within the 131072 byte budget\n",
       );
-    }
-    if (!blocksStat.isFile()) {
-      return result("--blocks-file must be a regular file\n");
-    }
-    if (blocksStat.size > MAX_BLOCKS_FILE_BYTES) {
-      return result(`blocks file exceeds ${MAX_BLOCKS_FILE_BYTES} bytes\n`);
-    }
-
-    let blocksRaw: string;
-    try {
-      blocksRaw = readFileSync(blocksPath, "utf8");
-    } catch (err) {
-      return result(
-        `failed to read --blocks-file ${parsed.blocksFile}: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
-    }
-    if (Buffer.byteLength(blocksRaw, "utf8") > MAX_BLOCKS_FILE_BYTES) {
-      return result(`blocks file exceeds ${MAX_BLOCKS_FILE_BYTES} bytes\n`);
-    }
+    const blocksRaw = read.value;
     let blocks: unknown;
     try {
       blocks = JSON.parse(blocksRaw);

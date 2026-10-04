@@ -1,0 +1,76 @@
+# Real broker acceptance fixture. Dummy-only, unique project/volumes, internal network, no host ports.
+# Uses prebuilt images; scripts/test-mcp-catalog-compose.sh never downloads or builds.
+services:
+  init:
+    image: node:24-slim
+    user: "0:0"
+    volumes:
+      - catalog:/etc/thor/mcp-catalog
+      - secrets:/run/secrets/thor-mcp
+      - workspace:/workspace
+      - ../../scripts/fixtures/mcp-catalog-init.mjs:/init.mjs:ro
+    command: [node, /init.mjs]
+  fixture:
+    image: ${MCP_TEST_BROKER_IMAGE:-thor-remote-cli:latest}
+    entrypoint: [node, /app/packages/remote-cli/mcp-fixture.mjs]
+    volumes:
+      - ../../scripts/fixtures/mcp-catalog-server.mjs:/app/packages/remote-cli/mcp-fixture.mjs:ro
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8000/health').then(r=>{if(!r.ok)throw 1})"]
+      interval: 1s
+      retries: 30
+  remote-cli:
+    image: ${MCP_TEST_BROKER_IMAGE:-thor-remote-cli:latest}
+    entrypoint: [node, /app/packages/remote-cli/dist/index.js]
+    environment:
+      PORT: "3004"
+      NODE_ENV: production
+      GITHUB_APP_ID: "1"
+      GITHUB_APP_SLUG: dummy-fixture
+      GITHUB_APP_BOT_ID: "1"
+      GITHUB_APP_PRIVATE_KEY_FILE: /var/lib/remote-cli/github-app/dummy.pem
+      SLACK_BOT_TOKEN: dummy-slack-token
+      THOR_INTERNAL_SECRET: dummy-internal-secret
+      RUNNER_BASE_URL: http://runner:3000
+      OP_SERVICE_ACCOUNT_TOKEN: dummy-managed-token
+      ONEPASSWORD_BROWSER_VAULT_ID: aaaaaaaaaaaaaaaaaaaaaaaaaa
+      ATLASSIAN_AUTH: dummy-broker-env-sentinel
+      POSTHOG_API_KEY: dummy-posthog-token
+    security_opt:
+      - seccomp=../remote-cli/seccomp-bwrap.json
+      - apparmor=unconfined
+      - systempaths=unconfined
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    volumes:
+      - catalog:/etc/thor/mcp-catalog:ro
+      - secrets:/run/secrets/thor-mcp:ro
+      - workspace:/workspace
+      - ../../packages/remote-cli/dist:/app/packages/remote-cli/dist:ro
+      - ../../packages/remote-cli/src:/app/packages/remote-cli/src:ro
+      - ../../packages/common/src:/app/packages/common/src:ro
+      - ../../scripts/fixtures/mcp-child-isolation.mjs:/app/packages/remote-cli/mcp-child-isolation.mjs:ro
+    depends_on:
+      init: { condition: service_completed_successfully }
+      fixture: { condition: service_healthy }
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3004/health').then(r=>{if(!r.ok)throw 1})"]
+      interval: 1s
+      retries: 30
+  runner:
+    image: ${MCP_TEST_RUNNER_IMAGE:-thor-mcp-test-runner:latest}
+    entrypoint: [node, -e, "setInterval(()=>{},1000)"]
+    volumes:
+      - workspace:/workspace:ro
+  executor:
+    image: ${MCP_TEST_EXECUTOR_IMAGE:-thor-mcp-test-executor:latest}
+    entrypoint: [node, -e, "setInterval(()=>{},1000)"]
+    volumes:
+      - workspace:/workspace:ro
+networks:
+  default:
+    internal: true
+volumes:
+  catalog:
+  secrets:
+  workspace:

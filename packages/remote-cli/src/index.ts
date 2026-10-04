@@ -40,6 +40,9 @@ import {
 } from "./gws-oauth.js";
 import { resolveOwnerRepoFromRemote } from "./github-app-auth.js";
 import { createMcpService, type McpExecResult, type McpServiceDeps } from "./mcp-handler.js";
+import { loadMcpCatalogSnapshot } from "./mcp-catalog-files.js";
+import { enableBrokerCommandIsolation } from "./broker-command-isolation.js";
+import { runMcpCatalogCommand } from "./mcp-catalog-command.js";
 import { registerMcpPrivateRoutes } from "./mcp-private-routes.js";
 import { ApprovalStore, type ApprovalAction } from "./approval-store.js";
 import { sanitizeCredentialBrokerToolCallLog } from "./credential-broker-audit.js";
@@ -90,6 +93,14 @@ const WORKTREE_ROOT = "/workspace/worktrees";
 const WORKTREE_PREFIX = `${WORKTREE_ROOT}/`;
 const INTERNAL_SECRET_HEADER = "x-thor-internal-secret";
 const INTERNAL_EXEC_MAX_OUTPUT = 1024 * 1024;
+// Trusted gateway repair workflows include reset; no shell, arbitrary executable or global git options.
+const InternalBrokerCommandSchema = z
+  .strictObject({
+    bin: z.enum(["git", "gh"]),
+    args: z.array(z.string()).min(1),
+    cwd: z.string().startsWith("/workspace/"),
+  })
+  .refine((command) => !command.args[0].startsWith("-"));
 const APPROVALS_DIR = "/workspace/data/approvals";
 const GWS_CONNECT_REQUEST_COOKIE = "thor_gws_connect_request";
 const GWS_DISCONNECT_COOKIE = "thor_gws_disconnect";
@@ -2265,6 +2276,15 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
       return;
     }
 
+    const parsedCommand = InternalBrokerCommandSchema.safeParse({ bin, args, cwd });
+    if (!parsedCommand.success || validateCwd(cwd)) {
+      res.status(400).json({
+        stdout: "",
+        stderr: "Broker command denied: unsupported internal command",
+        exitCode: 1,
+      });
+      return;
+    }
     const startedAt = Date.now();
     try {
       const result = await execCommand(bin, args, cwd, {
@@ -2330,9 +2350,12 @@ function hasLdcliOutputOverride(args: string[]): boolean {
 }
 
 export async function startRemoteCliServer(): Promise<void> {
+  enableBrokerCommandIsolation();
   const envConfig = loadRemoteCliEnv();
   const gitIdentity = deriveBotGitIdentity();
-  const remoteCli = createRemoteCliApp({ env: envConfig });
+  const catalog = loadMcpCatalogSnapshot();
+  if (!catalog.ok) throw new Error(`MCP catalog startup rejected: ${catalog.reason}`);
+  const remoteCli = createRemoteCliApp({ env: envConfig, mcp: { catalog: catalog.value } });
   logInfo(log, "remote_cli_starting", {
     port: envConfig.port,
     gitIdentityName: gitIdentity.name,
@@ -2368,7 +2391,12 @@ export async function startRemoteCliServer(): Promise<void> {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  startRemoteCliServer().catch((err) => {
+  (process.argv[2] === "mcp-catalog"
+    ? runMcpCatalogCommand(process.argv.slice(3)).then((code) => {
+        process.exitCode = code;
+      })
+    : startRemoteCliServer()
+  ).catch((err) => {
     logError(log, "remote_cli_start_failed", err);
     process.exit(1);
   });

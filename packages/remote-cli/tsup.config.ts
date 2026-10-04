@@ -8,7 +8,8 @@ export default defineConfig({
   splitting: false,
   sourcemap: true,
   clean: true,
-  noExternal: [/@thor\/.*/],
+  // Keep the reviewed arbitrary-schema validator/dialects aligned with this broker artifact.
+  noExternal: [/@thor\/.*/, /^ajv(?:-formats)?(?:\/|$)/],
   banner: {
     js: 'import{createRequire as __cr}from"node:module";const require=__cr(import.meta.url);',
   },

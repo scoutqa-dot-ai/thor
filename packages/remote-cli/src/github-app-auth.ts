@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync, mkdirSync, statSync, unlinkSync } from "no
 import { join } from "node:path";
 import { createSign } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { resolveBrokerCommand } from "./broker-command-isolation.js";
 import {
   getInstallationIdForOwner,
   loadGitHubAppAuthEnv,
@@ -58,7 +59,10 @@ export function resolveOwnerFromRemote(cwd: string): string | undefined {
 export function resolveOwnerRepoFromRemote(cwd: string): OwnerRepo | undefined {
   let remoteUrl: string;
   try {
-    remoteUrl = execFileSync("/usr/bin/git", ["remote", "get-url", "origin"], {
+    const launch = resolveBrokerCommand("git", ["remote", "get-url", "origin"], cwd, process.env);
+    if (!launch.ok) return undefined;
+    remoteUrl = execFileSync(launch.binary, launch.args, {
+      env: launch.env,
       cwd,
       encoding: "utf8",
       timeout: 5000,
@@ -96,10 +100,13 @@ function normalizeOwnerRepo(
   repoWithSuffix: string | undefined,
 ): OwnerRepo | undefined {
   if (!host || !owner || !repoWithSuffix) return undefined;
-  const repo = repoWithSuffix.endsWith(".git") ? repoWithSuffix.slice(0, -".git".length) : repoWithSuffix;
+  const repo = repoWithSuffix.endsWith(".git")
+    ? repoWithSuffix.slice(0, -".git".length)
+    : repoWithSuffix;
   const normalizedHost = host.toLowerCase();
   const safeSegment = /^[A-Za-z0-9._-]+$/;
-  if (!safeSegment.test(normalizedHost) || !safeSegment.test(owner) || !safeSegment.test(repo)) return undefined;
+  if (!safeSegment.test(normalizedHost) || !safeSegment.test(owner) || !safeSegment.test(repo))
+    return undefined;
   return { host: normalizedHost, owner, repo };
 }
 

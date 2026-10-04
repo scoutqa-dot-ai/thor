@@ -22,6 +22,10 @@ services:
     security_opt:
       - seccomp=./docker/remote-cli/seccomp-bwrap.json
       - apparmor=thor-remote-cli
+      # Rootless child PID namespaces need a fresh procfs; Docker's masked procfs forbids it.
+      - systempaths=unconfined
+      - no-new-privileges:true
+    cap_drop: [ALL]
     ports:
       - "127.0.0.1:3004:3004"
     environment:
@@ -77,6 +81,9 @@ services:
       - ./docker-volumes/workspace:/workspace
       - ./docker-volumes/github-app:/var/lib/remote-cli/github-app
       - google-workspace-oauth-data:/var/lib/remote-cli/google-workspace-oauth
+      # Optional directories: absent/empty catalog retains bundled defaults. Never share with tools.
+      - ./docker-volumes/mcp-catalog:/etc/thor/mcp-catalog:ro
+      - ./docker-volumes/mcp-secrets:/run/secrets/thor-mcp:ro
       - shared-tmp:/tmp
     depends_on:
       grafana-mcp:

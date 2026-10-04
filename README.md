@@ -115,6 +115,15 @@ Common usage patterns:
 
 ## Deployment Configuration
 
+Optional HTTP MCP additions live in `docker-volumes/mcp-catalog/catalog.json`,
+with private bearer files in `docker-volumes/mcp-secrets/`. Both fixed read-only
+directory mounts belong only to `remote-cli`; no new runtime env variables or
+workspace config fields are needed. Missing/empty catalog uses the six bundled
+defaults; malformed present config fails before listen. Add/remove/rotate,
+validate locally, then restart the broker. Custom approvals remain unsupported.
+See [operator catalog and security contract](docs/mcp-catalog.md), including the
+important distinction between deleting the entire catalog and disabling an alias.
+
 Integration-specific env vars live in each integration's doc. Cross-cutting vars:
 
 | Variable                        | Required | Service                                         | Purpose                                                                                              |
@@ -332,6 +341,8 @@ See [`docs/feat/security-model.md`](docs/feat/security-model.md) for the full la
 ```bash
 pnpm test
 pnpm test:mcp
+# Prebuilt dummy fixture images required; see docs/mcp-catalog.md:
+pnpm test:mcp-catalog-e2e
 REMOTE_CLI_GIT_REPO_URL=https://github.com/owner/repo \
 REMOTE_CLI_GITHUB_REPO=owner/repo \
   pnpm test:e2e

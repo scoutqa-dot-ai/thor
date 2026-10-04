@@ -1,6 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type { Writable } from "node:stream";
-import { getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
@@ -51,7 +50,7 @@ export class SecretStdioClientTransport implements Transport {
     await new Promise<void>((resolve, reject) => {
       let startSettled = false;
       const child = spawn(this.#server.command, this.#server.args, {
-        env: { ...getDefaultEnvironment(), ...this.#server.env },
+        env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/tmp", ...this.#server.env },
         stdio: ["pipe", "pipe", "inherit", "pipe"],
         shell: false,
         windowsHide: process.platform === "win32",

@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve, sep } from "node:path";
-import { rm, unlink, mkdir, stat } from "node:fs/promises";
+import { rm, unlink, mkdir } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { Daytona, type FileUpload, type Sandbox } from "@daytonaio/sdk";
 import { execCommand } from "./exec.js";
+import { withBrokerSharedFiles } from "./broker-shared-file.js";
 import { loadDaytonaEnv, withKeyLock, formatBytes } from "@thor/common";
 
 export interface ExecStreamCallbacks {
@@ -196,27 +198,26 @@ export async function overlayDirtyFiles(sandboxId: string, cwd: string): Promise
     );
   }
 
-  // Reject files exceeding size limit
-  for (const f of uploads) {
-    const fileStat = await stat(join(cwd, f)).catch(() => null);
-    if (fileStat && fileStat.size > FILE_SIZE_LIMIT) {
-      throw new SandboxError(
-        `File "${f}" is ${formatBytes(fileStat.size)}, exceeding the 100 MB sync limit. ` +
-          `Commit it first (git add "${f}" && git commit), add it to .gitignore, ` +
-          `or remove it from the worktree.`,
-        `overlay rejected: ${f} is ${fileStat.size} bytes (limit ${FILE_SIZE_LIMIT})`,
-      );
-    }
-  }
-
   const sandbox = await getSandboxById(sandboxId);
 
   if (uploads.length > 0) {
-    const fileUploads: FileUpload[] = uploads.map((f) => ({
-      source: join(cwd, f),
-      destination: join(DAYTONA_REPO_DIR, f),
-    }));
-    await sandbox.fs.uploadFiles(fileUploads);
+    const uploaded = await withBrokerSharedFiles(
+      uploads.map((file) => join(cwd, file)),
+      [realpathSync.native(cwd)],
+      FILE_SIZE_LIMIT,
+      async (pinnedPaths) => {
+        const fileUploads: FileUpload[] = pinnedPaths.map((source, index) => ({
+          source,
+          destination: join(DAYTONA_REPO_DIR, uploads[index]),
+        }));
+        await sandbox.fs.uploadFiles(fileUploads);
+      },
+    );
+    if (!uploaded.ok)
+      throw new SandboxError(
+        "Sandbox sync requires regular worktree files within the 100 MB limit; private paths and symlink escapes are denied.",
+        "Sandbox file boundary rejected an unsafe local upload",
+      );
   }
 
   for (const filePath of deletes) {
@@ -334,7 +335,19 @@ async function bundleAndUpload(
       );
     }
 
-    await sandbox.fs.uploadFile(localBundlePath, SANDBOX_SYNC_BUNDLE_PATH);
+    const uploaded = await withBrokerSharedFiles(
+      [localBundlePath],
+      [realpathSync.native(tmpdir())],
+      Infinity,
+      async ([pinnedPath]) => {
+        await sandbox.fs.uploadFile(pinnedPath, SANDBOX_SYNC_BUNDLE_PATH);
+      },
+    );
+    if (!uploaded.ok)
+      throw new SandboxError(
+        "Failed to prepare safe code sync",
+        "Sandbox bundle file boundary rejected an unsafe upload",
+      );
 
     const repoDir = shellQuote(DAYTONA_REPO_DIR);
     const bundlePath = shellQuote(SANDBOX_SYNC_BUNDLE_PATH);

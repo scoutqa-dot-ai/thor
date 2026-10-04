@@ -1,7 +1,10 @@
 # Explicit platform override ONLY when Docker reports no AppArmor support.
-# Keep the custom bubblewrap seccomp policy; do not use privileged/unconfined flags.
+# Keep custom seccomp and no-new-privileges; systempaths only permits fresh child procfs.
+# Do not use privileged or seccomp=unconfined.
 # On AppArmor-enabled hosts, load the deployment's thor-remote-cli profile instead.
 services:
   remote-cli:
     security_opt: !override
       - seccomp=./docker/remote-cli/seccomp-bwrap.json
+      - systempaths=unconfined
+      - no-new-privileges:true

@@ -10,6 +10,12 @@ The broker is a sandboxed stdio MCP child of `remote-cli`. It is intentionally *
 
 `remote-cli` transfers the token over anonymous descriptor 3. `bwrap` copies it to a private tmpfs file that broker startup consumes and unlinks before Chromium can start. The broker child receives no token in environment or argv, and Chromium receives a separate fixed credential-free environment.
 
+Its PID namespace now has fresh procfs, not the broker's `/proc`; the private MCP
+catalog/token directory is not mounted. Keep the broker-only Docker namespace
+settings described in [MCP child isolation](mcp-catalog.md#child-and-container-boundary)
+when updating seccomp/AppArmor/platform overrides. Namespace failure denies the
+child rather than falling back to broker filesystem/environment access.
+
 Browser sessions:
 
 - stay entirely inside the broker process;

@@ -10,6 +10,8 @@ on:
       - docker-compose.yml
       - docker-compose.no-apparmor.yml
       - docker/pi-test/**
+      # Real broker catalog authority has a separate dummy-only MCP Catalog E2E job.
+      - docker/mcp-test/**
       - docker/ingress/**
       - docker/opencode/bin/**
       - docker/opencode/config/skills/**

@@ -270,3 +270,6 @@ export type {
 export { SlackReplyAdmissionSchema, type SlackReplyAdmission } from "./slack-reply-policy.js";
 
 export * from "./mcp-broker.js";
+
+export { parseMcpOperatorCatalog, mcpOperatorCatalogJsonSchema } from "./mcp-catalog.js";
+export type { McpOperatorCatalog, McpProxyCatalog, McpCatalogParseResult } from "./mcp-catalog.js";

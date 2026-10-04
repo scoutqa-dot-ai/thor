@@ -9,6 +9,7 @@
 
 import { execFile, spawn } from "node:child_process";
 import type { ExecResult } from "@thor/common";
+import { resolveBrokerCommand } from "./broker-command-isolation.js";
 
 export interface ExecCommandOptions {
   env?: NodeJS.ProcessEnv;
@@ -27,19 +28,22 @@ export function execCommand(
   // outputs before feeding them to the LLM context window. Specific endpoints
   // may opt into a cap when they need tighter control.
   const maxBuffer = options.maxBuffer ?? Infinity;
+  const launch = resolveBrokerCommand(
+    binary,
+    args,
+    cwd,
+    options.envMode === "replace" ? (options.env ?? {}) : { ...process.env, ...options.env },
+  );
+  if (!launch.ok) return Promise.resolve(launch.result);
 
   return new Promise((resolve) => {
     const child = execFile(
-      binary,
-      args,
+      launch.binary,
+      launch.args,
       {
         cwd,
         maxBuffer,
-        ...(options.envMode === "replace"
-          ? { env: options.env ?? {} }
-          : options.env
-            ? { env: { ...process.env, ...options.env } }
-            : {}),
+        env: launch.env,
       },
       (err, stdout, stderr) => {
         resolve({
@@ -72,7 +76,17 @@ export function execCommandStream(
   callbacks: StreamCallbacks,
 ): Promise<number> {
   return new Promise((resolve) => {
-    const child = spawn(binary, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const launch = resolveBrokerCommand(binary, args, cwd, process.env);
+    if (!launch.ok) {
+      callbacks.onStderr(launch.result.stderr);
+      resolve(launch.result.exitCode);
+      return;
+    }
+    const child = spawn(launch.binary, launch.args, {
+      cwd,
+      env: launch.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");

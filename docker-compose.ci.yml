@@ -21,11 +21,14 @@ services:
       start_period: 0s
 
   remote-cli:
-    # These suites never start the credential browser broker; credentials remain disabled.
-    # Docker's default CI profile is not a substitute for the production thor-remote-cli policy.
+    # CI-only: command children now require rootless mounts, denied by docker-default AppArmor.
+    # Keep the filesystem/PID/credential sandbox and seccomp; this is NOT the production MAC policy.
+    # Credential browser bundle remains disabled in these legacy suites.
     security_opt: !override
       - seccomp=./docker/remote-cli/seccomp-bwrap.json
-      - apparmor=docker-default
+      - apparmor=unconfined
+      - systempaths=unconfined
+      - no-new-privileges:true
     environment:
       OP_SERVICE_ACCOUNT_TOKEN: ""
       ONEPASSWORD_BROWSER_VAULT_ID: ""

@@ -1,4 +1,6 @@
 # Isolated, deterministic Pi E2E. No production env file, credentials, host ports or bind-mounted workspace.
+# MCP catalog/secret authority is checked separately against a real broker in docker/mcp-test/compose.yml.
+# This runtime fixture's model-fixture alias is not evidence of broker credential isolation.
 services:
   init:
     image: node:24-slim

@@ -1667,7 +1667,7 @@ describe("remote-cli MCP endpoints", () => {
     expect(response.status).toBe(401);
   });
 
-  it("runs /internal/exec with valid internal secret", async () => {
+  it("rejects arbitrary executable access even with the internal secret", async () => {
     const response = await postJson(
       "/internal/exec",
       {
@@ -1683,10 +1683,10 @@ describe("remote-cli MCP endpoints", () => {
       exitCode: number;
     };
 
-    expect(response.status).toBe(200);
-    expect(body.exitCode).toBe(0);
-    expect(body.stdout.trim()).toBe("hello");
-    expect(body.stderr).toBe("");
+    expect(response.status).toBe(400);
+    expect(body.exitCode).toBe(1);
+    expect(body.stdout).toBe("");
+    expect(body.stderr).toContain("Broker command denied");
   });
 
   async function postJson(
