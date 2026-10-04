@@ -471,6 +471,8 @@ export interface GatewayAppConfig extends RunnerDeps {
   slackApiBaseUrl?: string;
   /** Our bot's Slack user ID — used to ignore our own messages. */
   slackBotUserId: string;
+  /** Configured workspace equality is required for automatic Pi replies. */
+  slackTeamId?: string;
   /** Remote CLI hostname for approval resolution. Default: "remote-cli". */
   remoteCliHost?: string;
   /** Remote CLI port for approval resolution. Default: 3004. */
@@ -1017,6 +1019,23 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
     client: config.slackClient ?? createSlackClient(config.slackBotToken, config.slackApiBaseUrl),
   };
 
+  // Best-effort source-only acknowledgement, deduplicated within this ingress owner. Slack's
+  // own reaction identity also makes a repeated attempt after restart harmless while eyes remain.
+  const acknowledgedSlackSources = new Set<string>();
+  const acknowledgeSlackSource = (event: SlackThreadEvent): void => {
+    const source = `${event.channel}/${event.ts}`;
+    if (acknowledgedSlackSources.has(source)) return;
+    acknowledgedSlackSources.add(source);
+    // Bound ephemeral dedup memory; this is not execution/publication authority or a new outbox.
+    if (acknowledgedSlackSources.size > 10_000) {
+      const oldest = acknowledgedSlackSources.values().next().value;
+      if (oldest) acknowledgedSlackSources.delete(oldest);
+    }
+    void addSlackReaction(event.channel, event.ts, "eyes", slackDeps).catch((err) =>
+      logError(log, "reaction_failed", err, { channel: event.channel, ts: event.ts }),
+    );
+  };
+
   const markIgnoredForGatedChannel = (
     event: SlackChannelGateInput & { ts: string },
     eventId: string,
@@ -1103,6 +1122,14 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       try {
         const plan = await planBatchDispatch({
           requestId: queuedBatchRequestId(events),
+          // Old/mixed queues have no reply authority. Privacy reroutes preserve signed proof.
+          slackTeamId:
+            slackEvents.length > 0 &&
+            slackEvents.every(
+              (event) => event.slackTeamId && event.slackTeamId === config.slackTeamId,
+            )
+              ? config.slackTeamId
+              : undefined,
           slackEvents: slackEvents.map((event) => event.payload),
           cronEvents: cronEvents.map((event) => event.payload),
           githubEvents: githubEvents.map((event) => event.payload),
@@ -1172,6 +1199,11 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
           logTrigger(plan.logPrefix, "dropped", plan.reason);
           return;
         }
+
+        // Deferred privacy resolution has now admitted the surface and repository. Busy work
+        // can acknowledge its human source without taking the current runner's presentation.
+        for (const event of slackEvents)
+          if (event.payload.type === "message") acknowledgeSlackSource(event.payload);
 
         const requestId = queuedBatchRequestId(events);
         const options = persistBatchRunnerRequest(config.queueDir ?? "data/queue", {
@@ -1347,6 +1379,12 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       subtype: event.type === "message" ? event.subtype : undefined,
     };
 
+    if (config.slackTeamId && envelope.data.team_id !== config.slackTeamId) {
+      history.reason = "slack_workspace_mismatch";
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
     // Skip all Slack events when bot user ID is not configured
     if (!selfUserId) {
       logInfo(log, "event_ignored_no_bot_user_id", { eventId });
@@ -1388,6 +1426,8 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
       queue.enqueue({
         id: eventId,
         source: "slack",
+        slackTeamId:
+          config.slackTeamId === envelope.data.team_id ? envelope.data.team_id : undefined,
         correlationKey,
         payload,
         receivedAt: new Date().toISOString(),
@@ -1436,6 +1476,7 @@ export function createGatewayApp(config: GatewayAppConfig): GatewayApp {
         correlationKey,
       });
       await enqueueSlackEvent(target, correlationKey, options);
+      if (target.type === "message") acknowledgeSlackSource(target);
       res.status(200).json({ ok: true });
     };
 

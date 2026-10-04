@@ -13,14 +13,14 @@ Neo uses the **HTTP Events API** only. Socket Mode is not supported.
 
 Set these in `.env` (or your deployment secret store):
 
-| Variable               | Required | Used by                                | What it is                                                                                    | Where to find it in Slack UI                                                                              |
-| ---------------------- | -------- | -------------------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `SLACK_BOT_TOKEN`      | Yes      | gateway, runner, remote-cli, mitmproxy | Bot user OAuth token (`xoxb-…`) for all Web API calls                                         | Slack app → **OAuth & Permissions** → Bot User OAuth Token                                                |
-| `SLACK_SIGNING_SECRET` | Yes      | gateway                                | HMAC secret used to verify `X-Slack-Signature` on webhook requests                            | Slack app → **Basic Information** → Signing Secret                                                        |
-| `SLACK_BOT_USER_ID`    | Yes      | gateway, admin                         | Bot user id; used for mention detection and self-loop guard                                   | Run `curl -H "Authorization: Bearer $SLACK_BOT_TOKEN" https://slack.com/api/auth.test` and read `user_id` |
-| `SLACK_DEFAULT_REPO`   | Yes      | gateway                                | Repo basename under `/workspace/repos/<name>` used when a channel has no per-channel override | User-supplied; must match an existing local clone                                                         |
-| `SLACK_TEAM_ID`        | No       | runner, admin                          | Workspace team id; enables permalink rendering in the viewer and admin UI                     | Any Slack URL: `https://app.slack.com/client/<TEAM_ID>/...`                                               |
-| `SLACK_API_BASE_URL`   | No       | gateway, runner, remote-cli, mitmproxy | Override for the Slack Web API base; defaults to `https://slack.com/api`                      | Infrastructure / proxy config                                                                             |
+| Variable               | Required                | Used by                                | What it is                                                                                                         | Where to find it in Slack UI                                                                              |
+| ---------------------- | ----------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `SLACK_BOT_TOKEN`      | Yes                     | gateway, runner, remote-cli, mitmproxy | Bot user OAuth token (`xoxb-…`) for all Web API calls                                                              | Slack app → **OAuth & Permissions** → Bot User OAuth Token                                                |
+| `SLACK_SIGNING_SECRET` | Yes                     | gateway                                | HMAC secret used to verify `X-Slack-Signature` on webhook requests                                                 | Slack app → **Basic Information** → Signing Secret                                                        |
+| `SLACK_BOT_USER_ID`    | Yes                     | gateway, admin                         | Bot user id; used for mention detection and self-loop guard                                                        | Run `curl -H "Authorization: Bearer $SLACK_BOT_TOKEN" https://slack.com/api/auth.test` and read `user_id` |
+| `SLACK_DEFAULT_REPO`   | Yes                     | gateway                                | Repo basename under `/workspace/repos/<name>` used when a channel has no per-channel override                      | User-supplied; must match an existing local clone                                                         |
+| `SLACK_TEAM_ID`        | For Pi host replies/GWS | gateway, runner, remote-cli, admin     | Workspace equality at signed intake, frozen Pi reply authority, requester-owned Google OAuth and viewer permalinks | Any Slack URL: `https://app.slack.com/client/<TEAM_ID>/...`                                               |
+| `SLACK_API_BASE_URL`   | No                      | gateway, runner, remote-cli, mitmproxy | Override for the Slack Web API base; defaults to `https://slack.com/api`                                           | Infrastructure / proxy config                                                                             |
 
 ## 2) Slack app manifest
 
@@ -88,6 +88,7 @@ containing the repo basename (matching a directory under `/workspace/repos/`). T
 
 - **Sender identity** — the gateway uses `SLACK_BOT_USER_ID` to filter self-authored events (self-loop guard) and to detect mentions.
 - **Signature verification** — `X-Slack-Signature` is computed as `v0=HMAC_SHA256(SLACK_SIGNING_SECRET, "v0:" + X-Slack-Request-Timestamp + ":" + raw_body)`. Requests older than 300 seconds (`SLACK_TIMESTAMP_TOLERANCE_SECONDS`) are rejected.
+- **Workspace equality** — configured `SLACK_TEAM_ID` must match the signed event team; mismatches are ignored before queue/reaction work. Missing configuration or old queue records provide no automatic Pi answer authority.
 - **URL verification** — Slack's one-time `url_verification` challenge is answered automatically; no manual step is needed when first pointing the app at the gateway.
 
 ## 8) Secret rotation
@@ -125,3 +126,15 @@ Remember to revert URLs back to your shared deployment when you're done — only
 | `self_sender`                     | Event sender id matches `SLACK_BOT_USER_ID`                                                    | Self-loop guard — expected when Neo posts replies or reactions                                        |
 
 Channel-privacy lookups (`conversations.info`) are cached for 60 minutes; failures fail closed and drop the event under `private_channel_not_allowlisted`. If a private channel that should admit is being rejected, confirm the bot is invited to the channel and that the `*:read` scopes are granted.
+
+## Pi native loading and final answers
+
+Pi uses the existing `chat:write` permission with `agents.sessions.setStatus`,
+explicitly clearing its own processing state on settlement/stop and suspending
+only confirmed user-action holds. Unsupported methods/features/permissions use
+the quiet footer, not an automatic scope/manifest change or blind legacy fallback.
+Do not switch `assistant_view` to irreversible `agent_view`, change app identity
+or subscribe to a native stop button merely to activate loading; those require
+separate approval and stop-path validation. Live Slack rendering is an acceptance
+gate, not proven by SDK fixtures. See [Pi reply safety](pi-runtime.md#host-owned-slack-answers)
+for frozen private targets and uncertain-delivery reconciliation.

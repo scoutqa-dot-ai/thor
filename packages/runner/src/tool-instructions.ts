@@ -50,7 +50,7 @@ export function buildToolInstructions(directory: string): string | undefined {
   blocks.push(
     [
       "[Slack capability]",
-      "Use `slack-post-message` for Slack message writes.",
+      "When your reply instructions say final text is published automatically, use final text for the ordinary reply and slack-post-message for explicitly requested outbound actions or rich artifacts. For tool-owned Slack reply targets, retain the Slack skill's posting workflow before ending. Canvases and requested uploads remain explicit actions; finish with a concise summary after an artifact.",
       "Load Slack skill for details about using `curl`/`fetch` with `reactions.add`, `conversations.replies` etc.",
     ].join("\n"),
   );

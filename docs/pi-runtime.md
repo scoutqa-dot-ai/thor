@@ -68,10 +68,38 @@ For non-streamed acceptance, omit `stream`; the response includes `anchorId` and
 
 Watch deployment logs with `docker compose -f docker-compose.yml -f docker-compose.pi.yml logs -f gateway runner remote-cli pi-executor` (append the platform override if selected). Signature errors, missing repo mapping/private allowlist, invalid Falcon credentials, unloaded AppArmor policy, unconnected model accounts, and missing Google identity are configuration failures, not reasons to bypass authorization. The deterministic tests use dummy Slack/Google/model fixtures; they do not send real Slack messages or validate real accounts.
 
+## Host-owned Slack answers
+
+New signed Slack work with configured `SLACK_TEAM_ID` equality and successful
+gateway privacy/repository admission freezes a permitted channel/thread in the
+request binding. Pi publishes only nonempty text from that input's successful
+native answer entry. Private destinations remain private; there is no public/root
+fallback. Existing admissions, old queued/frozen requests and OpenCode keep
+tool-owned replies. GitHub/cron sharing an anchor do not gain automatic posting.
+Google continuations inherit the original policy/target and publish only the
+resumed answer after authoritative no-wait evidence, never the paused step.
+
+Ordinary final text is visible to the admitted audience. Explicit outbound/rich
+Block Kit, canvases and requested uploads still use tools; the final answer is
+a concise summary, not retransmission of an artifact. The text sink converts
+common headings/bold/links to Slack mrkdwn, preserves code, chunks within Block
+Kit limits and puts Model / Thinking metadata on the final chunk. Unsupported
+unbreakable/over-budget output (more than 64 chunks) is rejected rather than clipped.
+
+The existing binding stores pending, confirmed (Slack timestamp), uncertain or
+rejected publication keyed by the exact answer/destination, with bounded chunk
+receipts. Send intent commits before I/O. Lost receipts, process loss and partial
+delivery are not automatic-repost permission; pending recovery becomes uncertain.
+The authenticated trigger viewer shows this disposition separately from model
+completion. Reconcile uncertain effects against the actual Slack thread/native
+answer privately; there is no automated repost endpoint, delivery queue or model/
+tool replay. An empty answer creates no delivery receipt. ✅ still denotes normal
+turn completion, not proof of publication or Google/resource success.
+
 ## Slack activity footer
 
 Long requests show a compact footer after a 1.5s grace, or three completed tool
-calls. Its original DS mark animates beside **Neo thinking** during model work
+calls. Its official AI mark animates beside **Neo thinking** during model work
 and **Neo working** during tool execution. Visible output switches it to a still
 **Neo responding** mark; Google sign-in waits stay static and do not get a check.
 Completed turns react ✅ to the current request message, including thread
@@ -86,7 +114,20 @@ updated when escalation changes them, rather than a global startup-model label.
 Model IDs render as plain text; provider settings and reasoning content are not
 included. Historical Pi tasks use their captured native model configuration.
 
-After syncing this change, rebuild `ingress`, `gateway` and `runner`, then use
+One request-owned presentation serializes native `agents.sessions.setStatus`
+and the footer. Actual active work uses `processing`, confirmed user-action holds
+use `suspended`, and settlement/stop explicitly leave processing with `active`.
+Nonterminal footer changes coalesce with a readability window; output immediately
+uses a still mark and terminal cleanup never waits for pacing. Restart repairs
+saved footer/native state from validated facts without repeating answers/checks.
+Feature/method/permission denial degrades to the existing footer/text. No blind
+legacy fallback: only explicitly verified embedded transport configuration may
+select the legacy method, with generic loading and a 30-second keepalive while
+active. The default deployment uses the sessions method and needs no new scope,
+custom identity, native stop-button subscription or automatic manifest migration.
+Live workspace support/GIF playback/accessibility remain separate acceptance.
+
+When deployment is separately authorized, rebuild `ingress`, `gateway` and `runner`, then use
 the existing `docker compose up -d`. Keep `RUNNER_BASE_URL` pointed at the public
 ingress HTTP(S) origin without credentials, query or fragment. Slack's image
 fetcher must retrieve `/neo-thinking-v1.gif`, `/neo-working-v1.gif` and
@@ -189,14 +230,14 @@ Runner's trusted Slack SDK bypasses the agent-tool proxy policy for `slack.com`.
 ## Persistence and safety
 
 - One runner owns SQLite, enforced by a Linux kernel lock (`flock`). Keep the complete SQLite/WAL files on persistent storage. Never delete `.owner` while a runner is live.
-- Neo metadata now uses version 2 of `thor.pi.conversation`. The supported Durable 1.0.0 document migration preserves version-1 identity, policy and authorization evidence; native submissions decide execution status. Prompt copies are retired only once native admission exists. Invalid/hybrid authority fails startup without being erased. Back up before upgrading; do not point an older Pi runner at migrated SQLite or assume a database downgrade is supported. The OpenCode rollback below does not read this database.
+- Neo metadata now uses version 3 of `thor.pi.conversation`. Durable 1.0.0 migration preserves version-1/2 identity, model policy and authorization, explicitly freezing old replies as tool-owned. Native submissions decide execution status. Prompt copies retire only after native admission. Invalid/hybrid authority fails startup intact. Back up before upgrading; do not point an older Pi runner at migrated SQLite or assume a database downgrade is supported. The OpenCode rollback below does not read this database.
 - Graceful stop leaves unfinished work pending. Reopening can retry an interrupted model request; this may incur another provider charge.
 - Google auth continuation polling uses the existing internal broker URL/secret and `SLACK_TEAM_ID`. Only broker readiness matching the persisted original session/anchor/trigger/requester/workspace may resume; receipts predating workspace binding fail closed. Busy original turns defer admission. A deterministic runner-owned receipt is persisted before binding/acknowledging the broker and submitting normal Pi input. Redelivery and restart reuse that receipt; this is at-most-once admission, not exactly-once Google effects. The resumed model gets original history and the exact blocked Google argv, never a shell replay or a new broad human task.
 - Auth-wait progress distinguishes a finished model turn from a completed Google operation using authenticated broker wait evidence. Missing/legacy/unavailable brokers do not authorize work; pending admissions recover when the broker returns. Polling stops and is awaited on shutdown.
 - Unsafe coding tools are not replay-safe. An interrupted shell/write may already have affected external state; the agent must reconcile that uncertainty rather than assume failure. Existing consumed approvals cannot authorize automatic write replay.
 - SQLite WAL/NORMAL is tested for process crashes, **not** lossless survival of newest commits after power/host failure. For consistent backup, stop runner before snapshotting its private volume; transcripts may contain private user/tool data.
 - Gateway persists uncertain batch membership and HTTP payloads until acceptance. Its `.runner-requests` manifests contain prompt/actor data; protect the queue directory like other conversation data. Retention/cleanup is not automated in this test delivery.
-- Slack progress is best-effort; recovery may duplicate a notification. Viewer usage is conversation-wide, not a per-trigger cost ledger.
+- Slack presentation is best-effort; an activity post lost before its local timestamp can require manual cleanup. Native loading and known footer receipts are repaired on restart. Ordinary answer uncertainty never triggers automatic repost. Viewer usage is conversation-wide, not a per-trigger cost ledger.
 - Initial mode has read/write/edit/bash, remote `read_image`, explicit skills and bounded `escalate_model`. Background subagents, lossless legacy transcript import and full browser chat parity are not implemented.
 
 ## Rollback

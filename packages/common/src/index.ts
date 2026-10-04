@@ -265,3 +265,4 @@ export type {
   PiModelRoutingPool,
   PiModelSelection,
 } from "./pi-model-routing.js";
+export { SlackReplyAdmissionSchema, type SlackReplyAdmission } from "./slack-reply-policy.js";

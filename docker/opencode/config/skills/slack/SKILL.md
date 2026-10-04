@@ -63,6 +63,15 @@ denial.
 
 ## Core workflow
 
+If your current reply instructions say final assistant text will be published
+automatically, write the ordinary answer as final Slack mrkdwn text. Use the
+posting workflow below for explicitly requested outbound actions or rich Block
+Kit artifacts; canvases and requested uploads remain explicit tool actions.
+After an artifact, finish with a concise result/summary rather than a second
+copy. Without automatic-publication instructions (including legacy tasks),
+post the substantive Slack reply using this workflow before ending; final text
+alone is not delivered there.
+
 ### 1. Resolve the reply target
 
 Prefer explicit Slack context from the task:

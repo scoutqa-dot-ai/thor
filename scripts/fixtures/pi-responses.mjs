@@ -9,6 +9,8 @@ let lastProgressTarget;
 let lastWrapper;
 let slackReplies = 0;
 let lastReply;
+let hostReplies = 0;
+let lastHostReply;
 let imageInputs = 0;
 const modelSelections = [];
 const slackDeliveries = [];
@@ -94,6 +96,8 @@ async function handle(req, res) {
       lastWrapper,
       slackReplies,
       lastReply,
+      hostReplies,
+      lastHostReply,
       imageInputs,
       modelSelections,
       slackDeliveries,
@@ -121,8 +125,9 @@ async function handle(req, res) {
     const form = new URLSearchParams(Buffer.concat(chunks).toString());
     slackDeliveries.push({
       method: req.url,
-      channel: form.get("channel"),
+      channel: form.get("channel") ?? form.get("channel_id"),
       threadTs: form.get("thread_ts"),
+      status: form.get("status"),
       timestamp: form.get("timestamp"),
       name: form.get("name"),
       ts: form.get("ts"),
@@ -133,10 +138,21 @@ async function handle(req, res) {
     if (req.url.includes("chat.postMessage")) {
       slackPosts++;
       lastProgressTarget = { channel: form.get("channel"), threadTs: form.get("thread_ts") };
+      if (form.get("blocks")?.includes('"section"')) {
+        hostReplies++;
+        lastHostReply = {
+          channel: form.get("channel"),
+          threadTs: form.get("thread_ts"),
+          text: form.get("text"),
+          blocks: JSON.parse(form.get("blocks")),
+        };
+      }
     }
     json(res, {
       ok: true,
       ts: "1710000000.001",
+      agent_status: form.get("status"),
+      status: form.get("status"),
       channel: { id: "C_SIGNED", is_private: false, is_shared: false },
     });
     return;
@@ -217,6 +233,11 @@ async function handle(req, res) {
     return;
   }
   if (input.includes("fixture-slack-intake")) {
+    if (input.includes("final assistant text will be published")) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      respond(res, "fixture signed completed");
+      return;
+    }
     const latestUser = payload.input.findLastIndex((item) => item.role === "user");
     const replied = payload.input
       .slice(latestUser + 1)

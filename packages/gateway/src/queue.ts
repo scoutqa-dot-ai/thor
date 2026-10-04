@@ -37,6 +37,8 @@ export interface QueuedEvent<T = unknown> {
   id: string;
   /** Original delivery identity, retained when internal reroutes change the queue file ID. */
   sourceEventId?: string;
+  /** Signed workspace proof; absent on pre-cutover queued events. */
+  slackTeamId?: string;
   source: string;
   correlationKey: string;
   payload: T;
@@ -54,6 +56,7 @@ export interface QueuedEvent<T = unknown> {
 const QueuedEventSchema = z.object({
   id: z.string(),
   sourceEventId: z.string().optional(),
+  slackTeamId: z.string().optional(),
   source: z.string(),
   correlationKey: z.string(),
   payload: z.unknown(),

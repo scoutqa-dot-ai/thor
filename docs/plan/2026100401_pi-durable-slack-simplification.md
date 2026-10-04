@@ -1,6 +1,6 @@
 # Neo — Pi Durable-native Slack simplification
 
-**Status:** In progress; Phases 1–2 implemented and locally verified. Phase 3 and the MCP companion remain unimplemented. Deployment, cutover and rollback retirement are not authorized by implementation approval.
+**Status:** Core Phases 1–3 implemented and isolated verification recorded below. The MCP companion, live workspace acceptance, deployment, cutover and rollback retirement remain separate work/approval gates.
 **Reviewed:** 2026-10-04, Neo `f8ce4b6`, released Pi `v1.0.2` (`cd32f7725fdbddbaecdff5b1e68491563394e0ca`).
 
 ## Goal and recommendation
@@ -404,28 +404,208 @@ effect, with its privacy/publication/pacing/lifecycle gates unchanged. Keep
 legacy execution/default OpenCode and the tool-owned reply instructions until
 that phase's new-admission-only policy is implemented.
 
+## Phase 3 implementation and isolated verification
+
+Implemented on the unchanged Durable/Pi AI/Chord **1.0.0** pins. Version 3 of
+`thor.pi.conversation` freezes host versus tool reply ownership and bounded
+publication/footer evidence on each existing request binding. Versions 1/2,
+including pre-submit intents and completed history, migrate as **tool-owned**;
+malformed current/hybrid data remains intact and fails startup. No answer is
+auto-published merely because an old receipt becomes readable.
+
+Gateway preserves signed team equality through the existing disk privacy reroute
+and freezes the permitted target only after privacy and repository admission.
+Old queued/frozen payloads have no such proof and cannot acquire it on retry.
+Runner rejects inconsistent workspace/requester/canonical-thread authority before
+interruption. Host targets remain independent of correlation aliases: a Slack
+request associated with a git anchor still uses its admitted private Slack
+surface; GitHub/cron do not inherit that publication policy. Existing aliases and
+serialized requester/model/cwd authority remain the source of conversation scope.
+OAuth continuation copies the original ownership and target, never the paused
+answer. All three reply instruction surfaces distinguish automatic final text
+from tool-owned ordinary replies and explicit outbound/rich artifacts.
+
+The sink reads only the successful native input's exact answer entry and its
+assistant text blocks. Empty/reasoning-only answers issue no publication. Native
+history keeps content; the binding stores answer/destination plus pending,
+confirmed timestamp, uncertain or rejected disposition, with at most 64 chunk
+receipts. Intent commits before I/O; SDK retries are disabled. Pending recovery,
+lost/malformed receipts, send-before-receipt SIGKILL and partial delivery do not
+authorize another send or model/tool replay. Formatting preserves code, converts
+common headings/bold/links to Slack mrkdwn, escapes ordinary text markup and
+chunks within Block Kit's UTF-16 budget without splitting Unicode. Unbreakable/
+over-budget content is rejected rather than clipped. Final Model / Thinking is
+on the last answer chunk. Rich tool output is not retransmitted; the final text
+is a summary. The authenticated viewer reports publication separately from model
+completion; ✅ remains normal turn completion, not delivery/business success.
+
+`PiSlackPresentation` is the request-owned Slack projection under the existing
+conversation/monitor owner. Pi no longer uses common `ProgressSession`'s global
+session/message/replay registries; those remain for OpenCode/NDJSON compatibility.
+One timer and serialized line coordinate the native lifecycle, quiet footer and
+source reactions. The 1.5-second/three-completed-call grace is preserved. Rapid
+nonterminal phases/model changes coalesce; output becomes still immediately and
+terminal cleanup cancels pacing, drains issued writes and clears loading before
+broker observation/final publication. Snapshot replacement restores counts
+without new-completion pulses. A fresh native status read after acknowledgement
+prevents processing for a turn that already finished. Startup repairs owned
+native/known-footer state without replaying replies or checks. Shutdown drains
+completed publication and persists cleanup before closing SQLite.
+
+Slack's current public docs were fetched during implementation: thread sessions
+use only `channel_id`, `thread_ts`, lifecycle `status`; **calling** `agent_status`
+confirms the write even when aggregate status differs. The installed SDK's
+generic `apiCall` handles `agents.sessions.setStatus` with parsed response evidence,
+without a package upgrade. Actual work uses processing, confirmed Google holds
+use suspended, and settled/stopped reusable conversations use active, never
+closed. Unsupported feature/method/permission outcomes keep the footer/text and
+never activate scopes/manifest features or try legacy blindly. Explicitly
+verified embedded compatibility configuration alone selects the legacy method,
+generic factual loading and a 30-second active keepalive; holds/end clear it.
+No avatar/custom identity, stop subscription, extra observer/timer registry,
+progress LLM, publication task, delivery scheduler or outbox was added.
+
+Isolated evidence on Node 24.21.0:
+
+- Real Responses/executor HTTP, native SQLite and Slack WebClient fixtures cover
+  new-only policy, old pending migration, malformed-state preservation, private
+  targets/aliases, final-only/empty/reasoning selection, artifact plus summary,
+  formatting/Unicode/chunks, confirmed/rejected/lost/partial sends, duplicate/
+  restart/SIGKILL no-repost, no completed-tool replay, late receipt ownership,
+  queued versus active work, pending native write versus interrupt/clear,
+  unavailable methods/permissions, own versus aggregate agent status, explicitly
+  verified legacy arguments, restart still/clear and exact human eyes/check.
+- Single-owner timing fixtures cover readable coalescing, instant still output/
+  terminal drain, three-call grace, snapshot accounting without invented pulses,
+  and verified legacy keepalive/hold stop. Existing authenticated Google hold,
+  unavailable/timeout/missing-team, continuation/escalation and requester-isolation
+  suites remain required. Generic native MCP tools/approval outcomes are not yet
+  supplied by this phase; their authenticated hold gates belong to the companion,
+  not model prose or a placeholder waiter in the Slack owner.
+- Final serial full suite: **70 files / 1,074 tests passed**. All eight workspace
+  typechecks and all workspace builds passed. Rebuilt isolated Pi container E2E
+  passed on the final sources, including native loading/explicit clear and two
+  host replies without the ordinary posting wrapper; the separate direct
+  tool-owned wrapper path still passes. Logs: `/tmp/phase3-tests-verified.log`,
+  `/tmp/phase3-types-verified.log`, `/tmp/phase3-build-verified.log`,
+  `/tmp/phase3-e2e-verified.log`. Earlier targeted real-boundary/timing checks and
+  full reruns also passed; no timeout was relaxed. The obsolete instant
+  post-tool-phase assertion now checks native phase evidence plus the separate
+  paced-owner tests, rather than requiring a short phase to bypass coalescing.
+- `scripts/test-pi-e2e.sh` exercises signed new host-owned intake/follow-up with
+  final metadata and explicit native clear, alongside unchanged direct legacy/
+  tool-owned wrapper posting, native execution/model routing, shared aliases,
+  source reactions, viewer/SSO and credential/mount/SIGKILL recovery isolation.
+  Its uniquely named dummy containers/volumes are removed afterward.
+
+No live Slack feature activation/rendering/playback/accessibility, real provider/
+OAuth/Ubuntu deployment acceptance, MCP implementation, optional upgrade,
+runtime-default change, push, workflow dispatch or PR is implied. An activity
+post lost before its local timestamp may still need manual UI cleanup; answer
+uncertainty never becomes automatic repost permission. Back up deployed SQLite
+before migration and do not run an older Pi runner against version-3 metadata.
+
+### Phase 3 verification correction — 2026-10-04
+
+Independent verification of `bca36c5` reproduced three missing gates. Earlier
+Phase 3 results did not establish these interleavings:
+
+1. A native successful host-owned answer settled during a broker 503, with no
+   publication intent. A later authoritative `waits: []` changed NDJSON to normal
+   completion but only deleted the degraded footer: no first answer, eyes removal
+   or completion check. Duplicate refresh and startup now share latest-idle
+   request reconciliation. Only a new host-owned binding with clear authorization,
+   the exact successful answer and **no existing publication record** retains its
+   first-send opportunity. Pending/uncertain/rejected/confirmed records never
+   authorize another send. Confirmed holds remain unconfirmed when disappearing;
+   tool-owned/historical and superseded requests cannot acquire publication.
+   Empty answers still get the normal source decoration when unavailable
+   authorization becomes clear, without inventing a delivered reply or repeating
+   checks on subsequent reads/restarts. An old refresh cannot clear a newer
+   active footer/status or install its actor/model. Terminal monitors drain before
+   reconciliation, and replacements reload footer evidence after cleanup.
+2. Chunking mistook comparison `<` characters for unclosed Slack entities. The
+   formatter now escapes ordinary standalone angles and protects only actual
+   Slack references/escapes, inline code and fenced-code delimiters/headers at
+   chunk boundaries. Fenced code retains comparisons verbatim and reopens/closes
+   across chunks. The 3,000 UTF-16-unit block and 64-chunk budgets, whole-answer
+   rejection, Unicode handling and last-chunk-only model metadata remain intact.
+3. Accepted engaged follow-ups lacked ingress eyes while busy work correctly
+   stayed queued. They now acknowledge only the human channel/message source;
+   no footer/status/model/actor ownership is acquired. Known permitted private
+   follow-ups acknowledge on intake; deferred privacy follows the admitted
+   dispatch plan. Disallowed, self and mention-duplicate follow-ups get no eyes.
+   A bounded ingress-owner source set deduplicates retries/concurrent redelivery;
+   Slack's own reaction identity also deduplicates restart attempts while eyes
+   remain. This is best-effort presentation, not a new durable delivery ledger or
+   a universal exactly-once guarantee after source eyes have been removed.
+
+Correction evidence on Node 24.21.0, using real HTTP/SQLite/Responses/executor and
+Slack SDK fixtures (no live accounts or dependency installation):
+
+- The exact new reproductions against an archived `bca36c5` fail **7 cases**:
+  duplicate/restart recovery with nonempty/empty final answers, the valid
+  **5,632-character fenced TypeScript comparison**, ordinary `0 < 1. ` plus
+  300 repeated answer phrases, and signed allowlisted private runner-busy intake.
+  The temporary archived checkout was removed. Log:
+  `/tmp/phase3-correction-exact-original-repro.log`.
+- The corrected fixtures additionally cover superseded/new-active ownership,
+  confirmed disappearing holds under host and tool policy, existing uncertain
+  publication, exact private/source timestamps, no model/tool replay, and 50
+  boundary placements of intentional Slack links/mentions, angle escapes and
+  inline comparisons. Finite boundary/interleaving fixtures were chosen over a
+  new property-test dependency or general mock framework.
+- `node_modules/.bin/vitest run --no-file-parallelism`: **70 files / 1,084 tests
+  passed**, including existing Google continuation, unsafe-effect, source/status,
+  migration, partial/lost/SIGKILL and legacy behavior. No timeout was relaxed.
+- `pnpm typecheck`: all eight workspace typechecks passed. `pnpm build`: all
+  workspace builds passed.
+- `./scripts/test-pi-e2e.sh`: rebuilt isolated container E2E passed, including
+  signed mention/follow-up, native loading/clear, host replies and final metadata,
+  tool-owned wrapper, requester/model routing, source reactions, remote image and
+  credential/storage isolation, SSO/viewers and SIGKILL recovery. The fixture
+  containers and volumes were confirmed removed.
+- Final logs: `/tmp/phase3-correction-full-tests.log`,
+  `/tmp/phase3-correction-types.log`, `/tmp/phase3-correction-build.log` and
+  `/tmp/phase3-correction-e2e.log`.
+
+This correction amends the Phase 3 commit. No MCP implementation, optional package
+upgrade, deployment, live Slack/model/OAuth acceptance, push, workflow dispatch,
+PR or `.pi` files are included. The companion MCP plan remains unimplemented and
+the separate live/cutover/retirement acceptance gates remain unchanged.
+
 ## Decision log
 
-| Decision                                                                       | Reason / approval boundary                                                                                                                                     |
-| ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Keep runner-owned embedded Harness; no adapter/conversation server             | Native Durable should own execution, not sit beneath another runtime abstraction.                                                                              |
-| Keep gateway, executor and broker initially                                    | They own external custody/security, not alternate LLM lifecycles. Fewer containers alone would not delete those responsibilities.                              |
-| Prefer native settlement/history over mirrored receipt status                  | Removes disagreement/recovery machinery while keeping domain admission/authorization evidence.                                                                 |
-| Native live input also outranks pre-submit withdrawal                          | Legacy aborted/expired continuations can retain placed input; validate persisted active requester before migration/scheduling, never guess missing authority.  |
-| Retain two-commit admission recovery and fingerprints                          | Released public API cannot supply combined admission or changed-payload/global dedup guarantees.                                                               |
-| Version Neo metadata, retire input only after native admission                 | Preserves the public submit crash gap while removing prompt/status mirrors; malformed version/hybrid authority is not silently reinterpreted.                  |
-| Keep fixed observation time and unanswered-history fence                       | Durable 1.0.0 has exact successful answer IDs but no settlement clock or failed-input answer boundary; retain only evidence it cannot supply.                  |
-| Stop native watch before terminal sends; clear active requester after drain    | A settled submission does not mean the old footer callback has finished; new actor/model ownership must not race those callbacks.                              |
-| Preserve confirmed-hold provenance through unavailable observations            | A vanished wait or second no-wait read cannot prove the blocked Google operation completed; continuation and supersession remain separate authority.           |
-| Keep serialized active requester/model boundary                                | Native queued input does not freeze actor/model/cwd authority.                                                                                                 |
-| Make ordinary final reply host-owned                                           | Removes a basic chat dependency on model tool compliance; delivery/decoration contract needs approval.                                                         |
-| Adopt Junior's paced native working effect with Neo's AI mark (user requested) | Native loading + one compact animated footer, not token edits or a second progress runtime; current Slack lifecycle and fallback gates apply.                  |
-| Retain current Google coordinator in core cut                                  | It implements external grant-bound automatic continuation already verified by existing fixtures. Native Task redesign is optional, not magic deletion.         |
-| Routing stays optional operator policy, not a second provider                  | Preserve shipped overrides/escalation and saved choices; existing `autoSelect`/`allowEscalation` controls suffice. No speculative capability/plugin framework. |
-| Separate historical OpenCode viewing from execution retirement                 | Old links/data must survive even after live legacy runtime is removed; retirement is not assumed authorized.                                                   |
-| Phase 1 loads legacy execution only at the runtime selector                    | A historical GET cannot construct the live SDK/event bus; preserve rollback explicitly without a runtime abstraction.                                          |
-| Share only raw OpenCode field/token interpretation across legacy owners        | Existing execution context progress and historical cost rendering use the same counts; neither owner depends on the other for parsing.                         |
-| No LOC/test-count target                                                       | Demonstrate deleted responsibilities, fewer authorities and stable recovery/permission contracts, not cosmetic shrinking.                                      |
+| Decision                                                                       | Reason / approval boundary                                                                                                                                                                 |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Keep runner-owned embedded Harness; no adapter/conversation server             | Native Durable should own execution, not sit beneath another runtime abstraction.                                                                                                          |
+| Keep gateway, executor and broker initially                                    | They own external custody/security, not alternate LLM lifecycles. Fewer containers alone would not delete those responsibilities.                                                          |
+| Prefer native settlement/history over mirrored receipt status                  | Removes disagreement/recovery machinery while keeping domain admission/authorization evidence.                                                                                             |
+| Native live input also outranks pre-submit withdrawal                          | Legacy aborted/expired continuations can retain placed input; validate persisted active requester before migration/scheduling, never guess missing authority.                              |
+| Retain two-commit admission recovery and fingerprints                          | Released public API cannot supply combined admission or changed-payload/global dedup guarantees.                                                                                           |
+| Version Neo metadata, retire input only after native admission                 | Preserves the public submit crash gap while removing prompt/status mirrors; malformed version/hybrid authority is not silently reinterpreted.                                              |
+| Keep fixed observation time and unanswered-history fence                       | Durable 1.0.0 has exact successful answer IDs but no settlement clock or failed-input answer boundary; retain only evidence it cannot supply.                                              |
+| Stop native watch before terminal sends; clear active requester after drain    | A settled submission does not mean the old footer callback has finished; new actor/model ownership must not race those callbacks.                                                          |
+| Preserve confirmed-hold provenance through unavailable observations            | A vanished wait or second no-wait read cannot prove the blocked Google operation completed; continuation and supersession remain separate authority.                                       |
+| Keep serialized active requester/model boundary                                | Native queued input does not freeze actor/model/cwd authority.                                                                                                                             |
+| Make ordinary final reply host-owned                                           | Removes a basic chat dependency on model tool compliance; delivery/decoration contract needs approval.                                                                                     |
+| Version-3 new-only reply policy; preserve v1/v2 and old queue ownership        | Prompts/private commentary already promised to historical or pending work cannot be retroactively published.                                                                               |
+| Frozen target is separate from correlation aliases                             | A git-linked Slack request retains the admitted private surface; an anchor alone never gives GitHub/cron automatic Slack publication.                                                      |
+| Publication intent/disposition on the existing binding, no retry               | Slack SDK retry/memo/client_msg_id cannot prove universal exactly-once effects; pending/lost/partial calls need explicit reconciliation.                                                   |
+| Latest idle host binding without publication retains first-send opportunity    | Clear broker observation can release a never-issued exact answer, not authorize repost or a superseded/paused/historical reply; normal source decoration is independent of empty delivery. |
+| Protect code-aware Slack tokens, escape ordinary angles                        | Comparison operators are not unclosed links; preserve code and intentional references while respecting UTF-16/chunk budgets.                                                               |
+| Source-only accepted follow-up eyes, no queued presentation owner              | Queued users get acknowledgement without changing the executing requester/model/footer/status; bounded best-effort dedup is not an effect-retry ledger.                                    |
+| One Pi request presentation, keep common registries only at legacy edges       | The common ProgressSession also serves OpenCode/NDJSON; reusing its global Pi lifecycle would retain two owners.                                                                           |
+| Generic SDK apiCall plus parsed own agent_status                               | Existing SDK/ordinary chat:write suffice; no version/scope/irreversible manifest activation is required by implementation.                                                                 |
+| Bounded section chunks with final model metadata; rich tools remain explicit   | Slack has a 3,000-character block budget; unsupported output rejects instead of silent clipping or artifact replacement.                                                                   |
+| Native settlement stops loading before broker observation                      | A timeout is not active model/tool work or success; the static authenticated/unconfirmed outcome follows without motion or replay.                                                         |
+| Adopt Junior's paced native working effect with Neo's AI mark (user requested) | Native loading + one compact animated footer, not token edits or a second progress runtime; current Slack lifecycle and fallback gates apply.                                              |
+| Retain current Google coordinator in core cut                                  | It implements external grant-bound automatic continuation already verified by existing fixtures. Native Task redesign is optional, not magic deletion.                                     |
+| Routing stays optional operator policy, not a second provider                  | Preserve shipped overrides/escalation and saved choices; existing `autoSelect`/`allowEscalation` controls suffice. No speculative capability/plugin framework.                             |
+| Separate historical OpenCode viewing from execution retirement                 | Old links/data must survive even after live legacy runtime is removed; retirement is not assumed authorized.                                                                               |
+| Phase 1 loads legacy execution only at the runtime selector                    | A historical GET cannot construct the live SDK/event bus; preserve rollback explicitly without a runtime abstraction.                                                                      |
+| Share only raw OpenCode field/token interpretation across legacy owners        | Existing execution context progress and historical cost rendering use the same counts; neither owner depends on the other for parsing.                                                     |
+| No LOC/test-count target                                                       | Demonstrate deleted responsibilities, fewer authorities and stable recovery/permission contracts, not cosmetic shrinking.                                                                  |
 
 ## Risks, non-goals and deployment boundaries
 

@@ -109,6 +109,7 @@ services:
       SLACK_BOT_TOKEN: gateway-secret-sentinel
       SLACK_SIGNING_SECRET: fixture-signing-secret
       SLACK_BOT_USER_ID: UBOT
+      SLACK_TEAM_ID: T_FIXTURE
       SLACK_DEFAULT_REPO: pi-fixture
       SLACK_API_BASE_URL: http://model-fixture:8000/slack/
       GITHUB_APP_SLUG: fixture

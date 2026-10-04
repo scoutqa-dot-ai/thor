@@ -231,6 +231,12 @@ it.each([{ modelProfile: "strong" as const }, { modelId: "configured-id" }])(
       const retry = persistBatchRunnerRequest(directory, {
         ...original,
         prompt: "fresh rendering",
+        slackReplyAdmission: {
+          version: 1,
+          teamId: "T123",
+          channel: "G_PRIVATE",
+          threadTs: "1710000000.001",
+        },
         ...selector,
         thinkingLevel: "high",
         routingTask: "new evidence must not leak",
@@ -250,6 +256,7 @@ it.each([{ modelProfile: "strong" as const }, { modelId: "configured-id" }])(
         "routingTask",
         "triggerSlackId",
         "messageTs",
+        "slackReplyAdmission",
         "triggerGithubLogin",
         "interrupt",
       ]) {

@@ -157,6 +157,16 @@ Runner uses `RUNNER_BASE_URL` with fixed root paths `/neo-thinking-v1.gif`,
 `/neo-working-v1.gif` and `/neo-ai-still-v1.png`. Set the existing public ingress
 HTTP(S) base without credentials, query or fragment; blank/invalid bases retain
 text-only progress. Slack must be able to retrieve these images without login.
+
+Opt-in Pi publishes ordinary final answers only for new gateway-admitted Slack
+requests with configured `SLACK_TEAM_ID` equality and frozen privacy/repository
+permission. Old/pending work and default OpenCode retain explicit tool replies;
+Google resumes inherit the original destination/policy. Publication uncertainty
+is recorded on the request and never automatically reposted. Native sessions
+loading uses existing `chat:write`; unsupported features fall back to the quiet
+AI footer. No manifest/scope activation or runtime-default change is automatic.
+See [Pi answer/presentation safety](docs/pi-runtime.md#host-owned-slack-answers).
+
 Rebuild/redeploy ingress, gateway and runner together; no new env var, Slack
 scope, app or credential is needed. Slack controls GIF playback and reduced
 motion; adjacent labels remain readable when images/animation are disabled.

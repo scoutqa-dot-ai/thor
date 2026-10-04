@@ -138,9 +138,14 @@ export function installPiRunnerTools(
             input.conversationId,
             context,
           );
-          const request = metadata?.receipts.find(
+          const receipt = metadata?.receipts.find(
             (item) => item.requestId === metadata.activeRequestId,
-          )?.request;
+          );
+          if (receipt?.delivery.owner === "host") {
+            const target = receipt.delivery.target;
+            return `Your final assistant text will be published to the admitted Slack destination: channel ${target.channel}, thread_ts ${target.threadTs}. Write the substantive answer as final text in Slack mrkdwn; this text is visible to that audience, not private commentary. Use slack-post-message only for explicitly requested outbound actions or rich Block Kit artifacts, not an ordinary reply here. Canvases and requested uploads remain explicit tools. After creating an artifact, give a concise final result/summary rather than duplicating the artifact.`;
+          }
+          const request = receipt?.request;
           const target = /^slack:thread:([^/]+)\/(.+)$/.exec(
             request?.correlationKey ?? metadata?.correlationKey ?? "",
           );

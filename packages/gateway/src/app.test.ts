@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { createHmac } from "node:crypto";
 import {
   mkdirSync,
@@ -2329,6 +2330,175 @@ describe("gateway", () => {
       expect(fetchImpl).not.toHaveBeenCalled();
       expect(readQueuedEvents(queueDir)).toHaveLength(0);
     });
+  });
+
+  it("freezes only equality-checked, privacy/repository-admitted Slack reply authority through real SDK and HTTP ingress", async () => {
+    const received: Array<Record<string, unknown>> = [];
+    const server = createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      res.setHeader("content-type", "application/json");
+      if (req.url === "/trigger") {
+        received.push(JSON.parse(Buffer.concat(chunks).toString()));
+        res.end(JSON.stringify({ accepted: true }));
+      } else res.end(JSON.stringify({ ok: true, channel: { is_private: true, is_shared: false } }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string")
+      throw new Error("Gateway HTTP fixture unavailable");
+    const url = `http://127.0.0.1:${address.port}`;
+    try {
+      await withServer(
+        fetch,
+        async (baseUrl, queue) => {
+          const event = {
+            type: "app_mention",
+            user: "UOWNER",
+            text: "<@U999> private result",
+            channel: "GPRIVATE",
+            ts: "1710000000.102",
+          };
+          const mismatch = JSON.parse(slackEventBody("wrong-team", event));
+          mismatch.team_id = "T_OTHER";
+          expect(
+            await (await postSignedSlackEvent(baseUrl, JSON.stringify(mismatch))).json(),
+          ).toMatchObject({ ignored: true });
+          await queue.flush();
+          expect(received).toHaveLength(0);
+          await postSignedSlackEvent(
+            baseUrl,
+            slackEventBody("blocked-private", { ...event, channel: "GBLOCKED" }),
+          );
+          await queue.flush();
+          expect(received).toHaveLength(0);
+          await postSignedSlackEvent(baseUrl, slackEventBody("permitted-private", event));
+          await queue.flush();
+          expect(received).toHaveLength(1);
+          expect(received[0]).toMatchObject({
+            directory: expect.stringContaining("test-repo"),
+            triggerSlackId: "UOWNER",
+            slackReplyAdmission: {
+              version: 1,
+              teamId: "T123",
+              channel: "GPRIVATE",
+              threadTs: "1710000000.102",
+            },
+          });
+        },
+        {
+          runnerUrl: url,
+          slackTeamId: "T123",
+          slackClient: undefined,
+          slackApiBaseUrl: url + "/",
+          workspaceConfigLoader: () => ({ slack: { private_channel_allowlist: ["GPRIVATE"] } }),
+        },
+      );
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("acknowledges only accepted private follow-up sources while runner-busy work stays queued, deduplicated through HTTP and Slack SDK", async () => {
+    const effects: Array<{ method: string; form: URLSearchParams }> = [];
+    const received: Array<Record<string, unknown>> = [];
+    const server = createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      res.setHeader("content-type", "application/json");
+      if (req.url === "/trigger") {
+        received.push(JSON.parse(Buffer.concat(chunks).toString()));
+        res.end(JSON.stringify({ busy: true, accepted: false }));
+      } else {
+        effects.push({
+          method: req.url ?? "",
+          form: new URLSearchParams(Buffer.concat(chunks).toString()),
+        });
+        res.end(JSON.stringify({ ok: true, channel: { is_private: true, is_shared: false } }));
+      }
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string")
+      throw new Error("Follow-up SDK fixture unavailable");
+    const url = `http://127.0.0.1:${address.port}`;
+    const eyes = () =>
+      effects.filter(
+        (effect) => effect.method === "/reactions.add" && effect.form.get("name") === "eyes",
+      );
+    sessionKeys.add("slack:thread:GPRIVATE/1710000000.100");
+    sessionKeys.add("slack:thread:GBLOCKED/1710000000.100");
+    try {
+      await withServer(
+        fetch,
+        async (baseUrl, queue) => {
+          const event = {
+            type: "message",
+            user: "UFOLLOWUP",
+            text: "private follow-up",
+            channel: "GPRIVATE",
+            channel_type: "group",
+            ts: "1710000000.102",
+            thread_ts: "1710000000.100",
+          };
+          const body = slackEventBody("accepted-follow-up", event);
+          expect((await postSignedSlackEvent(baseUrl, body)).status).toBe(200);
+          expect(queue.snapshotPending().pendingCount).toBe(1);
+          await vi.waitFor(() => expect(eyes()).toHaveLength(1));
+          expect(eyes()[0].form.get("channel")).toBe("GPRIVATE");
+          expect(eyes()[0].form.get("timestamp")).toBe(event.ts);
+          await Promise.all([
+            postSignedSlackEvent(baseUrl, body),
+            postSignedSlackEvent(baseUrl, body),
+          ]);
+          await postSignedSlackEvent(
+            baseUrl,
+            slackEventBody("self-follow-up", {
+              ...event,
+              user: "U0BOTEXAMPLE",
+              ts: "1710000000.103",
+            }),
+          );
+          await postSignedSlackEvent(
+            baseUrl,
+            slackEventBody("mention-duplicate", {
+              ...event,
+              text: "<@U0BOTEXAMPLE> follow-up",
+              ts: "1710000000.104",
+            }),
+          );
+          await postSignedSlackEvent(
+            baseUrl,
+            slackEventBody("blocked-follow-up", {
+              ...event,
+              channel: "GBLOCKED",
+              ts: "1710000000.105",
+            }),
+          );
+          await queue.flush();
+          expect(queue.snapshotPending().pendingCount).toBe(1);
+          expect(received).toHaveLength(1);
+          expect(received[0]).toMatchObject({ triggerSlackId: "UFOLLOWUP", interrupt: false });
+          await queue.flush();
+          expect(eyes()).toHaveLength(1);
+          expect(effects.filter((effect) => effect.method !== "/reactions.add")).toHaveLength(0);
+          expect(effects.some((effect) => effect.form.get("name") === "white_check_mark")).toBe(
+            false,
+          );
+        },
+        {
+          runnerUrl: url,
+          slackTeamId: "T123",
+          slackClient: undefined,
+          slackApiBaseUrl: url + "/",
+          workspaceConfigLoader: () => ({ slack: { private_channel_allowlist: ["GPRIVATE"] } }),
+        },
+      );
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   it("allows app mentions in allowlisted private channels", async () => {

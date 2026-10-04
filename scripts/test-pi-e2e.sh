@@ -51,7 +51,7 @@ const waitProgress=async(predicate)=>{
   }
   throw new Error('Pi Slack progress did not settle');
 };
-const initialDeliveries=await waitProgress(deliveries=>deliveries.some(d=>d.method==='/slack/reactions.add'&&d.timestamp==='1710000000.002'));
+const initialDeliveries=await waitProgress(deliveries=>deliveries.some(d=>d.method==='/slack/reactions.add'&&d.name==='white_check_mark'&&d.timestamp==='1710000000.002'));
 assert(initialDeliveries.some(d=>d.name==='white_check_mark'&&d.channel==='C_FIXTURE'&&d.timestamp==='1710000000.002'));
 assert(initialDeliveries.some(d=>d.method==='/slack/reactions.remove'&&d.name==='eyes'&&d.channel==='C_FIXTURE'&&d.timestamp==='1710000000.002'));
 assert(!initialDeliveries.some(d=>d.name==='white_check_mark'&&d.timestamp==='1710000000.001'));
@@ -141,10 +141,14 @@ assert.equal((await signedRuns())[0].starts.length,1);
 assert.equal((await slackRequest({...signedEvent,event_id:'Ev_signed_followup',event:{type:'message',user:'U_SIGNED',channel:'C_SIGNED',channel_type:'channel',ts:'1710000000.011',thread_ts:'1710000000.010',text:'fixture-slack-followup'}})).status,200);
 const followup=await waitSigned(2);assert.equal(followup.length,1);assert.equal(followup[0].sessionId,first[0].sessionId);assert.equal(followup[0].starts.length,2);
 assert(followup[0].starts.every(start=>start.triggerSlackId==='U_SIGNED'));
-const slackProbe=await (await fetch('http://model-fixture:8000/probe')).json();assert.equal(slackProbe.slackReplies,3);
+await waitProgress(deliveries=>deliveries.some(d=>d.name==='white_check_mark'&&d.timestamp==='1710000000.011'));
+const slackProbe=await (await fetch('http://model-fixture:8000/probe')).json();assert.equal(slackProbe.slackReplies,1);assert.equal(slackProbe.hostReplies,2);
 assert(slackProbe.modelSelections.some(choice=>choice.model==='fixture-strong'&&choice.effort==='low'));
 assert.deepEqual(slackProbe.modelSelections.at(-1),{model:'fixture-balanced',effort:'medium'}); // A new human task reroutes, not the prior strong override.
-assert.deepEqual(slackProbe.lastReply.args,['--channel','C_SIGNED','--thread-ts','1710000000.010']);assert.equal(slackProbe.lastReply.sessionId,first[0].sessionId);
+assert.equal(slackProbe.lastHostReply.channel,'C_SIGNED');assert.equal(slackProbe.lastHostReply.threadTs,'1710000000.010');assert.equal(slackProbe.lastHostReply.text,'fixture signed completed');
+assert(slackProbe.lastHostReply.blocks.at(-1).elements.some(element=>element.text==='Model: fixture-balanced · Thinking: medium'));
+const nativeStatuses=slackProbe.slackDeliveries.filter(d=>d.method==='/slack/agents.sessions.setStatus'&&d.channel==='C_SIGNED');
+assert(nativeStatuses.some(d=>d.status==='processing'));assert.equal(nativeStatuses.at(-1).status,'active');
 const signedChecks=await waitProgress(deliveries=>deliveries.some(d=>d.name==='white_check_mark'&&d.timestamp==='1710000000.011'));
 assert(signedChecks.some(d=>d.name==='white_check_mark'&&d.timestamp==='1710000000.010'&&d.channel==='C_SIGNED'));
 assert(signedChecks.some(d=>d.name==='white_check_mark'&&d.timestamp==='1710000000.011'&&d.channel==='C_SIGNED'));

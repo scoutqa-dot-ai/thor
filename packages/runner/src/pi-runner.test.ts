@@ -54,13 +54,33 @@ async function closeServer(server: Server) {
   server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
 }
-function respond(res: ServerResponse, content: { text: string } | { tool: string; args: object }) {
+function respond(
+  res: ServerResponse,
+  content: { text: string } | { tool: string; args: object; preamble?: string },
+) {
   res.writeHead(200, { "content-type": "text/event-stream" });
   let sequence_number = 0;
   const emit = (event: object) =>
     res.write(`data: ${JSON.stringify({ ...event, sequence_number: sequence_number++ })}\n\n`);
   emit({ type: "response.created", response: { id: "resp_test" } });
   if ("tool" in content) {
+    if (content.preamble) {
+      const item = {
+        type: "message",
+        id: "msg_intermediate",
+        role: "assistant",
+        status: "completed",
+        content: [{ type: "output_text", text: content.preamble, annotations: [] }],
+      };
+      emit({ type: "response.output_item.added", output_index: 1, item: { ...item, content: [] } });
+      emit({
+        type: "response.output_text.delta",
+        output_index: 1,
+        content_index: 0,
+        delta: content.preamble,
+      });
+      emit({ type: "response.output_item.done", output_index: 1, item });
+    }
     const item = {
       type: "function_call",
       id: "fc_test",
@@ -110,7 +130,7 @@ function respond(res: ServerResponse, content: { text: string } | { tool: string
   res.end();
 }
 
-function respondAfterThinking(res: ServerResponse) {
+function respondAfterThinking(res: ServerResponse, answer = "Visible answer") {
   res.writeHead(200, { "content-type": "text/event-stream" });
   let sequence_number = 0;
   const emit = (event: object) =>
@@ -139,10 +159,10 @@ function respondAfterThinking(res: ServerResponse) {
       id: "msg_thought",
       role: "assistant",
       status: "completed",
-      content: [{ type: "output_text", text: "Visible answer", annotations: [] }],
+      content: [{ type: "output_text", text: answer, annotations: [] }],
     };
     emit({ type: "response.output_item.added", output_index: 1, item: { ...item, content: [] } });
-    for (const delta of ["Visible", " ", "answer"])
+    for (const delta of answer ? ["Visible", " ", "answer"] : [])
       emit({ type: "response.output_text.delta", output_index: 1, content_index: 0, delta });
     emit({ type: "response.output_item.done", output_index: 1, item });
     emit({
@@ -179,7 +199,7 @@ let requests: Record<string, unknown>[];
 let hold: ServerResponse | undefined;
 let toolRound: boolean;
 let modelFailure: boolean;
-let modelActions: Array<{ text: string } | { tool: string; args: object }>;
+let modelActions: Array<{ text: string } | { tool: string; args: object; preamble?: string }>;
 let imagePath: string;
 let holdImageRead: boolean;
 let failImageRead: boolean;
@@ -304,6 +324,10 @@ beforeEach(async () => {
       !JSON.stringify(payload).includes("Google authorization continuation:")
     ) {
       hold = res;
+      return;
+    }
+    if (serialized.includes("fixture-reasoning-only")) {
+      respondAfterThinking(res, "");
       return;
     }
     if (serialized.includes("fixture-thinking-delay")) {
@@ -1092,7 +1116,7 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
     expect((await stream(body)).at(-1)?.durationMs).toBe(duration);
     await editPiNativeDocuments(async (tx, id) => {
       const metadata = await tx.doc(piConversationMetadataDoc, id);
-      expect(metadata.version).toBe(2);
+      expect(metadata.version).toBe(3);
       for (const receipt of metadata.receipts) {
         expect(receipt.admission).toEqual({ state: "submitted" });
         expect(receipt).not.toHaveProperty("status");
@@ -1294,6 +1318,7 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
 
   it.each([
     "settled legacy",
+    "settled current",
     "corrupt hybrid",
     "live legacy aborted",
     "live legacy error",
@@ -1305,7 +1330,7 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
     async (scenario) => {
       const live = scenario.startsWith("live");
       const hybrid = scenario === "corrupt hybrid";
-      const current = scenario.startsWith("live current withdrawn");
+      const current = scenario.includes("current");
       const queued = scenario.endsWith("queued");
       const status =
         scenario === "live legacy aborted"
@@ -1369,6 +1394,14 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
         fork: "initial",
         initial: () => ({ anchorId: "", directory: "", receipts: [] }),
       });
+      const version2Doc = defineDoc<JsonObject>({
+        kind: "thor.pi.conversation",
+        version: 2,
+        scope: "conversation",
+        history: "latest",
+        fork: "initial",
+        initial: () => ({ version: 2, anchorId: "", directory: "", receipts: [] }),
+      });
       const { status: _status, request: legacyRequest, ...binding } = oldReceipt;
       const { prompt: _prompt, ...authority } = legacyRequest;
       const currentMetadata = {
@@ -1424,8 +1457,7 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
             cwd: triggerDirectory,
           },
           init: async (tx, id) => {
-            if (current)
-              Object.assign(await tx.doc(piConversationMetadataDoc, id), currentMetadata);
+            if (current) Object.assign(await tx.doc(version2Doc, id), currentMetadata);
             else Object.assign(await tx.doc(legacyDoc, id), oldMetadata);
           },
         },
@@ -1450,7 +1482,7 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
       // Incorrect terminal mirrors cannot decide execution or supply a missing active requester.
       await conversation.commit(async (tx) => {
         if (current) {
-          const metadata = await tx.doc(piConversationMetadataDoc, conversation.id);
+          const metadata = await tx.doc(version2Doc, conversation.id);
           delete metadata.activeRequestId;
         } else {
           const metadata = await tx.doc(legacyDoc, conversation.id);
@@ -1460,7 +1492,7 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
       }, BACKGROUND_CONTEXT);
       const preservedMetadata = structuredClone(
         await runtime.snapshot(
-          current ? piConversationMetadataDoc : legacyDoc,
+          current ? version2Doc : legacyDoc,
           conversation.id,
           BACKGROUND_CONTEXT,
         ),
@@ -1488,7 +1520,7 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
           // Reading with the v1 token also proves no metadata-version migration committed.
           expect(
             await inspect.snapshot(
-              current ? piConversationMetadataDoc : legacyDoc,
+              current ? version2Doc : legacyDoc,
               conversation.id,
               BACKGROUND_CONTEXT,
             ),
@@ -1517,8 +1549,8 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
         await editPiNativeDocuments(async (tx, id) => {
           const metadata = await tx.doc(piConversationMetadataDoc, id);
           expect(metadata).toMatchObject({
-            version: 2,
-            receipts: [{ admission: { state: "submitted" } }],
+            version: 3,
+            receipts: [{ admission: { state: "submitted" }, delivery: { owner: "tool" } }],
           });
           expect(metadata.receipts[0]).not.toHaveProperty("status");
           expect(metadata.receipts[0]?.request).not.toHaveProperty("prompt");
@@ -1986,7 +2018,8 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
         },
         async update() {},
         async delete() {},
-        async addReaction() {
+        async addReaction(_target, _ts, name) {
+          if (name !== "x") return;
           signalBlocked();
           await delivery;
         },
@@ -2053,16 +2086,58 @@ async function editPiNativeDocuments(change: (tx: Tx, id: ConversationId) => Pro
 }
 
 describe("native Pi activity through the real Slack SDK", () => {
-  async function slackFixture(reactionError?: "already_reacted" | "invalid_auth") {
+  async function slackFixture(
+    reactionError?: "already_reacted" | "invalid_auth",
+    options: {
+      answerFailure?: "lost" | "rejected" | "partial" | "malformed";
+      statusFailure?: "feature_disabled" | "missing_scope" | "unknown_method" | "aggregate";
+      statusMode?: "sessions" | "verified-legacy";
+      blockAnswer?: () => Promise<void>;
+      blockStatus?: (status: string) => Promise<void>;
+    } = {},
+  ) {
+    let answers = 0;
     const deliveries: Array<{ method: string; form: URLSearchParams }> = [];
     const server = createServer(async (req, res) => {
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
-      deliveries.push({
-        method: req.url ?? "",
-        form: new URLSearchParams(Buffer.concat(chunks).toString()),
-      });
+      const form = new URLSearchParams(Buffer.concat(chunks).toString());
+      deliveries.push({ method: req.url ?? "", form });
       res.setHeader("content-type", "application/json");
+      if (req.url === "/agents.sessions.setStatus") {
+        await options.blockStatus?.(form.get("status") ?? "");
+        res.end(
+          JSON.stringify(
+            options.statusFailure && options.statusFailure !== "aggregate"
+              ? { ok: false, error: options.statusFailure }
+              : {
+                  ok: true,
+                  agent_status: form.get("status"),
+                  status: "processing",
+                },
+          ),
+        );
+        return;
+      }
+      if (req.url === "/chat.postMessage" && form.get("blocks")?.includes('"section"')) {
+        answers++;
+        await options.blockAnswer?.();
+        if (
+          options.answerFailure === "lost" ||
+          (options.answerFailure === "partial" && answers === 2)
+        ) {
+          res.destroy();
+          return;
+        }
+        if (options.answerFailure === "malformed") {
+          res.end(JSON.stringify({ ok: true, ts: `1710000001.${"1".repeat(100)}` }));
+          return;
+        }
+        if (options.answerFailure === "rejected") {
+          res.end(JSON.stringify({ ok: false, error: "not_in_channel" }));
+          return;
+        }
+      }
       res.end(
         JSON.stringify(
           (req.url === "/reactions.add" || req.url === "/reactions.remove") && reactionError
@@ -2073,7 +2148,7 @@ describe("native Pi activity through the real Slack SDK", () => {
                     ? "no_reaction"
                     : reactionError,
               }
-            : { ok: true, ts: `footer-${deliveries.length}` },
+            : { ok: true, ts: `1710000001.${String(deliveries.length).padStart(6, "0")}` },
         ),
       );
     });
@@ -2081,10 +2156,12 @@ describe("native Pi activity through the real Slack SDK", () => {
     const progressTransport = createSlackProgressTransport({
       token: "dummy-slack-token",
       slackApiUrl: `${url}/`,
+      statusMode: options.statusMode,
     });
     const events: ProgressEvent[] = [];
     config.runnerBaseUrl = "https://neo.example.test/private/viewer/path";
     return {
+      url,
       deliveries,
       events,
       progressTransport,
@@ -2114,9 +2191,878 @@ describe("native Pi activity through the real Slack SDK", () => {
   const posts = (fixture: Awaited<ReturnType<typeof slackFixture>>) =>
     fixture.deliveries.filter((entry) => entry.method === "/chat.postMessage");
   const checks = (fixture: Awaited<ReturnType<typeof slackFixture>>) =>
-    fixture.deliveries.filter((entry) => entry.method === "/reactions.add");
+    fixture.deliveries.filter(
+      (entry) => entry.method === "/reactions.add" && entry.form.get("name") === "white_check_mark",
+    );
   const removals = (fixture: Awaited<ReturnType<typeof slackFixture>>) =>
     fixture.deliveries.filter((entry) => entry.method === "/reactions.remove");
+
+  const hostBody = (requestId: string, prompt = "answer here") => ({
+    requestId,
+    prompt,
+    correlationKey: "slack:thread:G_PRIVATE/1710000000.001",
+    triggerSlackId: "UOWNER",
+    messageTs: "1710000000.002",
+    slackReplyAdmission: {
+      version: 1,
+      teamId: "T123",
+      channel: "G_PRIVATE",
+      threadTs: "1710000000.001",
+    },
+  });
+  const answers = (fixture: Awaited<ReturnType<typeof slackFixture>>) =>
+    posts(fixture).filter((entry) => entry.form.get("blocks")?.includes('"section"'));
+  const nativeStatuses = (fixture: Awaited<ReturnType<typeof slackFixture>>) =>
+    fixture.deliveries
+      .filter((entry) => entry.method === "/agents.sessions.setStatus")
+      .map((entry) => entry.form.get("status"));
+
+  it("publishes only the settled answer to the frozen private destination with Slack formatting and final model metadata", async () => {
+    const fixture = await slackFixture(undefined, { statusFailure: "aggregate" });
+    try {
+      await reopenProgress(fixture);
+      modelActions = [
+        {
+          tool: "bash",
+          args: { command: "printf meaningful-tool-result" },
+          preamble: "INTERMEDIATE_NOT_AN_ANSWER",
+        },
+        {
+          text: "# Result\n**Done** & ready. [Report](https://example.test/report)\n```ts\nconst x = '**literal**';\n```",
+        },
+      ];
+      const body = hostBody("host-final");
+      const frames = await stream(body);
+      await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
+      expect(answers(fixture)).toHaveLength(1);
+      const answer = answers(fixture)[0].form;
+      expect(answer.get("channel")).toBe("G_PRIVATE");
+      expect(answer.get("thread_ts")).toBe("1710000000.001");
+      expect(answer.get("text")).toContain(
+        "*Done* &amp; ready. <https://example.test/report|Report>",
+      );
+      expect(answer.get("text")).toContain("'**literal**'");
+      expect(answer.get("blocks")).toContain("Model: fixture-model · Thinking: medium");
+      expect(JSON.stringify(answers(fixture))).not.toContain("INTERMEDIATE_NOT_AN_ANSWER");
+      expect(frames.at(-1)).toMatchObject({ status: "completed" });
+      expect(nativeStatuses(fixture)[0]).toBe("processing");
+      expect(nativeStatuses(fixture).at(-1)).toBe("active");
+      expect(fixture.deliveries[0]).toMatchObject({ method: "/reactions.add" });
+      expect(fixture.deliveries[0].form.get("name")).toBe("eyes");
+      expect(JSON.stringify(requests[0])).toContain("final assistant text will be published");
+      expect(JSON.stringify(requests[0])).not.toContain(
+        "posting workflow for the substantive user-facing reply before ending",
+      );
+      expect(
+        fixture.deliveries.every(
+          (entry) => !/icon_|username|initiator|loading_messages/.test(entry.form.toString()),
+        ),
+      ).toBe(true);
+      const calls = requests.length;
+      await stream(body); // HTTP retry cannot publish another answer or replay tools.
+      await reopenProgress(fixture);
+      await stream(body);
+      expect(answers(fixture)).toHaveLength(1);
+      expect(requests).toHaveLength(calls);
+      await editPiNativeDocuments(async (tx, id) => {
+        const metadata = await tx.doc(piConversationMetadataDoc, id);
+        expect(metadata.receipts[0].delivery).toMatchObject({
+          owner: "host",
+          target: body.slackReplyAdmission,
+        });
+        expect(metadata.receipts[0].publication).toMatchObject({
+          disposition: { state: "confirmed" },
+          chunks: [{ state: "confirmed" }],
+        });
+      });
+      await openRunner();
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it.each(["empty", "reasoning-only"])(
+    "does not deliver or mark an %s final answer, while normal completion still decorates the human source",
+    async (scenario) => {
+      const fixture = await slackFixture();
+      try {
+        await reopenProgress(fixture);
+        modelActions = scenario === "empty" ? [{ text: "   \n" }] : [];
+        await stream(
+          hostBody("empty-final", scenario === "empty" ? "answer here" : "fixture-reasoning-only"),
+        );
+        await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
+        expect(answers(fixture)).toHaveLength(0);
+        await editPiNativeDocuments(async (tx, id) => {
+          const metadata = await tx.doc(piConversationMetadataDoc, id);
+          expect(metadata.receipts[0]).not.toHaveProperty("publication");
+        });
+        await openRunner();
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  it.each(["lost", "rejected", "partial", "malformed"] as const)(
+    "persists %s publication without automatic repost, model/tool replay or false confirmed delivery",
+    async (answerFailure) => {
+      const fixture = await slackFixture(undefined, { answerFailure });
+      try {
+        await reopenProgress(fixture);
+        modelActions = [
+          { tool: "bash", args: { command: "printf external-effect >> once-marker" } },
+          {
+            text:
+              answerFailure === "partial"
+                ? "```txt\n" + "🙂line of content\n".repeat(500) + "```"
+                : "Final result",
+          },
+        ];
+        const body = hostBody(`send-${answerFailure}`);
+        await stream(body);
+        await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
+        expect(answers(fixture)).toHaveLength(answerFailure === "partial" ? 2 : 1);
+        expect(await readFile(join(directory, "once-marker"), "utf8")).toBe("external-effect");
+        await editPiNativeDocuments(async (tx, id) => {
+          const metadata = await tx.doc(piConversationMetadataDoc, id);
+          const publication = metadata.receipts[0].publication;
+          expect(publication?.disposition.state).toBe(
+            answerFailure === "rejected" ? "rejected" : "uncertain",
+          );
+          if (answerFailure === "partial") {
+            expect(publication?.chunks[0].state).toBe("confirmed");
+            expect(publication?.chunks[1].state).toBe("uncertain");
+            expect(
+              answers(fixture).every((entry) => (entry.form.get("text")?.length ?? 0) < 3000),
+            ).toBe(true);
+            expect(
+              answers(fixture).every(
+                (entry) =>
+                  entry.form.get("text")?.startsWith("```txt\n") &&
+                  entry.form.get("text")?.endsWith("```"),
+              ),
+            ).toBe(true);
+          }
+        });
+        await openRunner({ progressTransport: fixture.progressTransport });
+        await stream(body);
+        expect(requests).toHaveLength(2);
+        expect(answers(fixture)).toHaveLength(answerFailure === "partial" ? 2 : 1);
+        expect(await readFile(join(directory, "once-marker"), "utf8")).toBe("external-effect");
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  it.each(["feature_disabled", "missing_scope", "unknown_method"] as const)(
+    "uses the quiet footer without blind legacy fallback when native status is %s",
+    async (statusFailure) => {
+      const fixture = await slackFixture(undefined, { statusFailure });
+      try {
+        await reopenProgress(fixture);
+        const pending = stream(hostBody(`unsupported-${statusFailure}`, "fixture-thinking-delay"));
+        await pending;
+        await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
+        expect(
+          posts(fixture).some((entry) => entry.form.get("blocks")?.includes("neo-thinking-v1.gif")),
+        ).toBe(true);
+        expect(answers(fixture)).toHaveLength(1);
+        expect(answers(fixture)[0].form.get("text")).toBe("Visible answer");
+        expect(
+          fixture.deliveries.every((entry) => entry.method !== "/assistant.threads.setStatus"),
+        ).toBe(true);
+        expect(nativeStatuses(fixture).at(-1)).toBe("active");
+        expect(
+          fixture.deliveries.every(
+            (entry) => !entry.form.toString().includes("private-reasoning-fixture"),
+          ),
+        ).toBe(true);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  it("keeps queued arrivals and replacement ownership behind a pending old publication, with scope-safe late receipts", async () => {
+    let release = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fixture = await slackFixture(undefined, { blockAnswer: () => blocked });
+    try {
+      await reopenProgress(fixture);
+      const body = hostBody("old-final", "hold-run");
+      await trigger(body);
+      await vi.waitFor(() => expect(hold).toBeDefined());
+      const queued = await (
+        await trigger({ ...body, requestId: "queued", prompt: "replacement" })
+      ).json();
+      expect(queued).toMatchObject({ busy: true });
+      expect(nativeStatuses(fixture)).toEqual(["processing"]);
+      expect(fixture.deliveries.filter((entry) => entry.method === "/reactions.add")).toHaveLength(
+        1,
+      );
+      if (!hold) throw new Error("Held response absent");
+      respond(hold, { text: "Old answer" });
+      await vi.waitFor(() => expect(answers(fixture)).toHaveLength(1));
+      const replacement = stream({
+        ...body,
+        requestId: "replacement",
+        prompt: "replacement",
+        messageTs: "1710000000.003",
+        interrupt: true,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(requests).toHaveLength(1);
+      expect(nativeStatuses(fixture).filter((status) => status === "processing")).toHaveLength(1);
+      release();
+      await replacement;
+      await vi.waitFor(() => expect(checks(fixture)).toHaveLength(2));
+      expect(answers(fixture).map((entry) => entry.form.get("text"))).toEqual([
+        "Old answer",
+        '&lt;answer&gt; &amp; "fixture"',
+      ]);
+      expect(checks(fixture).map((entry) => entry.form.get("timestamp"))).toEqual([
+        "1710000000.002",
+        "1710000000.003",
+      ]);
+      await editPiNativeDocuments(async (tx, id) => {
+        const metadata = await tx.doc(piConversationMetadataDoc, id);
+        expect(metadata.receipts.map((receipt) => receipt.publication?.disposition.state)).toEqual([
+          "confirmed",
+          "confirmed",
+        ]);
+        expect(metadata.receipts[0].publication?.chunks[0]).toEqual({
+          state: "confirmed",
+          ts: answers(fixture)[0].form.get("ts") ?? expect.any(String),
+        });
+      });
+      await openRunner();
+    } finally {
+      release();
+      await fixture.close();
+    }
+  });
+
+  it("drains an issued native processing write before interruption clears it and a replacement can own loading", async () => {
+    let release = () => {};
+    let first = true;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fixture = await slackFixture(undefined, {
+      blockStatus: async (status) => {
+        if (status === "processing" && first) {
+          first = false;
+          await blocked;
+        }
+      },
+    });
+    try {
+      await reopenProgress(fixture);
+      const body = hostBody("pending-native", "hold-run");
+      await trigger(body);
+      await vi.waitFor(() => expect(nativeStatuses(fixture)).toEqual(["processing"]));
+      const replacement = stream({
+        ...body,
+        requestId: "native-replacement",
+        prompt: "replacement",
+        interrupt: true,
+        messageTs: "1710000000.003",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(nativeStatuses(fixture)).toEqual(["processing"]);
+      expect(requests).toHaveLength(1);
+      release();
+      await replacement;
+      await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
+      const statuses = nativeStatuses(fixture);
+      expect(statuses[0]).toBe("processing");
+      expect(statuses[1]).toBe("active");
+      expect(statuses.at(-1)).toBe("active");
+      expect(checks(fixture)[0].form.get("timestamp")).toBe("1710000000.003");
+      expect(answers(fixture)).toHaveLength(1);
+    } finally {
+      release();
+      await fixture.close();
+    }
+  });
+
+  it("SIGKILL after issuing a Slack answer leaves uncertainty on the same SQLite binding and never reissues it", async () => {
+    let release = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fixture = await slackFixture(undefined, { blockAnswer: () => blocked });
+    await closeServer(runnerServer);
+    await runner.close();
+    const loader = new URL("../node_modules/tsx/dist/loader.mjs", import.meta.url).href;
+    const script = `
+      import { createServer } from 'node:http';
+      import { createPiRunnerApp } from ${JSON.stringify(new URL("./pi-runner.ts", import.meta.url).href)};
+      import { createSlackProgressTransport } from ${JSON.stringify(new URL("./slack-progress.ts", import.meta.url).href)};
+      const runner=await createPiRunnerApp(${JSON.stringify(config)}, {remoteCliUrl:${JSON.stringify(noWaitBrokerUrl)},
+        progressTransport:createSlackProgressTransport({token:'dummy-token',slackApiUrl:${JSON.stringify(fixture.url + "/")}})});
+      if(!runner.ok)throw new Error(runner.error);
+      const server=createServer(runner.app); server.listen(0,'127.0.0.1',()=>console.log('URL:'+server.address().port));
+    `;
+    const child = spawn(
+      process.execPath,
+      ["--import", loader, "--input-type=module", "-e", script],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const exited = new Promise((resolve) => child.once("close", resolve));
+    try {
+      const port = await new Promise<string>((resolve, reject) => {
+        let output = "";
+        child.stdout.on("data", (chunk) => {
+          output += chunk.toString();
+          const match = /URL:(\d+)/.exec(output);
+          if (match) resolve(match[1]);
+        });
+        child.once("error", reject);
+        child.once("exit", () => reject(new Error("Publication child exited before listen")));
+      });
+      const body = hostBody("crash-send");
+      await fetch(`http://127.0.0.1:${port}/trigger`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-thor-internal-secret": config.internalSecret,
+        },
+        body: JSON.stringify({ directory: triggerDirectory, ...body }),
+      });
+      await vi.waitFor(() => expect(answers(fixture)).toHaveLength(1));
+      child.kill("SIGKILL");
+      await exited;
+      release();
+      await openRunner({ progressTransport: fixture.progressTransport });
+      await stream(body);
+      await editPiNativeDocuments(async (tx, id) => {
+        const metadata = await tx.doc(piConversationMetadataDoc, id);
+        expect(metadata.receipts[0].publication).toMatchObject({
+          disposition: { state: "uncertain" },
+          chunks: [{ state: "uncertain" }],
+        });
+      });
+      await openRunner();
+      expect(answers(fixture)).toHaveLength(1);
+      expect(requests).toHaveLength(1);
+      expect(nativeStatuses(fixture).at(-1)).toBe("active");
+    } finally {
+      child.kill("SIGKILL");
+      release();
+      await exited;
+      await fixture.close();
+    }
+  });
+
+  it("host authorization holds publish neither a paused answer nor success and continuations inherit the private target", async () => {
+    const fixture = await slackFixture();
+    const broker = await continuationBroker();
+    try {
+      await reopenProgress(fixture, broker.url);
+      broker.setAckUnavailable(true);
+      const body = hostBody("host-oauth", "hold-run");
+      const receipt = await (await trigger(body)).json();
+      await vi.waitFor(() => expect(hold).toBeDefined());
+      broker.publish(receipt);
+      if (!hold) throw new Error("Held response absent");
+      respond(hold, { text: "Paused step, not the final answer" });
+      await vi.waitFor(() => expect(nativeStatuses(fixture).at(-1)).toBe("suspended"));
+      expect(answers(fixture)).toHaveLength(0);
+      expect(checks(fixture)).toHaveLength(0);
+      broker.setAckUnavailable(false);
+      await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1), { timeout: 4000 });
+      expect(answers(fixture)).toHaveLength(1);
+      expect(answers(fixture)[0].form.get("channel")).toBe("G_PRIVATE");
+      expect(answers(fixture)[0].form.get("text")).not.toContain("Paused step");
+      expect(JSON.stringify(requests.at(-1))).toContain("final assistant text will be published");
+    } finally {
+      await fixture.close();
+      await broker.close();
+    }
+  });
+
+  it("does not publish an answer or claim success when a host-owned task cannot verify authorization", async () => {
+    const fixture = await slackFixture();
+    const server = createServer((_req, res) => {
+      res.writeHead(503);
+      res.end();
+    });
+    const url = await listen(server);
+    try {
+      await reopenProgress(fixture, url);
+      const body = hostBody("host-unconfirmed");
+      const frames = await stream(body);
+      expect(frames.at(-1)).toMatchObject({ status: "error", authWait: "unconfirmed" });
+      await vi.waitFor(() =>
+        expect(
+          posts(fixture).some((entry) =>
+            entry.form.get("text")?.includes("completion is unconfirmed"),
+          ),
+        ).toBe(true),
+      );
+      expect(answers(fixture)).toHaveLength(0);
+      expect(checks(fixture)).toHaveLength(0);
+      expect(nativeStatuses(fixture).at(-1)).toBe("active");
+      await reopenProgress(fixture, url);
+      await stream(body);
+      expect(requests).toHaveLength(1);
+      expect(answers(fixture)).toHaveLength(0);
+      expect(checks(fixture)).toHaveLength(0);
+    } finally {
+      await fixture.close();
+      await closeServer(server);
+    }
+  });
+
+  it.each([
+    ["duplicate", "answer"],
+    ["restart", "answer"],
+    ["duplicate", "empty"],
+    ["restart", "empty"],
+  ] as const)(
+    "uses the never-issued host answer opportunity after broker recovery through %s (%s), without replay or repeated decoration",
+    async (recovery, content) => {
+      let healthy = false;
+      const broker = createServer((req, res) => {
+        expect(req.headers["x-thor-internal-secret"]).toBe(config.internalSecret);
+        res.setHeader("content-type", "application/json");
+        if (!healthy && req.url === "/internal/google-workspace/waits") res.statusCode = 503;
+        res.end(
+          JSON.stringify(
+            req.url === "/internal/google-workspace/waits" ? { waits: [] } : { continuations: [] },
+          ),
+        );
+      });
+      const url = await listen(broker);
+      const fixture = await slackFixture();
+      try {
+        await reopenProgress(fixture, url);
+        const body = hostBody(`auth-recovery-${recovery}-${content}`);
+        if (content === "empty") modelActions = [{ text: "" }];
+        const frames = await stream(body);
+        expect(frames.at(-1)).toMatchObject({ status: "error", authWait: "unconfirmed" });
+        await vi.waitFor(() =>
+          expect(
+            posts(fixture).some((post) =>
+              post.form.get("text")?.includes("completion is unconfirmed"),
+            ),
+          ).toBe(true),
+        );
+        expect(answers(fixture)).toHaveLength(0);
+        expect(checks(fixture)).toHaveLength(0);
+        expect(removals(fixture)).toHaveLength(0);
+        healthy = true;
+        if (recovery === "restart") await reopenProgress(fixture, url);
+        expect((await stream(body)).at(-1)).toMatchObject({ status: "completed" });
+        await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
+        expect(answers(fixture)).toHaveLength(content === "empty" ? 0 : 1);
+        if (content !== "empty") {
+          expect(answers(fixture)[0].form.get("channel")).toBe("G_PRIVATE");
+          expect(answers(fixture)[0].form.get("thread_ts")).toBe(body.slackReplyAdmission.threadTs);
+        }
+        expect(checks(fixture)[0].form.get("timestamp")).toBe(body.messageTs);
+        expect(removals(fixture)).toHaveLength(1);
+        expect(requests).toHaveLength(1);
+        await stream(body);
+        await reopenProgress(fixture, url);
+        await stream(body);
+        expect(answers(fixture)).toHaveLength(content === "empty" ? 0 : 1);
+        expect(checks(fixture)).toHaveLength(1);
+        expect(requests).toHaveLength(1);
+      } finally {
+        await fixture.close();
+        await closeServer(broker);
+      }
+    },
+  );
+
+  it("never recovers a superseded answer or lets an old authorization refresh clear a newer active presentation", async () => {
+    let healthy = false;
+    const broker = createServer((req, res) => {
+      res.setHeader("content-type", "application/json");
+      if (!healthy && req.url === "/internal/google-workspace/waits") res.statusCode = 503;
+      res.end(
+        JSON.stringify(
+          req.url === "/internal/google-workspace/waits" ? { waits: [] } : { continuations: [] },
+        ),
+      );
+    });
+    const url = await listen(broker);
+    const fixture = await slackFixture();
+    try {
+      await reopenProgress(fixture, url);
+      const old = hostBody("superseded-unissued");
+      expect((await stream(old)).at(-1)).toMatchObject({ authWait: "unconfirmed" });
+      await vi.waitFor(() =>
+        expect(
+          posts(fixture).some((post) =>
+            post.form.get("text")?.includes("completion is unconfirmed"),
+          ),
+        ).toBe(true),
+      );
+      healthy = true;
+      const next = {
+        ...hostBody("new-active", "hold-run"),
+        triggerSlackId: "UNEW",
+        messageTs: "1710000000.003",
+      };
+      await trigger(next);
+      await vi.waitFor(() => expect(hold).toBeDefined());
+      const before = fixture.deliveries.length;
+      expect((await stream(old)).at(-1)).toMatchObject({ status: "completed" });
+      expect(fixture.deliveries).toHaveLength(before);
+      expect(answers(fixture)).toHaveLength(0);
+      expect(checks(fixture)).toHaveLength(0);
+      expect(requests).toHaveLength(2);
+      if (!hold) throw new Error("New active response missing");
+      respond(hold, { text: "Latest request answer" });
+      await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
+      expect(answers(fixture)).toHaveLength(1);
+      expect(answers(fixture)[0].form.get("text")).toBe("Latest request answer");
+      const after = fixture.deliveries.length;
+      await stream(old);
+      expect(fixture.deliveries).toHaveLength(after);
+      await reopenProgress(fixture, url);
+      await stream(old);
+      expect(answers(fixture)).toHaveLength(1);
+      expect(checks(fixture)).toHaveLength(1);
+      expect(requests).toHaveLength(2);
+    } finally {
+      await fixture.close();
+      await closeServer(broker);
+    }
+  });
+
+  it.each([
+    ("```ts\nif (count < limit) {\n" + "  count++;\n".repeat(500)).padEnd(5627, " ") + "}\n```",
+    "0 < 1. " + "ordinary answer text ".repeat(300),
+  ])(
+    "transports under-budget comparison answers without losing code, escaping, or final metadata",
+    async (text) => {
+      const fixture = await slackFixture();
+      try {
+        await reopenProgress(fixture);
+        modelActions = [{ text }];
+        await stream(hostBody("comparison-answer"));
+        await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
+        const chunks = answers(fixture);
+        expect(chunks.length).toBeGreaterThan(1);
+        expect(chunks.every((chunk) => (chunk.form.get("text")?.length ?? 0) <= 3000)).toBe(true);
+        if (text.startsWith("```")) {
+          expect(
+            chunks.every(
+              (chunk) =>
+                chunk.form.get("text")?.startsWith("```ts\n") &&
+                chunk.form.get("text")?.endsWith("```"),
+            ),
+          ).toBe(true);
+          const reconstructed = chunks
+            .map((chunk, index) => {
+              let part = chunk.form.get("text") ?? "";
+              if (index > 0) part = part.replace(/^```ts\n/, "");
+              if (index < chunks.length - 1) part = part.replace(/\n```$/, "");
+              return part;
+            })
+            .join("");
+          expect(reconstructed).toBe(text);
+        } else
+          expect(chunks.map((chunk) => chunk.form.get("text")).join("")).toBe(
+            text.replaceAll("<", "&lt;"),
+          );
+        expect(
+          chunks.filter((chunk) => chunk.form.get("blocks")?.includes('"context"')),
+        ).toHaveLength(1);
+        expect(chunks.at(-1)?.form.get("blocks")).toContain("Model: fixture-model");
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  it("keeps explicit rich tool artifacts separate from the host's concise final summary", async () => {
+    const fixture = await slackFixture();
+    try {
+      await reopenProgress(fixture);
+      const toolScript = `fetch(${JSON.stringify(fixture.url + "/artifact")}, {method:'POST',body:new URLSearchParams({text:'Rich artifact payload',blocks:JSON.stringify([{type:'section',text:{type:'mrkdwn',text:'Rich artifact payload'}}])})}).then(r=>r.json()).then(()=>console.log('Artifact created'))`;
+      modelActions = [
+        {
+          tool: "bash",
+          args: { command: `node --input-type=module -e ${JSON.stringify(toolScript)}` },
+        },
+        { text: "Created the report artifact." },
+      ];
+      await stream(hostBody("rich-summary"));
+      await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
+      expect(fixture.deliveries.filter((entry) => entry.method === "/artifact")).toHaveLength(1);
+      expect(answers(fixture)).toHaveLength(1);
+      expect(answers(fixture)[0].form.get("text")).toBe("Created the report artifact.");
+      expect(answers(fixture)[0].form.get("blocks")).not.toContain("Rich artifact payload");
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("migrates a version-2 pending intent as tool-owned, while only a later new admission gains host ownership", async () => {
+    const fixture = await slackFixture();
+    try {
+      await closeServer(runnerServer);
+      await runner.close();
+      const harness = await Harness.open(
+        await openNodeSqliteStorage(config.storagePath),
+        { models: createModels(), registry: createRegistry() },
+        BACKGROUND_CONTEXT,
+      );
+      const version2Doc = defineDoc<JsonObject>({
+        kind: "thor.pi.conversation",
+        version: 2,
+        scope: "conversation",
+        history: "latest",
+        fork: "initial",
+        initial: () => ({ version: 2, anchorId: "", directory: "", receipts: [] }),
+      });
+      const body = hostBody("precutover-intent");
+      const anchorId = mintAnchor(),
+        triggerId = mintTriggerId();
+      try {
+        await harness.createConversation(
+          {
+            ownership: { kind: "ownerless" },
+            agent: {
+              model: { provider: "codex-lb", modelId: "fixture-model" },
+              cwd: triggerDirectory,
+              thinkingLevel: "medium",
+            },
+            init: async (tx, id) =>
+              Object.assign(await tx.doc(version2Doc, id), {
+                version: 2,
+                anchorId,
+                directory: triggerDirectory,
+                activeRequestId: body.requestId,
+                correlationKey: body.correlationKey,
+                receipts: [
+                  {
+                    requestId: body.requestId,
+                    fingerprint: "frozen-old",
+                    triggerId,
+                    startedAt: Date.now(),
+                    resumed: false,
+                    slackTeamId: "T123",
+                    request: {
+                      directory: triggerDirectory,
+                      correlationKey: body.correlationKey,
+                      triggerSlackId: body.triggerSlackId,
+                      messageTs: body.messageTs,
+                      interrupt: false,
+                      stream: false,
+                    },
+                    admission: { state: "intent", prompt: body.prompt },
+                  },
+                ],
+              }),
+          },
+          BACKGROUND_CONTEXT,
+        );
+      } finally {
+        await harness.close(BACKGROUND_CONTEXT);
+      }
+      await openRunner({ progressTransport: fixture.progressTransport });
+      await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
+      expect(answers(fixture)).toHaveLength(0);
+      expect(JSON.stringify(requests[0])).toContain(
+        "posting workflow for the substantive user-facing reply before ending",
+      );
+      await stream(hostBody("new-after-migration", "new request"));
+      await vi.waitFor(() => expect(checks(fixture)).toHaveLength(2));
+      expect(answers(fixture)).toHaveLength(1);
+      await editPiNativeDocuments(async (tx, id) => {
+        const metadata = await tx.doc(piConversationMetadataDoc, id);
+        expect(metadata.receipts.map((receipt) => receipt.delivery.owner)).toEqual([
+          "tool",
+          "host",
+        ]);
+        expect(metadata.receipts[0]).not.toHaveProperty("publication");
+      });
+      await openRunner();
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("rejects malformed version-3 delivery evidence intact rather than falling back to old tool policy", async () => {
+    const fixture = await slackFixture();
+    try {
+      await reopenProgress(fixture);
+      await stream(hostBody("corrupt-new"));
+      await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
+      let preserved: unknown;
+      await editPiNativeDocuments(async (tx, id) => {
+        const metadata = await tx.doc(piConversationMetadataDoc, id);
+        Reflect.deleteProperty(metadata.receipts[0], "delivery");
+        preserved = JSON.parse(JSON.stringify(metadata));
+      });
+      const result = await createPiRunnerApp(config, {
+        remoteCliUrl: noWaitBrokerUrl,
+        progressTransport: fixture.progressTransport,
+      });
+      expect(result).toEqual({ ok: false, error: "pi_startup_failed" });
+      const harness = await Harness.open(
+        await openNodeSqliteStorage(config.storagePath),
+        { models: createModels(), registry: createRegistry() },
+        BACKGROUND_CONTEXT,
+      );
+      try {
+        await harness.commit(async (tx) => {
+          const records = await tx.scanConversations({}, 100);
+          const metadata = await tx.doc(piConversationMetadataDoc, records.items[0].id);
+          expect(metadata).toEqual(preserved);
+          metadata.receipts[0].delivery = {
+            owner: "host",
+            target: hostBody("corrupt-new").slackReplyAdmission,
+          };
+        }, BACKGROUND_CONTEXT);
+      } finally {
+        await harness.close(BACKGROUND_CONTEXT);
+      }
+      expect(requests).toHaveLength(1);
+      expect(answers(fixture)).toHaveLength(1);
+      await openRunner();
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("repairs saved footer/native loading on restart without replaying the answer, source checks or model", async () => {
+    const fixture = await slackFixture();
+    try {
+      await reopenProgress(fixture);
+      await stream(hostBody("restart-ui"));
+      await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
+      await editPiNativeDocuments(async (tx, id) => {
+        const metadata = await tx.doc(piConversationMetadataDoc, id);
+        metadata.receipts[0].slackFooterTs = "1710000000.099";
+      });
+      const before = fixture.deliveries.length;
+      await openRunner({ progressTransport: fixture.progressTransport });
+      const repair = fixture.deliveries.slice(before);
+      expect(
+        repair.some(
+          (entry) =>
+            entry.method === "/agents.sessions.setStatus" && entry.form.get("status") === "active",
+        ),
+      ).toBe(true);
+      expect(
+        repair.some(
+          (entry) =>
+            entry.method === "/chat.update" &&
+            entry.form.get("ts") === "1710000000.099" &&
+            entry.form.get("blocks")?.includes("neo-ai-still-v1.png"),
+        ),
+      ).toBe(true);
+      expect(
+        repair.some(
+          (entry) => entry.method === "/chat.delete" && entry.form.get("ts") === "1710000000.099",
+        ),
+      ).toBe(true);
+      expect(repair.some((entry) => entry.method === "/reactions.add")).toBe(false);
+      expect(requests).toHaveLength(1);
+      expect(answers(fixture)).toHaveLength(1);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("uses the legacy Slack API only when explicitly verified, keeping raw loading generic and clearing it explicitly", async () => {
+    const fixture = await slackFixture(undefined, { statusMode: "verified-legacy" });
+    try {
+      await reopenProgress(fixture);
+      await stream(hostBody("verified-legacy", "fixture-thinking-delay"));
+      await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
+      const calls = fixture.deliveries.filter(
+        (entry) => entry.method === "/assistant.threads.setStatus",
+      );
+      expect(calls[0].form.get("status")).toBe("is working on your request...");
+      expect(calls[0].form.get("loading_messages")).toBe('["Working on your request"]');
+      expect(calls.at(-1)?.form.get("status")).toBe("");
+      expect(nativeStatuses(fixture)).toHaveLength(0);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("uses the admitted Slack destination even when correlation aliases point to git, without granting a later GitHub task automatic replies", async () => {
+    const fixture = await slackFixture();
+    try {
+      await reopenProgress(fixture);
+      const correlationKey = "git:branch:pi-fixture:feature/shared";
+      await stream({ ...hostBody("aliased-slack"), correlationKey });
+      await vi.waitFor(() => expect(checks(fixture)).toHaveLength(1));
+      expect(answers(fixture)).toHaveLength(1);
+      expect(answers(fixture)[0].form.get("channel")).toBe("G_PRIVATE");
+      await stream({
+        requestId: "github-same-anchor",
+        prompt: "GitHub followup",
+        triggerGithubLogin: "reviewer",
+        correlationKey,
+      });
+      expect(answers(fixture)).toHaveLength(1);
+      expect(JSON.stringify(requests.at(-1))).not.toContain(
+        "Your final assistant text will be published",
+      );
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("rejects mismatched new reply authority before interruption and never upgrades a plain or historical binding", async () => {
+    const fixture = await slackFixture();
+    try {
+      await reopenProgress(fixture);
+      const body = hostBody("authority", "hold-run");
+      await trigger(body);
+      await vi.waitFor(() => expect(hold).toBeDefined());
+      for (const proof of [
+        { ...body.slackReplyAdmission, teamId: "T_OTHER" },
+        { ...body.slackReplyAdmission, channel: "C_PUBLIC" },
+      ])
+        expect(
+          (
+            await trigger({
+              ...body,
+              requestId: "bad-proof",
+              interrupt: true,
+              slackReplyAdmission: proof,
+            })
+          ).status,
+        ).toBe(400);
+      expect(
+        (
+          await trigger({
+            ...body,
+            requestId: "missing-human-source",
+            messageTs: undefined,
+            interrupt: true,
+          })
+        ).status,
+      ).toBe(400);
+      expect(nativeStatuses(fixture)).toEqual(["processing"]);
+      const { slackReplyAdmission: _proof, ...plain } = hostBody("legacy-tool", "replacement");
+      await stream({ ...plain, interrupt: true });
+      expect(JSON.stringify(requests.at(-1))).toContain(
+        "posting workflow for the substantive user-facing reply before ending",
+      );
+      expect(answers(fixture)).toHaveLength(0);
+      expect(
+        (await trigger({ ...plain, slackReplyAdmission: body.slackReplyAdmission })).status,
+      ).toBe(409);
+    } finally {
+      await fixture.close();
+    }
+  });
 
   it("shows delayed zero-tool model activity, replaces animation on text output, and checks successive current messages", async () => {
     const fixture = await slackFixture();
@@ -2237,11 +3183,10 @@ describe("native Pi activity through the real Slack SDK", () => {
       });
       expect(posts(fixture)[0].form.get("text")).toContain("Neo working... 0 tool calls");
       expect(posts(fixture)[0].form.get("blocks")).toContain("neo-working-v1.gif");
-      expect(
-        fixture.deliveries.some((entry) =>
-          entry.form.get("text")?.includes("Neo thinking... 1 tool calls"),
-        ),
-      ).toBe(true);
+      // A short post-tool phase may coalesce directly to output; completed calls still count once.
+      expect(fixture.events).toContainEqual(
+        expect.objectContaining({ type: "activity", activity: "thinking" }),
+      );
       expect(frames.filter((frame) => frame.type === "tool").map((frame) => frame.status)).toEqual([
         "running",
         "completed",
@@ -2431,50 +3376,72 @@ describe("native Pi activity through the real Slack SDK", () => {
     },
   );
 
-  it("retains original hold evidence when a confirmed wait disappears, including repeated reads and restart", async () => {
-    const broker = await continuationBroker();
-    broker.setReady(false);
-    const fixture = await slackFixture();
-    try {
-      await reopenProgress(fixture, broker.url);
-      const body = {
-        prompt: "hold-run",
-        requestId: "lost-wait",
-        correlationKey,
-        triggerSlackId: "UOWNER",
-        messageTs: "1710000000.002",
-      };
-      const binding = await (await trigger(body)).json();
-      await vi.waitFor(() => expect(hold).toBeDefined());
-      broker.publish(binding);
-      if (!hold) throw new Error("Lost-wait fixture missing response");
-      respond(hold, { text: "Waiting for authorization" });
-      expect((await stream(body)).at(-1)).toMatchObject({ status: "error", authWait: "google" });
-      broker.clearRecords();
-      for (let read = 0; read < 2; read++)
+  it.each(["tool", "host"] as const)(
+    "retains %s-owned original hold evidence when a confirmed wait disappears, including repeated reads and restart",
+    async (deliveryOwner) => {
+      const broker = await continuationBroker();
+      broker.setReady(false);
+      const fixture = await slackFixture();
+      try {
+        await reopenProgress(fixture, broker.url);
+        const body = {
+          prompt: "hold-run",
+          requestId: "lost-wait",
+          correlationKey,
+          triggerSlackId: "UOWNER",
+          messageTs: "1710000000.002",
+          ...(deliveryOwner === "host"
+            ? {
+                slackReplyAdmission: {
+                  version: 1,
+                  teamId: "T123",
+                  channel: "C_CURRENT",
+                  threadTs: "1710000000.001",
+                },
+              }
+            : {}),
+        };
+        const binding = await (await trigger(body)).json();
+        await vi.waitFor(() => expect(hold).toBeDefined());
+        broker.publish(binding);
+        if (!hold) throw new Error("Lost-wait fixture missing response");
+        respond(hold, { text: "Waiting for authorization" });
+        expect((await stream(body)).at(-1)).toMatchObject({ status: "error", authWait: "google" });
+        broker.clearRecords();
+        for (let read = 0; read < 2; read++)
+          expect((await stream(body)).at(-1)).toMatchObject({
+            status: "error",
+            authWait: "unconfirmed",
+          });
+        expect(checks(fixture)).toHaveLength(0);
+        expect(removals(fixture)).toHaveLength(0);
+        expect(
+          fixture.deliveries.some((entry) =>
+            entry.form
+              .get("text")
+              ?.includes("authorization status unavailable — completion is unconfirmed"),
+          ),
+        ).toBe(true);
+        expect(nativeStatuses(fixture).at(-1)).toBe("active");
+        const count = requests.length;
+        await reopenProgress(fixture, broker.url);
         expect((await stream(body)).at(-1)).toMatchObject({
           status: "error",
           authWait: "unconfirmed",
         });
-      expect(checks(fixture)).toHaveLength(0);
-      expect(removals(fixture)).toHaveLength(0);
-      const count = requests.length;
-      await reopenProgress(fixture, broker.url);
-      expect((await stream(body)).at(-1)).toMatchObject({
-        status: "error",
-        authWait: "unconfirmed",
-      });
-      expect(requests).toHaveLength(count);
-      const page = await (
-        await fetch(`${runnerUrl}/runner/v/${binding.anchorId}/${binding.triggerId}`)
-      ).text();
-      expect(page).toContain("wait is no longer confirmed");
-      expect(checks(fixture)).toHaveLength(0);
-    } finally {
-      await fixture.close();
-      await broker.close();
-    }
-  });
+        expect(requests).toHaveLength(count);
+        const page = await (
+          await fetch(`${runnerUrl}/runner/v/${binding.anchorId}/${binding.triggerId}`)
+        ).text();
+        expect(page).toContain("wait is no longer confirmed");
+        expect(checks(fixture)).toHaveLength(0);
+        expect(answers(fixture)).toHaveLength(0);
+      } finally {
+        await fixture.close();
+        await broker.close();
+      }
+    },
+  );
 
   it("never sends a success reaction for a failed native model turn", async () => {
     const fixture = await slackFixture();
@@ -2928,8 +3895,8 @@ describe("per-task native model routing", () => {
       const selected = selectPiTaskModel({pool,routingTask:request.prompt}).value;
       const conversation = await runtime.createConversation({ownership:{kind:'ownerless'},agent:{model:{provider:'codex-lb',modelId:selected.modelId},thinkingLevel:selected.thinkingLevel,cwd:request.directory},
         init:async(tx,id)=>Object.assign(await tx.doc(piConversationMetadataDoc,id),{
-          version:2,anchorId:mintAnchor(),directory:request.directory,activeRequestId:request.requestId,
-          receipts:[{requestId:request.requestId,fingerprint:'fixture-unused',triggerId:mintTriggerId(),startedAt:Date.now(),resumed:false,admission:{state:'intent',prompt:request.prompt},request:(({prompt,...authority})=>authority)(request),modelSelection:selected}]
+          version:3,anchorId:mintAnchor(),directory:request.directory,activeRequestId:request.requestId,
+          receipts:[{requestId:request.requestId,fingerprint:'fixture-unused',triggerId:mintTriggerId(),startedAt:Date.now(),resumed:false,delivery:{owner:'tool'},admission:{state:'intent',prompt:request.prompt},request:(({prompt,...authority})=>authority)(request),modelSelection:selected}]
         })},context);
       await conversation.submit({type:'input',content:request.prompt,requestId:request.requestId},context);
     `;

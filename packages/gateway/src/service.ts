@@ -1,3 +1,4 @@
+import { SlackReplyAdmissionSchema, type SlackReplyAdmission } from "@thor/common";
 import {
   createLogger,
   ExecResultSchema,
@@ -57,6 +58,8 @@ export interface RunnerTriggerOptions extends Pick<
 > {
   /** Stable queued batch identity, retained across uncertain delivery. */
   requestId?: string;
+  /** Gateway admitted automatic-reply target, absent for legacy queues/non-Slack work. */
+  slackReplyAdmission?: SlackReplyAdmission;
   /** Current trusted requester's message, not the thread root or rendered history. */
   messageTs?: string;
   prompt: string;
@@ -86,6 +89,8 @@ export interface ApprovalOutcomeEventPayload {
 }
 
 export interface BatchDispatchInput {
+  /** Equality-checked signed workspace from queued Slack envelopes only. */
+  slackTeamId?: string;
   requestId?: string;
   slackEvents: SlackThreadEvent[];
   cronEvents: CronPayload[];
@@ -587,6 +592,7 @@ async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<Trigg
       directory: options.directory,
       ...(options.triggerSlackId ? { triggerSlackId: options.triggerSlackId } : {}),
       ...(options.messageTs ? { messageTs: options.messageTs } : {}),
+      ...(options.slackReplyAdmission ? { slackReplyAdmission: options.slackReplyAdmission } : {}),
       ...(options.triggerGithubLogin ? { triggerGithubLogin: options.triggerGithubLogin } : {}),
     }),
   });
@@ -790,6 +796,28 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
     selectSlackRequestSource(input.slackEvents, input.triggerSlackId)?.ts,
   );
 
+  const source = selectSlackRequestSource(input.slackEvents, input.triggerSlackId);
+  const replyAdmission =
+    source &&
+    input.slackTeamId &&
+    sourceTs.success &&
+    parts.length === 1 &&
+    input.cronEvents.length === 0 &&
+    input.githubEvents.length === 0 &&
+    input.approvalOutcomes.length === 0 &&
+    input.slackEvents.every(
+      (event) =>
+        event.channel === source.channel &&
+        (event.thread_ts ?? event.ts) === (source.thread_ts ?? source.ts),
+    )
+      ? SlackReplyAdmissionSchema.safeParse({
+          version: 1,
+          teamId: input.slackTeamId,
+          channel: source.channel,
+          threadTs: source.thread_ts ?? source.ts,
+        })
+      : undefined;
+
   const prompt =
     parts.length === 1 ? parts[0].singlePrompt : parts.map((part) => part.mixedPrompt).join("\n\n");
 
@@ -802,6 +830,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
       correlationKey: input.correlationKey,
       ...routing.value,
       ...(sourceTs.success ? { messageTs: sourceTs.data } : {}),
+      ...(replyAdmission?.success ? { slackReplyAdmission: replyAdmission.data } : {}),
       ...(input.triggerSlackId ? { triggerSlackId: input.triggerSlackId } : {}),
       ...(input.triggerGithubLogin ? { triggerGithubLogin: input.triggerGithubLogin } : {}),
       directory: directories[0],

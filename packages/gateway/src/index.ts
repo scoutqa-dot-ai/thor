@@ -14,6 +14,7 @@ if (!config.slackBotToken.trim()) {
 }
 
 const { app } = createGatewayApp({
+  slackTeamId: config.slackTeamId,
   runnerUrl: config.runnerUrl,
   signingSecret: config.slackSigningSecret,
   slackBotToken: config.slackBotToken,

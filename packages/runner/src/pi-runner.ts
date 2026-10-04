@@ -28,9 +28,8 @@ import {
   readTriggerSlice,
   resolveAlias,
   resolveAnchorForCorrelationKey,
-  handleProgressEvent,
-  stopProgressRequest,
   ProgressModelSchema,
+  SlackMessageTsSchema,
   matchesInternalSecret,
   type ProgressEvent,
   type ProgressModel,
@@ -48,8 +47,13 @@ import {
   type PiAdmissionReceipt,
   type PiTriggerRequest,
 } from "./pi-runner-state.js";
-import { resolveSlackProgressTarget, type SlackProgressTransportTarget } from "./slack-progress.js";
-import type { ProgressTransport } from "@thor/common";
+import {
+  resolveSlackProgressTarget,
+  type SlackProgressTransport,
+  type SlackAnswerReceipt,
+} from "./slack-progress.js";
+import { PiSlackPresentation } from "./pi-slack-presentation.js";
+import { prepareSlackFinalAnswer } from "./slack-final-answer.js";
 import type { PiRunnerConfig } from "./pi-runner-config.js";
 import { GoogleWorkspaceConnectionStatusClient } from "./google-workspace-connection-status.js";
 import {
@@ -59,7 +63,11 @@ import {
 
 const context = BACKGROUND_CONTEXT;
 type ConversationMetadata = ReturnType<typeof piConversationMetadataSchema.parse>;
-type ConversationOwner = { conversation: Conversation; metadata: ConversationMetadata };
+type ConversationOwner = {
+  conversation: Conversation;
+  metadata: ConversationMetadata;
+  presentation?: PiSlackPresentation;
+};
 type StreamFrame =
   | ProgressEvent
   | { type: "text"; text: string; requestId?: string; sessionId?: string };
@@ -95,6 +103,7 @@ function fingerprintPiRequest(request: PiTriggerRequest): string {
         sessionId: request.sessionId,
         triggerSlackId: request.triggerSlackId,
         messageTs: request.messageTs,
+        slackReplyAdmission: request.slackReplyAdmission,
         triggerGithubLogin: request.triggerGithubLogin,
         interrupt: request.interrupt,
         modelProfile: request.modelProfile,
@@ -112,7 +121,7 @@ export async function createPiRunnerApp(
   options: {
     legacyViewerApp?: express.Express;
     progressEventSink?: (event: ProgressEvent) => void;
-    progressTransport?: ProgressTransport<SlackProgressTransportTarget>;
+    progressTransport?: SlackProgressTransport;
     /** Existing internal broker service; override only for embedded integration tests/custom topology. */
     remoteCliUrl?: string;
     /** Read operator workspace routing once at startup through the production config interface. */
@@ -125,6 +134,16 @@ export async function createPiRunnerApp(
   const ownerLock = await acquirePiStorageOwner(config.storagePath);
   if (!ownerLock.ok) return ownerLock;
   let harness: Harness | undefined;
+  const owners = new Map<string, ConversationOwner>();
+  const monitors = new Map<
+    string,
+    {
+      completion: Promise<void>;
+      listeners: Set<(frame: StreamFrame) => void>;
+      terminal?: StreamFrame;
+    }
+  >();
+  let closing = false;
   try {
     const models = createModels();
     const pool = loadPiModelRoutingPool(config, options.configLoader);
@@ -202,18 +221,8 @@ export async function createPiRunnerApp(
       options.remoteCliUrl ?? "http://remote-cli:3004",
       config.internalSecret,
     );
-    const owners = new Map<string, ConversationOwner>();
     const requests = new Map<string, ConversationOwner>();
-    const monitors = new Map<
-      string,
-      {
-        completion: Promise<void>;
-        listeners: Set<(frame: StreamFrame) => void>;
-        terminal?: StreamFrame;
-      }
-    >();
     const slackTransport = options.progressTransport;
-    let closing = false;
     let admissionLine = Promise.resolve();
 
     const serialAdmission = <T>(work: () => Promise<T>): Promise<T> => {
@@ -271,7 +280,14 @@ export async function createPiRunnerApp(
       }
       const correlationKeys = new Set([
         owner.metadata.correlationKey,
-        ...owner.metadata.receipts.map((receipt) => receipt.request.correlationKey),
+        ...owner.metadata.receipts.flatMap((receipt) => [
+          receipt.request.correlationKey,
+          ...(receipt.delivery.owner === "host"
+            ? [
+                `slack:thread:${receipt.delivery.target.channel}/${receipt.delivery.target.threadTs}`,
+              ]
+            : []),
+        ]),
       ]);
       for (const correlationKey of correlationKeys) {
         if (
@@ -313,19 +329,131 @@ export async function createPiRunnerApp(
           });
       }
     };
-    const progress = async (event: ProgressEvent, receipt: PiAdmissionReceipt) => {
-      options.progressEventSink?.(event);
-      const target = resolveSlackProgressTarget(receipt.request.correlationKey, {
-        messageTs: receipt.request.messageTs,
-        runnerBaseUrl: config.runnerBaseUrl,
+    const presentationFor = async (owner: ConversationOwner, receipt: PiAdmissionReceipt) => {
+      await owner.presentation?.stop();
+      // Draining the previous owner may have deleted its saved footer. Do not reattach the
+      // replacement to a stale timestamp from before that cleanup commit.
+      await reload(owner);
+      receipt =
+        owner.metadata.receipts.find((item) => item.requestId === receipt.requestId) ?? receipt;
+      const target = resolveSlackProgressTarget(
+        receipt.delivery.owner === "host"
+          ? `slack:thread:${receipt.delivery.target.channel}/${receipt.delivery.target.threadTs}`
+          : receipt.request.correlationKey,
+        {
+          messageTs: receipt.request.messageTs,
+          runnerBaseUrl: config.runnerBaseUrl,
+        },
+      );
+      if (
+        !target ||
+        !slackTransport ||
+        (receipt.delivery.owner === "host" && receipt.delivery.target.teamId !== config.slackTeamId)
+      )
+        return undefined;
+      const presentation = new PiSlackPresentation(
+        target,
+        slackTransport,
+        receipt.startedAt,
+        async (ts) => {
+          await owner.conversation.commit(async (tx) => {
+            const metadata = await tx.doc(piConversationMetadataDoc, owner.conversation.id);
+            const stored = metadata.receipts.find((item) => item.requestId === receipt.requestId);
+            if (stored) {
+              if (ts) stored.slackFooterTs = ts;
+              else delete stored.slackFooterTs;
+            }
+          }, context);
+        },
+        receipt.slackFooterTs,
+      );
+      owner.presentation = presentation;
+      const model = ProgressModelSchema.safeParse({
+        type: "model",
+        modelId: receipt.modelSelection?.modelId,
+        thinkingLevel: receipt.modelSelection?.thinkingLevel,
       });
-      if (target && slackTransport) {
-        try {
-          await handleProgressEvent(target, event, slackTransport);
-        } catch {
-          /* Progress delivery is best effort; never expose transport errors. */
+      if (model.success) await presentation.event(model.data);
+      return presentation;
+    };
+    const publishFinalAnswer = async (
+      owner: ConversationOwner,
+      receipt: PiAdmissionReceipt,
+      model?: ProgressModel,
+    ) => {
+      await reload(owner);
+      const stored = owner.metadata.receipts.find((item) => item.requestId === receipt.requestId);
+      if (
+        !stored ||
+        stored.delivery.owner !== "host" ||
+        stored.publication ||
+        stored.authorization !== "clear" ||
+        owner.metadata.receipts.at(-1)?.requestId !== receipt.requestId ||
+        (owner.metadata.activeRequestId !== undefined &&
+          owner.metadata.activeRequestId !== receipt.requestId) ||
+        closing
+      )
+        return false;
+      const native = await nativeRecord(owner, receipt.requestId);
+      if (native?.type !== "input" || native.status !== "done") return false;
+      const entries = await owner.conversation.entries(
+        { minEntryId: native.answer, maxEntryId: native.answer },
+        1,
+        undefined,
+        context,
+      );
+      const answer = textFromEntries(entries.items.filter((entry) => entry.id === native.answer));
+      const prepared = prepareSlackFinalAnswer(answer, model);
+      if (prepared.state === "empty") return false;
+      const target = stored.delivery.target;
+      const publication: NonNullable<PiAdmissionReceipt["publication"]> = {
+        answerEntry: native.answer,
+        target,
+        disposition: { state: prepared.state === "rejected" ? "rejected" : "pending" },
+        chunks: prepared.state === "ready" ? prepared.chunks.map(() => ({ state: "pending" })) : [],
+      };
+      const save = async () => {
+        await owner.conversation.commit(async (tx) => {
+          const metadata = await tx.doc(piConversationMetadataDoc, owner.conversation.id);
+          const binding = metadata.receipts.find((item) => item.requestId === receipt.requestId);
+          if (!binding) throw new Error("Pi publication binding missing");
+          binding.publication = publication;
+        }, context);
+      };
+      await save(); // The point of no automatic retry: intent commits before any Slack send.
+      if (prepared.state !== "ready") return true;
+      for (const [index, chunk] of prepared.chunks.entries()) {
+        let result: SlackAnswerReceipt = { state: "rejected" };
+        if (closing) result = { state: "uncertain" };
+        else if (slackTransport && target.teamId === config.slackTeamId) {
+          try {
+            if (slackTransport.postAnswer)
+              result = await slackTransport.postAnswer(target, chunk.text, chunk.blocks);
+            else {
+              const sent = await slackTransport.post(target, chunk.text, chunk.blocks);
+              const timestamp = SlackMessageTsSchema.safeParse(sent.ts);
+              result = timestamp.success
+                ? { state: "confirmed", ts: timestamp.data }
+                : { state: "uncertain" };
+            }
+          } catch {
+            result = { state: "uncertain" };
+          }
         }
+        publication.chunks[index] = result;
+        publication.disposition =
+          result.state === "confirmed"
+            ? index === prepared.chunks.length - 1
+              ? result
+              : { state: "pending" }
+            : result.state === "rejected" && index === 0
+              ? result
+              : { state: "uncertain" };
+        await save(); // Late receipts update only the original request/answer/destination binding.
+        if (result.state !== "confirmed") break;
       }
+      await reload(owner);
+      return true;
     };
     const submissionFor = async (owner: ConversationOwner, requestId: string) => {
       const record = await nativeRecord(owner, requestId);
@@ -475,6 +603,54 @@ export async function createPiRunnerApp(
       await reload(owner);
       await reconcileLogs(owner);
     };
+    // Only the latest idle request may repair the thread. A new host binding without publication
+    // intent retains its first-send opportunity; existing/uncertain records never authorize repost.
+    const reconcileSettledPresentation = async (
+      owner: ConversationOwner,
+      receipt: PiAdmissionReceipt,
+    ) => {
+      await reload(owner);
+      if (
+        owner.metadata.activeRequestId ||
+        owner.metadata.receipts.at(-1)?.requestId !== receipt.requestId
+      )
+        return;
+      const current = owner.metadata.receipts.at(-1);
+      if (!current) return;
+      const presentation = await presentationFor(owner, current);
+      if (
+        current.delivery.owner === "host" &&
+        current.authorization === "clear" &&
+        !current.publication &&
+        (await executionStatus(owner, current)) === "completed"
+      ) {
+        const event = await doneFrame(owner, current);
+        if (event.type !== "done") return;
+        const model = ProgressModelSchema.safeParse({
+          type: "model",
+          modelId: current.modelSelection?.modelId,
+          thinkingLevel: current.modelSelection?.thinkingLevel,
+        });
+        await presentation?.settle(event);
+        const publicationCreated = await publishFinalAnswer(
+          owner,
+          current,
+          model.success ? model.data : undefined,
+        );
+        // Completion is not delivery proof: an empty answer still completes when unavailable
+        // authorization becomes clear. Persisted clear evidence prevents repeating its check.
+        if (
+          publicationCreated ||
+          receipt.authorization === "unavailable" ||
+          receipt.authorization === undefined
+        ) {
+          await presentation?.finish(event);
+          return;
+        }
+      }
+      await presentation?.reconcile(current.authorization);
+    };
+
     const monitor = async (
       owner: ConversationOwner,
       receipt: PiAdmissionReceipt,
@@ -490,6 +666,7 @@ export async function createPiRunnerApp(
         : await runtime.snapshot(AgentDoc, owner.conversation.id, context);
       const stream = await watchEvents(runtime, owner.conversation.id, context);
       let emittedText = "";
+      let presentation: PiSlackPresentation | undefined;
       const emit = async (frame: StreamFrame) => {
         const event: StreamFrame = {
           ...frame,
@@ -501,7 +678,15 @@ export async function createPiRunnerApp(
           if (monitorState) monitorState.terminal = event;
         }
         for (const listener of listeners) listener(event);
-        if (event.type !== "text") await progress(event, receipt);
+        if (event.type !== "text") {
+          options.progressEventSink?.(event);
+          if (event.type === "done" || event.type === "error") {
+            await presentation?.settle(event);
+            if (event.type === "done" && event.status === "completed" && !event.authWait)
+              await publishFinalAnswer(owner, receipt, displayedModel);
+            await presentation?.finish(event);
+          } else await presentation?.event(event);
+        }
       };
       let displayedModel: ProgressModel | undefined;
       const refreshTaskModel = async () => {
@@ -657,16 +842,21 @@ export async function createPiRunnerApp(
         let settled = false;
         try {
           if (closing) return;
-          await progress(
-            {
-              type: "start",
-              requestId: receipt.requestId,
-              sessionId: sessionId(owner),
-              correlationKey: receipt.request.correlationKey,
-              resumed: receipt.resumed,
-            },
-            receipt,
-          );
+          presentation = await presentationFor(owner, receipt);
+          if (submitted.status === "done" || submitted.status === "unanswered")
+            await presentation?.reconcile(receipt.authorization);
+          else
+            await presentation?.start(async () => {
+              const current = await submission.status(context);
+              return current.status !== "done" && current.status !== "unanswered";
+            });
+          await emit({
+            type: "start",
+            requestId: receipt.requestId,
+            sessionId: sessionId(owner),
+            correlationKey: receipt.request.correlationKey,
+            resumed: receipt.resumed,
+          });
           await refreshTaskModel();
           await project(stream.snapshot);
           stream.start(async (events) => {
@@ -682,6 +872,7 @@ export async function createPiRunnerApp(
           await stream.stop();
           await projectionLine;
           if (closing) return;
+          await presentation?.nativeSettled();
           await observeSettlement(owner, receipt, observedAt);
           const settledReceipt = owner.metadata.receipts.find(
             (item) => item.requestId === receipt.requestId,
@@ -699,13 +890,7 @@ export async function createPiRunnerApp(
             }, context);
             await reload(owner);
           }
-          if (closing) {
-            const target = resolveSlackProgressTarget(receipt.request.correlationKey, {
-              messageTs: receipt.request.messageTs,
-              runnerBaseUrl: config.runnerBaseUrl,
-            });
-            if (target) await stopProgressRequest(target, receipt.requestId);
-          }
+          if (closing) await presentation?.stop();
           monitors.delete(receipt.requestId);
         }
       });
@@ -725,8 +910,10 @@ export async function createPiRunnerApp(
       if (existing && (record?.status === "done" || record?.status === "unanswered")) {
         if (owner.metadata.activeRequestId === receipt.requestId)
           await monitor(owner, receipt, existing);
-        else if (!receipt.observation || receipt.authorization !== "clear")
+        else if (!receipt.observation || receipt.authorization !== "clear") {
           await observeSettlement(owner, receipt);
+          await reconcileSettledPresentation(owner, receipt);
+        }
         return "started";
       }
       if (receipt.admission.state === "withdrawn") return "retired";
@@ -799,6 +986,16 @@ export async function createPiRunnerApp(
           if (receipt.modelSelection && !routing.supported(receipt.modelSelection).ok)
             throw new Error("Pi saved model pool unavailable");
         }
+        for (const receipt of owner.metadata.receipts) {
+          if (!receipt.publication) continue;
+          const native = await nativeRecord(owner, receipt.requestId);
+          if (
+            native?.type !== "input" ||
+            native.status !== "done" ||
+            native.answer !== receipt.publication.answerEntry
+          )
+            throw new Error("Pi publication answer binding invalid");
+        }
         const active = owner.metadata.receipts.find(
           (receipt) => receipt.requestId === owner.metadata.activeRequestId,
         );
@@ -820,6 +1017,12 @@ export async function createPiRunnerApp(
         for (const receipt of metadata.receipts) {
           const record = await tx.submissionByRequest(owner.conversation.id, receipt.requestId);
           if (record) receipt.admission = { state: "submitted" };
+          if (receipt.publication?.disposition.state === "pending") {
+            receipt.publication.disposition = { state: "uncertain" };
+            receipt.publication.chunks = receipt.publication.chunks.map((chunk) =>
+              chunk.state === "pending" ? { state: "uncertain" } : chunk,
+            );
+          }
         }
       }, context);
       await reload(owner);
@@ -840,6 +1043,13 @@ export async function createPiRunnerApp(
             if (!receipt.googleAuthSource) throw new Error("Pi recovery admission failed");
           }
         }
+    // A settled reusable conversation must explicitly leave native processing even after a crash.
+    for (const owner of owners.values()) {
+      const receipt = owner.metadata.receipts.at(-1);
+      if (receipt && !owner.metadata.activeRequestId) {
+        await reconcileSettledPresentation(owner, receipt);
+      }
+    }
     runtime.resume();
 
     const continuationPoller = startGoogleAuthContinuationCoordinator({
@@ -895,6 +1105,20 @@ export async function createPiRunnerApp(
         return;
       }
       const request = parsed.data;
+      const replyProof = request.slackReplyAdmission;
+      if (
+        replyProof &&
+        (replyProof.teamId !== config.slackTeamId ||
+          !request.triggerSlackId ||
+          !request.messageTs ||
+          request.triggerGithubLogin ||
+          !request.correlationKey ||
+          (request.correlationKey.startsWith("slack:thread:") &&
+            request.correlationKey !== `slack:thread:${replyProof.channel}/${replyProof.threadTs}`))
+      ) {
+        res.status(400).json({ error: "slack_reply_authority_invalid" });
+        return;
+      }
       if (!isAllowedDirectory(request.directory)) {
         res.status(400).json({ error: "directory_not_allowed" });
         return;
@@ -907,9 +1131,7 @@ export async function createPiRunnerApp(
           const duplicate = requests.get(requestId);
           if (duplicate) {
             await reload(duplicate);
-            const receipt = duplicate.metadata.receipts.find(
-              (item) => item.requestId === requestId,
-            );
+            let receipt = duplicate.metadata.receipts.find((item) => item.requestId === requestId);
             if (!receipt || receipt.fingerprint !== fingerprint)
               return { kind: "error", status: 409, error: "request_id_payload_mismatch" } as const;
             if (
@@ -918,7 +1140,20 @@ export async function createPiRunnerApp(
               !routing.supported(receipt.modelSelection).ok
             )
               return { kind: "error", status: 409, error: "pi_saved_model_unavailable" } as const;
-            if (!monitors.has(requestId)) {
+            const priorMonitor = monitors.get(requestId);
+            if (
+              !priorMonitor ||
+              (priorMonitor.terminal?.type === "done" && priorMonitor.terminal.authWait)
+            ) {
+              // A terminal frame precedes UI drain and active-authority release. Never replace its
+              // presentation or reclaim first publication until that request owner has finished.
+              if (priorMonitor?.terminal) {
+                await priorMonitor.completion;
+                await reload(duplicate);
+                receipt =
+                  duplicate.metadata.receipts.find((item) => item.requestId === requestId) ??
+                  receipt;
+              }
               if ((await executionStatus(duplicate, receipt)) === "accepted")
                 await startAccepted(duplicate, receipt);
               else if (
@@ -926,6 +1161,10 @@ export async function createPiRunnerApp(
                 (await executionStatus(duplicate, receipt)) === "completed"
               )
                 await observeSettlement(duplicate, receipt);
+              if ((await executionStatus(duplicate, receipt)) !== "accepted")
+                await reconcileSettledPresentation(duplicate, receipt);
+              if (priorMonitor?.terminal?.type === "done")
+                priorMonitor.terminal = await doneFrame(duplicate, receipt);
             }
             return { kind: "accepted", owner: duplicate, receipt, duplicate: true } as const;
           }
@@ -951,6 +1190,21 @@ export async function createPiRunnerApp(
                 item.metadata.correlationKey === correlationKey ||
                 item.metadata.anchorId === resolveAnchorForCorrelationKey(correlationKey),
             );
+          const replyAnchor = replyProof
+            ? resolveAnchorForCorrelationKey(
+                `slack:thread:${replyProof.channel}/${replyProof.threadTs}`,
+              )
+            : undefined;
+          const replyOwner = replyAnchor
+            ? [...owners.values()].find((item) => item.metadata.anchorId === replyAnchor)
+            : undefined;
+          if (owner && replyAnchor && owner.metadata.anchorId !== replyAnchor)
+            return {
+              kind: "error",
+              status: 409,
+              error: "slack_reply_conversation_mismatch",
+            } as const;
+          owner ??= replyOwner;
           if (owner && owner.metadata.directory !== request.directory)
             return { kind: "error", status: 409, error: "session_directory_mismatch" } as const;
           const resumed = owner !== undefined;
@@ -1010,7 +1264,12 @@ export async function createPiRunnerApp(
               await reconcileLogs(owner);
             }
           }
-          const { prompt: admittedPrompt, routingTask: _routingTask, ...authority } = request;
+          const {
+            prompt: admittedPrompt,
+            routingTask: _routingTask,
+            slackReplyAdmission,
+            ...authority
+          } = request;
           const receipt: PiAdmissionReceipt = {
             modelSelection: { ...selection.value, history: [...selection.value.history] },
             requestId,
@@ -1019,15 +1278,20 @@ export async function createPiRunnerApp(
             startedAt: Date.now(),
             resumed,
             request: authority,
+            delivery: slackReplyAdmission
+              ? { owner: "host", target: slackReplyAdmission }
+              : { owner: "tool" },
             ...(config.slackTeamId ? { slackTeamId: config.slackTeamId } : {}),
             admission: { state: "intent", prompt: admittedPrompt },
           };
           if (!owner) {
-            const anchorId = request.correlationKey
-              ? (resolveAnchorForCorrelationKey(request.correlationKey) ?? mintAnchor())
-              : mintAnchor();
+            const anchorId =
+              replyAnchor ??
+              (request.correlationKey
+                ? (resolveAnchorForCorrelationKey(request.correlationKey) ?? mintAnchor())
+                : mintAnchor());
             const metadata: ConversationMetadata = {
-              version: 2,
+              version: 3,
               anchorId,
               directory: request.directory,
               ...(request.correlationKey ? { correlationKey: request.correlationKey } : {}),
@@ -1203,10 +1467,17 @@ export async function createPiRunnerApp(
                 ? "Waiting for Google authorization · model turn finished, Google operation not completed"
                 : "Google authorization wait is no longer confirmed · model turn finished";
         }
+        const replyBinding = current ?? receipt;
+        const publicationSummary =
+          replyBinding.delivery.owner === "tool"
+            ? "Slack reply ownership: explicit tools"
+            : replyBinding.publication
+              ? `Slack answer publication: ${replyBinding.publication.disposition.state} · answer entry ${replyBinding.publication.answerEntry} · ${replyBinding.publication.chunks.filter((chunk) => chunk.state === "confirmed").length}/${replyBinding.publication.chunks.length} chunks confirmed`
+              : "Slack answer publication: no issued answer";
         res
           .type("html")
           .send(
-            `<!doctype html><html><head><meta charset="utf-8"><link rel="icon" type="image/svg+xml" href="/favicon-v4.svg"><link rel="manifest" href="/site.webmanifest"><title>Neo Pi trigger</title></head><body><h1>Neo Pi trigger</h1><p>${escapePiHtml(displayStatus)} · ${escapePiHtml(sessionId(owner))} · ${escapePiHtml(modelIdentity)}</p>${routingHistory}${body}${liveTools}<h3>Conversation usage</h3><pre>${escapePiHtml(usage)}</pre></body></html>`,
+            `<!doctype html><html><head><meta charset="utf-8"><link rel="icon" type="image/svg+xml" href="/favicon-v4.svg"><link rel="manifest" href="/site.webmanifest"><title>Neo Pi trigger</title></head><body><h1>Neo Pi trigger</h1><p>${escapePiHtml(displayStatus)} · ${escapePiHtml(sessionId(owner))} · ${escapePiHtml(modelIdentity)}</p><p>${escapePiHtml(publicationSummary)}</p>${routingHistory}${body}${liveTools}<h3>Conversation usage</h3><pre>${escapePiHtml(usage)}</pre></body></html>`,
           );
       } catch {
         res.status(503).send("Pi history unavailable");
@@ -1226,22 +1497,26 @@ export async function createPiRunnerApp(
         closing = true;
         await continuationPoller.close();
         await admissionLine;
+        // Drain completed publication and persist footer cleanup while SQLite is still open.
+        for (const owner of owners.values()) await owner.presentation?.stop();
+        await Promise.allSettled(
+          [...monitors.values()].filter((item) => item.terminal).map((item) => item.completion),
+        );
         await runtime.close(context); // Leaves work pending, unlike abort().
         await Promise.allSettled([...monitors.values()].map((item) => item.completion));
         for (const owner of owners.values()) {
           const receipt = owner.metadata.receipts.at(-1);
           if (!receipt) continue;
-          const target = resolveSlackProgressTarget(receipt.request.correlationKey, {
-            messageTs: receipt.request.messageTs,
-            runnerBaseUrl: config.runnerBaseUrl,
-          });
-          if (target) await stopProgressRequest(target, receipt.requestId);
+          await owner.presentation?.stop();
         }
         await ownerLock.release();
       },
     };
   } catch {
+    closing = true;
+    for (const owner of owners.values()) await owner.presentation?.stop();
     await harness?.close(context).catch(() => undefined);
+    await Promise.allSettled([...monitors.values()].map((item) => item.completion));
     await ownerLock.release();
     return { ok: false, error: "pi_startup_failed" };
   }

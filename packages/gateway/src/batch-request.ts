@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { PiTaskRoutingFields, SlackMessageTsSchema } from "@thor/common";
+import { PiTaskRoutingFields, SlackMessageTsSchema, SlackReplyAdmissionSchema } from "@thor/common";
 import type { QueuedEvent } from "./queue.js";
 import type { RunnerTriggerOptions } from "./service.js";
 
@@ -14,6 +14,7 @@ const batchRequestPayloadSchema = z
     directory: z.string(),
     triggerSlackId: z.string().optional(),
     messageTs: SlackMessageTsSchema.optional(),
+    slackReplyAdmission: SlackReplyAdmissionSchema.optional(),
     triggerGithubLogin: z.string().optional(),
     interrupt: z.boolean().optional(),
   })

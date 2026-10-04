@@ -274,6 +274,7 @@ export function startGoogleAuthContinuationCoordinator(options: {
           startedAt: options.now(),
           resumed: true,
           request: original.request,
+          delivery: original.delivery,
           admission: { state: "intent", prompt: request.prompt },
           slackTeamId: record.slackTeamId,
           googleAuthSource: { ...record, originalRequestId: original.requestId },

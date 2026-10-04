@@ -8,6 +8,7 @@ import {
   PiModelSelectionSchema,
   PiModelProfileSchema,
   PiThinkingLevelSchema,
+  SlackReplyAdmissionSchema,
 } from "@thor/common";
 
 const triggerFieldsSchema = z.object({
@@ -23,6 +24,7 @@ const triggerFieldsSchema = z.object({
   sessionId: z.string().min(1).optional(),
   triggerSlackId: z.string().trim().min(1).optional(),
   messageTs: SlackMessageTsSchema.optional(),
+  slackReplyAdmission: SlackReplyAdmissionSchema.optional(),
   triggerGithubLogin: z.string().trim().min(1).optional(),
   interrupt: z.boolean().default(false),
   directory: z.string().min(1),
@@ -80,7 +82,10 @@ const legacyReceiptSchema = z
     triggerId: z.string().regex(UUID_V7_RE),
     startedAt: z.number(),
     resumed: z.boolean(),
-    request: piTriggerRequestSchema.strict(),
+    request: triggerFieldsSchema
+      .omit({ slackReplyAdmission: true })
+      .strict()
+      .refine(hasExclusivePiModelOverride),
     slackTeamId: z.string().optional(),
     googleAuthWaiting: z.boolean().optional(),
     googleAuthSource: GoogleAuthContinuationSchema.safeExtend({
@@ -112,7 +117,7 @@ const legacyMetadataSchema = z.strictObject({
   activeRequestId: z.string().optional(),
   receipts: z.array(legacyReceiptSchema.superRefine(refineEscalationEvidence)),
 });
-const receiptSchema = legacyReceiptSchema
+const version2ReceiptSchema = legacyReceiptSchema
   .omit({
     status: true,
     googleAuthWaiting: true,
@@ -120,7 +125,7 @@ const receiptSchema = legacyReceiptSchema
   })
   .safeExtend({
     request: triggerFieldsSchema
-      .omit({ prompt: true, routingTask: true })
+      .omit({ prompt: true, routingTask: true, slackReplyAdmission: true })
       .strict()
       .refine(hasExclusivePiModelOverride),
     admission: z.discriminatedUnion("state", [
@@ -139,13 +144,66 @@ const receiptSchema = legacyReceiptSchema
   })
   .strict()
   .superRefine(refineEscalationEvidence);
-/** Admission intent retains input only until native submit; authorization is separate from execution. */
+const deliveryPolicySchema = z.discriminatedUnion("owner", [
+  z.strictObject({ owner: z.literal("tool") }),
+  z.strictObject({ owner: z.literal("host"), target: SlackReplyAdmissionSchema }),
+]);
+const dispositionSchema = z.discriminatedUnion("state", [
+  z.strictObject({ state: z.literal("pending") }),
+  z.strictObject({ state: z.literal("confirmed"), ts: SlackMessageTsSchema }),
+  z.strictObject({ state: z.literal("uncertain") }),
+  z.strictObject({ state: z.literal("rejected") }),
+]);
+const publicationSchema = z
+  .strictObject({
+    answerEntry: z.number().int().positive(),
+    target: SlackReplyAdmissionSchema,
+    disposition: dispositionSchema,
+    chunks: z.array(dispositionSchema).max(64),
+  })
+  .superRefine((publication, ctx) => {
+    const last = publication.chunks.at(-1);
+    if (
+      (publication.disposition.state === "confirmed" &&
+        (!publication.chunks.length ||
+          publication.chunks.some((chunk) => chunk.state !== "confirmed") ||
+          last?.state !== "confirmed" ||
+          last.ts !== publication.disposition.ts)) ||
+      (publication.disposition.state === "rejected" &&
+        publication.chunks.some((chunk) => chunk.state === "confirmed"))
+    )
+      ctx.addIssue({ code: "custom", message: "Pi publication disposition invalid" });
+  });
+const receiptSchema = version2ReceiptSchema
+  .safeExtend({
+    delivery: deliveryPolicySchema,
+    publication: publicationSchema.optional(),
+    slackFooterTs: z.string().min(1).optional(),
+  })
+  .superRefine((receipt, ctx) => {
+    const target = receipt.delivery.owner === "host" ? receipt.delivery.target : undefined;
+    if (
+      (target &&
+        (!receipt.request.triggerSlackId ||
+          !receipt.request.messageTs ||
+          receipt.request.triggerGithubLogin ||
+          target.teamId !== receipt.slackTeamId ||
+          !receipt.request.correlationKey ||
+          (receipt.request.correlationKey.startsWith("slack:thread:") &&
+            receipt.request.correlationKey !==
+              `slack:thread:${target.channel}/${target.threadTs}`))) ||
+      (receipt.publication &&
+        (!target || JSON.stringify(target) !== JSON.stringify(receipt.publication.target)))
+    )
+      ctx.addIssue({ code: "custom", message: "Pi Slack delivery binding invalid" });
+  });
+/** Admission and publication evidence; native state remains the execution authority. */
 export type PiAdmissionReceipt = z.infer<typeof receiptSchema>;
 
 /** Versioned Neo metadata rejects hybrid lifecycle authority instead of dropping malformed fields. */
 export const piConversationMetadataSchema = z
   .strictObject({
-    version: z.literal(2),
+    version: z.literal(3),
     anchorId: z.string().regex(UUID_V7_RE),
     directory: z.string(),
     correlationKey: z.string().optional(),
@@ -164,23 +222,41 @@ export const piConversationMetadataSchema = z
 /** Persistent identity and admissions; no credential or provider error enters this document. */
 export const piConversationMetadataDoc = defineDoc<z.infer<typeof piConversationMetadataSchema>>({
   kind: "thor.pi.conversation",
-  version: 2,
+  version: 3,
   scope: "conversation",
   history: "latest",
   fork: "initial",
-  initial: () => ({ version: 2, anchorId: "", directory: "", receipts: [] }),
+  initial: () => ({ version: 3, anchorId: "", directory: "", receipts: [] }),
   migrate: (value, fromVersion) => {
+    if (fromVersion === 2) {
+      const legacy = z
+        .strictObject({
+          version: z.literal(2),
+          anchorId: z.string().regex(UUID_V7_RE),
+          directory: z.string(),
+          correlationKey: z.string().optional(),
+          activeRequestId: z.string().optional(),
+          receipts: z.array(version2ReceiptSchema),
+        })
+        .parse(value);
+      return piConversationMetadataSchema.parse({
+        ...legacy,
+        version: 3,
+        receipts: legacy.receipts.map((receipt) => ({ ...receipt, delivery: { owner: "tool" } })),
+      });
+    }
     if (fromVersion !== 1 || "version" in value)
       throw new Error("Pi metadata migration version invalid");
     const legacy = legacyMetadataSchema.parse(value);
     return piConversationMetadataSchema.parse({
       ...legacy,
-      version: 2,
+      version: 3,
       receipts: legacy.receipts.map(({ status, googleAuthWaiting, request, ...receipt }) => {
         const { prompt, routingTask: _routingTask, ...authority } = request;
         return {
           ...receipt,
           request: authority,
+          delivery: { owner: "tool" },
           // Legacy terminal fields are not execution evidence, including aborted. Startup must validate
           // any live native input before committing this provisional pre-submit withdrawal.
           admission:
