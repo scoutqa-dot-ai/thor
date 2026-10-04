@@ -228,6 +228,11 @@ rollback.
 
 Use `docker compose -f docker-compose.yml -f docker-compose.pi.yml up --build -d --remove-orphans` after configuring the stack. See [Pi testing, persistence and rollback](docs/pi-runtime.md); do not run two stacks on the same ports/webhook stream. The override selects Pi and routes the authenticated home page to the Neo sessions dashboard, not an interactive OpenCode UI.
 
+Pi startup loads its native runtime and a read-only historical OpenCode viewer,
+not the live OpenCode execution client/event bus. Existing `/runner/v/` links
+remain available behind the same ingress SSO boundary. Default/explicit OpenCode
+startup retains the legacy execution path for rollback.
+
 | Variable                   | Default                     | Service             | Purpose                                                     |
 | -------------------------- | --------------------------- | ------------------- | ----------------------------------------------------------- |
 | `THOR_RUNTIME`             | `opencode`                  | `runner`, `ingress` | Override selects `pi`; default deployment stays OpenCode    |

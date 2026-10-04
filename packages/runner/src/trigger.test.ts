@@ -3,11 +3,12 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Event, TextPart } from "@opencode-ai/sdk";
+import { createLegacyRunnerViewer } from "./legacy-runner-viewer.js";
 import {
   createRunnerApp,
   resetModelContextLimitCacheForTests,
   type RunnerAppOptions,
-} from "./index.js";
+} from "./legacy-runner.js";
 import {
   appendAlias,
   appendCorrelationAliasForAnchor,
@@ -406,8 +407,8 @@ function setupBusySession(slackThreadTs: string): string {
 }
 
 describe("runner /trigger orchestration", () => {
-  it("serves the trigger viewer with 404 and rendered status", async () => {
-    const h = createHarness();
+  it("serves historical routes read-only without constructing legacy execution", async () => {
+    const h = { app: createLegacyRunnerViewer() };
     const triggerId = "00000000-0000-7000-8000-000000000301";
     const anchorId = mintAnchor();
     bindSessionToAnchor("viewer-session", anchorId);
@@ -437,6 +438,21 @@ describe("runner /trigger orchestration", () => {
       expect(html).toContain("direct trigger");
       // No /raw escape hatch — the single-endpoint contract.
       expect(html).not.toContain("/raw");
+      const before = readFileSync(sessionLogPath("viewer-session"), "utf8");
+      for (const path of [
+        "/trigger",
+        "/internal/e2e/trigger-context",
+        `/runner/v/${anchorId}/${triggerId}`,
+      ]) {
+        const mutation = await fetch(`${url}${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+        expect(mutation.status).toBe(404);
+      }
+      expect((await fetch(`${url}/health`)).status).toBe(404);
+      expect(readFileSync(sessionLogPath("viewer-session"), "utf8")).toBe(before);
     });
   });
 

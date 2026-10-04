@@ -13,12 +13,13 @@ import {
   appendSessionEvent,
   findActiveTrigger,
   findTriggerActor,
+  findActiveSlackTriggerActor,
   mintAnchor,
   mintTriggerId,
   readTriggerSlice,
   resolveAlias,
 } from "@thor/common";
-import { createRunnerApp } from "./index.js";
+import { createLegacyRunnerViewer } from "./legacy-runner-viewer.js";
 import sharp from "sharp";
 import { truncate } from "node:fs/promises";
 import { crc32 } from "node:zlib";
@@ -957,7 +958,12 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
     );
   });
   it("graceful close leaves accepted work pending and startup restores its receipt before resuming", async () => {
-    const body = { prompt: "hold-run", requestId: "pending", correlationKey: "cron:recovery" };
+    const body = {
+      prompt: "hold-run",
+      requestId: "pending",
+      correlationKey: "slack:thread:C_RECOVER/1710000000.001",
+      triggerSlackId: "U_RECOVER",
+    };
     const accepted = await (await trigger(body)).json();
     await new Promise<void>((resolve) => {
       const timer = setInterval(() => {
@@ -972,12 +978,16 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
     expect(readTriggerSlice(accepted.sessionId, accepted.triggerId)).toMatchObject({
       status: "in_flight",
     });
+    // Reconstruct missing shared authority from SQLite, before the first recovered dispatch.
+    await rm(join(directory, "worklog"), { recursive: true, force: true });
+    const recoveredActors: ReturnType<typeof findActiveSlackTriggerActor>[] = [];
     // The fixture now answers the recovered request instead of holding it.
     modelServer.removeAllListeners("request");
     modelServer.on("request", async (req, res) => {
       for await (const _chunk of req) {
         /* Drain request. */
       }
+      recoveredActors.push(findActiveSlackTriggerActor(accepted.sessionId));
       respond(res, { text: "recovered" });
     });
     await openRunner();
@@ -987,48 +997,177 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
       status: "completed",
       response: "recovered",
     });
+    expect(recoveredActors).toEqual([
+      {
+        ok: true,
+        anchorId: accepted.anchorId,
+        sessionId: accepted.sessionId,
+        triggerId: accepted.triggerId,
+        slackUserId: "U_RECOVER",
+      },
+    ]);
     expect(readTriggerSlice(accepted.sessionId, accepted.triggerId)).toMatchObject({
       status: "completed",
     });
   });
   it("keeps legacy viewer history read-only and never forwards Pi session IDs to OpenCode", async () => {
-    let openCodeRequests = 0;
-    const openCode = createServer((_req, res) => {
-      openCodeRequests++;
-      res.writeHead(500);
-      res.end();
+    await closeServer(runnerServer);
+    await runner.close();
+    await openRunner({ legacyViewerApp: createLegacyRunnerViewer() });
+    const anchorId = mintAnchor();
+    const triggerId = mintTriggerId();
+    appendAlias({ aliasType: "opencode.session", aliasValue: "ses_legacy_history", anchorId });
+    appendSessionEvent("ses_legacy_history", { type: "trigger_start", triggerId });
+    appendSessionEvent("ses_legacy_history", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
     });
-    const url = await listen(openCode);
-    try {
-      await closeServer(runnerServer);
-      await runner.close();
-      await openRunner({ legacyViewerApp: createRunnerApp({ opencodeUrl: url }) });
-      const anchorId = mintAnchor();
-      const triggerId = mintTriggerId();
-      appendAlias({ aliasType: "opencode.session", aliasValue: "ses_legacy_history", anchorId });
-      appendSessionEvent("ses_legacy_history", { type: "trigger_start", triggerId });
-      appendSessionEvent("ses_legacy_history", {
-        type: "trigger_end",
-        triggerId,
-        status: "completed",
-      });
-      const legacyViewer = await fetch(`${runnerUrl}/runner/v/${anchorId}/${triggerId}`);
-      expect(legacyViewer.status).toBe(200);
-      expect(await legacyViewer.text()).toContain("ses_legacy_history");
-      expect(await (await fetch(`${runnerUrl}/health`)).json()).toMatchObject({
-        runtime: "pi",
-        status: "ok",
-      });
-      await stream({ prompt: "Pi only", requestId: "pi-only" });
-      expect(
-        (await trigger({ prompt: "must not resume legacy", sessionId: "ses_legacy_history" }))
-          .status,
-      ).toBe(404);
-      expect(openCodeRequests).toBe(0);
-    } finally {
-      await closeServer(openCode);
-    }
+    const legacyViewer = await fetch(`${runnerUrl}/runner/v/${anchorId}/${triggerId}`);
+    expect(legacyViewer.status).toBe(200);
+    expect(await legacyViewer.text()).toContain("ses_legacy_history");
+    expect(await (await fetch(`${runnerUrl}/health`)).json()).toMatchObject({
+      runtime: "pi",
+      status: "ok",
+    });
+    await stream({ prompt: "Pi only", requestId: "pi-only" });
+    expect(
+      (await trigger({ prompt: "must not resume legacy", sessionId: "ses_legacy_history" })).status,
+    ).toBe(404);
   });
+
+  it("starts the production Pi entrypoint without loading OpenCode execution and preserves viewer/auth routes", async () => {
+    await closeServer(runnerServer);
+    await runner.close();
+    const portReservation = createServer();
+    const childUrl = await listen(portReservation);
+    const port = new URL(childUrl).port;
+    await closeServer(portReservation);
+    const guardPath = join(directory, "deny-legacy-imports.mjs");
+    // This guard rejects execution-module loading rather than replacing any module implementation.
+    await writeFile(
+      guardPath,
+      `import { registerHooks } from 'node:module';
+      registerHooks({ resolve(specifier, context, next) {
+        if (specifier === '@opencode-ai/sdk' || /\\/(legacy-runner|event-bus)\\.(js|ts)$/.test(specifier))
+          throw new Error('Pi composition loaded legacy execution: ' + specifier);
+        return next(specifier, context);
+      }});`,
+    );
+    const anchorId = mintAnchor();
+    const triggerId = mintTriggerId();
+    appendAlias({ aliasType: "opencode.session", aliasValue: "ses_entrypoint_history", anchorId });
+    appendSessionEvent("ses_entrypoint_history", { type: "trigger_start", triggerId });
+    appendSessionEvent("ses_entrypoint_history", {
+      type: "trigger_end",
+      triggerId,
+      status: "completed",
+    });
+    const tsxLoader = new URL("../node_modules/tsx/dist/loader.mjs", import.meta.url).href;
+    const entrypoint = new URL("./index.ts", import.meta.url);
+    const child = spawn(
+      process.execPath,
+      ["--import", tsxLoader, "--import", guardPath, entrypoint.pathname],
+      {
+        cwd: process.cwd(),
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          THOR_RUNTIME: "pi",
+          PORT: port,
+          THOR_INTERNAL_SECRET: config.internalSecret,
+          PI_STORAGE_PATH: config.storagePath,
+          PI_EXECUTOR_URL: config.executorUrl,
+          PI_MODEL_BASE_URL: config.modelBaseUrl,
+          PI_MODEL_ID: config.modelId,
+          PI_MODEL_API_KEY: config.modelApiKey,
+          PI_MODEL_CONTEXT_WINDOW: String(config.modelContextWindow),
+          PI_SKILLS_DIR: config.skillsDir,
+          PI_MEMORY_DIR: config.memoryDir,
+          SLACK_BOT_TOKEN: "",
+          SLACK_TEAM_ID: "",
+          RUNNER_BASE_URL: "",
+          OPENCODE_URL: "http://127.0.0.1:1",
+          THOR_E2E_TEST_HELPERS: "1",
+        },
+      },
+    );
+    let output = "";
+    child.stdout.on("data", (chunk: Buffer) => {
+      output += chunk.toString();
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      output += chunk.toString();
+    });
+    const exited = new Promise<number | null>((resolve) =>
+      child.once("exit", (code) => resolve(code)),
+    );
+    try {
+      await vi.waitFor(
+        async () => {
+          if (child.exitCode !== null) throw new Error(`Pi entrypoint exited: ${output}`);
+          expect((await fetch(`${childUrl}/health`)).status).toBe(200);
+        },
+        { timeout: 8000, interval: 25 },
+      );
+      expect(await (await fetch(`${childUrl}/health`)).json()).toMatchObject({ runtime: "pi" });
+      expect((await fetch(`${childUrl}/runner/v/${anchorId}`)).status).toBe(200);
+      const historical = await fetch(`${childUrl}/runner/v/${anchorId}/${triggerId}`);
+      expect(historical.status).toBe(200);
+      expect(await historical.text()).toContain("ses_entrypoint_history");
+      const unauthorized = await fetch(`${childUrl}/trigger`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      expect(unauthorized.status).toBe(401);
+      expect(
+        (await fetch(`${childUrl}/internal/e2e/trigger-context`, { method: "POST" })).status,
+      ).toBe(404);
+      const admitted = await fetch(`${childUrl}/trigger`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-thor-internal-secret": config.internalSecret,
+        },
+        body: JSON.stringify({
+          directory: triggerDirectory,
+          prompt: "entrypoint task",
+          requestId: "entrypoint",
+          stream: true,
+        }),
+      });
+      expect(admitted.status).toBe(200);
+      const frames = (await admitted.text())
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(frames.at(-1)).toMatchObject({ type: "done", status: "completed" });
+      const duplicate = await fetch(`${childUrl}/trigger`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-thor-internal-secret": config.internalSecret,
+        },
+        body: JSON.stringify({
+          directory: triggerDirectory,
+          prompt: "entrypoint task",
+          requestId: "entrypoint",
+        }),
+      });
+      const receipt = await duplicate.json();
+      expect(receipt.duplicate).toBe(true);
+      const native = await fetch(`${childUrl}/runner/v/${receipt.anchorId}/${receipt.triggerId}`);
+      expect(native.status).toBe(200);
+      expect(await native.text()).toContain("fixture");
+      child.kill("SIGTERM");
+      expect(await exited).toBe(0);
+    } finally {
+      if (child.exitCode === null) child.kill("SIGKILL");
+      await exited;
+      await openRunner(); // The real startup/shutdown path must release SQLite ownership.
+    }
+  }, 15000);
 
   it("releases the single-owner lock after SIGKILL and resumes an accepted input without duplicating it", async () => {
     await closeServer(runnerServer);

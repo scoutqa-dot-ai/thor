@@ -1,6 +1,6 @@
 # Neo — Configurable MCP catalog and native Durable tools
 
-**Status:** Proposed; no runtime implementation or deployment authorized.
+**Status:** Implementation requested; not started. Work begins with Phase 1 of the companion Slack refactor. Deployment remains a separate approval gate.
 **Reviewed:** 2026-10-04, Neo `33ada49`; released Pi Durable/MCP `v1.0.2` (`cd32f7725fdbddbaecdff5b1e68491563394e0ca`).
 **Companion:** [Pi Durable Slack simplification](2026100401_pi-durable-slack-simplification.md). This plan adds operator MCP onboarding and agent discovery; it does not change the single-owner admission/security architecture.
 

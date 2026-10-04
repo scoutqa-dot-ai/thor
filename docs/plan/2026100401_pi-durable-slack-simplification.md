@@ -1,6 +1,6 @@
 # Neo — Pi Durable-native Slack simplification
 
-**Status:** Proposed; implementation has not started. Approval of this architecture is not approval to deploy or retire rollback support.
+**Status:** In progress; Phase 1 implemented and locally verified. Phases 2–3 and the MCP companion remain unimplemented. Deployment, cutover and rollback retirement are not authorized by implementation approval.
 **Reviewed:** 2026-10-04, Neo `f8ce4b6`, released Pi `v1.0.2` (`cd32f7725fdbddbaecdff5b1e68491563394e0ca`).
 
 ## Goal and recommendation
@@ -232,6 +232,27 @@ If approved, coordinate exact 1.0.2 Pi Durable/Pi AI/Chord pins in runner and ex
 
 **Optional later phase:** typed Google child Task only after its separate gates. Native heterogeneous queueing and gateway merger remain deferred; neither blocks the core simplification.
 
+## Implementation record
+
+### Phase 1 — 2026-10-04
+
+Implementation begins with the handoff's next phase, starting with composition separation. `index.ts` now owns runtime selection and startup/shutdown only. It dynamically imports `legacy-runner.ts` only for default/explicit OpenCode execution. Pi constructs `createLegacyRunnerViewer()` instead of `createRunnerApp()`; the historical owner installs only the two existing GET viewer routes, with no JSON parser, trigger/helper/health route, live SDK, event bus, config loader or execution progress transport.
+
+Historical rendering moved unchanged, including aliases, owner/current-session distinction, escaped content, omitted markers, unknown events and recursive subagent logs. Shared raw-field/token parsing lives in `opencode-event-fields.ts`, so legacy context progress does not import the historical renderer for token accounting. No new service/adapter, native state migration, reply-policy change, dependency, environment variable, mount or ingress change was introduced. Default `THOR_RUNTIME=opencode` and explicit rollback execution remain intact.
+
+Validation on Node 24:
+
+- All eight workspace typechecks passed; runner split build passed.
+- Full unit suite: **68 files / 1,021 tests passed**. New entrypoint checks exercise unset/explicit OpenCode, Pi with execution-module import rejection, historical/native viewer URLs, trigger authentication, absence of legacy helper routes and graceful storage-owner release.
+- Historical viewer is exercised directly without execution-resource construction; POST/health routes return 404 and reads leave session records unchanged. Existing viewer cases retain unknown-event, omitted-marker, patch, UTF-8 and recursive-subagent coverage.
+- Existing SQLite recovery fixture now deletes shared worklog/aliases before reopening and observes the correct original Slack actor at the first recovered model dispatch. Admission, interrupt/drain, continuation and resume ordering remain unchanged in this phase; strengthening request-scoped ownership is Phase 2 work.
+- Three additional isolated checks reran the production-entrypoint fixtures against compiled `dist/index.js` rather than tsx source, including the SDK import rejection guard. Temporary validation copies were removed afterward.
+- `scripts/test-pi-e2e.sh` passed with real isolated containers: native tool execution, wrapper identity, Slack SDK presentation, signed gateway intake, SSO viewer/admin routes, model routing, storage/credential isolation and SIGKILL recovery. Its test containers/volumes were cleaned up.
+
+Independent source verification found no extraction regressions. Its bundled-entrypoint gap was closed by the compiled checks. Proposed extra per-call restoration edits were not retained: this phase preserves the existing admission ordering instead of introducing unverified recovery-policy changes. No live provider/Slack/OAuth/Ubuntu acceptance, Core E2E against real integrations, push, GitHub workflow or PR was performed. These results validate Phase 1 only, not the quiet-footer implementation or MCP catalog.
+
+**Next:** Phase 2, native execution truth and one request owner. Keep the previously identified watch/terminal-presentation and unconfirmed authorization risks in that phase; do not activate host replies or native Slack status before its gates pass.
+
 ## Decision log (proposed)
 
 | Decision                                                                       | Reason / approval boundary                                                                                                                                     |
@@ -246,6 +267,8 @@ If approved, coordinate exact 1.0.2 Pi Durable/Pi AI/Chord pins in runner and ex
 | Retain current Google coordinator in core cut                                  | It implements external grant-bound automatic continuation already verified by existing fixtures. Native Task redesign is optional, not magic deletion.         |
 | Routing stays optional operator policy, not a second provider                  | Preserve shipped overrides/escalation and saved choices; existing `autoSelect`/`allowEscalation` controls suffice. No speculative capability/plugin framework. |
 | Separate historical OpenCode viewing from execution retirement                 | Old links/data must survive even after live legacy runtime is removed; retirement is not assumed authorized.                                                   |
+| Phase 1 loads legacy execution only at the runtime selector                    | A historical GET cannot construct the live SDK/event bus; preserve rollback explicitly without a runtime abstraction.                                          |
+| Share only raw OpenCode field/token interpretation across legacy owners        | Existing execution context progress and historical cost rendering use the same counts; neither owner depends on the other for parsing.                         |
 | No LOC/test-count target                                                       | Demonstrate deleted responsibilities, fewer authorities and stable recovery/permission contracts, not cosmetic shrinking.                                      |
 
 ## Risks, non-goals and deployment boundaries
@@ -261,7 +284,7 @@ If approved, coordinate exact 1.0.2 Pi Durable/Pi AI/Chord pins in runner and ex
 
 ## Review evidence and source references
 
-This change is **a source-backed plan only**: no runtime/dependency/config changes, target execution, installs, live account calls or new tests. The prior 1,018-case results belong to earlier commits; they are not new validation of this architecture or 1.0.2.
+The original proposal was **source-backed planning only**: no runtime/dependency/config changes, target execution, installs, live account calls or new tests at that point. The prior 1,018-case results belong to earlier commits; they are not validation of this architecture or 1.0.2. Subsequent Phase 1 implementation evidence is recorded above.
 
 Four independent source reviews covered native capabilities, runner ownership, admission/broker boundaries and the chat reference. A subsequent critique prompted explicit release-optional sequencing, minimal publication state, old/new reply policy/privacy, unconfirmed OAuth holds, startup authentication/order and runtime-default gates. Follow-up plan verification passed those amendments. This is planning verification only; implementation exit criteria remain future work.
 
