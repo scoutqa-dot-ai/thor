@@ -503,7 +503,7 @@ class ProgressSession {
     if (status === "waiting") {
       // Waiting is visible even for a short request, with no moving mark.
       const delivered = await this.sendText(
-        "⏳ Neo waiting for Google sign-in — the task will automatically continue.",
+        "Neo waiting for Google sign-in — the task will automatically continue.",
         "terminal",
       );
       if (!delivered) await this.removeMessage();
@@ -553,7 +553,7 @@ class ProgressSession {
       working: "Neo working",
       responding: "Neo responding",
     }[this.activity];
-    const header = `⏳ ${label}... ${this.toolCallCount} tool calls | ${formatDuration(Date.now() - this.startTime)} elapsed`;
+    const header = `${label}... ${this.toolCallCount} tool calls | ${formatDuration(Date.now() - this.startTime)} elapsed`;
     const lines = [
       tools.length && !hasExtras ? `${header} | latest: ${formatToolGroups(tools)}` : header,
     ];

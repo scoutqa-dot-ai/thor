@@ -1108,7 +1108,7 @@ describe("scoped Neo activity lifecycle", () => {
     const deps = mockSlackDeps();
     const target = await begin(deps);
     await handleProgressEvent(target, done({ authWait: "google" }), transport);
-    expect(chat(deps).postMessage.mock.calls[0][0].text).toContain("waiting for Google sign-in");
+    expect(chat(deps).postMessage.mock.calls[0][0].text).toMatch(/^Neo waiting for Google sign-in/);
     expect(JSON.stringify(chat(deps).postMessage.mock.calls)).toContain("neo-ai-still-v1.png");
     await vi.advanceTimersByTimeAsync(120000);
     expect(chat(deps).postMessage).toHaveBeenCalledOnce();

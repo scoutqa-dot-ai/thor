@@ -1316,7 +1316,7 @@ describe("native Pi activity through the real Slack SDK", () => {
       await vi.waitFor(() => expect(posts(fixture)).toHaveLength(1), { timeout: 3000 });
       const footer = posts(fixture)[0].form;
       expect(footer.get("thread_ts")).toBe("1710000000.001");
-      expect(footer.get("text")).toContain("Neo thinking... 0 tool calls");
+      expect(footer.get("text")).toMatch(/^Neo thinking\.\.\. 0 tool calls/);
       expect(JSON.parse(footer.get("blocks") ?? "[]")[0].elements[0].image_url).toBe(
         "https://neo.example.test/neo-thinking-v1.gif",
       );

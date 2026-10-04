@@ -338,3 +338,18 @@ claimed as newly rerun in this pruning phase. No GitHub CI, push, production or
 live account check. Review/exit criteria passed; ready for one test-only phase
 commit. The remaining count is not a correctness target or a claim that tests
 are required to run the product.
+
+### Footer icon simplification
+
+At the user's request, remove the redundant hourglass prefix from the shared
+thinking/working/responding header and Google sign-in wait text. The DS animated
+or still mark remains the sole activity icon; plain-text labels still work when
+images are unavailable. Completion/failure markers and reactions are unchanged.
+Strengthen existing native Slack SDK/footer and auth-wait assertions to verify
+the label starts directly with Neo; add no new test cases. Verify through the
+existing common/native suites, workspace typecheck and build before committing.
+
+Existing common/native checks passed (120 cases, unchanged test count), as did
+all workspace typechecks/builds and diff checks. Logs:
+`/tmp/neo-hourglass-{tests,types,build}.log`. No asset, auth, model or deployment
+configuration changes; local commit only, no push or production verification.
