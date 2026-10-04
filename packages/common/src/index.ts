@@ -85,6 +85,8 @@ export {
   readTriggerSlice,
   findActiveTrigger,
   findActiveSlackTriggerActor,
+  findNativeMcpProjection,
+  hasNativeMcpCallProjection,
   findTriggerActor,
   findTriggerCorrelationKey,
   findSlackTriggerCorrelationKey,
@@ -266,3 +268,5 @@ export type {
   PiModelSelection,
 } from "./pi-model-routing.js";
 export { SlackReplyAdmissionSchema, type SlackReplyAdmission } from "./slack-reply-policy.js";
+
+export * from "./mcp-broker.js";

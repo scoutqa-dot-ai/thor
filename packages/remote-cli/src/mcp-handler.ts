@@ -1,16 +1,24 @@
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import {
-  appendCorrelationAlias,
-  approvalToolRequiresDisclaimer,
+  McpCallInputSchema,
   buildApprovalSlackMessage,
   validateDisclaimerCompatibleArgs,
   buildThorDisclaimer,
-  computeSlackCorrelationKey,
   createLogger,
   ExecResultSchema,
   extractRepoFromCwd,
   findAnchorContext,
+  findNativeMcpProjection,
+  hasNativeMcpCallProjection,
+  type McpNativeAuthority,
+  type McpNativeOperation,
+  type McpSearchInput,
+  type McpCallInput,
+  type McpBrokerFailure,
+  type McpDiscoveryOutcome,
+  type McpDescribeOutcome,
   BrowserOpenAuthenticatedRequestArgsSchema,
   FindLoginItemsArgsSchema,
   getProxyConfig,
@@ -34,16 +42,19 @@ import {
 import type { ApprovalRequiredEventPayload } from "@thor/common";
 import { ApprovalStore, type ApprovalAction } from "./approval-store.js";
 import {
-  classifyTool,
-  PolicyDriftError,
-  PolicyOverlapError,
-  validatePolicy,
-} from "./policy-mcp.js";
-import { unwrapResult } from "./unwrap-result.js";
+  buildMcpInventory,
+  mcpPolicyFingerprint,
+  MCP_DISCOVERY_MAX_BYTES,
+  type McpInventoryTool,
+} from "./mcp-tool-inventory.js";
+import {
+  mcpCallToExec,
+  projectMcpCallResult,
+  type McpServiceCallOutcome,
+} from "./mcp-call-result.js";
 import {
   connectUpstream,
   resolveOnePasswordBrowserUpstream,
-  upstreamTarget,
   type UpstreamConfig,
   type UpstreamConnection,
 } from "./upstream.js";
@@ -52,25 +63,12 @@ import { postSlackMessageApi } from "./slack-post-message.js";
 
 const log = createLogger("mcp");
 const DEFAULT_APPROVALS_DIR = "/workspace/data/approvals";
-const MAX_RECONNECT_ATTEMPTS = 5;
-const BASE_DELAY_MS = 1000;
-const MAX_DELAY_MS = 30_000;
 const CREDENTIAL_BROWSER_APPROVAL_CONSUMED_RESULT = {
   stdout: "",
   stderr:
     "Credential-browser approval was consumed before dispatch; the outcome is unknown and must not be retried.\n",
   exitCode: 1,
 } as const;
-const CREDENTIAL_BROWSER_TOOLS = new Set([
-  "find_login_items",
-  "browser_open_authenticated",
-  "browser_snapshot",
-  "browser_click",
-  "browser_type",
-  "browser_navigate",
-  "browser_close",
-  "_resolve_login_plan",
-]);
 const LoginPlanApprovalResultSchema = z
   .object({
     login_plan_id: z.uuid(),
@@ -86,8 +84,15 @@ const LoginPlanApprovalResultSchema = z
   })
   .strict();
 
+function isBuiltinDisclaimerTool(server: string, tool: string): boolean {
+  return (
+    (server === "atlassian" && ["createJiraIssue", "addCommentToJiraIssue"].includes(tool)) ||
+    (server === "posthog" && tool === "create-feature-flag")
+  );
+}
+
 function buildUpstreamArgs(action: ApprovalAction): Record<string, unknown> {
-  if (!approvalToolRequiresDisclaimer(action.tool)) return action.args;
+  if (!isBuiltinDisclaimerTool(action.upstream, action.tool)) return action.args;
   const trigger = action.origin?.trigger;
   if (!trigger) {
     throw new Error(
@@ -122,18 +127,12 @@ function parseJiraAccountLookupStdout(stdout: string): JiraLookupResult {
   try {
     parsed = JSON.parse(stdout);
   } catch {
-    logWarn(log, "jira_account_lookup_parse_failed", {
-      reason: "invalid_json",
-      raw: stdout,
-    });
+    logWarn(log, "jira_account_lookup_parse_failed", { reason: "invalid_json" });
     return { ok: false, reason: "lookup_parse_failed" };
   }
   const result = JiraAccountLookupResultSchema.safeParse(parsed);
   if (!result.success) {
-    logWarn(log, "jira_account_lookup_parse_failed", {
-      reason: "schema_mismatch",
-      raw: parsed,
-    });
+    logWarn(log, "jira_account_lookup_parse_failed", { reason: "schema_mismatch" });
     return { ok: false, reason: "lookup_parse_failed" };
   }
   const ids = [...new Set(result.data.data.users.users.map((user) => user.accountId))];
@@ -146,6 +145,9 @@ interface ProxyInstance {
   name: string;
   upstream: UpstreamConnection;
   approvalStore: ApprovalStore;
+  readonly inventory: readonly McpInventoryTool[];
+  readonly fingerprint: string;
+  readonly revision: string;
 }
 
 export interface McpExecResult {
@@ -206,11 +208,13 @@ export interface McpServiceDeps {
   customApprovalReviewerAuthorizers?: Readonly<Record<string, CustomApprovalReviewerAuthorizer>>;
 }
 
-interface ToolInfo {
-  name: string;
-  description?: string;
-  inputSchema?: unknown;
-  classification?: string;
+/** Native access requires current host evidence; legacy CLI scope cannot upgrade itself. */
+export type McpAccessContext =
+  | { readonly kind: "native"; readonly authority: McpNativeAuthority }
+  | { readonly kind: "cli"; readonly command: McpCommandContext };
+
+function brokerFailure(status: McpBrokerFailure["status"], message: string): McpBrokerFailure {
+  return { status, isError: true, message };
 }
 
 interface ApprovalLookup {
@@ -271,7 +275,18 @@ function suggestMatch(input: string, candidates: string[]): string {
   return "";
 }
 
+/** One broker owns filtered MCP discovery, exact dispatch and existing built-in approval preparation. */
 export interface McpService {
+  /** Filtered observational discovery with complete schemas and revision-bound pagination. */
+  searchTools(input: McpSearchInput, context: McpAccessContext): Promise<McpDiscoveryOutcome>;
+  /** Exact lookup never selects a fuzzy or hidden name. */
+  describeTool(
+    server: string,
+    name: string,
+    context: McpAccessContext,
+  ): Promise<McpDescribeOutcome>;
+  /** Exact call revalidates policy, schema and native authority before any effect. No call retry. */
+  callTool(input: McpCallInput, context: McpAccessContext): Promise<McpServiceCallOutcome>;
   getHealth(): Record<string, unknown>;
   warmUpstreams(): Promise<void>;
   closeAll(): Promise<void>;
@@ -279,6 +294,7 @@ export interface McpService {
   executeApproval(args: string[], context?: McpCommandContext): Promise<McpExecResult>;
 }
 
+/** Create the shared MCP owner; native context is checked independently of transport authentication. */
 export function createMcpService(deps: McpServiceDeps): McpService {
   const approvalsDir = deps.approvalsDir ?? DEFAULT_APPROVALS_DIR;
   const connectUpstreamFn = deps.connectUpstreamFn ?? connectUpstream;
@@ -287,8 +303,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   const fetchImpl = deps.fetchImpl;
   const slackConfig = deps.slack;
   const instances = new Map<string, ProxyInstance>();
-  const connecting = new Map<string, Promise<ProxyInstance>>();
+  const connecting = new Map<string, Promise<ProxyInstance | undefined>>();
+  const startupCancellation = new AbortController();
   const approvalStores = new Map<string, ApprovalStore>();
+  let closed = false;
   const resolvingApprovals = new Map<
     string,
     {
@@ -363,101 +381,71 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     name: string,
     proxyDef: ProxyConfig,
     upstreamConfig: UpstreamConfig,
-  ): Promise<ProxyInstance> {
-    function scheduleReconnect(attempt: number): void {
-      const instance = instances.get(name);
-      if (!instance) return;
-      if (attempt > MAX_RECONNECT_ATTEMPTS) {
-        logError(
-          log,
-          "upstream_reconnect_exhausted",
-          `gave up after ${MAX_RECONNECT_ATTEMPTS} attempts`,
-          {
-            name,
-          },
-        );
-        instances.delete(name);
-        return;
-      }
-      const delay = Math.min(BASE_DELAY_MS * 2 ** (attempt - 1), MAX_DELAY_MS);
-      logInfo(log, "upstream_reconnecting", { name, attempt, delayMs: delay });
-      setTimeout(() => {
-        connectUpstreamFn(name, upstreamConfig, () => scheduleReconnect(1))
-          .then((newUpstream) => {
-            instance.upstream = newUpstream;
-            logInfo(log, "upstream_reconnected", { name, afterAttempt: attempt });
-          })
-          .catch((err) => {
-            logError(
-              log,
-              "upstream_reconnect_failed",
-              err instanceof Error ? err.message : String(err),
-              { name, attempt },
-            );
-            scheduleReconnect(attempt + 1);
-          });
-      }, delay);
-    }
-
-    logInfo(log, "connecting_upstream", { name, target: upstreamTarget(upstreamConfig) });
-    const upstream = await connectUpstreamFn(name, upstreamConfig, () => scheduleReconnect(1));
-
-    const allToolNames = upstream.tools.map((tool) => tool.name);
-    try {
-      validatePolicy(proxyDef.allow, proxyDef.approve ?? [], allToolNames);
-    } catch (err) {
-      if (err instanceof PolicyDriftError) {
-        if (deps.isProduction) {
-          logWarn(log, "policy_drift", { name, orphans: err.orphans });
-        } else {
-          throw err;
-        }
-      } else if (err instanceof PolicyOverlapError) {
-        throw err;
-      } else {
-        throw err;
-      }
-    }
-
-    logInfo(log, "upstream_ready", {
-      name,
-      upstreamTools: allToolNames.length,
-      allow: proxyDef.allow.length,
-      approve: (proxyDef.approve ?? []).length,
-    });
-
-    return {
-      name,
-      upstream,
-      approvalStore: getApprovalStore(name),
+  ): Promise<ProxyInstance | undefined> {
+    let disconnected = false;
+    let candidate: ProxyInstance | undefined;
+    const onDisconnect = () => {
+      disconnected = true;
+      if (candidate && instances.get(name) === candidate) instances.delete(name);
     };
+    let upstream: UpstreamConnection | undefined;
+    try {
+      upstream = await connectUpstreamFn(
+        name,
+        upstreamConfig,
+        onDisconnect,
+        startupCancellation.signal,
+      );
+      const revision = randomUUID();
+      const inventory = buildMcpInventory(name, proxyDef, upstream, revision);
+      if (closed || disconnected) {
+        await upstream.client.close();
+        return undefined;
+      }
+      candidate = {
+        name,
+        upstream,
+        inventory,
+        revision,
+        fingerprint: mcpPolicyFingerprint(proxyDef),
+        approvalStore: getApprovalStore(name),
+      };
+      return candidate;
+    } catch {
+      await upstream?.client.close().catch(() => undefined);
+      logWarn(log, "mcp_inventory_unavailable", {
+        server: name,
+        reason: "connection_or_inventory_unsupported",
+      });
+      return undefined;
+    }
   }
 
   async function getInstance(name: string): Promise<ProxyInstance | undefined> {
+    if (closed) return undefined;
     const proxyDef = getProxyConfig(name);
-    if (!proxyDef) {
-      instances.delete(name);
-      return undefined;
-    }
-
-    const upstreamConfig = resolveUpstreamConfig(proxyDef);
-    if (!upstreamConfig) {
-      instances.delete(name);
-      return undefined;
-    }
-
+    if (!proxyDef) return undefined;
     const existing = instances.get(name);
-    if (existing) return existing;
-
+    if (existing?.fingerprint === mcpPolicyFingerprint(proxyDef)) return existing;
+    if (existing) {
+      instances.delete(name);
+      await existing.upstream.client.close().catch(() => undefined);
+    }
     const pending = connecting.get(name);
     if (pending) return pending;
-
+    let upstreamConfig: UpstreamConfig | undefined;
+    try {
+      upstreamConfig = resolveUpstreamConfig(proxyDef);
+    } catch {
+      return undefined;
+    }
+    if (!upstreamConfig) return undefined;
     const promise = connectInstance(name, proxyDef, upstreamConfig);
     connecting.set(name, promise);
     try {
       const instance = await promise;
-      instances.set(name, instance);
-      return instance;
+      if (instance && !closed) instances.set(name, instance);
+      return closed ? undefined : instance;
     } finally {
       connecting.delete(name);
     }
@@ -496,92 +484,194 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     return undefined;
   }
 
-  async function listVisibleTools(upstreamName: string): Promise<ToolInfo[] | McpExecResult> {
-    if (!isProxyName(upstreamName)) {
-      return fail(
-        `Unknown upstream "${upstreamName}". Available upstreams: ${PROXY_NAMES.join(", ")}`,
+  function commandContext(
+    access: McpAccessContext,
+    operation: McpNativeOperation,
+  ): McpCommandContext | McpBrokerFailure {
+    if (access.kind === "cli") {
+      const invalid = validateRepoDirectory(access.command.directory);
+      return invalid ? brokerFailure("denied", invalid.stderr) : access.command;
+    }
+    const claimed = access.authority;
+    const projected = findNativeMcpProjection(claimed.sessionId);
+    if (
+      !projected ||
+      (projected.nativeMcp.requester.source === "slack" && !projected.nativeMcp.teamId) ||
+      projected.anchorId !== claimed.anchorId ||
+      projected.triggerId !== claimed.triggerId ||
+      projected.nativeMcp.requestId !== claimed.requestId ||
+      projected.nativeMcp.directory !== claimed.directory ||
+      projected.nativeMcp.repositoryDirectory !== claimed.repositoryDirectory ||
+      projected.nativeMcp.teamId !== claimed.teamId ||
+      projected.nativeMcp.sourceKey !== claimed.sourceKey ||
+      JSON.stringify(projected.nativeMcp.requester) !== JSON.stringify(claimed.requester) ||
+      !hasNativeMcpCallProjection(claimed, operation)
+    )
+      return brokerFailure(
+        "denied",
+        "MCP native authority denied: current admission does not match.",
       );
-    }
-
-    const instance = await getInstance(upstreamName);
-    if (!instance) {
-      return fail(`Unknown upstream "${upstreamName}".`);
-    }
-
-    const proxyDef = getProxyConfig(upstreamName);
-    const allow = proxyDef?.allow ?? [];
-    const approve = proxyDef?.approve ?? [];
-
-    return instance.upstream.tools
-      .map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        inputSchema: tool.inputSchema,
-        classification: classifyTool(allow, approve, tool.name),
-      }))
-      .filter((tool) => tool.classification !== "hidden");
+    return {
+      directory: projected.nativeMcp.directory,
+      sessionId: claimed.sessionId,
+      callId: claimed.callId,
+    };
   }
 
-  function resolveTool(
-    tools: ToolInfo[],
-    input: string,
-    upstreamName: string,
-  ): ToolInfo | McpExecResult {
-    const exact = tools.find((tool) => tool.name === input);
-    if (exact) return exact;
+  async function describeTool(
+    server: string,
+    name: string,
+    access: McpAccessContext,
+  ): Promise<McpDescribeOutcome> {
+    const context = commandContext(access, "mcp_search");
+    if ("status" in context) return context;
+    if (!isProxyName(server))
+      return brokerFailure("denied", "MCP tool unavailable or not permitted.");
+    const instance = await getInstance(server);
+    if (!instance)
+      return brokerFailure("unavailable", "MCP server unavailable or inventory unsupported.");
+    const tool = instance.inventory.find((entry) => entry.descriptor.name === name);
+    const current = commandContext(access, "mcp_search");
+    if ("status" in current) return current;
+    return tool
+      ? { status: "ok", value: tool.descriptor }
+      : brokerFailure("denied", "MCP tool unavailable or not permitted.");
+  }
 
-    const matches = fuzzyMatch(
-      input,
-      tools.map((tool) => tool.name),
-    );
-    if (matches.length === 1) {
-      return tools.find((tool) => tool.name === matches[0])!;
+  async function searchTools(
+    input: McpSearchInput,
+    access: McpAccessContext,
+  ): Promise<McpDiscoveryOutcome> {
+    const context = commandContext(access, "mcp_search");
+    if ("status" in context) return context;
+    if (input.server && !isProxyName(input.server))
+      return brokerFailure("denied", "MCP server unavailable or not permitted.");
+    const names = input.server ? [input.server] : [...PROXY_NAMES];
+    const selected = await Promise.all(names.map((name) => getInstance(name)));
+    const current = commandContext(access, "mcp_search");
+    if ("status" in current) return current;
+    const servers = names.map((server, index) => ({
+      server,
+      available: !!selected[index],
+      ...(selected[index] ? { visibleTools: selected[index].inventory.length } : {}),
+    }));
+    if (input.exactName) {
+      if (!input.server) return brokerFailure("denied", "MCP exact lookup requires a server.");
+      // Reuse this search's snapshot, including failure; exact lookup must not silently
+      // reconnect and spend another inventory budget when the first attempt was unavailable.
+      const instance = selected[0];
+      if (!instance)
+        return brokerFailure("unavailable", "MCP server unavailable or inventory unsupported.");
+      const tool = instance.inventory.find((entry) => entry.descriptor.name === input.exactName);
+      return tool
+        ? { status: "ok", value: { servers, tools: [tool.descriptor] } }
+        : brokerFailure("denied", "MCP tool unavailable or not permitted.");
     }
+    const stamp = createHash("sha256")
+      .update(
+        JSON.stringify([
+          input.server,
+          input.query,
+          input.limit,
+          selected.map((instance) => instance?.revision),
+        ]),
+      )
+      .digest("hex");
+    let offset = 0;
+    if (input.cursor) {
+      const cursor = z
+        .strictObject({ stamp: z.string(), offset: z.number().int().nonnegative() })
+        .safeParse(
+          (() => {
+            try {
+              return JSON.parse(Buffer.from(input.cursor, "base64url").toString());
+            } catch {
+              return undefined;
+            }
+          })(),
+        );
+      if (!cursor.success || cursor.data.stamp !== stamp)
+        return brokerFailure("stale", "MCP discovery changed; search again without a cursor.");
+      offset = cursor.data.offset;
+    }
+    if (!input.query && !input.server) return { status: "ok", value: { servers, tools: [] } };
+    const query = input.query.toLowerCase();
+    const matches = selected
+      .flatMap((instance) => instance?.inventory.map((entry) => entry.descriptor) ?? [])
+      .filter(
+        (tool) =>
+          !query ||
+          tool.name.toLowerCase().includes(query) ||
+          tool.description?.toLowerCase().includes(query),
+      )
+      .sort((a, b) => a.server.localeCompare(b.server) || a.name.localeCompare(b.name));
+    if (offset > matches.length)
+      return brokerFailure("stale", "MCP discovery cursor invalid; search again.");
+    const tools: typeof matches = [];
+    let bytes = 0;
+    for (const tool of matches.slice(offset, offset + input.limit)) {
+      const size = Buffer.byteLength(JSON.stringify(tool));
+      if (bytes + size > MCP_DISCOVERY_MAX_BYTES) break;
+      tools.push(tool);
+      bytes += size;
+    }
+    const next = offset + tools.length;
+    return {
+      status: "ok",
+      value: {
+        servers,
+        tools,
+        ...(next < matches.length
+          ? { cursor: Buffer.from(JSON.stringify({ stamp, offset: next })).toString("base64url") }
+          : {}),
+      },
+    };
+  }
 
-    return fail(
-      `Unknown tool "${input}" on upstream "${upstreamName}". ${suggestMatch(
-        input,
-        tools.map((tool) => tool.name),
-      )}Available tools: ${tools.map((tool) => tool.name).join(", ")}`,
+  function isCurrentMcpInstance(instance: ProxyInstance): boolean {
+    const config = getProxyConfig(instance.name);
+    return (
+      instances.get(instance.name) === instance &&
+      !!config &&
+      instance.fingerprint === mcpPolicyFingerprint(config)
     );
   }
 
-  async function listUpstreams(directory?: string): Promise<McpExecResult> {
-    const failure = validateRepoDirectory(directory);
-    if (failure) return failure;
-
-    const upstreams = PROXY_NAMES.map((name) => {
-      const instance = instances.get(name);
+  async function callExactTool(
+    input: McpCallInput,
+    access: McpAccessContext,
+  ): Promise<McpServiceCallOutcome> {
+    let context = commandContext(access, "mcp_call");
+    if ("status" in context) return context;
+    const server = input.toolRef.split(".")[0];
+    if (!isProxyName(server))
+      return brokerFailure(
+        "stale",
+        "MCP tool reference stale or unavailable; rediscover before calling.",
+      );
+    const instance = await getInstance(server);
+    if (!instance)
+      return brokerFailure("unavailable", "MCP server unavailable or inventory unsupported.");
+    const tool = instance.inventory.find((entry) => entry.descriptor.toolRef === input.toolRef);
+    if (!tool)
+      return brokerFailure(
+        "stale",
+        "MCP tool reference stale or unavailable; rediscover before calling.",
+      );
+    if (!tool.validator.validate(input.arguments))
       return {
-        name,
-        toolCount: instance?.upstream.tools.length ?? 0,
-        connected: instances.has(name),
+        ...brokerFailure("invalid_arguments", `Invalid arguments for "${tool.descriptor.name}"`),
+        issues: tool.validator.validate.errors?.map((issue) => ({
+          path: issue.instancePath,
+          keyword: issue.keyword,
+        })),
       };
-    });
-
-    return ok(stringify({ upstreams }));
-  }
-
-  function parseJsonArgs(
-    jsonArg: string,
-    toolInfo: ToolInfo,
-  ): Record<string, unknown> | McpExecResult {
-    try {
-      const parsed = JSON.parse(jsonArg);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
-      }
-      return {};
-    } catch {
-      const containsBrokerCredentialBoundary = CREDENTIAL_BROWSER_TOOLS.has(toolInfo.name);
-      let stderr = containsBrokerCredentialBoundary
-        ? `Invalid JSON argument for "${toolInfo.name}"\n`
-        : `Invalid JSON argument: ${jsonArg}\n`;
-      if (toolInfo.inputSchema) {
-        stderr += `\n[hint] Input schema for "${toolInfo.name}":\n${JSON.stringify(toolInfo.inputSchema, null, 2)}\n`;
-      }
-      return fail(stderr);
-    }
+    // Connection/policy and authority are checked after observational work, immediately before preparation/dispatch.
+    context = commandContext(access, "mcp_call");
+    if ("status" in context) return context;
+    if (!isCurrentMcpInstance(instance))
+      return brokerFailure("stale", "MCP tool reference changed before dispatch; rediscover.");
+    return callVisibleTool(instance, tool, input.arguments, context, access);
   }
 
   interface UpstreamCallOpts {
@@ -592,7 +682,6 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     decision: "allowed" | "blocked" | "pending" | "approved" | "rejected";
     extraLogFields?: Record<string, unknown>;
     sessionId?: string;
-    inputSchema?: unknown;
     onSuccess?: (rawResult: unknown) => void;
     onError?: (message: string) => void;
   }
@@ -621,81 +710,54 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     return { ...args, _thor_session_id: sessionId };
   }
 
-  async function executeUpstreamCall(opts: UpstreamCallOpts): Promise<McpExecResult> {
-    const { instance, toolName, args, logEvent, decision, extraLogFields, inputSchema } = opts;
+  async function dispatchUpstreamCall(opts: UpstreamCallOpts): Promise<McpServiceCallOutcome> {
+    const { instance, toolName, args, logEvent, decision, extraLogFields } = opts;
     const start = Date.now();
-    let callArgs = args;
+    let callArgs: Record<string, unknown>;
     try {
       callArgs = outboundArgs(instance, args, opts.sessionId);
-      const result = await instance.upstream.client.callTool({
-        name: toolName,
-        arguments: callArgs,
-      });
-      const duration = Date.now() - start;
-      logInfo(log, logEvent, {
+    } catch {
+      return brokerFailure("denied", "MCP call denied: required broker context is missing.");
+    }
+    let raw: unknown;
+    try {
+      // This is the dispatch boundary. Any exception from the transport or SDK after entry is uncertain.
+      raw = await instance.upstream.client.callTool({ name: toolName, arguments: callArgs });
+    } catch {
+      const message =
+        "MCP transport failed after dispatch; the outcome is uncertain. Do not retry automatically.";
+      logWarn(log, "mcp_call_uncertain", {
         upstream: instance.name,
         tool: toolName,
-        durationMs: duration,
         ...extraLogFields,
-      });
-      writeToolCallLogFn({
-        tool: toolName,
-        decision,
-        args: callArgs,
-        result,
-        durationMs: duration,
-      });
-      opts.onSuccess?.(result);
-
-      const stdout = unwrapResult(result);
-      if (toolName === "post_message" && opts.sessionId) {
-        const correlationKey = computeSlackCorrelationKey(args, stdout);
-        if (correlationKey) {
-          try {
-            appendCorrelationAlias(opts.sessionId, correlationKey);
-            logInfo(log, "alias_registered", {
-              sessionId: opts.sessionId,
-              correlationKey,
-              source: "mcp:post_message",
-            });
-          } catch (err) {
-            logError(
-              log,
-              "alias_registration_error",
-              err instanceof Error ? err.message : String(err),
-              {
-                sessionId: opts.sessionId,
-                correlationKey,
-              },
-            );
-          }
-        }
-      }
-      return ok(stdout);
-    } catch (err) {
-      const duration = Date.now() - start;
-      const message = err instanceof Error ? err.message : String(err);
-      logError(log, logEvent, message, {
-        upstream: instance.name,
-        tool: toolName,
-        durationMs: duration,
-        ...extraLogFields,
-      });
-      writeToolCallLogFn({
-        tool: toolName,
-        decision,
-        args: callArgs,
-        durationMs: duration,
-        error: message,
       });
       opts.onError?.(message);
-
-      let stderr = `Error calling "${toolName}": ${message}\n`;
-      if (inputSchema) {
-        stderr += `\n[hint] Input schema for "${toolName}":\n${JSON.stringify(inputSchema, null, 2)}\n`;
-      }
-      return fail(stderr);
+      writeToolCallLogFn({
+        tool: toolName,
+        decision,
+        durationMs: Date.now() - start,
+        error: message,
+      });
+      return brokerFailure("uncertain", message);
     }
+    const outputValidator = instance.inventory.find(
+      (tool) => tool.descriptor.name === toolName,
+    )?.outputValidator;
+    const projected = projectMcpCallResult(raw, outputValidator);
+    logInfo(log, logEvent, {
+      upstream: instance.name,
+      tool: toolName,
+      durationMs: Date.now() - start,
+      ...extraLogFields,
+    });
+    // Ordinary audit records contain no argument, result or vendor-error copies.
+    writeToolCallLogFn({ tool: toolName, decision, durationMs: Date.now() - start });
+    opts.onSuccess?.(raw);
+    return projected;
+  }
+
+  async function executeUpstreamCall(opts: UpstreamCallOpts): Promise<McpExecResult> {
+    return mcpCallToExec(await dispatchUpstreamCall(opts));
   }
 
   async function prepareBrowserOpenApprovalArgs(
@@ -754,30 +816,28 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     };
   }
 
-  async function callTool(
-    upstreamName: string,
-    toolInfo: ToolInfo,
+  async function callVisibleTool(
+    instance: ProxyInstance,
+    tool: McpInventoryTool,
     args: Record<string, unknown>,
     context: McpCommandContext,
-  ): Promise<McpExecResult> {
-    const instance = await getInstance(upstreamName);
-    if (!instance) {
-      return fail(`Unknown upstream "${upstreamName}".`);
-    }
+    access: McpAccessContext,
+  ): Promise<McpServiceCallOutcome> {
+    const toolInfo = tool.descriptor;
 
     if (instance.name === "onepassword-browser" && toolInfo.name === "find_login_items") {
       const findArgs = FindLoginItemsArgsSchema.safeParse(args);
       if (!findArgs.success) {
-        return fail('Invalid arguments for "find_login_items"');
+        return brokerFailure("invalid_arguments", 'Invalid arguments for "find_login_items"');
       }
       args = findArgs.data;
     }
     if (instance.name === "onepassword-browser" && toolInfo.name === "browser_open_authenticated") {
       const prepared = await prepareBrowserOpenApprovalArgs(instance, args, context);
-      if (isExecResult(prepared)) return prepared;
+      if (isExecResult(prepared)) return brokerFailure("denied", prepared.stderr);
       args = prepared;
     }
-    if (toolInfo.classification === "approve") {
+    if (toolInfo.policy === "approve") {
       const approvalRequired = ApprovalRequiredEventPayloadSchema.safeParse({
         type: "approval_required",
         actionId: "_pending",
@@ -786,26 +846,46 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         args,
       });
       if (!approvalRequired.success) {
-        return fail(
-          `Invalid approval arguments for "${toolInfo.name}": ${approvalRequired.error.message}`,
-        );
+        return {
+          ...brokerFailure(
+            "invalid_arguments",
+            `Invalid approval arguments for "${toolInfo.name}": ${approvalRequired.error.issues.map((issue) => issue.path.join("/")).join(", ")}`,
+          ),
+          issues: approvalRequired.error.issues.map((issue) => ({
+            path: issue.path.join("/"),
+            keyword: issue.code,
+          })),
+        };
       }
       const approvalArgs = approvalRequired.data.args;
-      const formatError = validateDisclaimerCompatibleArgs(toolInfo.name, approvalArgs);
-      if (formatError) return fail(formatError);
+      const formatError = isBuiltinDisclaimerTool(instance.name, toolInfo.name)
+        ? validateDisclaimerCompatibleArgs(toolInfo.name, approvalArgs)
+        : undefined;
+      if (formatError) return brokerFailure("invalid_arguments", formatError);
       if (!context.sessionId) {
-        return fail(`Approval required for "${toolInfo.name}": missing Neo session id`);
+        return brokerFailure(
+          "denied",
+          `Approval required for "${toolInfo.name}": missing Neo session id`,
+        );
       }
       const anchorContext = findAnchorContext(context.sessionId);
       if (!anchorContext.ok) {
-        return fail(
+        return brokerFailure(
+          "denied",
           `Approval required for "${toolInfo.name}": no Neo anchor for session ${context.sessionId} (${anchorContext.reason})`,
         );
       }
       const slackTarget = resolveSlackThreadTargetFromTrigger(context.sessionId);
       if ("error" in slackTarget) {
-        return fail(`Approval required for "${toolInfo.name}": ${slackTarget.error}`);
+        return brokerFailure(
+          "denied",
+          `Approval required for "${toolInfo.name}": ${slackTarget.error}`,
+        );
       }
+      const current = commandContext(access, "mcp_call");
+      if ("status" in current) return current;
+      if (!isCurrentMcpInstance(instance))
+        return brokerFailure("stale", "MCP tool reference changed before approval; rediscover.");
       const action = instance.approvalStore.buildPending(
         toolInfo.name,
         approvalArgs,
@@ -830,7 +910,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       });
       if ("error" in slackPost) {
         instance.approvalStore.rejectLoaded(action, "system", slackPost.error);
-        return fail(`Approval required for "${toolInfo.name}": ${slackPost.error}`);
+        return brokerFailure(
+          "unavailable",
+          `Approval required for "${toolInfo.name}": notification failed`,
+        );
       }
       action.notification = {
         provider: "slack",
@@ -839,27 +922,40 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         messageTs: slackPost.ts,
         postedAt: new Date().toISOString(),
       };
-      instance.approvalStore.update(action);
+      try {
+        instance.approvalStore.update(action);
+      } catch {
+        return brokerFailure(
+          "uncertain",
+          "MCP approval was published but its record could not be saved. Do not retry automatically.",
+        );
+      }
       logInfo(log, "tool_call_pending_approval", {
         upstream: instance.name,
         tool: toolInfo.name,
         actionId: action.id,
         ...getThorIds(context),
       });
-      writeToolCallLogFn({ tool: toolInfo.name, decision: "pending", args: approvalArgs });
+      writeToolCallLogFn({ tool: toolInfo.name, decision: "pending" });
       const approvalEvent: ApprovalRequiredEventPayload = {
         ...approvalRequired.data,
         actionId: action.id,
       };
-      return ok(
-        stringify({
-          ...approvalEvent,
-          command: `approval status ${action.id}`,
-        }),
-      );
+      return {
+        status: "pending_approval",
+        isError: false,
+        actionId: action.id,
+        server: instance.name,
+        tool: toolInfo.name,
+        approvalEvent,
+      };
     }
 
-    return executeUpstreamCall({
+    const current = commandContext(access, "mcp_call");
+    if ("status" in current) return current;
+    if (!isCurrentMcpInstance(instance))
+      return brokerFailure("stale", "MCP tool reference changed before dispatch; rediscover.");
+    return dispatchUpstreamCall({
       instance,
       toolName: toolInfo.name,
       args,
@@ -867,7 +963,6 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       decision: "allowed",
       extraLogFields: getThorIds(context),
       sessionId: context.sessionId,
-      inputSchema: toolInfo.inputSchema,
     });
   }
 
@@ -975,7 +1070,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         actionId: rejected.id,
         reviewer,
       });
-      writeToolCallLogFn({ tool: rejected.tool, decision: "rejected", args: rejected.args });
+      writeToolCallLogFn({ tool: rejected.tool, decision: "rejected" });
       return ok(stringify(rejected));
     }
 
@@ -1014,7 +1109,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     let upstreamArgs: Record<string, unknown>;
     try {
       upstreamArgs = buildUpstreamArgs(pendingAction);
-      if (pendingAction.tool === "createJiraIssue") {
+      if (instance.name === "atlassian" && pendingAction.tool === "createJiraIssue") {
         upstreamArgs = await withJiraAttribution(
           upstreamArgs,
           pendingAction.origin?.sessionId,
@@ -1024,7 +1119,10 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     } catch (err) {
       return fail(err instanceof Error ? err.message : String(err));
     }
-    if (pendingAction.tool === "browser_open_authenticated") {
+    if (
+      instance.name === "onepassword-browser" &&
+      pendingAction.tool === "browser_open_authenticated"
+    ) {
       try {
         lookup.store.approveLoaded(
           pendingAction,
@@ -1036,7 +1134,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         return fail("Failed to persist single-use credential-browser approval");
       }
     }
-    const result = await executeUpstreamCall({
+    const outcome = await dispatchUpstreamCall({
       instance,
       toolName: pendingAction.tool,
       args: upstreamArgs,
@@ -1049,10 +1147,21 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         lookup.store.update(pendingAction);
       },
     });
-    if (result.exitCode !== 0) {
-      return result;
+    const result = mcpCallToExec(outcome);
+    // Browser consumption fences redispatch, not confirmed error persistence. A completed
+    // isError result replaces the unknown placeholder just like a confirmed success does.
+    if (pendingAction.status === "approved" && outcome.status !== "completed") return result;
+    // A returned dispatched error/uncertainty is a consumed approval, not another pending
+    // opportunity to execute. Generic pre-dispatch crash fencing remains a separate owner.
+    if (outcome.status === "completed" || outcome.status === "uncertain") {
+      try {
+        lookup.store.approveLoaded(pendingAction, result, reviewer, reason);
+      } catch {
+        return fail(
+          "MCP approved dispatch outcome could not be saved. Do not retry automatically.",
+        );
+      }
     }
-    lookup.store.approveLoaded(pendingAction, result, reviewer, reason);
     return result;
   }
 
@@ -1119,6 +1228,9 @@ export function createMcpService(deps: McpServiceDeps): McpService {
   }
 
   return {
+    searchTools,
+    describeTool,
+    callTool: callExactTool,
     getHealth(): Record<string, unknown> {
       return {
         configured: PROXY_NAMES.length,
@@ -1128,7 +1240,7 @@ export function createMcpService(deps: McpServiceDeps): McpService {
             name,
             {
               connected: instances.has(name),
-              tools: instances.get(name)?.upstream.tools.length ?? 0,
+              tools: instances.get(name)?.inventory.length ?? 0,
             },
           ]),
         ),
@@ -1146,9 +1258,13 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     },
 
     async closeAll(): Promise<void> {
+      closed = true;
+      startupCancellation.abort();
+      await Promise.allSettled([...connecting.values()]);
       await Promise.allSettled(
         [...instances.values()].map((instance) => instance.upstream.client.close()),
       );
+      instances.clear();
     },
 
     async executeMcp(args: string[], context: McpCommandContext): Promise<McpExecResult> {
@@ -1166,7 +1282,17 @@ export function createMcpService(deps: McpServiceDeps): McpService {
       }
 
       if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
-        return listUpstreams(context.directory);
+        const invalid = validateRepoDirectory(context.directory);
+        if (invalid) return invalid;
+        return ok(
+          stringify({
+            upstreams: PROXY_NAMES.map((name) => ({
+              name,
+              toolCount: instances.get(name)?.inventory.length ?? 0,
+              connected: instances.has(name),
+            })),
+          }),
+        );
       }
 
       const failure = validateRepoDirectory(context.directory);
@@ -1182,24 +1308,47 @@ export function createMcpService(deps: McpServiceDeps): McpService {
         );
       }
 
-      const tools = await listVisibleTools(upstreamName);
-      if (!Array.isArray(tools)) return tools;
+      const instance = await getInstance(upstreamName);
+      if (!instance) return fail(`Unknown upstream "${upstreamName}" or inventory unsupported.`);
+      const tools = instance.inventory;
 
       if (args.length === 1) {
-        return ok(tools.map((tool) => tool.name).join("\n") + (tools.length > 0 ? "\n" : ""));
+        return ok(
+          tools.map((tool) => tool.descriptor.name).join("\n") + (tools.length > 0 ? "\n" : ""),
+        );
       }
 
-      const resolvedTool = resolveTool(tools, args[1], upstreamName);
-      if ("exitCode" in resolvedTool) return resolvedTool;
+      const resolvedTool = tools.find((tool) => tool.descriptor.name === args[1]);
+      if (!resolvedTool)
+        return fail(
+          `Unknown tool "${args[1]}" on upstream "${upstreamName}". ${suggestMatch(
+            args[1],
+            tools.map((tool) => tool.descriptor.name),
+          )}Available tools: ${tools.map((tool) => tool.descriptor.name).join(", ")}`,
+        );
 
       if (args.length === 2 || (args.length === 3 && args[2] === "--help")) {
-        return ok(stringify(resolvedTool));
+        const { name, description, inputSchema, policy } = resolvedTool.descriptor;
+        return ok(stringify({ name, description, inputSchema, classification: policy }));
       }
 
-      const parsedArgs = parseJsonArgs(args[2], resolvedTool);
-      if (isExecResult(parsedArgs)) return parsedArgs;
-
-      return callTool(upstreamName, resolvedTool, parsedArgs, context);
+      let raw: unknown;
+      try {
+        raw = JSON.parse(args[2]);
+      } catch {
+        return fail(
+          `Invalid JSON argument for "${resolvedTool.descriptor.name}"\n\n[hint] Input schema:\n${JSON.stringify(resolvedTool.descriptor.inputSchema, null, 2)}\n`,
+        );
+      }
+      const input = McpCallInputSchema.safeParse({
+        toolRef: resolvedTool.descriptor.toolRef,
+        arguments: raw,
+      });
+      if (!input.success)
+        return fail(
+          `Invalid arguments for "${resolvedTool.descriptor.name}": expected a JSON object`,
+        );
+      return mcpCallToExec(await callExactTool(input.data, { kind: "cli", command: context }));
     },
 
     async executeApproval(args: string[], context: McpCommandContext = {}): Promise<McpExecResult> {

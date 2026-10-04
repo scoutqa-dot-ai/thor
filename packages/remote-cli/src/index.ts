@@ -40,6 +40,7 @@ import {
 } from "./gws-oauth.js";
 import { resolveOwnerRepoFromRemote } from "./github-app-auth.js";
 import { createMcpService, type McpExecResult, type McpServiceDeps } from "./mcp-handler.js";
+import { registerMcpPrivateRoutes } from "./mcp-private-routes.js";
 import { ApprovalStore, type ApprovalAction } from "./approval-store.js";
 import { sanitizeCredentialBrokerToolCallLog } from "./credential-broker-audit.js";
 import {
@@ -1070,6 +1071,7 @@ export function createRemoteCliApp(config: RemoteCliAppConfig = {}): RemoteCliAp
   const app = express();
   app.use(express.json());
   app.use(express.urlencoded({ extended: false, limit: "4kb" }));
+  registerMcpPrivateRoutes(app, mcpService, internalSecret);
 
   app.get("/health", (_req, res) => {
     res.json({

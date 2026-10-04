@@ -2,11 +2,16 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createLogger, logError, logInfo } from "@thor/common";
 import { createKaliApiMcpClient, KALI_API_TOOLS } from "./kali-api-upstream.js";
 import { SecretStdioClientTransport, type StdioSecretInput } from "./secret-stdio-transport.js";
+import { mcpJsonSchemaValidator } from "./mcp-schema-validation.js";
 
 const log = createLogger("mcp");
+
+// Inventory is observational but endpoint-specific work must finish even on empty unique pages.
+const MCP_INVENTORY_MAX_PAGES = 128;
 
 const ONEPASSWORD_BROWSER_MCP_ENTRY = "/app/packages/onepassword-browser-mcp/dist/index.js";
 export const ONEPASSWORD_BROWSER_TOKEN_FILE = "/run/secrets/thor-onepassword-service-account-token";
@@ -116,11 +121,13 @@ export type UpstreamConfig =
       secretInput: StdioSecretInput;
     };
 
+/** Private upstream transport owner; the broker translates rejected call promises into uncertainty. */
 export interface UpstreamClient {
   callTool(input: { name: string; arguments?: Record<string, unknown> }): Promise<unknown>;
   close(): Promise<void>;
 }
 
+/** A connection inventory is immutable for its broker revision and discarded on disconnect/change. */
 export interface UpstreamConnection {
   client: UpstreamClient;
   tools: Tool[];
@@ -160,10 +167,6 @@ export function resolveOnePasswordBrowserUpstream(
   };
 }
 
-export function upstreamTarget(config: UpstreamConfig): string {
-  return config.kind === "stdio" ? config.command : config.url;
-}
-
 function createTransport(config: Exclude<UpstreamConfig, { kind: "kali-api" }>): Transport {
   if (config.kind === "stdio") {
     return new SecretStdioClientTransport({
@@ -183,51 +186,63 @@ function createTransport(config: Exclude<UpstreamConfig, { kind: "kali-api" }>):
   });
 }
 
+/** Collect at most 128 inventory pages / 2,000 tools; shutdown cancels SDK initialization and listing. */
 export async function connectUpstream(
   name: string,
   config: UpstreamConfig,
   onDisconnect?: () => void,
+  signal?: AbortSignal,
 ): Promise<UpstreamConnection> {
   if (config.kind === "kali-api") {
     const client = await createKaliApiMcpClient({ baseUrl: config.url });
-    logInfo(log, "upstream_connected", { name, target: config.url, transport: config.kind });
-    logInfo(log, "upstream_tools_listed", {
-      name,
-      toolCount: KALI_API_TOOLS.length,
-      tools: KALI_API_TOOLS.map((tool) => tool.name),
-    });
+    logInfo(log, "upstream_connected", { name, transport: config.kind });
     return { client, tools: KALI_API_TOOLS };
   }
 
-  const target = upstreamTarget(config);
-  const client = new Client({ name: `thor-remote-cli-${name}`, version: "0.0.1" });
+  const client = new Client(
+    { name: `thor-remote-cli-${name}`, version: "0.0.1" },
+    { jsonSchemaValidator: mcpJsonSchemaValidator },
+  );
   const transport = createTransport(config);
 
-  try {
-    await client.connect(transport);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to connect to upstream MCP server "${name}" at ${target}: ${message}`);
-  }
-  logInfo(log, "upstream_connected", { name, target, transport: config.kind });
-
-  client.onclose = () => {
-    logError(log, "upstream_disconnected", "upstream closed unexpectedly", { name, target });
-    onDisconnect?.();
+  const cancelConnection = () => {
+    void client.close().catch(() => undefined);
   };
-
-  let tools: Tool[];
+  signal?.addEventListener("abort", cancelConnection, { once: true });
   try {
-    ({ tools } = await client.listTools());
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Connected to "${name}" at ${target} but failed to list tools: ${message}`);
-  }
-  logInfo(log, "upstream_tools_listed", {
-    name,
-    toolCount: tools.length,
-    tools: tools.map((tool) => tool.name),
-  });
+    signal?.throwIfAborted();
+    await client.connect(transport, { signal });
+    logInfo(log, "upstream_connected", { name, transport: config.kind });
 
-  return { client, tools };
+    client.onclose = () => {
+      logError(log, "upstream_disconnected", "upstream closed unexpectedly", { name });
+      onDisconnect?.();
+    };
+
+    client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
+      // An inventory change revokes the old connection snapshot before any subsequent dispatch.
+      onDisconnect?.();
+      await client.close();
+    });
+    const tools: Tool[] = [];
+    let cursor: string | undefined;
+    const seen = new Set<string>();
+    let pages = 0;
+    do {
+      signal?.throwIfAborted();
+      const page = await client.listTools(cursor ? { cursor } : {}, { signal });
+      pages += 1;
+      tools.push(...page.tools);
+      cursor = page.nextCursor;
+      if (tools.length > 2000 || (cursor && (pages >= MCP_INVENTORY_MAX_PAGES || seen.has(cursor))))
+        throw new Error("MCP inventory unsupported: pagination");
+      if (cursor) seen.add(cursor);
+    } while (cursor);
+    return { client, tools };
+  } catch {
+    await client.close().catch(() => undefined);
+    throw new Error("MCP upstream unavailable: connection or inventory failed");
+  } finally {
+    signal?.removeEventListener("abort", cancelConnection);
+  }
 }

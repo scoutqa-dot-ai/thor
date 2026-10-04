@@ -23,6 +23,7 @@ import {
   appendCorrelationAliasForAnchor,
   appendSessionEvent,
   isAllowedDirectory,
+  resolveMcpRepositoryDirectory,
   mintAnchor,
   mintTriggerId,
   readTriggerSlice,
@@ -300,12 +301,28 @@ export async function createPiRunnerApp(
         const status = await executionStatus(owner, receipt);
         let slice = readTriggerSlice(id, receipt.triggerId);
         if ("notFound" in slice) {
+          const repositoryDirectory = resolveMcpRepositoryDirectory(owner.metadata.directory);
+          if (!repositoryDirectory) throw new Error("Pi repository directory invalid");
           appendSessionEvent(id, {
             type: "trigger_start",
             triggerId: receipt.triggerId,
             correlationKey: receipt.request.correlationKey,
             triggerSlackId: receipt.request.triggerSlackId,
             triggerGithubLogin: receipt.request.triggerGithubLogin,
+            nativeMcp: {
+              requestId: receipt.requestId,
+              directory: owner.metadata.directory,
+              repositoryDirectory,
+              teamId: receipt.request.triggerSlackId
+                ? (receipt.slackTeamId ?? config.slackTeamId ?? null)
+                : null,
+              sourceKey: receipt.request.correlationKey ?? null,
+              requester: receipt.request.triggerSlackId
+                ? { source: "slack", id: receipt.request.triggerSlackId }
+                : receipt.request.triggerGithubLogin
+                  ? { source: "github", id: receipt.request.triggerGithubLogin }
+                  : { source: "system" },
+            },
           });
           slice = readTriggerSlice(id, receipt.triggerId);
         }

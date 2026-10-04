@@ -275,9 +275,13 @@ beforeEach(async () => {
       res.end();
       return;
     }
-    payload.cwd = directory;
-    if (payload.operation.type === "exec" && payload.operation.options?.cwd === triggerDirectory)
-      payload.operation.options.cwd = directory;
+    const executorCwd = (cwd: string) =>
+      cwd.startsWith(`${triggerDirectory}/`)
+        ? join(directory, cwd.slice(triggerDirectory.length))
+        : directory;
+    payload.cwd = executorCwd(payload.cwd);
+    if (payload.operation.type === "exec" && payload.operation.options?.cwd)
+      payload.operation.options.cwd = executorCwd(payload.operation.options.cwd);
     const controller = new AbortController();
     res.once("close", () => controller.abort());
     try {
@@ -909,6 +913,57 @@ describe("embedded Pi runner over Responses HTTP, executor HTTP and SQLite", () 
     if (!("notFound" in log))
       expect(log.records.map((entry) => entry.type)).toEqual(["trigger_start", "trigger_end"]);
   });
+  it.each(["", "/packages", "/packages/service", "/packages/../packages/"])(
+    "preserves admitted cwd %s through local HTTP, SQLite and model/tool execution",
+    async (suffix) => {
+      await mkdir(join(directory, "packages/service"), { recursive: true });
+      const cwd = triggerDirectory + suffix;
+      const input = {
+        prompt: "write-round",
+        directory: cwd,
+        requestId: "cwd-compat",
+        triggerSlackId: "UCWD",
+      };
+      const frames = await stream(input);
+      expect(frames.at(-1)).toMatchObject({ type: "done", status: "completed" });
+      const file = join(directory, suffix, "remote-only.txt");
+      expect(await readFile(file, "utf8")).toBe("<remote-result>");
+      expect(executorRequests.filter((request) => request.operation.type === "writeFile")).toEqual([
+        expect.objectContaining({ cwd }),
+      ]);
+      expect(requests).toHaveLength(2);
+      expect(requests.every((request) => request.model === "fixture-model")).toBe(true);
+      expect(findTriggerActor(String(frames[0].sessionId))).toMatchObject({ slack: "UCWD" });
+      // Reconstruct the real SQLite owner; deduplicated admission must not schedule again.
+      await closeServer(runnerServer);
+      await runner.close();
+      await openRunner();
+      const duplicate = await trigger(input);
+      expect(duplicate.status).toBe(200);
+      expect(await duplicate.json()).toMatchObject({ accepted: true, duplicate: true });
+      expect(requests).toHaveLength(2);
+      expect(
+        executorRequests.filter((request) => request.operation.type === "writeFile"),
+      ).toHaveLength(1);
+    },
+  );
+
+  it("projects the full admitted cwd separately from canonical MCP repository authority", async () => {
+    const cwd = triggerDirectory + "/packages";
+    await mkdir(join(directory, "packages"));
+    const frames = await stream({ prompt: "answer", directory: cwd, requestId: "cwd-projection" });
+    const receipt = await (
+      await trigger({ prompt: "answer", directory: cwd, requestId: "cwd-projection" })
+    ).json();
+    const slice = readTriggerSlice(receipt.sessionId, receipt.triggerId);
+    expect(slice).toMatchObject({ status: "completed" });
+    if ("notFound" in slice) throw new Error("Cwd projection fixture missing admission");
+    expect(slice.records.find((record) => record.type === "trigger_start")).toMatchObject({
+      nativeMcp: { directory: cwd, repositoryDirectory: triggerDirectory },
+    });
+    expect(frames.at(-1)).toMatchObject({ status: "completed" });
+  });
+
   it("explicitly loads the remote skill catalog, root/repo memory, tool instructions and active actor", async () => {
     await mkdir(join(config.skillsDir, "demo"), { recursive: true });
     await writeFile(

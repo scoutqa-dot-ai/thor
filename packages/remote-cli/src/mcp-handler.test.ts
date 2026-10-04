@@ -5,7 +5,13 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
-import { appendAlias, appendSessionEvent, formatThorContextFooter } from "@thor/common";
+import {
+  appendAlias,
+  appendSessionEvent,
+  formatThorContextFooter,
+  PROXY_REGISTRY,
+  getProxyConfig,
+} from "@thor/common";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { createRemoteCliApp } from "./index.js";
 import type { UpstreamConnection } from "./upstream.js";
@@ -23,7 +29,7 @@ const tools: Tool[] = [
       type: "object",
       properties: { projectKey: { type: "string" }, summary: { type: "string" } },
       required: ["projectKey", "summary"],
-      additionalProperties: false,
+      additionalProperties: true,
     },
   },
   {
@@ -31,8 +37,11 @@ const tools: Tool[] = [
     description: "Create a Jira issue link",
     inputSchema: {
       type: "object",
-      properties: { issueIdOrKey: { type: "string" }, fields: { type: "object" } },
-      required: ["issueIdOrKey"],
+      properties: {
+        outwardIssueIdOrKey: { type: "string" },
+        inwardIssueIdOrKey: { type: "string" },
+      },
+      required: ["outwardIssueIdOrKey", "inwardIssueIdOrKey"],
       additionalProperties: true,
     },
   },
@@ -91,6 +100,7 @@ const onePasswordTools: Tool[] = [
       properties: {
         login_plan_id: { type: "string" },
         item_id: { type: "string" },
+        automate_totp: { type: "boolean" },
       },
       required: ["login_plan_id", "item_id"],
       additionalProperties: false,
@@ -104,6 +114,15 @@ const onePasswordTools: Tool[] = [
     }),
   ),
 ];
+
+function policyFixtureTools(server: string): Tool[] {
+  const fixture = server === "onepassword-browser" ? onePasswordTools : tools;
+  const policy = getProxyConfig(server);
+  const missing = [...(policy?.allow ?? []), ...(policy?.approve ?? [])].filter(
+    (name) => !fixture.some((tool) => tool.name === name),
+  );
+  return [...fixture, ...missing.map((name): Tool => ({ name, inputSchema: { type: "object" } }))];
+}
 
 const onePasswordItemId = "bbbbbbbbbbbbbbbbbbbbbbbbbb";
 const onePasswordOrigin = "https://accounts.lambdatest.com";
@@ -220,7 +239,7 @@ describe("remote-cli MCP endpoints", () => {
         connectUpstreamFn: async (name: string): Promise<UpstreamConnection> => {
           connectedUpstreams.push(name);
           return {
-            tools: name === "onepassword-browser" ? onePasswordTools : tools,
+            tools: policyFixtureTools(name),
             client: {
               callTool: async ({
                 name,
@@ -391,6 +410,36 @@ describe("remote-cli MCP endpoints", () => {
     return (await resolved.json()) as { stdout: string; stderr: string; exitCode: number };
   }
 
+  it("wires native MCP routes behind the private secret without accepting legacy CLI session authority", async () => {
+    const body = {
+      context: {
+        sessionId: "parent-session",
+        anchorId: activeAnchorId,
+        triggerId: activeTriggerId,
+        requestId: "forged",
+        directory: "/workspace/repos/acme",
+        repositoryDirectory: "/workspace/repos/acme",
+        requester: { source: "slack", id: "UABCDEF1" },
+        teamId: "T123",
+        sourceKey: activeSlackCorrelationKey,
+        taskId: "task",
+        callId: "call",
+      },
+      input: { server: "atlassian", query: "Jira" },
+    };
+    expect(
+      (await postJson("/internal/mcp/search", body, { "x-thor-session-id": "parent-session" }))
+        .status,
+    ).toBe(401);
+    const authenticated = await postJson("/internal/mcp/search", body, {
+      "x-thor-internal-secret": "resolve-secret",
+    });
+    expect(authenticated.status).toBe(200);
+    expect(await authenticated.json()).toMatchObject({ status: "denied", isError: true });
+    expect(connectedUpstreams).toEqual([]);
+    expect(toolCalls).toEqual([]);
+  });
+
   it("lists allowed upstreams and visible tools, then calls an allowed tool", async () => {
     const upstreams = await postJson("/exec/mcp", {
       args: [],
@@ -419,13 +468,9 @@ describe("remote-cli MCP endpoints", () => {
     const toolsBody = (await listedTools.json()) as { stdout: string };
 
     expect(listedTools.status).toBe(200);
-    expect(toolsBody.stdout.trim().split("\n")).toEqual([
-      "getJiraIssue",
-      "createJiraIssue",
-      "createIssueLink",
-      "editJiraIssue",
-      "transitionJiraIssue",
-    ]);
+    expect(toolsBody.stdout.trim().split("\n").sort()).toEqual(
+      [...PROXY_REGISTRY.atlassian.allow, ...PROXY_REGISTRY.atlassian.approve].sort(),
+    );
 
     const hiddenLookup = await postJson("/exec/mcp", {
       args: [
@@ -472,7 +517,10 @@ describe("remote-cli MCP endpoints", () => {
 
     expect(health.status).toBe(200);
     expect(healthBody.mcp.configured).toBe(6);
-    expect(healthBody.mcp.instances.atlassian).toEqual({ connected: true, tools: 7 });
+    expect(healthBody.mcp.instances.atlassian).toEqual({
+      connected: true,
+      tools: PROXY_REGISTRY.atlassian.allow.length + PROXY_REGISTRY.atlassian.approve.length,
+    });
   });
 
   it("warms every registered upstream", async () => {
@@ -996,7 +1044,7 @@ describe("remote-cli MCP endpoints", () => {
     expect(pending.status).toBe(200);
     expect(pendingBody.exitCode).toBe(1);
     expect(pendingBody.stdout).toBe("");
-    expect(pendingBody.stderr).toContain("Slack API error: channel_not_found");
+    expect(pendingBody.stderr).toContain("notification failed");
 
     const dateDir = readdirSync(join(approvalsDir, "atlassian"))[0]!;
     const actionFile = readdirSync(join(approvalsDir, "atlassian", dateDir))[0]!;
@@ -1260,7 +1308,7 @@ describe("remote-cli MCP endpoints", () => {
     expect(toolCalls).toHaveLength(1);
   });
 
-  it("keeps approvals pending when approved tool execution fails and returns a clear error for corrupt approved records", async () => {
+  it("stores uncertain approved dispatch without redispatch and rejects corrupt approved records", async () => {
     appendAlias({
       aliasType: "opencode.session",
       aliasValue: "parent-session",
@@ -1296,14 +1344,18 @@ describe("remote-cli MCP endpoints", () => {
       exitCode: number;
     };
     expect(failedBody.exitCode).toBe(1);
-    expect(failedBody.stderr).toContain('Error calling "createJiraIssue": upstream unavailable');
+    expect(failedBody.stderr).toContain("outcome is uncertain. Do not retry automatically.");
 
     const statusAfterFailure = await postJson("/exec/approval", { args: ["status", actionId] });
     const statusAfterFailureBody = (await statusAfterFailure.json()) as { stdout: string };
     expect(JSON.parse(statusAfterFailureBody.stdout)).toMatchObject({
       id: actionId,
-      status: "pending",
-      error: "upstream unavailable",
+      status: "approved",
+      result: {
+        exitCode: 1,
+        stderr:
+          "MCP transport failed after dispatch; the outcome is uncertain. Do not retry automatically.",
+      },
     });
 
     const successfulRetry = await postJson(
@@ -1316,7 +1368,8 @@ describe("remote-cli MCP endpoints", () => {
       stderr: string;
       exitCode: number;
     };
-    expect(successfulRetryBody).toEqual({ stdout: "created", stderr: "", exitCode: 0 });
+    expect(successfulRetryBody).toEqual(failedBody);
+    expect(toolCalls).toHaveLength(1);
 
     const statusAfterSuccess = await postJson("/exec/approval", { args: ["status", actionId] });
     const statusAfterSuccessBody = (await statusAfterSuccess.json()) as { stdout: string };
@@ -1433,7 +1486,7 @@ describe("remote-cli MCP endpoints", () => {
     });
     const missingBody = (await missingSession.json()) as { stderr: string; exitCode: number };
     expect(missingBody.exitCode).toBe(1);
-    expect(missingBody.stderr).toContain("Missing Neo session id for 1Password browser request");
+    expect(missingBody.stderr).toContain("required broker context is missing");
   });
 
   it("does not create approval when the selected Login does not match the exact origin", async () => {
@@ -1587,7 +1640,8 @@ describe("remote-cli MCP endpoints", () => {
       expect(JSON.parse(statusBody.stdout)).toMatchObject({
         status: "approved",
         reviewer: "U123",
-        error: "connection lost after dispatch",
+        error:
+          "MCP transport failed after dispatch; the outcome is uncertain. Do not retry automatically.",
       });
 
       const retry = await postJson(

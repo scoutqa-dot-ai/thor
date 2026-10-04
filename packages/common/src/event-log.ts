@@ -12,6 +12,12 @@ import { dirname, join, resolve, sep } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
 import { getWorklogDir } from "./worklog.js";
+import {
+  McpNativeProjectionSchema,
+  McpNativeCallProjectionSchema,
+  type McpNativeAuthority,
+  type McpNativeOperation,
+} from "./mcp-broker.js";
 import { createLogger, logWarn, truncate } from "./logger.js";
 import { parseOpencodeEvent, projectOpencodeEvent } from "./opencode-event.js";
 
@@ -60,6 +66,7 @@ export const TriggerStartRecordSchema = BaseRecordSchema.extend({
   correlationKey: z.string().optional(),
   triggerSlackId: z.string().min(1).optional(),
   triggerGithubLogin: z.string().min(1).optional(),
+  nativeMcp: McpNativeProjectionSchema.optional(),
 });
 
 export const TriggerEndRecordSchema = BaseRecordSchema.extend({
@@ -972,7 +979,7 @@ export function listAnchorSessionStates(
  */
 type ScannedTrigger = { triggerId: string; ts: string } & Pick<
   z.infer<typeof TriggerStartRecordSchema>,
-  "correlationKey" | "triggerSlackId" | "triggerGithubLogin"
+  "correlationKey" | "triggerSlackId" | "triggerGithubLogin" | "nativeMcp"
 >;
 
 function scanTriggers(
@@ -989,6 +996,7 @@ function scanTriggers(
         ...(record.correlationKey ? { correlationKey: record.correlationKey } : {}),
         ...(record.triggerSlackId ? { triggerSlackId: record.triggerSlackId } : {}),
         ...(record.triggerGithubLogin ? { triggerGithubLogin: record.triggerGithubLogin } : {}),
+        ...(record.nativeMcp ? { nativeMcp: record.nativeMcp } : {}),
       };
       if (accepts(t)) {
         open = t;
@@ -1062,6 +1070,63 @@ export function findActiveSlackTriggerActor(
     triggerId: best.triggerId,
     slackUserId: best.slackUserId,
   };
+}
+
+/** Read the latest open native admission only; older/ended/legacy turns cannot authorize private MCP. */
+export function findNativeMcpProjection(sessionId: string):
+  | {
+      readonly anchorId: string;
+      readonly triggerId: string;
+      readonly nativeMcp: z.infer<typeof McpNativeProjectionSchema>;
+    }
+  | undefined {
+  const anchorId = resolveAlias({ aliasType: "pi.conversation", aliasValue: sessionId });
+  if (
+    !anchorId ||
+    sessionId !== `pi-${anchorId}` ||
+    resolveAlias({ aliasType: "opencode.session", aliasValue: sessionId }) !== anchorId
+  )
+    return undefined;
+  const { open, latest } = scanTriggers(sessionId);
+  if (!open?.nativeMcp || latest?.triggerId !== open.triggerId) return undefined;
+  if ((open.correlationKey ?? null) !== open.nativeMcp.sourceKey) return undefined;
+  const requester = open.nativeMcp.requester;
+  if (
+    (requester.source === "slack" &&
+      (open.triggerSlackId !== requester.id || open.triggerGithubLogin)) ||
+    (requester.source === "github" &&
+      (open.triggerGithubLogin !== requester.id || open.triggerSlackId)) ||
+    (requester.source === "system" && (open.triggerSlackId || open.triggerGithubLogin))
+  )
+    return undefined;
+  return { anchorId, triggerId: open.triggerId, nativeMcp: open.nativeMcp };
+}
+
+/** Check operation-bound host tool proof inside the open admission; search cannot grant dispatch. */
+export function hasNativeMcpCallProjection(
+  claimed: McpNativeAuthority,
+  operation: McpNativeOperation,
+): boolean {
+  const slice = readTriggerSlice(claimed.sessionId, claimed.triggerId);
+  if (
+    "notFound" in slice ||
+    slice.status !== "in_flight" ||
+    slice.skippedMalformed ||
+    slice.truncated
+  )
+    return false;
+  const record = [...slice.records]
+    .reverse()
+    .find((entry) => entry.type === "tool_call" && entry.callId === claimed.callId);
+  if (!record || record.type !== "tool_call" || record.tool !== operation) return false;
+  const parsed = McpNativeCallProjectionSchema.safeParse(record.payload);
+  const authority = McpNativeCallProjectionSchema.shape.nativeMcp.safeParse(claimed);
+  return (
+    parsed.success &&
+    authority.success &&
+    parsed.data.state === "started" &&
+    JSON.stringify(parsed.data.nativeMcp) === JSON.stringify(authority.data)
+  );
 }
 
 function findBestTriggerForSession(
