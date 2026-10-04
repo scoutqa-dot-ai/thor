@@ -1,6 +1,6 @@
 # Neo — Pi Durable-native Slack simplification
 
-**Status:** Core Phases 1–3 implemented and isolated verification recorded below. The MCP companion, live workspace acceptance, deployment, cutover and rollback retirement remain separate work/approval gates.
+**Status:** Core Phases 1–3 and Phase 4's feasible **local acceptance** are verified after `dfaa3ad`; MCP companion core Phases 1–4 are implemented. Phase 4 is **not fully accepted**: CI, live workspace/provider/OAuth and Ubuntu deployment acceptance remain unrun. Deployment, default cutover and rollback retirement require separate approval.
 **Reviewed:** 2026-10-04, Neo `f8ce4b6`, released Pi `v1.0.2` (`cd32f7725fdbddbaecdff5b1e68491563394e0ca`).
 
 ## Goal and recommendation
@@ -399,7 +399,7 @@ This correction amends the Phase 2 commit, rather than adding a downstream
 phase commit. No push, CI, container E2E rerun, live acceptance, deployment or
 Phase 3 implementation was performed for the correction.
 
-**Next:** Phase 3 host-owned replies and the approved quiet-footer/native working
+**Historical Phase 2 handoff (completed below):** Phase 3 host-owned replies and the approved quiet-footer/native working
 effect, with its privacy/publication/pacing/lifecycle gates unchanged. Keep
 legacy execution/default OpenCode and the tool-owned reply instructions until
 that phase's new-admission-only policy is implemented.
@@ -573,6 +573,89 @@ This correction amends the Phase 3 commit. No MCP implementation, optional packa
 upgrade, deployment, live Slack/model/OAuth acceptance, push, workflow dispatch,
 PR or `.pi` files are included. The companion MCP plan remains unimplemented and
 the separate live/cutover/retirement acceptance gates remain unchanged.
+
+## Phase 4 — local acceptance only — 2026-10-05
+
+Verified the core on `dfaa3ad` without retirement, default cutover, deployment,
+upgrade, push or PR. The earlier Phase 2/3 handoffs and statements that MCP was
+unimplemented describe those commits, not current status. **Next:** MCP Phase 5
+local integration acceptance, then separately authorized external gates below.
+
+One acceptance-fixture repair: explicit cached-image GWS validation now mounts
+the current host-built broker `dist` read-only and fails if it is missing. Cached
+images supply dependencies, not validation of old compiled source. No production
+environment/mount, credential, catalog or application behavior changed.
+
+### Actual isolated evidence
+
+Node **24.21.0**, pnpm **10.33.4**, installed dependencies and cached images only.
+No downloads/install, live Slack/Google/provider/API/repository calls or private
+deployment data. Sandbox preflight confirms `sbx v0.46.0` and approved
+`node:24-bookworm`, but no prepared repository/dependency image; the expressly
+authorized host/dummy Docker mechanisms were available and used instead.
+
+- `pnpm exec vitest run --no-file-parallelism`: **76 files / 1,321 tests passed**,
+  zero skipped. Includes real SQLite/Responses/executor/Slack SDK, Google automatic
+  continuation/current actor, browser Chromium, Jira/built-in approval, sandbox
+  policy/file boundaries and generic MCP crash/uncertainty regressions.
+- `pnpm typecheck`, `pnpm build`, `pnpm build:mcp-fixture`: all pass (eight
+  workspace typechecks/builds, separately compiled integration fixture).
+- Cached `./scripts/test-pi-e2e.sh`: pass, actual Pi SQLite → production broker →
+  SDK HTTP, signed Slack gateway/queue, host final text/model/source reactions,
+  private approval continuation, structured/image/error, credential/storage
+  isolation, viewer/SSO and SIGKILL recovery. No model/provider/Slack live claim.
+- Cached `./scripts/test-mcp-catalog-compose.sh`: pass, actual private review/
+  effect/result, owner refusal, complete authority evidence and production
+  browser/command kernel child file/proc/mount isolation. This supplies local
+  sandbox fail-closed evidence, not a Daytona cloud lifecycle.
+- `./scripts/test-gws-e2e.sh thor-gws-remote-cli:e2e thor-gws-opencode:e2e`:
+  pass with **current broker artifacts**, dummy per-user OAuth/direct reads/writes,
+  Drata, caller formatting/pagination, upstream denial and private mount checks.
+- `node --import ./packages/runner/node_modules/tsx/dist/loader.mjs
+scripts/test-gws-browser-cookie.mjs /usr/bin/chromium` and the same command for
+  `scripts/test-gws-ingress-browser.mjs`: both pass. Fresh headless Chromium,
+  local fake SSO/Google, shipped Nginx, scoped cookie recovery/verified owner,
+  exact public GIF/PNG bytes/MIME and decoding in both themes; no copied profile.
+- Base/Pi/CI/no-AppArmor graphs rendered in an empty inherited environment with
+  explicit dummy values, `--env-file /dev/null --no-env-resolution --format json`:
+  pass. Assertions confirm broker-only private approval volume and both broker-only
+  read-only catalog/token mounts. Shell syntax and `git diff --check` pass.
+
+Pi selectors: `PI_TEST_USE_CACHED_IMAGES=1`,
+`MCP_TEST_BROKER_IMAGE=thor-gws-remote-cli:e2e`,
+`PI_TEST_{RUNNER,EXECUTOR,GATEWAY,ADMIN,INGRESS}_IMAGE` select the corresponding
+`thor-pi-e2e-1000-3364098-{runner,pi-executor,gateway,admin,ingress}:latest` images.
+Catalog uses the same images under `MCP_TEST_{BROKER,RUNNER,EXECUTOR,GATEWAY,ADMIN}_IMAGE`.
+Current compiled artifacts are mounted by the existing cached overlay.
+Logs: `/tmp/slack4-{tests,types,build,fixture-build,pi,catalog,gws,cookie,browser}.log`;
+graphs: `/tmp/slack4-compose-{base,pi,ci,no-apparmor}.json`.
+Post-script Docker container/volume/network queries show no resources for
+`thor-pi-e2e-1000-150847` or `neo-mcp-catalog-test-1000-163277`, nor GWS/browser
+fixture containers/networks. Each browser fixture removes its temporary private
+state and closes its fresh context. Initial graph setup lacked required dummy
+values; supplying them (without private env resolution) produced all four graphs.
+
+### Exact remaining gates (not local fixture acceptance)
+
+- Authorized push/CI Unit, Pi Runtime, MCP Catalog and relevant Core/Sandbox
+  workflow results; no push/dispatch/PR requested or performed here.
+- Real Slack workspace feature/permission/surface lifecycle, GIF playback,
+  reduced motion/accessibility and Katalon artwork rights. Local decoding/SDK
+  response fixtures cannot prove client rendering or permit app activation.
+- Genuine served-provider execution/model behavior and real requester Google
+  OAuth/account consent/automatic continuation, plus live Slack/Jira/Core paths.
+  `test-e2e.sh`, `test-create-jira-approval-e2e.sh` and `test-opencode-e2e.sh`
+  require real integrations and were deliberately not launched.
+- `test-sandbox-e2e.sh` requires Daytona credentials/snapshot and clones an
+  external repository; its cloud lifecycle was deliberately not launched. Unit,
+  pinned-file and kernel child denial gates above are its feasible local subset.
+- Existing Ubuntu Compose/keys/volumes, loaded production `thor-remote-cli`
+  AppArmor and storage/power-loss/backup support. This host reports AppArmor kernel
+  `N`; test-only unconfined-AppArmor fixtures do not validate the Ubuntu profile.
+  SIGKILL/WAL process-crash evidence is not power-loss acceptance.
+
+No second Slack consumer, actual private mount changes, `.pi` files, database
+downgrade, optional Pi 1.0.2/typed Google redesign or legacy retirement included.
 
 ## Decision log
 
