@@ -180,6 +180,8 @@ Adopt Junior's readable debounce/minimum-visible principle for **nonterminal pha
 
 Focused independent plan verification passed the source/lifecycle/animation/ownership boundaries. This does not validate live rendering or authorize implementation/deployment; the Phase 3 isolated and workspace acceptance gates remain future work.
 
+**Prototype review:** throwaway branch `prototype/neo-slack-working`, snapshot `bb74e7c`, captures three Slack-style layouts at `packages/runner/src/slack-working.prototype.html`: A quiet footer, B activity card and C step trail, using unchanged AI assets and synthetic task states. The user marked **A — Quiet footer** preferred in the local review window (completed state, dark theme). Record this as the initial visual direction: native loading plus one compact AI mark/model line, with task metadata on the final reply. It does not approve implementation/deployment, verify native Slack playback or accept every lifecycle state; further feedback and Phase 3 acceptance gates remain. The prototype/server/switcher stay on the throwaway branch, not in production code. Run there with `pnpm prototype:slack` for further review.
+
 ### Google: preserve the working flow; optional second cut
 
 Core refactor keeps the broker outbox and `google-auth-continuation-poller.ts`. Current `/exec/gws` produces typed 428 `authWait`, but the shell wrapper renders `ExecResult` text and does not make bash a native signal waiter. Broker-ready continuation authorizes the existing automatic **agent task** continuation under the original requester/final model; never replay a compound shell command or uncertain earlier effect.
