@@ -21,6 +21,7 @@ import {
 } from "./mcp-broker.js";
 import { createLogger, logWarn, truncate } from "./logger.js";
 import { parseOpencodeEvent, projectOpencodeEvent } from "./opencode-event.js";
+import { SlackReplyAdmissionSchema } from "./slack-reply-policy.js";
 
 const log = createLogger("event-log");
 const SLOW_READ_THRESHOLD_MS = 50;
@@ -68,6 +69,13 @@ export const TriggerStartRecordSchema = BaseRecordSchema.extend({
   triggerSlackId: z.string().min(1).optional(),
   triggerGithubLogin: z.string().min(1).optional(),
   nativeMcp: McpNativeProjectionSchema.optional(),
+  // Frozen host reply ownership comes from the admission receipt, never tool arguments.
+  nativeMcpDelivery: z
+    .discriminatedUnion("owner", [
+      z.strictObject({ owner: z.literal("tool") }),
+      z.strictObject({ owner: z.literal("host"), target: SlackReplyAdmissionSchema }),
+    ])
+    .optional(),
 });
 
 export const TriggerEndRecordSchema = BaseRecordSchema.extend({
@@ -999,7 +1007,7 @@ export function listAnchorSessionStates(
  */
 type ScannedTrigger = { triggerId: string; ts: string } & Pick<
   z.infer<typeof TriggerStartRecordSchema>,
-  "correlationKey" | "triggerSlackId" | "triggerGithubLogin" | "nativeMcp"
+  "correlationKey" | "triggerSlackId" | "triggerGithubLogin" | "nativeMcp" | "nativeMcpDelivery"
 >;
 
 function scanTriggerRecords(
@@ -1017,6 +1025,7 @@ function scanTriggerRecords(
         ...(record.triggerSlackId ? { triggerSlackId: record.triggerSlackId } : {}),
         ...(record.triggerGithubLogin ? { triggerGithubLogin: record.triggerGithubLogin } : {}),
         ...(record.nativeMcp ? { nativeMcp: record.nativeMcp } : {}),
+        ...(record.nativeMcpDelivery ? { nativeMcpDelivery: record.nativeMcpDelivery } : {}),
       };
       if (accepts(t)) {
         open = t;
@@ -1139,10 +1148,12 @@ export function findNativeMcpProjection(sessionId: string):
   return { anchorId, triggerId: open.triggerId, nativeMcp: open.nativeMcp };
 }
 
-/** Latest original admission may finish awaiting approval; incomplete evidence or supersession revokes it. */
-export function findLatestMcpApprovalProjection(
-  sessionId: string,
-): ReturnType<typeof findNativeMcpProjection> {
+/** Latest original admission includes frozen reply ownership; incomplete evidence or supersession revokes it. */
+export function findLatestMcpApprovalProjection(sessionId: string):
+  | (NonNullable<ReturnType<typeof findNativeMcpProjection>> & {
+      readonly delivery: z.infer<typeof TriggerStartRecordSchema>["nativeMcpDelivery"];
+    })
+  | undefined {
   const records = readMcpAuthorityRecords(sessionId);
   if (!records) return undefined;
   const anchorId = resolveAlias({ aliasType: "pi.conversation", aliasValue: sessionId });
@@ -1164,7 +1175,12 @@ export function findLatestMcpApprovalProjection(
     latest.triggerGithubLogin
   )
     return undefined;
-  return { anchorId, triggerId: latest.triggerId, nativeMcp: latest.nativeMcp };
+  return {
+    anchorId,
+    triggerId: latest.triggerId,
+    nativeMcp: latest.nativeMcp,
+    delivery: latest.nativeMcpDelivery,
+  };
 }
 
 /** Require complete log evidence and operation-bound open host tool proof; search cannot grant dispatch. */

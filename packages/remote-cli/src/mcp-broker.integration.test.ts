@@ -60,7 +60,14 @@ const fixtureHttpResponseSchema = z.looseObject({
   stdout: z.string().default(""),
   stderr: z.string().default(""),
   exitCode: z.number().default(-1),
-  content: z.array(z.looseObject({ type: z.literal("text"), text: z.string() })).default([]),
+  content: z
+    .array(
+      z.discriminatedUnion("type", [
+        z.looseObject({ type: z.literal("text"), text: z.string() }),
+        z.looseObject({ type: z.literal("image"), data: z.string(), mimeType: z.string() }),
+      ]),
+    )
+    .default([]),
   value: z
     .looseObject({
       tools: z.array(
@@ -772,12 +779,17 @@ describe("shared MCP broker through real local SDK HTTP", () => {
     const binary = await call(toolRef);
     expect(binary.body.content).toHaveLength(2);
     expect(JSON.stringify(binary.body)).not.toContain("dummy-binary-secret");
-    expect(JSON.stringify(binary.body)).not.toContain(
-      Buffer.from("dummy-binary-secret").toString("base64"),
-    );
-    expect(binary.body.content.every((block) => block.text.startsWith("Unsupported MCP"))).toBe(
-      true,
-    );
+    // The private edge now carries untrusted inline image bytes for the single runner decoder.
+    // It is not model-visible base64 prose; malformed images are rejected by real native tests.
+    expect(binary.body.content[0]).toEqual({
+      type: "image",
+      data: Buffer.from("dummy-binary-secret").toString("base64"),
+      mimeType: "image/png",
+    });
+    expect(binary.body.content[1]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("Unsupported MCP resource"),
+    });
     expect(JSON.stringify(binary.body)).not.toContain("private.example");
     const legacy = await post("/exec/mcp", {
       args: ["atlassian", "getJiraIssue", JSON.stringify(validArgs)],
@@ -841,6 +853,17 @@ describe("shared MCP broker through real local SDK HTTP", () => {
     expect(pending.http).toBe(200);
     expect(pending.body.status).toBe("pending_approval");
     const stored = await service.executeApproval(["list"]);
+    const { requester, teamId, repositoryDirectory, sourceKey, requestId, sessionId } = context;
+    const reader = { requester, teamId, repositoryDirectory, sourceKey, requestId, sessionId };
+    expect((await post("/internal/mcp/approvals/wait", reader)).body.status).toBe("pending");
+    expect(
+      (
+        await post("/internal/mcp/approvals/wait", {
+          ...reader,
+          requester: { source: "slack", id: "U_OTHER" },
+        })
+      ).body.status,
+    ).toBe("unavailable");
     expect(JSON.stringify(pending.body)).not.toContain("approvalEvent");
     expect(JSON.stringify(pending.body)).not.toContain("cliOutput");
     expect(pending.body).not.toHaveProperty("args");
@@ -860,6 +883,7 @@ describe("shared MCP broker through real local SDK HTTP", () => {
       "createJiraIssue",
     ]);
     expect(effects[1].arguments).toMatchObject({ assignee_account_id: "jira-alice" });
+    expect((await post("/internal/mcp/approvals/wait", reader)).body.status).toBe("clear");
     expect(effects[1].arguments?.description).toContain(
       `https://neo.example.test/runner/v/${anchorId}/${triggerId}`,
     );

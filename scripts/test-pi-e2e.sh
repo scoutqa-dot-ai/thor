@@ -12,7 +12,14 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
-"${compose[@]}" up --build -d --wait --wait-timeout 180
+if [[ "${PI_TEST_USE_CACHED_IMAGES:-0}" == 1 ]]; then
+  compose+=(-f "$root/docker/pi-test/cached.yml")
+  "${compose[@]}" up --no-build --pull never -d --wait --wait-timeout 180
+else
+  # Build separately before validation; offline checks below never install dependencies.
+  "${compose[@]}" build remote-cli pi-executor runner gateway admin ingress
+  "${compose[@]}" up --no-build --pull never -d --wait --wait-timeout 180
+fi
 
 # Seed an image only in the executor filesystem, without placing encoded bytes in model text.
 "${compose[@]}" exec -T pi-executor node --input-type=module <<'JS'
@@ -30,12 +37,14 @@ const trigger = async (body) => fetch('http://127.0.0.1:3000/trigger', {
   body:JSON.stringify({directory:'/workspace/repos/pi-fixture', ...body}),
 });
 await writeFile('/var/lib/runner/runner-only','runner-private-sentinel');
+const waitProbe=await fetch('http://remote-cli:3004/internal/google-workspace/waits',{headers:{'x-thor-internal-secret':process.env.THOR_INTERNAL_SECRET}});
+assert.equal(waitProbe.status,200,await waitProbe.text());
 const body={prompt:'fixture-tool',requestId:'container-tool',correlationKey:'slack:thread:C_FIXTURE/1710000000.001',triggerSlackId:'U_FIXTURE',messageTs:'1710000000.002'};
 const streamed=await trigger({...body,stream:true});
 assert.equal(streamed.status,200);
 const frames=(await streamed.text()).trim().split('\n').map(JSON.parse);
 assert.equal(frames[0].type,'start');
-assert.equal(frames.at(-1).status,'completed');
+assert.equal(frames.at(-1).status,'completed',JSON.stringify(frames.at(-1)));
 assert.equal(frames.at(-1).response,'fixture completed');
 assert(frames.some(frame=>frame.type==='tool'&&frame.tool==='bash'&&frame.status==='completed'));
 assert(frames.some(frame=>frame.type==='context'));
@@ -91,6 +100,20 @@ const imageHtml=await (await fetch(`http://127.0.0.1:3000/runner/v/${imageReceip
 assert(imageHtml.includes('[Image attached: image/png]'));
 assert(!imageHtml.includes('data:image/')); assert(!imageHtml.includes('iVBORw0KGgo'));
 console.log('PASS: executor-only raster image reaches actual Responses input_image and safe viewer marker');
+for (const mode of ['native-structured','native-image','native-error']) {
+  const nativeBody={prompt:'fixture-native-mcp '+mode,requestId:'container-'+mode,correlationKey:'cron:container-'+mode};
+  const nativeFrames=(await (await trigger({...nativeBody,stream:true})).text()).trim().split('\n').map(JSON.parse);
+  assert.equal(nativeFrames.at(-1).response,'fixture native MCP verified');
+  assert(nativeFrames.some(frame=>frame.type==='tool'&&frame.tool==='mcp_search'&&frame.status==='completed'));
+  assert(nativeFrames.some(frame=>frame.type==='tool'&&frame.tool==='mcp_call'&&frame.status===(mode==='native-error'?'error':'completed')));
+}
+const actualMcp=await (await fetch('http://mcp-fixture:8000/health')).json();
+assert.equal(actualMcp.effects,3);
+assert.deepEqual(actualMcp.calls.map(call=>call.arguments),[{text:'native-structured'},{text:'native-image'},{text:'native-error'}]);
+assert(actualMcp.calls.every(call=>call.name==='echo'));
+const nativeProbe=await (await fetch('http://model-fixture:8000/probe')).json();
+assert.equal(nativeProbe.wrapperCalls,1); // Native calls never use the shell/argv wrapper.
+console.log('PASS: actual Durable SQLite -> real broker -> real SDK MCP search/object call, structured/image/isError results, no shell roundtrip');
 const denied=await (await fetch('http://pi-executor:3002/execute',{
   method:'POST',headers:{'content-type':'application/json'},
   body:JSON.stringify({sessionId:'00000000-0000-4000-8000-000000000001',cwd:'/workspace/repos/pi-fixture',operation:{type:'writeFile',path:'/workspace/repos/pi-fixture/README.md',content:{encoding:'text',data:'must fail'}}}),
@@ -104,8 +127,8 @@ const viewer=await fetch(`http://ingress:8080/runner/v/${receipt.anchorId}/${rec
 const admin=await fetch('http://ingress:8080/admin/sessions',{headers});assert.equal(admin.status,200);assert((await admin.text()).includes(receipt.anchorId));
 const unauthorizedConnect=await fetch('http://ingress:8080/google-workspace/connect/authorize',{redirect:'manual',headers:{'x-vouch-user':'forged'}});assert.equal(unauthorizedConnect.status,302);assert(unauthorizedConnect.headers.get('location').includes('/vouch/login'));
 const connect=await fetch('http://ingress:8080/google-workspace/connect/authorize',{headers:{...headers,'x-vouch-user':'forged','x-thor-internal-secret':'forged'}});
-assert.deepEqual(await connect.json(),{trustedInternalHeader:true,vouchUser:'fixture@example.com'});
-const callback=await fetch('http://ingress:8080/google-workspace/oauth/callback?code=fixture-code&state=fixture-state',{headers:{'x-thor-internal-secret':'forged'}});assert.equal((await callback.json()).trustedInternalHeader,true);
+assert.equal(connect.status,400);assert((await connect.text()).includes('Resume Google Workspace connection'));
+const callback=await fetch('http://ingress:8080/google-workspace/oauth/callback?code=fixture-code&state=fixture-state',{headers:{'x-thor-internal-secret':'forged'}});assert.equal(callback.status,400);
 // Actual signed HTTP intake, disk queue, gateway admission and embedded Pi response.
 const signedEvent={type:'event_callback',team_id:'T_FIXTURE',event_id:'Ev_signed_first',event:{type:'app_mention',user:'U_SIGNED',channel:'C_SIGNED',ts:'1710000000.010',text:'<@UBOT> [profile:strong thinking:low] fixture-slack-intake'}};
 const slackRequest=async(payload,valid=true)=>{
@@ -164,6 +187,28 @@ assert(routingHtml.includes('Need more reasoning')&&routingHtml.includes('Need d
 const routingProbe=await (await fetch('http://model-fixture:8000/probe')).json();
 assert.deepEqual(routingProbe.modelSelections.slice(-3),[{model:'fixture-fast',effort:'low'},{model:'fixture-balanced',effort:'medium'},{model:'fixture-strong',effort:'high'}]);
 console.log('PASS: actual per-task Responses model/effort, explicit Slack override, new-human reroute, bounded native escalation and viewer attribution');
+const approvalBody={prompt:'fixture-native-mcp-approval',requestId:'container-native-approval',correlationKey:'slack:thread:DFIXTURE/1710000000.100',triggerSlackId:'U_FIXTURE',messageTs:'1710000000.101',thinkingLevel:'high',slackReplyAdmission:{version:1,teamId:'T_FIXTURE',channel:'DFIXTURE',threadTs:'1710000000.100'}};
+const approvalFrames=(await (await trigger({...approvalBody,stream:true})).text()).trim().split('\n').map(JSON.parse);
+assert.equal(approvalFrames.at(-1).status,'error');assert.equal(approvalFrames.at(-1).authWait,'approval');
+const beforeApproval=await (await fetch('http://mcp-fixture:8000/health')).json();
+assert.equal(beforeApproval.effects,3);assert.equal(beforeApproval.cards.length,1);
+const card=beforeApproval.cards[0];
+assert.equal(card.channel,'DFIXTURE');
+const value=card.blocks.flatMap(block=>block.elements??[]).find(element=>element.action_id==='approval_approve').value;
+const actionBody=new URLSearchParams({payload:JSON.stringify({type:'block_actions',team:{id:'T_FIXTURE'},user:{id:'U_FIXTURE'},channel:{id:'DFIXTURE'},message:{ts:'1710000000.123'},actions:[{action_id:'approval_approve',value}]})}).toString();
+const actionTime=String(Math.floor(Date.now()/1000));
+const actionSignature='v0='+createHmac('sha256','fixture-signing-secret').update(`v0:${actionTime}:${actionBody}`).digest('hex');
+const actionResponse=await fetch('http://ingress:8080/slack/interactivity',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded','x-slack-request-timestamp':actionTime,'x-slack-signature':actionSignature},body:actionBody});
+assert.equal(actionResponse.status,200);
+const approvedDeliveries=await waitProgress(deliveries=>deliveries.some(d=>d.method==='/slack/chat.postMessage'&&d.text==='fixture approved disposition'));
+const approvedReply=approvedDeliveries.find(d=>d.text==='fixture approved disposition');
+assert.equal(approvedReply.channel,'DFIXTURE');assert.equal(approvedReply.threadTs,'1710000000.100');
+assert(approvedReply.blocks.at(-1).elements.some(element=>element.text==='Model: fixture-balanced · Thinking: high'));
+const afterApproval=await (await fetch('http://mcp-fixture:8000/health')).json();
+assert.equal(afterApproval.effects,4);assert.equal(afterApproval.calls.at(-1).name,'write_doc');
+assert.deepEqual(afterApproval.calls.at(-1).arguments,{text:'dummy-private-approved-native'});
+assert(!approvedDeliveries.some(d=>d.text==='fixture native approval pending'));
+console.log('PASS: native pending hold -> signed gateway click -> private broker dispatch -> authenticated queue continuation -> original host target/model, exactly one approved effect');
 const pending={prompt:'fixture-hold',requestId:'container-recovery',correlationKey:'cron:container-recovery'};
 const accepted=await (await trigger(pending)).json();assert.equal(accepted.accepted,true);
 await writeFile('/var/lib/runner/e2e-pending.json',JSON.stringify(accepted));

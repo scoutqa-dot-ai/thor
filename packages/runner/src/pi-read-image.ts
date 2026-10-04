@@ -66,6 +66,60 @@ function imageFailure(reason: string) {
   };
 }
 
+/** Decode inline raster images with the same byte, pixel, still-image and model contract as read_image. */
+export async function decodePiRasterImage(
+  data: string,
+  modelSupportsImages: boolean,
+  signal?: AbortSignal,
+  declaredMimeType?: string,
+): Promise<
+  | { ok: false; reason: string }
+  | { ok: true; mimeType: string; width: number; height: number; bytes: number }
+> {
+  if (signal?.aborted) return { ok: false, reason: "cancelled" };
+  if (!modelSupportsImages)
+    return { ok: false, reason: "the selected model does not support images" };
+  if (data.length > Math.ceil(PI_IMAGE_MAX_BYTES / 3) * 4)
+    return { ok: false, reason: "image exceeds the 10 MiB byte limit" };
+  const bytes = Buffer.from(data, "base64");
+  if (bytes.toString("base64") !== data) return { ok: false, reason: "malformed image encoding" };
+  if (bytes.length > PI_IMAGE_MAX_BYTES)
+    return { ok: false, reason: "image exceeds the 10 MiB byte limit" };
+  const mimeType = rasterMimeType(bytes);
+  if (!mimeType)
+    return {
+      ok: false,
+      reason: "unsupported image contents; use PNG, JPEG, WebP or static GIF (not SVG or HTML)",
+    };
+  if (declaredMimeType !== undefined && declaredMimeType !== mimeType)
+    return { ok: false, reason: "image MIME type does not match raster contents" };
+  const envelopeFailure = rasterEnvelopeFailure(bytes, mimeType);
+  if (envelopeFailure) return { ok: false, reason: envelopeFailure };
+  try {
+    // The signature allowlist precedes libvips; metadata is read before pixel allocation.
+    const metadata = await sharp(bytes, { limitInputPixels: false, failOn: "warning" }).metadata();
+    const { width, height } = metadata;
+    if (!width || !height || !Number.isSafeInteger(width * height))
+      return { ok: false, reason: "malformed image dimensions" };
+    if (width * height > imageMaxPixels)
+      return { ok: false, reason: "image exceeds the 16 million pixel limit" };
+    if ((metadata.pages ?? 1) > 1)
+      return { ok: false, reason: "animated images are not supported; provide a still frame" };
+    if (`image/${metadata.format === "jpg" ? "jpeg" : metadata.format}` !== mimeType)
+      return { ok: false, reason: "malformed image contents" };
+    if (signal?.aborted) return { ok: false, reason: "cancelled" };
+    await sharp(bytes, { limitInputPixels: imageMaxPixels, failOn: "warning" }).raw().toBuffer();
+    return signal?.aborted
+      ? { ok: false, reason: "cancelled" }
+      : { ok: true, mimeType, width, height, bytes: bytes.length };
+  } catch {
+    return {
+      ok: false,
+      reason: signal?.aborted ? "cancelled" : "malformed or incomplete raster image",
+    };
+  }
+}
+
 /** Read images only through the Pi remote executor; full raster decoding precedes inline model content. */
 export function createPiReadImageTool(
   modelSupportsImages: boolean,
@@ -97,52 +151,21 @@ export function createPiReadImageTool(
             : `remote file unavailable (${read.error.code})`,
         );
       if ("tooLarge" in read.value) return imageFailure("image exceeds the 10 MiB byte limit");
-      const bytes = Buffer.from(read.value.data, "base64");
-      const mimeType = rasterMimeType(bytes);
-      if (!mimeType)
-        return imageFailure(
-          "unsupported image contents; use PNG, JPEG, WebP or static GIF (not SVG or HTML)",
-        );
-      const envelopeFailure = rasterEnvelopeFailure(bytes, mimeType);
-      if (envelopeFailure) return imageFailure(envelopeFailure);
-      try {
-        // Signature allowlist runs before the decoder, so SVG/XML is never handed to libvips.
-        // metadata does not allocate a pixel buffer; full decode is separately pixel-bounded.
-        const metadata = await sharp(bytes, {
-          limitInputPixels: false,
-          failOn: "warning",
-        }).metadata();
-        const { width, height } = metadata;
-        if (!width || !height || !Number.isSafeInteger(width * height))
-          return imageFailure("malformed image dimensions");
-        if (width * height > imageMaxPixels)
-          return imageFailure("image exceeds the 16 million pixel limit");
-        if ((metadata.pages ?? 1) > 1)
-          return imageFailure("animated images are not supported; provide a still frame");
-        if (`image/${metadata.format === "jpg" ? "jpeg" : metadata.format}` !== mimeType)
-          return imageFailure("malformed image contents");
-        if (context.abortSignal?.aborted) return imageFailure("cancelled");
-        // Unlike header sniffing, full decode rejects truncated/corrupt raster data. Raw output is
-        // bounded to 16M pixels by libvips; no decoded pixels are stored in messages or logs.
-        await sharp(bytes, { limitInputPixels: imageMaxPixels, failOn: "warning" })
-          .raw()
-          .toBuffer();
-        if (context.abortSignal?.aborted) return imageFailure("cancelled");
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Image: ${mimeType}, ${width} × ${height}, ${bytes.length} bytes.`,
-            },
-            { type: "image", mimeType, data: read.value.data },
-          ],
-        };
-      } catch {
-        // Native decoder errors may contain untrusted metadata; do not echo them.
-        return imageFailure(
-          context.abortSignal?.aborted ? "cancelled" : "malformed or incomplete raster image",
-        );
-      }
+      const image = await decodePiRasterImage(
+        read.value.data,
+        modelSupportsImages,
+        context.abortSignal,
+      );
+      if (!image.ok) return imageFailure(image.reason);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Image: ${image.mimeType}, ${image.width} × ${image.height}, ${image.bytes} bytes.`,
+          },
+          { type: "image", mimeType: image.mimeType, data: read.value.data },
+        ],
+      };
     },
   });
 }

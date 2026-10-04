@@ -1,10 +1,10 @@
 # Operator MCP HTTP catalog
 
-Phases 2–3 support restart-only custom MCP servers through the existing broker.
+Phases 2–4 support restart-only custom MCP servers through the existing broker.
 Allow-only tools retain the legacy `mcp` wrapper. Custom `approve` uses a versioned
 generic operation and the authenticated structured broker edge; CLI attribution
-cannot create generic review. Native `mcp_search` / `mcp_call` registration is a
-later phase, not installed by Phase 3. `allow` authorizes effects,
+cannot create generic review. Pi registers native `mcp_search` / `mcp_call` before
+recovery and scheduling. `allow` authorizes effects,
 not merely reads. Review the provider's business-argument and credential contract:
 tools needing credentials in arguments require a dedicated broker adapter.
 
@@ -122,8 +122,8 @@ with the same command; it needs no live integration credentials to validate file
 
 After validation, drain broker-dependent work, then restart/recreate **remote-cli**.
 Subsequent supported additions need no source edit, rebuild or runner restart.
-Inspect `/health` status and `mcp --help`, then `mcp mydocs` / tool `--help` via the
-existing agent wrapper. Offline servers are individually unavailable, not broker
+Inspect `/health` status and native `mcp_search`; legacy clients can use `mcp --help`,
+then `mcp mydocs` / tool `--help`. Offline servers are individually unavailable, not broker
 startup failures. All credential bytes are immutable startup snapshots; replacing
 a token file alone does not rotate the active client. Rotate and restart, then
 rediscover: every connection revision invalidates old tool references/cursors,
@@ -146,6 +146,27 @@ text, not vendor fragments. Exact known-token reflection in inventory or a
 successful result is unsupported: inventory stays unavailable; a dispatched
 result becomes uncertain, without returning the reflected bytes or retrying.
 This is a specific credential boundary, not general business-field redaction.
+
+## Native Pi discovery and results
+
+Two stable tools query the live broker, not a registry rebuilt from each catalog.
+`mcp_search` supports bounded summaries, filtered pages, exact lookup and cursors;
+selected input schemas are complete (32 KiB descriptor / 20 tools / 256 KiB page).
+Its Harness text budget accommodates the complete page. Description/schema prose
+is untrusted data, never a system instruction. Hidden names, annotations, `_meta`,
+upstream locations and credentials are absent. `mcp_call` passes `{toolRef,
+arguments}` directly as structured JSON; neither tool uses shell/CLI stdout.
+The host supplies current admitted requester, full cwd, canonical repo and native
+task/call proof; tool arguments cannot choose that authority.
+
+Structured results become JSON text. HTTP-200 `isError` remains a tool error;
+inline still PNG/JPEG/WebP/GIF goes through the same 10 MiB / 16-million-pixel
+decoder/model contract as `read_image`. Audio/resources have explicit unsupported
+text, without base64 prose or URL fetching. Native details contain disposition and
+small correlation IDs, not result copies. Search is replay safe; **every call is
+replay unsafe**, including read-only/idempotent hints. After interruption/restart,
+the Harness reports potentially partial work instead of reissuing a mutation.
+This does not deduplicate a newly issued model/user call or prove provider exactly-once.
 
 ## Generic approval safety contract
 
@@ -179,11 +200,26 @@ proven by schema equality: restart/reapprove incompatible changes.
 Only a host-admitted Slack requester with current workspace/repository/source proof
 can review generic operations. GitHub/system/cron and forgeable CLI attributes are
 insufficient. The broker confirms its Slack workspace and the requester's private
-DM, displays complete effective JSON as plain text (one section, conservative 2800
+DM and independently reads frozen reply ownership from the trusted host projection.
+Host-owned requests must already target that same confirmed requester DM/workspace;
+public/different-DM targets or missing ownership proof return `review_not_supported`
+before any approval intent, card or mutation. Ask the requester for a fresh private-DM
+request; the broker does not silently change the original target. Explicit tool-owned
+requests keep their existing private review/result flow.
+The broker displays complete effective JSON as plain text (one section, conservative 2800
 UTF-16-code-unit budget including heading/repo), or returns `review_not_supported`.
 There is no truncated review, public raw payload, caller-selected reviewer/channel,
 or generic detailed UI. Private notification intent is durable **before** posting;
 missing receipt is uncertain, never an automatic second card for the same host call.
+
+Only **one generic review operation per original request** is supported. The existing
+private record and creation lock guard session/request identity, including completed,
+rejected and uncertain records, not just outstanding reviews. Same native task/call
+redelivery can return its existing pending action; distinct calls return an actionable
+denial without a new intent/card/effect, even after resolution but before continuation
+or after broker restart. Request additional operations under a fresh admitted request
+or an authorized continuation, without repeating already dispatched mutations. This
+is a review constraint, not deduplication of arbitrary allowed/provider operations.
 
 On click the authenticated signed gateway supplies actual user/team/channel/card
 evidence, not button routing hints. The broker rechecks original latest request
@@ -201,7 +237,8 @@ repo, original source/request/session even for removed servers. CLI returns deni
 for generic IDs and excludes generic records from legacy lists; no raw fallback.
 Generic result projection is deliberately the minimal completed/tool-error/uncertain
 disposition, not raw vendor content. The existing gateway approval continuation
-reauthorizes stored scope and routes only to its private DM thread/frozen repo; it
+reauthorizes stored scope while the original request remains current and routes only
+to its private DM thread/frozen repo; a newer human request revokes pending authority. It
 does not create an outbox, task waiter or tool invocation ledger. Pending review is
 not successful execution and never instructs the agent to retry the mutation.
 
@@ -247,6 +284,8 @@ ports/deployment data. Supply prebuilt broker/runner/executor image names throug
 its `MCP_TEST_{BROKER,RUNNER,EXECUTOR,GATEWAY,ADMIN}_IMAGE` test-only selectors;
 it never installs/builds/downloads. All four consumer image probes and managed
 children check that private records/fences are inaccessible. These are measurement
-processes, not a live Pi conversation;
-full Pi native discovery/approval acceptance remains a later phase. CI explicitly
-prepares images before running that gate. All fixture resources are removed on exit.
+processes, not a live Pi conversation. `scripts/test-pi-e2e.sh` additionally exercises
+actual Durable SQLite → real broker → installed SDK MCP search/object calls and
+structured/image/error results. Native approval/recovery tests use the same real
+boundaries locally; live provider/Slack/deployment acceptance remains separate.
+CI prepares images before validation. All fixture resources are removed on exit.

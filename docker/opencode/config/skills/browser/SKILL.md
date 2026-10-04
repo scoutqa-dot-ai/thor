@@ -22,6 +22,8 @@ Run browser tooling in the sandbox when local dependencies are missing or when y
 
 For a 1Password-backed SaaS login, use the dedicated MCP integration instead of sandbox browser tooling. Find Login choices for the destination, request an authenticated browser, then use only the returned session/snapshot refs:
 
+With native MCP tools available, discover `onepassword-browser` with `mcp_search`, then pass each selected `toolRef` and business-argument object to `mcp_call`. The operation sequence and returned plan/session refs below still apply. With the legacy CLI, use:
+
 ```bash
 mcp onepassword-browser find_login_items '{"url":"https://approved.example/dashboard"}'
 mcp onepassword-browser browser_open_authenticated '{"login_plan_id":"<login-plan-id-from-find>","item_id":"<matching-item-id>"}'

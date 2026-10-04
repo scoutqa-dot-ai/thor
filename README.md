@@ -121,8 +121,11 @@ directory mounts belong only to `remote-cli`; no new runtime env variables or
 workspace config fields are needed. Missing/empty catalog uses the six bundled
 defaults; malformed present config fails before listen. Add/remove/rotate,
 validate locally, then restart the broker. Custom `approve` requires trusted Slack
-requester-private review through the structured broker edge (native registration
-is a later phase; CLI attribution cannot request generic review). New generic
+requester-private review through Pi's native `mcp_search` / `mcp_call` tools, with
+host replies already targeting the confirmed requester DM. Unsupported audiences
+deny before review/effects; only one generic review operation per request is supported;
+CLI attribution cannot request generic review. Discovery uses the live broker
+catalog, so later supported changes require no runner rebuild/restart. New generic
 records/fences use broker-only `mcp-approval-state` at
 `/var/lib/remote-cli/mcp-approvals` (0700/0600), not historical shared approvals.
 Every restart revokes pending generic authority, including identical catalogs and

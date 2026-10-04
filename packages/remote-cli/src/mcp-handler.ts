@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import {
   McpCallInputSchema,
+  MCP_DISCOVERY_MAX_BYTES,
   buildApprovalSlackMessage,
   validateDisclaimerCompatibleArgs,
   buildThorDisclaimer,
@@ -11,6 +12,7 @@ import {
   extractRepoFromCwd,
   findAnchorContext,
   findNativeMcpProjection,
+  findLatestMcpApprovalProjection,
   hasNativeMcpCallProjection,
   type McpNativeAuthority,
   type McpNativeOperation,
@@ -43,7 +45,6 @@ import { ApprovalStore, type ApprovalAction } from "./approval-store.js";
 import {
   buildMcpInventory,
   mcpPolicyFingerprint,
-  MCP_DISCOVERY_MAX_BYTES,
   type McpInventoryTool,
 } from "./mcp-tool-inventory.js";
 import {
@@ -317,6 +318,8 @@ export interface McpService {
   readPrivateApproval(id: string, reader: McpApprovalReader): McpApprovalProjection | undefined;
   /** Authenticated scope-filtered list, independent of active aliases. */
   listPrivateApprovals(reader: McpApprovalReader): McpApprovalProjection[];
+  /** Minimal current native hold observation also covers server-qualified legacy approvals. */
+  observePrivateApprovalWait(reader: McpApprovalReader): "pending" | "clear" | "unavailable";
   getHealth(): Record<string, unknown>;
   warmUpstreams(): Promise<void>;
   closeAll(): Promise<void>;
@@ -1418,6 +1421,46 @@ export function createMcpService(deps: McpServiceDeps): McpService {
     },
     readPrivateApproval: (id, reader) => genericApprovals?.read(id, reader, genericRevisionCurrent),
     listPrivateApprovals: (reader) => genericApprovals?.list(reader, genericRevisionCurrent) ?? [],
+    observePrivateApprovalWait: (reader) => {
+      const latest = findLatestMcpApprovalProjection(reader.sessionId);
+      const admitted = latest?.nativeMcp;
+      if (
+        !admitted ||
+        admitted.requestId !== reader.requestId ||
+        admitted.repositoryDirectory !== reader.repositoryDirectory ||
+        admitted.teamId !== reader.teamId ||
+        admitted.sourceKey !== reader.sourceKey ||
+        admitted.requester.source !== reader.requester.source ||
+        (admitted.requester.source !== "system" &&
+          (reader.requester.source === "system" || admitted.requester.id !== reader.requester.id))
+      )
+        return "unavailable";
+      try {
+        if (
+          genericApprovals
+            ?.list(reader, genericRevisionCurrent)
+            .some((record) => record.disposition === "pending")
+        )
+          return "pending";
+        for (const name of BUILTIN_PROXY_NAMES) {
+          if (
+            getApprovalStore(name)
+              .listPending()
+              .some(
+                (record) =>
+                  builtinApprovalHandlers.has(`${name}/${record.tool}`) &&
+                  record.origin?.sessionId === reader.sessionId &&
+                  record.origin.trigger?.anchorId === latest.anchorId &&
+                  record.origin.trigger.triggerId === latest.triggerId,
+              )
+          )
+            return "pending";
+        }
+        return "clear";
+      } catch {
+        return "unavailable";
+      }
+    },
     getHealth(): Record<string, unknown> {
       return {
         configured: proxyNames.length,

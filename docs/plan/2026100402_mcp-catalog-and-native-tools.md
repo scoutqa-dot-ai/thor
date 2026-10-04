@@ -1,6 +1,6 @@
 # Neo — Configurable MCP catalog and native Durable tools
 
-**Status:** MCP phases 1–3 implemented and isolated locally validated after companion Slack phases 1–3 (`cc6c2b9`), including the Phase 3 incomplete-authority-evidence correction below. Phase 3 follows `3ba5b80`; phases 4–5 and live deployment remain pending, separately approval-gated. Custom approvals now have a private versioned broker contract; native tool registration is not enabled.
+**Status:** MCP phases 1–4 implemented and isolated locally validated after companion Slack phases 1–3 (`cc6c2b9`), including the Phase 3 incomplete-authority-evidence correction. Phase 4 follows `9f086c6`; Phase 5, live acceptance and deployment remain pending, separately approval-gated. Pi now installs two native tools; the default OpenCode runtime and pinned Durable 1.0.0 are unchanged.
 **Reviewed:** 2026-10-04, Neo `33ada49`; released Pi Durable/MCP `v1.0.2` (`cd32f7725fdbddbaecdff5b1e68491563394e0ca`).
 **Companion:** [Pi Durable Slack simplification](2026100401_pi-durable-slack-simplification.md). This plan adds operator MCP onboarding and agent discovery; it does not change the single-owner admission/security architecture.
 
@@ -211,6 +211,8 @@ Add generic operation schemas and private requester review, immutable approval p
 **Exit:** custom approved tools require no code-defined tool enum. Broker-only record/fence permissions and second-owner refusal, concurrent/restarted/late clicks, source supersession, identical removal/re-addition, same-secret-file account replacement, token rotation, schema/policy drift, malformed records, failed private delivery and dispatch-before-result crashes preserve authority and cannot automatically redispatch consumed/uncertain approvals. Cross-requester status/list/result reads and raw CLI fallback are denied; full review is possible or explicitly denied. Removed actions remain readable only to authorized readers. Legacy behavior and Google no-command-approval policy remain intact.
 
 ### Phase 4 — Native Durable extension and lean discovery experience
+
+**Implemented:** stable native registration, host proof, complete live discovery, structured results/images, private approval hold/continuation and unsafe-call recovery; isolated evidence below.
 
 Install `mcp_search`/`mcp_call` before scheduling; wire authenticated context from the active admitted request; replace Pi MCP prompt/skill obligations while keeping legacy wrappers. Native tools consume live broker discovery, so ordinary subsequent catalog changes need broker restart only, not runner registry rebuild.
 
@@ -575,3 +577,249 @@ image/dependencies; delegated local checks used existing host dependencies/cache
 Docker images, not installation, download or audit preparation. No private mounted
 data or `.env` files were read. No Phase 4 work, push, deployment, workflow or live
 Slack/provider acceptance; those gates remain explicitly pending.
+
+## Phase 4 implementation decisions and evidence — 2026-10-05
+
+Implemented only Phase 4 after `9f086c6`. No Pi/dependency upgrade, new production
+environment variable, dynamic tool registry, direct upstream client, provider retry,
+waiter/outbox/invocation ledger, policy broadening, deployment, push or private-data
+access. Existing legacy MCP wrappers, bundled specialized handlers and Google
+authorization/model routing remain separate owners.
+
+| Decision / owner                                                            | Boundary / reason                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PiMcpBrokerClient` is the concrete Durable/private HTTP adapter            | The existing `McpService` remains policy/effect owner. Deleting this adapter would spread native proof lifetime, structured parsing, cancellation/uncertainty and content translation into runner composition/tools. Google continuation/status clients do not own MCP semantics; no generic HTTP framework or second SDK client was added. Transport credentials remain privately wrapped until I/O; failures expose safe tags/messages.                                                                                                   |
+| Register two tools in `thor-pi` before `Harness.open` and all scheduling    | Native task IDs are numbers in installed 1.0.0; stringify that trusted ID for the existing broker seam. Derive requester/team/full cwd/canonical root/source/request/anchor/trigger from parsed active/latest admission and native task/call API. Emit operation-bound started/ended proof around private I/O; no model-selectable identity or observer-inferred authority.                                                                                                                                                                 |
+| Complete live discovery uses shared broker page budget and Harness settings | Search is replay safe; complete schema pages can exceed the default 50 KiB text budget. Keep the existing 256 KiB descriptor-page contract in common and allow that page plus its bounded envelope through Harness output limits, rather than another truncator. Real large-page tests prove complete JSON/assertions reach the model. Hidden tools, annotations, `_meta`, upstream config and credentials never enter discovery. Descriptions remain untrusted tool-result data, not system prompt instructions.                           |
+| Every native call remains replay unsafe                                     | No annotation can change the generic replay contract. Object arguments go directly to typed broker HTTP; invalid nested arguments fail before upstream/approval effects. Native details contain only disposition and small task/call/action IDs, never full result copies. HTTP-200 `isError` stays an error; structured-only output is JSON text; unsupported audio/resource content is explicit, with no fetching/base64 prose.                                                                                                           |
+| Reuse the single `pi-read-image.ts` raster decoder                          | Its existing byte/pixel/signature/envelope/full-decode/still/model rules now also accept untrusted inline MCP image bytes. No second decoder or URL owner. Canonical base64, MIME/contents equality, cancellation, 10 MiB and 16M pixels precede model images. Existing local-file/executor tests remain required.                                                                                                                                                                                                                          |
+| Authenticated minimal approval wait observation in the existing broker      | Match original current complete admission and reader scope before observing generic or server-qualified legacy pending records. Return only pending/clear/unavailable, not names/counts/arguments/results. Native pending outcome records hold provenance on the existing receipt; failed reads and disappearing holds cannot publish a paused answer or claim success. No polling agent tool or native signal API.                                                                                                                         |
+| Existing signed gateway continuation plus runner reread                     | Gateway forwards the minimal scoped projection; runner independently rereads it against the original stored requester/team/repository/source/request/session. Reject mismatched/public input audiences, supersession, pending/forged results and unavailable reads. Inherit original final model/escalation evidence, full cwd and host/tool ownership. Host resumes preserve the exact original confirmed requester-DM target and human source, not the review card thread. Tool-owned originals never acquire automatic host publication. |
+| Preserve target rather than invent public result authority                  | A frozen host-owned public/different-DM target cannot satisfy both original-target inheritance and Phase 3's requester-private result contract. Deny that continuation explicitly rather than silently changing ownership/destination or publishing private projections publicly. This is a fail-closed audience limitation, not a new permission policy or an excuse to replay the mutation. Operator reconciliation/private follow-up is required for that combination.                                                                   |
+| Lean Pi instructions, retained legacy/special workflows                     | Pi uses live discovery/object calls; only the legacy path enumerates bundled CLI inventory/quoted JSON. Browser/Kali skills select native discovery when available and retain their legacy command and special plan/session/security workflows. Jira attachment uploads and Slack artifacts/tool-owned ordinary replies remain unchanged.                                                                                                                                                                                                   |
+| Extend the real Pi container fixture, not only standalone broker probes     | Add the real production broker with its private catalog/owner volume and installed SDK fixture. Retain faithful model/Slack/SSO/legacy-wrapper boundaries. Cached-image validation uses current separately compiled artifacts, an internal-only network, dummy OAuth setup for authoritative empty waits, no ports/downloads/install/build and unique disposable volumes. Broad catalog/child/private-state probes remain the separate existing fixture.                                                                                    |
+
+### Permanent isolated gates
+
+- `pi-runner.test.ts` now has **41** real native/SQLite → broker → SDK HTTP
+  regressions: paginated complete discovery (including pages beyond 50 KiB), exact
+  object dispatch and nested schema errors; requester/repo/cwd/task/call/operation
+  tampering with zero effects/cards; HTTP-200 tool errors, dispatched uncertainty,
+  structured-only JSON, unsupported resources/audio, valid still PNG/JPEG/WebP/GIF
+  and malformed/SVG/MIME/byte/pixel/animation/text-model rejection; catalog
+  restart/removal/re-add with stable runner registrations and stale-ref denial.
+- Approval cases prove approved/rejected/tool-error/uncertain minimal results,
+  static suspended holds with no source check or paused host answer, private read
+  reauthorization/corruption denials, original host target/model/human-source
+  inheritance, old tool-owned policy preservation and redelivery without effects.
+  Unavailable wait observation stays unconfirmed. Native viewer distinguishes MCP
+  holds/continuations from Google authorization.
+- Real unsafe dispatch tests hold the upstream after the effect, then use graceful
+  close, authorized interruption and a **SIGKILL child runner** on actual SQLite.
+  The reopened Harness supplies potentially-partial error content, never repeats
+  the effect even with `readOnlyHint`. Safe search recovery repeats only discovery
+  under the same native proof, then performs exactly one object call. These are
+  native execution/checkpoint tests, not module mocks or schema echoes.
+- Existing real broker/Jira approval test also proves scope-checked native legacy
+  hold observation and its transition to clear, with cross-requester unavailability.
+  Existing private generic crash/fence/reader/gateway, Google wait/routing/source,
+  rich Slack artifact, local image and legacy wrapper suites remain full gates.
+- Pi container acceptance includes real search/object call, structured/image/error
+  translation, and native hold → **signed gateway click** → broker claim/SDK effect
+  → authenticated disk queue/result reread → actual native continuation and original
+  host target/model, without a mutation re-call. Existing signed Slack intake,
+  source reactions, rich/tool-owned wrapper, remote tools/images, SSO/viewers and
+  SIGKILL recovery remain. Standalone catalog/private-mount/owner gates are also rerun.
+
+Finite boundary/transition/corruption cases were chosen over another generator
+dependency; they exercise the independent wire/storage inputs and observed effects,
+not library schema declarations. Existing v1/v2 metadata migrations explicitly
+exclude the new source field; current v3 adds only parsed optional result authority
+and hold evidence, without switching historical delivery ownership.
+
+### Final verification
+
+Final commands/results are recorded below before the single Phase 4 commit.
+Sandbox preflight found an approved Node base runtime, but no prepared repository
+image/dependencies. Explicitly delegated checks therefore use installed host Node
+24.21.0/dependencies and cached Docker images with local/dummy fixtures only.
+No installation, download, sandbox preparation, private `.env`/mounted data or `.pi`
+changes are included. Live provider/Slack rendering, production Ubuntu AppArmor,
+GitHub workflow/push/PR and deployment/cutover remain **unverified Phase 5/operator
+gates**, not claims of Phase 4 isolated acceptance.
+
+**Container-discovered correction:** the first signed native approval round exposed
+the gateway's frozen-payload parser discarding the new structured source field. A
+direct native admission test and an unfrozen sender alone did not establish that
+contract. Added the field to the existing disk-manifest parser, retaining old absent
+fields as authoritative, and strengthened the real signed gateway process test to
+assert original reader/result scope survives freezing. The final real-container
+round now exercises that exact chain successfully. No new queue/store was added.
+
+**Original Phase 4 local gates (superseded by required corrections below):**
+
+- `pnpm exec vitest run --no-file-parallelism` — **76 files / 1,311 tests pass**,
+  including **41** real native MCP cases and unchanged Google/model/source/rich
+  Slack/browser/Jira/catalog/private-state/legacy suites. Final log:
+  `/tmp/mcp4-final-tests.log`.
+- `pnpm typecheck`, `pnpm build`, `pnpm build:mcp-fixture` — **pass**, all workspace
+  packages. Logs: `/tmp/mcp4-types.log`, `/tmp/mcp4-build.log`,
+  `/tmp/mcp4-fixture-build.log`.
+- `PI_TEST_USE_CACHED_IMAGES=1 MCP_TEST_BROKER_IMAGE=thor-gws-remote-cli:e2e
+PI_TEST_RUNNER_IMAGE=thor-pi-e2e-1000-3364098-runner:latest
+PI_TEST_EXECUTOR_IMAGE=thor-pi-e2e-1000-3364098-pi-executor:latest
+PI_TEST_GATEWAY_IMAGE=thor-pi-e2e-1000-3364098-gateway:latest
+PI_TEST_ADMIN_IMAGE=thor-pi-e2e-1000-3364098-admin:latest
+PI_TEST_INGRESS_IMAGE=thor-pi-e2e-1000-3364098-ingress:latest
+./scripts/test-pi-e2e.sh` — **exit 0**, current compiled artifacts and real broker,
+  including the signed native approval/continuation chain. Log:
+  `/tmp/mcp4-final-pi-e2e.log`.
+- Same cached broker/runner/executor/gateway/admin selectors under
+  `MCP_TEST_{BROKER,RUNNER,EXECUTOR,GATEWAY,ADMIN}_IMAGE`,
+  `./scripts/test-mcp-catalog-compose.sh` — **exit 0**, including real generic
+  approval/private state, owner refusal, credential/child/proc isolation, complete
+  authority evidence and restart-only catalog behavior. Log:
+  `/tmp/mcp4-final-catalog-e2e.log`.
+- Dummy-only Compose graph, changed-file Prettier, `bash -n` and
+  `git diff --check` — **pass**. Post-cleanup Docker queries show no owned fixture
+  containers, networks or volumes. No images/deployment resources were rebuilt,
+  downloaded or removed by cached validation.
+
+**Remaining gates / limits:** Phase 5 CI push/workflow/PR, live provider/Slack
+rendering/OAuth and production Ubuntu AppArmor/storage/power-loss/deployment
+acceptance remain unrun and require separate authorization. No exactly-once provider
+claim or automatic uncertainty replay. A host-owned public/different-DM original
+target must be denied before generic approval intent/card/mutation; both frozen
+target inheritance and requester-private projection must hold. One Phase 4 commit;
+no push, next-phase implementation or `.pi`/private deployment data staged.
+
+**Complete-schema decoder correction:** final inspection found recursive Zod JSON
+records would strip `__proto__` business-map keys inside an otherwise supported
+schema's enum/default/property data. The native wire edge now checks the root
+object without transforming the JSON tree already validated by the broker. The
+real SDK/native regression verifies exact enum assertions and a valid object call;
+the old decoder fails it. This does not relax argument/approval proto-key rejection
+or broker schema semantics.
+
+**Tool-owned private context preservation:** when the original tool-owned source is
+the same broker-confirmed requester DM, reuse its native conversation/history,
+original reply thread and human message timestamp, while discarding the incoming
+host publication proof. The outcome matrix verifies original history/session,
+source completion reaction and no automatic host answer for both ownership modes.
+Other tool-owned results remain in the private review conversation; no public
+result projection or delivery-ownership upgrade is inferred.
+
+## Phase 4 required corrections — pre-effect audience and sibling review — 2026-10-05
+
+Corrected P1/P2 before final acceptance and amended into the Phase 4 commit originally
+`89d3ae0`. The original green suites were insufficient: public/different-DM host
+requests could mutate and then permanently fail continuation, and distinct calls
+could create sibling cards/effects whose second continuation was stranded by the first.
+No optional private-continuation enhancement, ledger, scheduler, new policy, dependency,
+production environment variable, push, deployment or final acceptance is included.
+
+| Decision / owner                                                       | Reason / limit                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Freeze reply ownership in the existing host `trigger_start` projection | Runner emits the parsed receipt's host/tool ownership and exact target. The broker independently reads complete committed evidence; model/HTTP hints cannot supply delivery authority. Old logs remain parseable, but missing delivery proof cannot create generic review and requires a fresh admitted private-DM request. Explicit legacy tool-owned receipts retain their supported private review/result flow. No OpenCode event/viewer representation changes.                                                                                                         |
+| Reject unsupported audiences before private intent/card/effect         | After confirming the requester DM/workspace, generic preparation checks the frozen host target against it before any record or card. Public/different-DM targets return actionable `review_not_supported` without silently rerouting. The same gate participates in original-authority checks before dispatch; runner's continuation denial remains defense in depth.                                                                                                                                                                                                       |
+| One generic review operation per originating session/request           | The existing owner and creation lock guard the existing approval-record scan and first intent write. All dispositions count, including completed-before-continuation, rejected, consumed/uncertain and old activations. Same task/call may retain its pending action; a distinct task/call cannot create another review. This is deliberately stricter than one outstanding review; no sibling descendant authorization or new store is introduced. Additional work needs a fresh admitted request/authorized continuation, never automatic replay of dispatched mutations. |
+| Conditional native guidance                                            | Pending is not execution. A result continuation may report disposition while original authorization remains current; human supersession still revokes it. Unsupported review and one-operation denials carry actionable instructions. No unconditional promise to deliver a result or retry mutation.                                                                                                                                                                                                                                                                       |
+
+### Permanent behavior evidence
+
+- Real native Durable/SQLite → broker → installed SDK tests reject public channel,
+  group/private-channel and different-DM frozen host audiences with **zero private
+  intents, approval cards and upstream effects**, plus actionable private-DM guidance.
+- Two distinct real native calls in successive rounds and in one model tool batch
+  create only one review operation; resolving the first before the second call and
+  before continuation still produces no second card/intent/effect. The first authorized
+  result resumes successfully without repeating the mutation.
+- Pi retains sequential native tool execution. To prove the broker's concurrent
+  boundary as well, the model-batch case holds the first real native Slack card receipt
+  and sends a separately host-proved sibling HTTP call under that same SQLite admission.
+  It denies while the creation lock is held; after release, the second actual native
+  task also denies against durable intent. This is not a claim that Pi executes tools
+  in parallel or that the synthetic sibling was a second native task.
+- A real newer human request supersedes the native original: authenticated resolve
+  rejects with no mutation and its stale continuation returns 403, without new cards.
+- Real broker/SDK/Slack/file tests deny missing ownership and ignore caller-selected
+  delivery hints; same task/call retains the pending action while distinct task/call
+  identities deny both before/after resolution and after broker reconstruction.
+  Fresh admitted work can request a new review. Token rotation tests now explicitly
+  admit fresh requests rather than relying on previously unsupported sibling reviews.
+- Finite audience/state/ordering cases cover these invariants without a new generator
+  dependency. No new exported abstraction; the private audience predicate is reused
+  only at preparation and original-authority recheck. Existing specialized built-in
+  approvals, Google, tool-owned reply ownership and unsafe recovery remain full gates.
+
+### Corrected gates
+
+Final commands use installed Node **24.21.0** and existing pnpm **9.14.4**, selected
+explicitly via PATH; no package-manager/dependency installation or pin change.
+
+- `pnpm exec vitest run --no-file-parallelism` — **76 files / 1,321 tests pass**.
+  Log: `/tmp/mcp4-fix-full-tests.log` (final run, 143.20 seconds).
+- Focused required regressions — **2 files / 11 pass / 217 intentionally unselected**.
+  Log: `/tmp/mcp4-fix-regressions.log`. Exact command:
+
+  ```bash
+  pnpm exec vitest run packages/runner/src/pi-runner.test.ts packages/remote-cli/src/mcp-generic-approval.integration.test.ts -t 'unsupported frozen host|one native review|newer human request|unsupported/missing frozen|same task/call'
+  ```
+
+- `pnpm typecheck`, `pnpm build`, `pnpm build:mcp-fixture` — **all pass**.
+  Logs: `/tmp/mcp4-fix-types.log`, `/tmp/mcp4-fix-build.log`,
+  `/tmp/mcp4-fix-fixture-build.log`.
+- Final cached real-broker Pi E2E — **exit 0**, including native discovery/calls,
+  signed gateway approval/queue/native continuation with original target/model,
+  Google readiness setup, source ownership, isolation and SIGKILL recovery.
+  Log: `/tmp/mcp4-fix-pi-e2e.log`. Exact selectors/command:
+
+  ```bash
+  PI_TEST_USE_CACHED_IMAGES=1 MCP_TEST_BROKER_IMAGE=thor-gws-remote-cli:e2e \
+  PI_TEST_RUNNER_IMAGE=thor-pi-e2e-1000-3364098-runner:latest \
+  PI_TEST_EXECUTOR_IMAGE=thor-pi-e2e-1000-3364098-pi-executor:latest \
+  PI_TEST_GATEWAY_IMAGE=thor-pi-e2e-1000-3364098-gateway:latest \
+  PI_TEST_ADMIN_IMAGE=thor-pi-e2e-1000-3364098-admin:latest \
+  PI_TEST_INGRESS_IMAGE=thor-pi-e2e-1000-3364098-ingress:latest \
+  ./scripts/test-pi-e2e.sh
+  ```
+
+- Final cached MCP catalog/private-state dummy E2E — **exit 0**, current compiled
+  artifact and enriched trusted fixture delivery proof, with private review/effect/
+  result, complete authority evidence, catalog activation and owner/child/mount gates.
+  Log: `/tmp/mcp4-fix-catalog-e2e.log`. Exact selectors/command:
+
+  ```bash
+  MCP_TEST_BROKER_IMAGE=thor-gws-remote-cli:e2e \
+  MCP_TEST_RUNNER_IMAGE=thor-pi-e2e-1000-3364098-runner:latest \
+  MCP_TEST_EXECUTOR_IMAGE=thor-pi-e2e-1000-3364098-pi-executor:latest \
+  MCP_TEST_GATEWAY_IMAGE=thor-pi-e2e-1000-3364098-gateway:latest \
+  MCP_TEST_ADMIN_IMAGE=thor-pi-e2e-1000-3364098-admin:latest \
+  ./scripts/test-mcp-catalog-compose.sh
+  ```
+
+- Post-script container, volume and network queries filtered by project labels
+  `thor-pi-e2e-1000-112668` and `neo-mcp-catalog-test-1000-112669` return **no resources**.
+  Earlier successful runs (`86526`/`86527`) likewise cleaned completely.
+- Dummy-only, empty inherited environment Compose renders:
+  `docker compose --env-file /dev/null -f docker-compose.yml [-f
+docker-compose.{pi,ci,no-apparmor}.yml] config --no-env-resolution --format json`
+  — **all four pass**, exactly one broker-only approval-state mount and broker-only
+  read-only catalog/token mounts. JSON: `/tmp/mcp4-fix-compose-{base,pi,ci,no-apparmor}.json`.
+- Changed-file Prettier, `bash -n scripts/test-pi-e2e.sh
+scripts/test-mcp-catalog-compose.sh` and `git diff --check` — **pass**.
+
+Initial correction probes exposed scanner omission of the new frozen delivery field,
+reused model fixture call IDs and the already sequential native execution setting;
+these were repaired/represented explicitly before the final passing suite, not hidden
+by weakening the audience/operation guards. An initial typecheck failed on an
+unexported test schema import; the test now uses the existing public projection type
+and destination parser, with no new export. Initial pnpm shim/PATH and Compose dummy
+variable shell-quoting setup failures were resolved using existing binaries and a
+clean explicit dummy environment; no installation or live configuration fallback.
+
+Sandbox preflight confirmed `sbx v0.46.0` and an approved Node base image but **no
+prepared repository/dependency image**. Explicitly delegated checks therefore use
+installed host Node 24.21.0/dependencies and cached Docker images, dummy/local fixtures
+only; no installation, download or preparation. Phase 5 CI/push/PR, live accounts/Slack,
+production AppArmor/storage/power-loss and deployment/final acceptance remain **unrun**.

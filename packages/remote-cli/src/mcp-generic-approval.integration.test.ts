@@ -34,6 +34,8 @@ import {
   McpNativeAuthoritySchema,
   McpToolRefSchema,
   McpApprovalProjectionSchema,
+  findLatestMcpApprovalProjection,
+  SlackReplyAdmissionSchema,
   mintAnchor,
   PROXY_NAMES,
   type McpNativeAuthority,
@@ -111,13 +113,19 @@ describe("private generic MCP review and durable dispatch", { timeout: 30_000 },
     writeFileSync(path + ".next", JSON.stringify(value));
     renameSync(path + ".next", path);
   }
-  function admit(context = authority) {
+  function admit(
+    context = authority,
+    delivery: NonNullable<ReturnType<typeof findLatestMcpApprovalProjection>>["delivery"] | null = {
+      owner: "tool",
+    },
+  ) {
     for (const aliasType of ["pi.conversation", "opencode.session"] as const)
       appendAlias({ aliasType, aliasValue: context.sessionId, anchorId: context.anchorId });
     appendSessionEvent(context.sessionId, {
       type: "trigger_start",
       triggerId: context.triggerId,
       correlationKey: context.sourceKey,
+      ...(delivery ? { nativeMcpDelivery: delivery } : {}),
       ...(context.requester.source === "slack"
         ? { triggerSlackId: context.requester.id }
         : { triggerGithubLogin: "fixture" }),
@@ -594,6 +602,67 @@ describe("private generic MCP review and durable dispatch", { timeout: 30_000 },
     expect(effects).toHaveLength(0);
   });
 
+  it.each(["C123", "D_OTHER", null])(
+    "broker rejects unsupported/missing frozen host audience %s and ignores caller delivery hints",
+    async (channel) => {
+      admit(
+        authority,
+        channel
+          ? {
+              owner: "host",
+              target: SlackReplyAdmissionSchema.parse({
+                version: 1,
+                teamId: "T123",
+                channel,
+                threadTs: "1710000000.001",
+              }),
+            }
+          : null,
+      );
+      expect((await request()).status).toBe("review_not_supported");
+      const hinted = await post("/internal/mcp/call", {
+        context: { ...authority, nativeMcpDelivery: { owner: "tool" } },
+        input: { toolRef: await toolRef(), arguments: input },
+      });
+      expect(hinted.body.status).toBe("denied");
+      expect(cards).toHaveLength(0);
+      expect(effects).toHaveLength(0);
+      expect(store().listGeneric()).toHaveLength(0);
+    },
+  );
+
+  it("same task/call retains its pending review, but distinct calls cannot create another operation even after resolution or restart", async () => {
+    const id = await pending();
+    expect(await request()).toMatchObject({ status: "pending_approval", actionId: id });
+    const siblings = [
+      McpNativeAuthoritySchema.parse({ ...authority, callId: "another-call" }),
+      McpNativeAuthoritySchema.parse({ ...authority, taskId: "another-task" }),
+    ];
+    for (const sibling of siblings) {
+      projectCall(sibling);
+      expect(await request(input, sibling)).toMatchObject({ status: "denied" });
+    }
+    expect(cards).toHaveLength(1);
+    expect(effects).toHaveLength(0);
+    await post("/internal/mcp/approvals/resolve", click(id));
+    for (const sibling of siblings) expect((await request(input, sibling)).status).toBe("denied");
+    await restart();
+    expect((await request(input, siblings[0])).status).toBe("denied");
+    expect(store().listGeneric()).toHaveLength(1);
+    expect(cards).toHaveLength(1);
+    expect(effects).toHaveLength(1);
+    authority = McpNativeAuthoritySchema.parse({
+      ...authority,
+      requestId: "fresh-human-request",
+      triggerId: mintAnchor(),
+      callId: "fresh-human-call",
+    });
+    admit();
+    await pending();
+    expect(cards).toHaveLength(2);
+    expect(effects).toHaveLength(1);
+  });
+
   it("concurrent preparation has one durable notification intent, and receipt loss cannot resend", async () => {
     loseReceipt = true;
     const first = request();
@@ -749,14 +818,24 @@ describe("private generic MCP review and durable dispatch", { timeout: 30_000 },
       renameSync(file + ".next", file);
       await post("/internal/mcp/approvals/resolve", click(id));
       expect(bearerCalls).toEqual(["Bearer dummy-account-a-token"]);
-      authority = McpNativeAuthoritySchema.parse({ ...authority, callId: "second-call" });
-      projectCall();
+      authority = McpNativeAuthoritySchema.parse({
+        ...authority,
+        callId: "second-call",
+        requestId: "second-request",
+        triggerId: mintAnchor(),
+      });
+      admit();
       const old = await pending();
       await restart();
       await post("/internal/mcp/approvals/resolve", click(old));
       expect(effects).toHaveLength(1);
-      authority = McpNativeAuthoritySchema.parse({ ...authority, callId: "fresh-call" });
-      projectCall();
+      authority = McpNativeAuthoritySchema.parse({
+        ...authority,
+        callId: "fresh-call",
+        requestId: "fresh-request",
+        triggerId: mintAnchor(),
+      });
+      admit();
       const fresh = await pending();
       await post("/internal/mcp/approvals/resolve", click(fresh));
       expect(bearerCalls).toEqual(["Bearer dummy-account-a-token", `Bearer ${token}`]);
@@ -1047,6 +1126,19 @@ describe("private generic MCP review and durable dispatch", { timeout: 30_000 },
       expect(continuation.directory).toBe(authority.repositoryDirectory);
       expect(continuation.triggerSlackId).toBe("U123");
       expect(continuation.correlationKey).toBe("slack:thread:D123/1710000000.123");
+      const frozenSource = McpApprovalProjectionSchema.parse(
+        z.looseObject({ mcpApprovalSource: z.unknown() }).parse(continuations[0]).mcpApprovalSource,
+      );
+      expect(frozenSource).toMatchObject({
+        actionId: id,
+        disposition: "completed",
+        channel: "D123",
+        reader: {
+          requestId: authority.requestId,
+          sourceKey: authority.sourceKey,
+          sessionId: authority.sessionId,
+        },
+      });
       expect(
         z
           .looseObject({

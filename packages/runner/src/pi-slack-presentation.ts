@@ -234,13 +234,17 @@ export class PiSlackPresentation {
     this.phaseDue = undefined;
     await this.enqueue(async () => {
       await this.status(
-        event.type === "done" && event.authWait === "google" ? "suspended" : "active",
+        event.type === "done" && (event.authWait === "google" || event.authWait === "approval")
+          ? "suspended"
+          : "active",
       );
       if (event.type === "done" && event.authWait) {
         await this.footer(
           event.authWait === "google"
             ? "Neo waiting for Google sign-in — the task will automatically continue."
-            : "Neo authorization status unavailable — completion is unconfirmed.",
+            : event.authWait === "approval"
+              ? "Neo waiting for human approval — the operation has not completed."
+              : "Neo authorization status unavailable — completion is unconfirmed.",
           true,
         );
       } else if (this.messageTs) {
@@ -300,12 +304,18 @@ export class PiSlackPresentation {
     this.finished = true;
     clearTimeout(this.timer);
     await this.enqueue(async () => {
-      await this.status(authorization === "waiting" ? "suspended" : "active");
+      await this.status(
+        authorization === "waiting" || authorization === "approval_waiting"
+          ? "suspended"
+          : "active",
+      );
       if (authorization && authorization !== "clear")
         await this.footer(
           authorization === "waiting"
             ? "Neo waiting for Google sign-in — the task will automatically continue."
-            : "Neo authorization status unavailable — completion is unconfirmed.",
+            : authorization === "approval_waiting"
+              ? "Neo waiting for human approval — the operation has not completed."
+              : "Neo authorization status unavailable — completion is unconfirmed.",
           true,
         );
       else await this.removeFooter();

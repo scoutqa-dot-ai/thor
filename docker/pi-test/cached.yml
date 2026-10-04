@@ -1,0 +1,21 @@
+# Optional offline validation: prepared images supply dependencies; current host-built artifacts only.
+services:
+  runner:
+    image: ${PI_TEST_RUNNER_IMAGE:?prebuilt runner image required}
+    volumes:
+      - ../../packages/runner/dist:/app/packages/runner/dist:ro
+  gateway:
+    image: ${PI_TEST_GATEWAY_IMAGE:?prebuilt gateway image required}
+    volumes:
+      - ../../packages/gateway/dist:/app/packages/gateway/dist:ro
+  admin:
+    image: ${PI_TEST_ADMIN_IMAGE:?prebuilt admin image required}
+    volumes:
+      - ../../packages/admin/dist:/app/packages/admin/dist:ro
+  pi-executor:
+    image: ${PI_TEST_EXECUTOR_IMAGE:?prebuilt executor image required}
+    volumes:
+      - ../../packages/pi-executor/dist:/app/packages/pi-executor/dist:ro
+      - ../opencode/config/skills:/etc/thor/skills:ro
+  ingress:
+    image: ${PI_TEST_INGRESS_IMAGE:?prebuilt ingress image required}

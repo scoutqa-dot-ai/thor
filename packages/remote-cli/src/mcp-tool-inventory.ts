@@ -7,8 +7,6 @@ import { compileMcpSchema, type McpArgumentValidator } from "./mcp-schema-valida
 
 /** Complete descriptors above 32 KiB are unsupported, never silently clipped. */
 const MCP_DESCRIPTOR_MAX_BYTES = 32 * 1024;
-/** Each discovery page contains at most 20 descriptors and 256 KiB of descriptor JSON. */
-export const MCP_DISCOVERY_MAX_BYTES = 256 * 1024;
 /** A visible tool binds exact policy/schema/revision and its argument validator together. */
 export interface McpInventoryTool {
   readonly descriptor: McpToolDescriptor;

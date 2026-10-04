@@ -24,6 +24,7 @@ import {
   appendSessionEvent,
   isAllowedDirectory,
   resolveMcpRepositoryDirectory,
+  McpApprovalReaderSchema,
   mintAnchor,
   mintTriggerId,
   readTriggerSlice,
@@ -41,6 +42,7 @@ import { loadPiModelRoutingPool, PiModelRoutingRuntime } from "./pi-model-routin
 import { selectPiTaskModel } from "./pi-model-routing-policy.js";
 import { acquirePiStorageOwner } from "./pi-storage-owner.js";
 import { installPiRunnerTools } from "./pi-runner-tools.js";
+import { PiMcpBrokerClient } from "./pi-mcp-tools.js";
 import {
   piTriggerRequestSchema,
   piConversationMetadataDoc,
@@ -105,6 +107,7 @@ function fingerprintPiRequest(request: PiTriggerRequest): string {
         triggerSlackId: request.triggerSlackId,
         messageTs: request.messageTs,
         slackReplyAdmission: request.slackReplyAdmission,
+        mcpApprovalSource: request.mcpApprovalSource,
         triggerGithubLogin: request.triggerGithubLogin,
         interrupt: request.interrupt,
         modelProfile: request.modelProfile,
@@ -183,6 +186,11 @@ export async function createPiRunnerApp(
       }),
     );
     const registry = createRegistry();
+    const mcpClient = new PiMcpBrokerClient(
+      options.remoteCliUrl ?? "http://remote-cli:3004",
+      config.internalSecret,
+      config.modelSupportsImages,
+    );
     installPiRunnerTools(
       registry,
       config,
@@ -191,6 +199,7 @@ export async function createPiRunnerApp(
         internalSecret: config.internalSecret,
       }),
       routing,
+      mcpClient,
     );
     const storage = await openNodeSqliteStorage(ownerLock.path);
     try {
@@ -309,6 +318,7 @@ export async function createPiRunnerApp(
             correlationKey: receipt.request.correlationKey,
             triggerSlackId: receipt.request.triggerSlackId,
             triggerGithubLogin: receipt.request.triggerGithubLogin,
+            nativeMcpDelivery: receipt.delivery,
             nativeMcp: {
               requestId: receipt.requestId,
               directory: owner.metadata.directory,
@@ -547,8 +557,8 @@ export async function createPiRunnerApp(
         correlationKey: receipt.request.correlationKey,
         resumed: receipt.resumed,
         status: status === "completed" && authorization === "clear" ? "completed" : "error",
-        ...(authorization === "waiting"
-          ? { authWait: "google" as const }
+        ...(authorization === "waiting" || authorization === "approval_waiting"
+          ? { authWait: authorization === "waiting" ? ("google" as const) : ("approval" as const) }
           : authorization === "unavailable" || authorization === "waiting_unconfirmed"
             ? { authWait: "unconfirmed" as const }
             : {}),
@@ -599,7 +609,7 @@ export async function createPiRunnerApp(
           };
         }
       }, context);
-      const brokerOutcome =
+      let brokerOutcome: PiAdmissionReceipt["authorization"] =
         status === "completed"
           ? await continuationClient.observeGoogleAuthWait(
               sessionId(owner),
@@ -607,11 +617,42 @@ export async function createPiRunnerApp(
               receipt,
             )
           : "clear";
+      const mcpCalled = (await entriesFor(owner, receipt)).some((entry) =>
+        entry.model?.some((message) =>
+          message.role === "toolResult"
+            ? message.toolName === "mcp_call"
+            : message.role === "assistant" &&
+              message.content.some(
+                (block) => block.type === "toolCall" && block.name === "mcp_call",
+              ),
+        ),
+      );
+      if (status === "completed" && mcpCalled && receipt.request.triggerSlackId) {
+        const reader = McpApprovalReaderSchema.safeParse({
+          requester: { source: "slack", id: receipt.request.triggerSlackId },
+          teamId: receipt.slackTeamId,
+          repositoryDirectory: resolveMcpRepositoryDirectory(owner.metadata.directory),
+          sourceKey: receipt.request.correlationKey ?? null,
+          requestId: receipt.requestId,
+          sessionId: sessionId(owner),
+        });
+        const approvalOutcome = reader.success
+          ? await mcpClient.observeApprovalWait(reader.data)
+          : "unavailable";
+        if (approvalOutcome !== "clear") brokerOutcome = approvalOutcome;
+      }
+      await reload(owner);
+      receipt =
+        owner.metadata.receipts.find((item) => item.requestId === receipt.requestId) ?? receipt;
       // Once a hold was confirmed, its disappearance is not proof the blocked operation completed.
       const hadConfirmedWait =
-        receipt.authorization === "waiting" || receipt.authorization === "waiting_unconfirmed";
+        receipt.authorization === "waiting" ||
+        receipt.authorization === "approval_waiting" ||
+        receipt.authorization === "waiting_unconfirmed";
       const authorization =
-        hadConfirmedWait && brokerOutcome !== "waiting" ? "waiting_unconfirmed" : brokerOutcome;
+        hadConfirmedWait && brokerOutcome !== "waiting" && brokerOutcome !== "approval_waiting"
+          ? "waiting_unconfirmed"
+          : brokerOutcome;
       await owner.conversation.commit(async (tx) => {
         const metadata = await tx.doc(piConversationMetadataDoc, owner.conversation.id);
         const stored = metadata.receipts.find((item) => item.requestId === receipt.requestId);
@@ -1122,7 +1163,7 @@ export async function createPiRunnerApp(
         return;
       }
       const request = parsed.data;
-      const replyProof = request.slackReplyAdmission;
+      let replyProof = request.slackReplyAdmission;
       if (
         replyProof &&
         (replyProof.teamId !== config.slackTeamId ||
@@ -1143,6 +1184,87 @@ export async function createPiRunnerApp(
       try {
         const outcome = await serialAdmission(async () => {
           if (closing) return { kind: "error", status: 503, error: "runner_closing" } as const;
+          const source = request.mcpApprovalSource;
+          let original: PiAdmissionReceipt | undefined;
+          if (source) {
+            const originalOwner = requests.get(source.reader.requestId);
+            if (originalOwner) await reload(originalOwner);
+            original = originalOwner?.metadata.receipts.find(
+              (item) => item.requestId === source.reader.requestId,
+            );
+            const expectedReader =
+              original && originalOwner
+                ? McpApprovalReaderSchema.safeParse({
+                    requester: { source: "slack", id: original.request.triggerSlackId },
+                    teamId: original.slackTeamId,
+                    repositoryDirectory: resolveMcpRepositoryDirectory(
+                      originalOwner.metadata.directory,
+                    ),
+                    sourceKey: original.request.correlationKey ?? null,
+                    requestId: original.requestId,
+                    sessionId: sessionId(originalOwner),
+                  })
+                : undefined;
+            const result = expectedReader?.success
+              ? await mcpClient.readApproval(source.actionId, expectedReader.data)
+              : undefined;
+            const latest = originalOwner?.metadata.receipts.at(-1);
+            const redelivery =
+              latest?.requestId === request.requestId &&
+              latest?.request.mcpApprovalSource?.actionId === source.actionId;
+            if (
+              !original ||
+              !originalOwner ||
+              (latest?.requestId !== original.requestId && !redelivery) ||
+              !result ||
+              result.disposition === "pending" ||
+              JSON.stringify(result) !== JSON.stringify(source) ||
+              request.triggerSlackId !== original.request.triggerSlackId ||
+              request.triggerGithubLogin ||
+              config.slackTeamId !== original.slackTeamId ||
+              request.correlationKey !== `slack:thread:${result.channel}/${result.threadTs}` ||
+              request.messageTs !== result.threadTs ||
+              resolveMcpRepositoryDirectory(request.directory) !== result.repositoryDirectory ||
+              (request.sessionId !== undefined && request.sessionId !== sessionId(originalOwner)) ||
+              (original.delivery.owner === "host" &&
+                (!original.delivery.target.channel.startsWith("D") ||
+                  original.delivery.target.channel !== result.channel))
+            )
+              return {
+                kind: "error",
+                status: 403,
+                error: "mcp_approval_continuation_denied",
+              } as const;
+            if (
+              (!redelivery && originalOwner.metadata.activeRequestId) ||
+              (await executionStatus(originalOwner, original)) === "accepted"
+            )
+              return { kind: "busy", sessionId: sessionId(originalOwner) } as const;
+            // Native continuation inherits the original full cwd/model/reply policy. Its result
+            // audience must remain the broker-confirmed private DM; no public fallback.
+            request.directory = original.request.directory;
+            request.interrupt = false;
+            const originalPrivateTarget = resolveSlackProgressTarget(
+              original.request.correlationKey,
+            );
+            const reuseOriginal =
+              original.delivery.owner === "host" ||
+              originalPrivateTarget?.transportTarget.channel === result.channel;
+            if (reuseOriginal) {
+              if (original.delivery.owner === "host") {
+                request.slackReplyAdmission = original.delivery.target;
+                replyProof = original.delivery.target;
+              } else {
+                // Historical tool-owned private work keeps its original history, reply thread
+                // and human source, without acquiring the incoming host publication proof.
+                delete request.slackReplyAdmission;
+                replyProof = undefined;
+              }
+              request.correlationKey = original.request.correlationKey;
+              request.sessionId = sessionId(originalOwner);
+              request.messageTs = original.request.messageTs;
+            }
+          }
           const requestId = request.requestId ?? randomUUID();
           const fingerprint = fingerprintPiRequest(request);
           const duplicate = requests.get(requestId);
@@ -1288,16 +1410,22 @@ export async function createPiRunnerApp(
             ...authority
           } = request;
           const receipt: PiAdmissionReceipt = {
-            modelSelection: { ...selection.value, history: [...selection.value.history] },
+            modelSelection: original?.modelSelection ?? {
+              ...selection.value,
+              history: [...selection.value.history],
+            },
+            ...(original?.escalationCalls ? { escalationCalls: original.escalationCalls } : {}),
             requestId,
             fingerprint,
             triggerId: mintTriggerId(),
             startedAt: Date.now(),
             resumed,
             request: authority,
-            delivery: slackReplyAdmission
-              ? { owner: "host", target: slackReplyAdmission }
-              : { owner: "tool" },
+            delivery:
+              original?.delivery ??
+              (slackReplyAdmission
+                ? { owner: "host", target: slackReplyAdmission }
+                : { owner: "tool" }),
             ...(config.slackTeamId ? { slackTeamId: config.slackTeamId } : {}),
             admission: { state: "intent", prompt: admittedPrompt },
           };
@@ -1319,8 +1447,12 @@ export async function createPiRunnerApp(
               {
                 ownership: { kind: "ownerless" },
                 agent: {
-                  model: { provider: "codex-lb", modelId: selection.value.modelId },
-                  thinkingLevel: selection.value.thinkingLevel,
+                  model: {
+                    provider: "codex-lb",
+                    modelId: receipt.modelSelection?.modelId ?? selection.value.modelId,
+                  },
+                  thinkingLevel:
+                    receipt.modelSelection?.thinkingLevel ?? selection.value.thinkingLevel,
                   cwd: request.directory,
                 },
                 init: async (tx, id) => {
@@ -1471,18 +1603,42 @@ export async function createPiRunnerApp(
         let displayStatus: string = status === "completed" ? "Model turn completed" : status;
         const authorization =
           current?.authorization ?? (receipt.request.triggerSlackId ? "unavailable" : "clear");
+        const mcpContinuation = [...owners.values()]
+          .flatMap((item) => item.metadata.receipts)
+          .find(
+            (item) =>
+              item.request.mcpApprovalSource?.reader.requestId === receipt.requestId &&
+              item.request.mcpApprovalSource.reader.sessionId === sessionId(owner),
+          );
+        const mcpWait =
+          authorization === "approval_waiting" ||
+          entries.some((entry) =>
+            entry.model?.some(
+              (message) => message.role === "toolResult" && message.toolName === "mcp_call",
+            ),
+          );
         if (status === "completed" && authorization !== "clear") {
-          displayStatus = continuation
-            ? `Google authorization continued in trigger ${continuation.triggerId}`
-            : owner.metadata.receipts.at(-1)?.requestId !== receipt.requestId
-              ? "Google authorization wait superseded by a newer request"
-              : (await continuationClient.observeGoogleAuthWait(
-                    sessionId(owner),
-                    owner.metadata.anchorId,
-                    current ?? receipt,
-                  )) === "waiting"
-                ? "Waiting for Google authorization · model turn finished, Google operation not completed"
-                : "Google authorization wait is no longer confirmed · model turn finished";
+          if (mcpWait) {
+            displayStatus = mcpContinuation
+              ? `MCP approval result continued in trigger ${mcpContinuation.triggerId}`
+              : owner.metadata.receipts.at(-1)?.requestId !== receipt.requestId
+                ? "MCP approval hold superseded by a newer request"
+                : authorization === "approval_waiting"
+                  ? "Waiting for MCP approval · model turn finished, operation not completed"
+                  : "MCP approval status unavailable · model turn finished, completion unconfirmed";
+          } else {
+            displayStatus = continuation
+              ? `Google authorization continued in trigger ${continuation.triggerId}`
+              : owner.metadata.receipts.at(-1)?.requestId !== receipt.requestId
+                ? "Google authorization wait superseded by a newer request"
+                : (await continuationClient.observeGoogleAuthWait(
+                      sessionId(owner),
+                      owner.metadata.anchorId,
+                      current ?? receipt,
+                    )) === "waiting"
+                  ? "Waiting for Google authorization · model turn finished, Google operation not completed"
+                  : "Google authorization wait is no longer confirmed · model turn finished";
+          }
         }
         const replyBinding = current ?? receipt;
         const publicationSummary =

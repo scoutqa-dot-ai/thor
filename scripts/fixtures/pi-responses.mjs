@@ -259,6 +259,78 @@ async function handle(req, res) {
     } else respond(res, "fixture signed completed");
     return;
   }
+  if (input.includes("Authorized MCP approval result: completed")) {
+    respond(res, "fixture approved disposition");
+    return;
+  }
+  if (input.includes("fixture-native-mcp-approval")) {
+    const search = payload.input.findLast(
+      (item) => item.type === "function_call_output" && item.call_id === "call_native_search",
+    );
+    const invoked = payload.input.findLast(
+      (item) => item.type === "function_call_output" && item.call_id === "call_native_invoke",
+    );
+    if (!search)
+      respond(
+        res,
+        { server: "localdocs", exactName: "write_doc" },
+        "mcp_search",
+        "call_native_search",
+      );
+    else if (!invoked)
+      respond(
+        res,
+        {
+          toolRef: JSON.parse(search.output).tools[0].toolRef,
+          arguments: { text: "dummy-private-approved-native" },
+        },
+        "mcp_call",
+        "call_native_invoke",
+      );
+    else respond(res, "fixture native approval pending");
+    return;
+  }
+  if (input.includes("fixture-native-mcp")) {
+    const search = payload.input.findLast(
+      (item) => item.type === "function_call_output" && item.call_id === "call_native_search",
+    );
+    const invoked = payload.input.findLast(
+      (item) => item.type === "function_call_output" && item.call_id === "call_native_invoke",
+    );
+    if (!search)
+      respond(res, { server: "localdocs", exactName: "echo" }, "mcp_search", "call_native_search");
+    else if (!invoked) {
+      const page = JSON.parse(search.output);
+      const mode = input.includes("native-image")
+        ? "native-image"
+        : input.includes("native-error")
+          ? "native-error"
+          : "native-structured";
+      respond(
+        res,
+        { toolRef: page.tools[0].toolRef, arguments: { text: mode } },
+        "mcp_call",
+        "call_native_invoke",
+      );
+    } else {
+      if (input.includes("native-image")) {
+        if (
+          !invoked.output?.some(
+            (block) =>
+              block.type === "input_image" &&
+              block.image_url === `data:image/png;base64,${imageFixtureBase64}`,
+          )
+        )
+          throw new Error("Native MCP image absent");
+      } else if (input.includes("native-error")) {
+        if (!JSON.stringify(invoked.output).includes("Confirmed fixture error"))
+          throw new Error("Native MCP isError lost");
+      } else if (JSON.parse(invoked.output).echoed !== "native-structured")
+        throw new Error("Native structured result lost");
+      respond(res, "fixture native MCP verified");
+    }
+    return;
+  }
   if (input.includes("fixture-image")) {
     const output = payload.input?.findLast(
       (item) => item.type === "function_call_output" && item.call_id === "call_image",

@@ -67,6 +67,7 @@ export interface RunnerTriggerOptions extends Pick<
   requestId?: string;
   /** Gateway admitted automatic-reply target, absent for legacy queues/non-Slack work. */
   slackReplyAdmission?: SlackReplyAdmission;
+  mcpApprovalSource?: McpApprovalProjection;
   /** Current trusted requester's message, not the thread root or rendered history. */
   messageTs?: string;
   prompt: string;
@@ -409,7 +410,7 @@ export function buildApprovalOutcomePrompt(events: ApprovalOutcomeEventPayload[]
   const lines = events.map((event, index) => {
     if (event.genericMcp) {
       const result = event.genericMcp;
-      return `${index + 1}. MCP approval \`${result.actionId}\`: ${result.disposition}. Target: ${result.server}/${result.tool}.\nReport this disposition only in the requester's private DM ${result.channel}, thread ${result.threadTs}. The approved mutation may already have executed; do not replay or re-run it. Continue only with distinct safe work. No raw provider result is available through this continuation.`;
+      return `${index + 1}. MCP approval \`${result.actionId}\`: ${result.disposition}. Target: ${result.server}/${result.tool}.\nReport this disposition only in the requester's private DM ${result.channel}, following the admitted reply ownership/target instructions. Review card thread: ${result.threadTs}. The approved mutation may already have executed; do not replay or re-run it. Continue only with distinct safe work. No raw provider result is available through this continuation.`;
     }
     const target = [event.upstreamName, event.tool].filter(Boolean).join("/") || "unknown tool";
     const resolutionFailed =
@@ -607,6 +608,7 @@ async function triggerRunnerPrompt(options: RunnerTriggerOptions): Promise<Trigg
       ...(options.triggerSlackId ? { triggerSlackId: options.triggerSlackId } : {}),
       ...(options.messageTs ? { messageTs: options.messageTs } : {}),
       ...(options.slackReplyAdmission ? { slackReplyAdmission: options.slackReplyAdmission } : {}),
+      ...(options.mcpApprovalSource ? { mcpApprovalSource: options.mcpApprovalSource } : {}),
       ...(options.triggerGithubLogin ? { triggerGithubLogin: options.triggerGithubLogin } : {}),
     }),
   });
@@ -875,6 +877,7 @@ export async function planBatchDispatch(input: BatchDispatchInput): Promise<Batc
       ...(sourceTs.success ? { messageTs: sourceTs.data } : {}),
       ...(approvalSourceTs?.success ? { messageTs: approvalSourceTs.data } : {}),
       ...(replyAdmission?.success ? { slackReplyAdmission: replyAdmission.data } : {}),
+      ...(genericOnly ? { mcpApprovalSource: generic } : {}),
       ...(input.triggerSlackId ? { triggerSlackId: input.triggerSlackId } : {}),
       ...(input.triggerGithubLogin ? { triggerGithubLogin: input.triggerGithubLogin } : {}),
       directory: directories[0],

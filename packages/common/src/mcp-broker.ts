@@ -58,6 +58,9 @@ export const McpNativeCallProjectionSchema = z.strictObject({
   state: z.enum(["started", "ended"]),
 });
 
+/** Complete descriptor payload budget per discovery page; native Harness output must not clip it. */
+export const MCP_DISCOVERY_MAX_BYTES = 256 * 1024;
+
 /** Discovery accepts exact lookup or bounded search; continuation preserves the complete query. */
 export const McpSearchInputSchema = z
   .strictObject({
@@ -135,13 +138,17 @@ export type McpBrokerFailure = {
   readonly message: string;
   readonly issues?: readonly { readonly path: string; readonly keyword: string }[];
 };
-/** MCP results are model-visible text; binary/URI blocks are explicitly unsupported until native decoding is installed. */
+/** Native image bytes remain untrusted until the runner's bounded raster decoder accepts them. */
+export type McpNativeContent =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "image"; readonly data: string; readonly mimeType: string };
+/** MCP results preserve inline images, never URI downloads or private protocol metadata. */
 export type McpCallOutcome =
   | McpBrokerFailure
   | {
       readonly status: "completed";
       readonly isError: boolean;
-      readonly content: readonly { readonly type: "text"; readonly text: string }[];
+      readonly content: readonly McpNativeContent[];
     }
   | {
       readonly status: "pending_approval";
@@ -158,3 +165,70 @@ export type McpDiscoveryOutcome =
 export type McpDescribeOutcome =
   | McpBrokerFailure
   | { readonly status: "ok"; readonly value: McpToolDescriptor };
+
+const brokerFailureSchema = z.strictObject({
+  status: z.enum([
+    "denied",
+    "unavailable",
+    "stale",
+    "invalid_arguments",
+    "uncertain",
+    "review_not_supported",
+  ]),
+  isError: z.literal(true),
+  message: z.string(),
+  issues: z.array(z.strictObject({ path: z.string(), keyword: z.string() })).optional(),
+});
+/** Parse private broker discovery without admitting arbitrary metadata into native history. */
+export const McpDiscoveryOutcomeSchema = z.union([
+  brokerFailureSchema,
+  z.strictObject({
+    status: z.literal("ok"),
+    value: z.strictObject({
+      servers: z.array(
+        z.strictObject({
+          server: z.string(),
+          available: z.boolean(),
+          visibleTools: z.number().int().nonnegative().optional(),
+        }),
+      ),
+      tools: z.array(
+        z.strictObject({
+          server: z.string(),
+          name: z.string(),
+          description: z.string().optional(),
+          // The broker owns arbitrary schema validation. JSON.parse supplies the wire tree;
+          // preserve it exactly here: recursive Zod records would silently strip __proto__
+          // business keys inside enum/default/properties and change complete schema semantics.
+          inputSchema: z.custom<Readonly<Record<string, unknown>>>(
+            (value) => value !== null && typeof value === "object" && !Array.isArray(value),
+          ),
+          policy: z.enum(["allow", "approve"]),
+          toolRef: McpToolRefSchema,
+        }),
+      ),
+      cursor: z.string().optional(),
+    }),
+  }),
+]);
+/** Parse only supported native content; inline image decoding is a separate product boundary. */
+export const McpCallOutcomeSchema = z.union([
+  brokerFailureSchema,
+  z.strictObject({
+    status: z.literal("completed"),
+    isError: z.boolean(),
+    content: z.array(
+      z.discriminatedUnion("type", [
+        z.strictObject({ type: z.literal("text"), text: z.string() }),
+        z.strictObject({ type: z.literal("image"), data: z.string(), mimeType: z.string() }),
+      ]),
+    ),
+  }),
+  z.strictObject({
+    status: z.literal("pending_approval"),
+    isError: z.literal(false),
+    actionId: z.string(),
+    server: z.string(),
+    tool: z.string(),
+  }),
+]);

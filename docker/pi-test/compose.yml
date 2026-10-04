@@ -1,7 +1,5 @@
-# This fixture's MCP edge is a replacement; real generic-state owner/mount gates use docker/mcp-test/compose.yml.
-# Isolated, deterministic Pi E2E. No production env file, credentials, host ports or bind-mounted workspace.
-# MCP catalog/secret authority is checked separately against a real broker in docker/mcp-test/compose.yml.
-# This runtime fixture's model-fixture alias is not evidence of broker credential isolation.
+# Isolated Pi E2E with a real broker/SDK MCP edge. Dummy-only, internal network, no host ports.
+# Model/Slack/legacy wrapper fixtures are not real providers. Full mount gates also use docker/mcp-test.
 services:
   init:
     image: node:24-slim
@@ -12,12 +10,10 @@ services:
       - memory:/workspace/memory
       - worklog:/workspace/worklog
       - config:/workspace/config
-    command:
-      [
-        node,
-        -e,
-        "const fs=require('fs'); fs.mkdirSync('/workspace/repos/pi-fixture',{recursive:true}); fs.writeFileSync('/workspace/repos/pi-fixture/README.md','fixture repo'); fs.chownSync('/workspace/repos/pi-fixture',1001,1001); fs.chownSync('/workspace/repos/pi-fixture/README.md',1001,1001); fs.writeFileSync('/workspace/config/thor.json',JSON.stringify({owners:{},users:[],pi:{modelRouting:{profiles:{fast:{modelId:'fixture-fast'},balanced:{modelId:'fixture-balanced'},strong:{modelId:'fixture-strong'}}}}})); for(const p of ['repos','worktrees','memory','worklog','config'])fs.chownSync('/workspace/'+p,1001,1001);",
-      ]
+      - catalog:/etc/thor/mcp-catalog
+      - mcp-approval-state:/var/lib/remote-cli/mcp-approvals
+      - ../../scripts/fixtures/pi-mcp-init.mjs:/mcp-init.mjs:ro
+    command: [node, /mcp-init.mjs]
 
   model-fixture:
     image: node:24-slim
@@ -26,11 +22,68 @@ services:
     command: [node, /fixture.mjs]
     networks:
       default:
-        aliases: [vouch, codex-lb, remote-cli]
+        aliases: [vouch, codex-lb]
     healthcheck:
       test: [CMD, node, -e, "fetch('http://127.0.0.1:8000/health').then(r=>{if(!r.ok)throw 1})"]
       interval: 1s
       timeout: 3s
+      retries: 30
+
+  mcp-fixture:
+    image: ${MCP_TEST_BROKER_IMAGE:-thor-pi-mcp-fixture:latest}
+    entrypoint: [node, /app/packages/remote-cli/mcp-fixture.mjs]
+    environment:
+      MCP_FIXTURE_TEAM: T_FIXTURE
+      MCP_FIXTURE_USER: U_FIXTURE
+    volumes:
+      - ../../scripts/fixtures/mcp-catalog-server.mjs:/app/packages/remote-cli/mcp-fixture.mjs:ro
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8000/health').then(r=>{if(!r.ok)throw 1})"]
+      interval: 1s
+      retries: 30
+
+  remote-cli:
+    build:
+      context: ../..
+      target: remote-cli
+    image: ${MCP_TEST_BROKER_IMAGE:-thor-pi-mcp-fixture:latest}
+    entrypoint: [node, /app/packages/remote-cli/dist/index.js]
+    environment:
+      PORT: "3004"
+      NODE_ENV: production
+      GITHUB_APP_ID: "1"
+      GITHUB_APP_SLUG: dummy-fixture
+      GITHUB_APP_BOT_ID: "1"
+      GITHUB_APP_PRIVATE_KEY_FILE: /var/lib/remote-cli/github-app/dummy.pem
+      GOOGLE_WORKSPACE_OAUTH_CLIENT_ID: dummy-client-id
+      GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET: dummy-client-secret
+      GOOGLE_WORKSPACE_OAUTH_PUBLIC_BASE_URL: https://dummy-neo.example
+      GOOGLE_WORKSPACE_OAUTH_SCOPES: https://www.googleapis.com/auth/drive
+      # Fixed 32-byte dummy fixture key, not an account/deployment credential.
+      GOOGLE_WORKSPACE_OAUTH_ENCRYPTION_KEY: ERERERERERERERERERERERERERERERERERERERERERE=
+      SLACK_BOT_TOKEN: dummy-slack-token
+      SLACK_API_BASE_URL: http://mcp-fixture:8000/slack
+      SLACK_TEAM_ID: T_FIXTURE
+      THOR_INTERNAL_SECRET: runner-internal-sentinel
+      RUNNER_BASE_URL: http://runner:3000
+    security_opt:
+      - seccomp=../remote-cli/seccomp-bwrap.json
+      - apparmor=unconfined
+      - systempaths=unconfined
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    volumes:
+      - catalog:/etc/thor/mcp-catalog:ro
+      - mcp-approval-state:/var/lib/remote-cli/mcp-approvals
+      - worklog:/workspace/worklog
+      - config:/workspace/config:ro
+      - ../../packages/remote-cli/dist:/app/packages/remote-cli/dist:ro
+    depends_on:
+      init: { condition: service_completed_successfully }
+      mcp-fixture: { condition: service_healthy }
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3004/health').then(r=>{if(!r.ok)throw 1})"]
+      interval: 1s
       retries: 30
 
   pi-executor:
@@ -90,6 +143,8 @@ services:
     depends_on:
       pi-executor:
         condition: service_healthy
+      remote-cli:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -118,8 +173,8 @@ services:
       GITHUB_APP_SLUG: fixture
       GITHUB_APP_BOT_ID: "1"
       GITHUB_WEBHOOK_SECRET: fixture-webhook-secret
-      REMOTE_CLI_HOST: model-fixture
-      REMOTE_CLI_PORT: "8000"
+      REMOTE_CLI_HOST: remote-cli
+      REMOTE_CLI_PORT: "3004"
       QUEUE_DIR: /workspace/worklog/gateway-queue
     volumes:
       - repos:/workspace/repos:ro
@@ -177,3 +232,9 @@ volumes:
   worklog:
   config:
   state:
+  catalog:
+  mcp-approval-state:
+
+networks:
+  default:
+    internal: true

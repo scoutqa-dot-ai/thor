@@ -49,6 +49,14 @@ export function registerMcpPrivateRoutes(
       res.status(403).json({ status: "denied" });
     }
   });
+  app.post("/internal/mcp/approvals/wait", (req, res) => {
+    const parsed = McpApprovalReaderSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ status: "unavailable" });
+      return;
+    }
+    res.json({ status: service.observePrivateApprovalWait(parsed.data) });
+  });
   app.post("/internal/mcp/approvals/list", (req, res) => {
     const parsed = McpApprovalReaderSchema.safeParse(req.body);
     if (!parsed.success) {

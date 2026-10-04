@@ -62,7 +62,7 @@ export const ProgressDoneSchema = z.object({
   correlationKey: z.string().optional(),
   resumed: z.boolean(),
   status: z.enum(["completed", "error"]),
-  authWait: z.enum(["google", "unconfirmed"]).optional(),
+  authWait: z.enum(["google", "approval", "unconfirmed"]).optional(),
   error: z.string().optional(),
   response: z.string(),
   toolCalls: z.array(z.object({ tool: z.string(), state: z.string() })),

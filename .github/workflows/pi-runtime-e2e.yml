@@ -10,7 +10,7 @@ on:
       - docker-compose.yml
       - docker-compose.no-apparmor.yml
       - docker/pi-test/**
-      # Real broker catalog authority has a separate dummy-only MCP Catalog E2E job.
+      # Pi now exercises real broker/native calls; broader catalog isolation has its own job.
       - docker/mcp-test/**
       - docker/ingress/**
       - docker/opencode/bin/**
@@ -19,6 +19,8 @@ on:
       - pnpm-lock.yaml
       - scripts/test-pi-e2e.sh
       - scripts/fixtures/pi-responses.mjs
+      - scripts/fixtures/pi-mcp-init.mjs
+      - scripts/fixtures/mcp-catalog-server.mjs
   workflow_dispatch:
 
 permissions:

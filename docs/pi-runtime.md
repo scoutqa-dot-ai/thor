@@ -14,6 +14,13 @@ Requires Docker with Compose 2.24.4+ and internet access to build images. It cre
 
 The test verifies signed Slack HTTP intake through the real gateway/disk queue into Pi, invalid-signature denial, duplicate suppression across privacy reroutes, actor attribution, in-thread replies and non-mention continuation. It also checks model/tool rounds, remote file/shell execution, wrapper session/call attribution, read-only repo mounts, runner-secret isolation, forged-trigger denial, correctly addressed Slack progress, authenticated ingress/admin/viewers, OAuth header/SSO routing and SQLite recovery after SIGKILL.
 
+Native MCP checks now use the real broker and installed SDK HTTP server, not the
+legacy wrapper replacement fixture. For offline validation, first compile current
+artifacts with `pnpm build`, then set `PI_TEST_USE_CACHED_IMAGES=1`,
+`MCP_TEST_BROKER_IMAGE` and `PI_TEST_{RUNNER,EXECUTOR,GATEWAY,ADMIN,INGRESS}_IMAGE`
+to already prepared images. That path uses `--no-build --pull never` and current
+artifacts; it neither installs dependencies nor reuses deployment data.
+
 For local source verification:
 
 ```bash
@@ -159,6 +166,46 @@ keeping eyes without a check. A previously confirmed hold cannot become success
 merely because its wait disappears. Rechecking observation does not replay tools
 or Slack completion effects; a newer admitted human request supersedes the hold.
 
+## Native MCP tools
+
+Pi installs `mcp_search` and `mcp_call` before restoring/scheduling work on the
+unchanged Durable 1.0.0 runtime. Search returns live permitted tools, complete
+selected schemas and revision-bound refs/cursors. Empty search gives server
+summaries; use an advertised server or exact lookup to discover beyond one page.
+Calls pass business arguments as JSON objects directly to the broker. Legacy MCP
+wrappers and special Jira attachment/browser/Kali/Slack artifact workflows remain.
+See [catalog configuration and safety](mcp-catalog.md).
+
+Pending approval is a hold, not completed execution. Authenticated broker
+observation uses a static waiting footer, suspended native status, retained eyes
+and no check (`authWait: "approval"`); unavailable observation stays degraded and
+non-successful. The existing signed gateway continuation carries only the authorized
+minimal result disposition. Runner rereads it, checks original requester/repo/source,
+and inherits the original final model and host/tool ownership. Host-owned resumes
+retain the exact original private DM destination and human source, not the review
+card's thread. If that frozen host destination is public or is not the confirmed
+requester DM, the broker rejects generic review with actionable `review_not_supported`
+**before approval intent, card or mutation**. Missing frozen ownership evidence also
+requires a fresh admitted private-DM request. No target/ownership change or public
+private-result publication is inferred. Tool-owned private resumes retain their
+original history/thread/human source and explicit reply ownership; other tool-owned
+results remain scoped to the private review conversation. Caller-selected public
+destinations cannot receive the projection.
+No polling tool, native waiter, provider retry or mutation re-call is introduced.
+
+Only one generic review operation is admitted per original request, not merely one
+outstanding card. Same task/call redelivery retains the pending action; distinct calls
+deny without additional intent/cards/effects even if the first already resolved before
+continuation. Request additional operations in a fresh request or an authorized
+continuation, never by automatically repeating a dispatched mutation. Continuation
+remains conditional on the original authorization; genuine human supersession still
+revokes it.
+
+`mcp_search` may replay observational work after recovery. Every `mcp_call` remains
+unsafe, regardless of MCP annotations; a remote dispatch without a committed
+native result is potentially partial work, never automatic redispatch permission.
+Reconcile effects with the provider before issuing distinct new work.
+
 ## Configuration
 
 The runner's Pi settings are also listed in README Deployment Configuration and `.env.example`. The override fixes `THOR_RUNTIME=pi`; ordinary Compose defaults to OpenCode.
@@ -238,7 +285,7 @@ Runner's trusted Slack SDK bypasses the agent-tool proxy policy for `slack.com`.
 - SQLite WAL/NORMAL is tested for process crashes, **not** lossless survival of newest commits after power/host failure. For consistent backup, stop runner before snapshotting its private volume; transcripts may contain private user/tool data.
 - Gateway persists uncertain batch membership and HTTP payloads until acceptance. Its `.runner-requests` manifests contain prompt/actor data; protect the queue directory like other conversation data. Retention/cleanup is not automated in this test delivery.
 - Slack presentation is best-effort; an activity post lost before its local timestamp can require manual cleanup. Native loading and known footer receipts are repaired on restart. Ordinary answer uncertainty never triggers automatic repost. Viewer usage is conversation-wide, not a per-trigger cost ledger.
-- Initial mode has read/write/edit/bash, remote `read_image`, explicit skills and bounded `escalate_model`. Background subagents, lossless legacy transcript import and full browser chat parity are not implemented.
+- Pi has read/write/edit/bash, remote `read_image`, explicit skills, bounded `escalate_model` and native MCP discovery/calls. Background subagents, lossless legacy transcript import and full browser chat parity are not implemented.
 
 ## Rollback
 

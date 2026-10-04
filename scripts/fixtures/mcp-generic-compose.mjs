@@ -31,6 +31,7 @@ appendSessionEvent(sessionId, {
   correlationKey: context.sourceKey,
   triggerSlackId: "UFIXTURE",
   nativeMcp: projection,
+  nativeMcpDelivery: { owner: "tool" },
 });
 const search = McpNativeAuthoritySchema.parse({
   ...context,
@@ -136,6 +137,7 @@ for (const [log, tail] of [
     correlationKey: next.sourceKey,
     triggerSlackId: "UFIXTURE",
     nativeMcp,
+    nativeMcpDelivery: { owner: "tool" },
   });
   appendSessionEvent(sessionId, {
     type: "tool_call",

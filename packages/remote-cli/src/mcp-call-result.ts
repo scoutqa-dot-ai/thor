@@ -40,10 +40,12 @@ export function projectMcpCallResult(
   const content = result.content.map((block) =>
     block.type === "text"
       ? { type: "text" as const, text: block.text }
-      : {
-          type: "text" as const,
-          text: `Unsupported MCP ${block.type} content; no binary data or resource URI was opened.`,
-        },
+      : block.type === "image"
+        ? { type: "image" as const, data: block.data, mimeType: block.mimeType }
+        : {
+            type: "text" as const,
+            text: `Unsupported MCP ${block.type} content; no binary data or resource URI was opened.`,
+          },
   );
   if (result.structuredContent !== undefined)
     content.unshift({ type: "text", text: JSON.stringify(result.structuredContent) });

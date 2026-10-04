@@ -16,6 +16,7 @@ import type { PiRunnerConfig } from "./pi-runner-config.js";
 import type { IGoogleWorkspaceConnectionStatusClient } from "./google-workspace-connection-status.js";
 import { createPiReadImageTool } from "./pi-read-image.js";
 import type { PiModelRoutingRuntime } from "./pi-model-routing-runtime.js";
+import type { PiMcpBrokerClient } from "./pi-mcp-tools.js";
 
 /** Install remote coding tools, explicitly discovered skills, memory and active actor instructions. */
 export function installPiRunnerTools(
@@ -23,6 +24,7 @@ export function installPiRunnerTools(
   config: PiRunnerConfig,
   googleWorkspaceStatus: IGoogleWorkspaceConnectionStatusClient,
   routing: PiModelRoutingRuntime,
+  mcp: PiMcpBrokerClient,
 ): void {
   const loader = createConfigLoader(WORKSPACE_CONFIG_PATH);
   const bash = createBashTool({
@@ -38,6 +40,8 @@ export function installPiRunnerTools(
       name: "thor-pi",
       tools: [
         routing.escalationTool(),
+        mcp.searchTool(),
+        mcp.callTool(),
         createPiReadImageTool(config.modelSupportsImages),
         defineTool({
           ...bash,
@@ -179,6 +183,19 @@ export function installPiRunnerTools(
             ? `Run triggered by ${user.name} <${user.email}>.`
             : `Run triggered by ${actor.triggerSlackId ? `slack: ${actor.triggerSlackId}` : `github: ${actor.triggerGithubLogin}`}.`;
         }),
+        section("mcp-approval-continuation", async (input, context) => {
+          const metadata = await input.read.snapshot(
+            piConversationMetadataDoc,
+            input.conversationId,
+            context,
+          );
+          const source = metadata?.receipts.find(
+            (item) => item.requestId === metadata.activeRequestId,
+          )?.request.mcpApprovalSource;
+          return source
+            ? `Authorized MCP approval result: ${source.disposition} for ${source.server}/${source.tool}. This is the original requester's private result continuation, not new authorization. Report this disposition; no raw provider result is retained. The mutation may already have executed. Continue only with distinct safe work, never repeat the approved or uncertain operation.`
+            : undefined;
+        }),
         section("google-auth-continuation", async (input, context) => {
           const metadata = await input.read.snapshot(
             piConversationMetadataDoc,
@@ -209,7 +226,9 @@ export function installPiRunnerTools(
             return `Current Google Workspace status for Slack requester ${requester}: no stored connection was found. Use gws for the current result and private onboarding instructions. If it confirms an authorization DM, explain that the task is waiting for sign-in and will automatically continue; do not claim the Google operation completed, seek command approval, or ask the user to repeat the request. Unconfirmed delivery is not a usable wait. A user statement alone is not evidence of readiness.`;
           return `Current Google Workspace connection status for Slack requester ${requester} could not be verified. Do not infer connected/disconnected from old tool results or user claims. Use gws to check the current request without command approval; never replay an uncertain effect.`;
         }),
-        section("tool-instructions", (input) => buildToolInstructions(input.agent.cwd ?? "")),
+        section("tool-instructions", (input) =>
+          buildToolInstructions(input.agent.cwd ?? "", "native"),
+        ),
       ],
     }),
   );

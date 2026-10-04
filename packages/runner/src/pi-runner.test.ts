@@ -43,6 +43,14 @@ import { persistBatchRunnerRequest } from "../../gateway/src/batch-request.js";
 import { createConfigLoader } from "@thor/common";
 import { clearRegistry, type ProgressEvent } from "@thor/common";
 import { createSlackProgressTransport } from "./slack-progress.js";
+import { openNativeMcpFixture } from "../../remote-cli/src/mcp-native.test-fixture.js";
+import { ApprovalStore } from "../../remote-cli/src/approval-store.js";
+import {
+  McpApprovalReaderSchema,
+  McpNativeAuthoritySchema,
+  McpApprovalProjectionSchema,
+} from "@thor/common";
+import { z } from "zod";
 
 async function listen(server: Server): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -54,17 +62,21 @@ async function closeServer(server: Server) {
   server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
 }
+let responseToolSequence = 0;
 function respond(
   res: ServerResponse,
-  content: { text: string } | { tool: string; args: object; preamble?: string },
+  content:
+    | { text: string }
+    | { tool: string; args: object; preamble?: string }
+    | { tools: { tool: string; args: object }[] },
 ) {
   res.writeHead(200, { "content-type": "text/event-stream" });
   let sequence_number = 0;
   const emit = (event: object) =>
     res.write(`data: ${JSON.stringify({ ...event, sequence_number: sequence_number++ })}\n\n`);
   emit({ type: "response.created", response: { id: "resp_test" } });
-  if ("tool" in content) {
-    if (content.preamble) {
+  if ("tool" in content || "tools" in content) {
+    if ("preamble" in content && content.preamble) {
       const item = {
         type: "message",
         id: "msg_intermediate",
@@ -81,21 +93,29 @@ function respond(
       });
       emit({ type: "response.output_item.done", output_index: 1, item });
     }
-    const item = {
-      type: "function_call",
-      id: "fc_test",
-      call_id: "call_test",
-      name: content.tool,
-      arguments: JSON.stringify(content.args),
-      status: "completed",
-    };
-    emit({ type: "response.output_item.added", output_index: 0, item: { ...item, arguments: "" } });
-    emit({
-      type: "response.function_call_arguments.delta",
-      output_index: 0,
-      delta: item.arguments,
-    });
-    emit({ type: "response.output_item.done", output_index: 0, item });
+    const toolSequence = responseToolSequence++;
+    const calls = "tools" in content ? content.tools : [content];
+    for (const [index, call] of calls.entries()) {
+      const item = {
+        type: "function_call",
+        id: `fc_test_${toolSequence}_${index}`,
+        call_id: `call_test_${toolSequence}_${index}`,
+        name: call.tool,
+        arguments: JSON.stringify(call.args),
+        status: "completed",
+      };
+      emit({
+        type: "response.output_item.added",
+        output_index: index,
+        item: { ...item, arguments: "" },
+      });
+      emit({
+        type: "response.function_call_arguments.delta",
+        output_index: index,
+        delta: item.arguments,
+      });
+      emit({ type: "response.output_item.done", output_index: index, item });
+    }
   } else {
     const item = {
       type: "message",
@@ -200,6 +220,9 @@ let hold: ServerResponse | undefined;
 let toolRound: boolean;
 let modelFailure: boolean;
 let modelActions: Array<{ text: string } | { tool: string; args: object; preamble?: string }>;
+let nativeModelResponder:
+  | ((payload: Record<string, unknown>, res: ServerResponse) => void)
+  | undefined;
 let imagePath: string;
 let holdImageRead: boolean;
 let failImageRead: boolean;
@@ -242,6 +265,7 @@ beforeEach(async () => {
   toolRound = false;
   modelFailure = false;
   modelActions = [];
+  nativeModelResponder = undefined;
   imagePath = "remote-image.bin";
   holdImageRead = false;
   failImageRead = false;
@@ -311,6 +335,10 @@ beforeEach(async () => {
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const payload: Record<string, unknown> = JSON.parse(Buffer.concat(chunks).toString());
     requests.push(payload);
+    if (nativeModelResponder) {
+      nativeModelResponder(payload, res);
+      return;
+    }
     const action = modelActions.shift();
     if (action) {
       respond(res, action);
@@ -4153,4 +4181,900 @@ describe("per-task native model routing", () => {
     });
     expect(await (await fetch(url)).text()).toContain("fixture-fast · thinking low · profile fast");
   });
+});
+
+describe("native Durable SQLite through the real MCP broker", { timeout: 20_000 }, () => {
+  let mcp: Awaited<ReturnType<typeof openNativeMcpFixture>>;
+  const argumentsObject = { text: "hello", nested: { count: 3 } };
+  beforeEach(async () => {
+    mcp = await openNativeMcpFixture(directory, config.internalSecret);
+    await closeServer(runnerServer);
+    await runner.close();
+    await openRunner({
+      remoteCliUrl: mcp.brokerUrl,
+      progressTransport: createSlackProgressTransport({
+        token: "dummy-slack-token",
+        slackApiUrl: mcp.slackUrl,
+      }),
+    });
+  });
+  afterEach(async () => {
+    mcp?.holdCalls(false);
+    mcp?.holdCards(false);
+    await mcp?.close();
+  });
+
+  function lastOutput(payload: Record<string, unknown>): string {
+    const inputs = z
+      .array(z.looseObject({ type: z.string().optional(), output: z.unknown().optional() }))
+      .parse(payload.input);
+    const output = inputs.findLast((input) => input.type === "function_call_output")?.output;
+    if (typeof output === "string") return output;
+    return z
+      .array(z.looseObject({ text: z.string().optional() }))
+      .parse(output)
+      .map((block) => block.text ?? "")
+      .join("\n");
+  }
+  function searchCall(name = "observe_0", args: object = argumentsObject) {
+    let round = 0;
+    let discoveredRef = "";
+    nativeModelResponder = (payload, res) => {
+      if (round++ === 0)
+        respond(res, { tool: "mcp_search", args: { server: "docs", exactName: name } });
+      else if (round === 2) {
+        const page = JSON.parse(lastOutput(payload));
+        discoveredRef = page.tools[0].toolRef;
+        respond(res, { tool: "mcp_call", args: { toolRef: discoveredRef, arguments: args } });
+      } else respond(res, { text: "Native result checked" });
+    };
+    return () => discoveredRef;
+  }
+
+  it("discovers complete paginated schemas, excludes private metadata, and calls JSON objects with trusted native proof", async () => {
+    let round = 0;
+    const pages: Record<string, unknown>[] = [];
+    nativeModelResponder = (payload, res) => {
+      if (round++ === 0) respond(res, { tool: "mcp_search", args: { server: "docs", limit: 20 } });
+      else if (round === 2) {
+        const page = JSON.parse(lastOutput(payload));
+        pages.push(page);
+        respond(res, {
+          tool: "mcp_search",
+          args: { server: "docs", limit: 20, cursor: page.cursor },
+        });
+      } else if (round === 3) {
+        const page = JSON.parse(lastOutput(payload));
+        pages.push(page);
+        respond(res, {
+          tool: "mcp_call",
+          args: { toolRef: page.tools[0].toolRef, arguments: argumentsObject },
+        });
+      } else respond(res, { text: "Native result checked" });
+    };
+    const frames = await stream({
+      prompt: "native discovery",
+      requestId: "native-discovery",
+      directory: `${triggerDirectory}/packages/core`,
+      triggerSlackId: "U123",
+      correlationKey: "slack:thread:D123/1710000000.001",
+    });
+    expect(frames.at(-1)).toMatchObject({ status: "completed" });
+    const tools = z
+      .array(z.looseObject({ name: z.string(), inputSchema: z.unknown() }))
+      .parse(pages.flatMap((page) => page.tools));
+    expect(tools).toHaveLength(24);
+    expect(
+      tools.every((tool) => JSON.stringify(tool.inputSchema) === JSON.stringify(mcp.schema)),
+    ).toBe(true);
+    expect(mcp.effects).toEqual([{ name: "observe_7", arguments: argumentsObject }]);
+    const proof = McpNativeAuthoritySchema.parse(
+      z
+        .looseObject({ context: z.unknown() })
+        .parse(mcp.privateBodies.findLast((item) => item.path === "/internal/mcp/call")?.body)
+        .context,
+    );
+    expect(proof).toMatchObject({
+      requester: { source: "slack", id: "U123" },
+      directory: `${triggerDirectory}/packages/core`,
+      repositoryDirectory: triggerDirectory,
+      taskId: expect.any(String),
+      callId: expect.stringContaining("call_test"),
+    });
+    const output = JSON.stringify(requests);
+    for (const hidden of [
+      "private-tool-meta",
+      "private-annotation",
+      "private-hidden-name",
+      "hidden_mutation",
+      config.internalSecret,
+      "mcp <upstream>",
+      "Always pass a single JSON string",
+    ])
+      expect(output).not.toContain(hidden);
+    expect(output).toContain("Untrusted fixture description");
+    expect(JSON.stringify(requests[0])).not.toContain("Untrusted fixture description");
+    expect(lastOutput(requests.at(-1) ?? {})).toBe('{"confirmed":true}');
+    expect(executorRequests.some((request) => request.operation.type === "exec")).toBe(false);
+    const ended = readTriggerSlice(proof.sessionId, proof.triggerId);
+    expect(JSON.stringify(ended)).toContain('"state":"ended"');
+    expect(JSON.stringify(ended)).not.toContain('"nested"');
+  });
+
+  it("preserves complete schema pages beyond the default Harness text limit", async () => {
+    const padding = "schema-business-assertion-".repeat(500);
+    await closeServer(runnerServer);
+    await runner.close();
+    config.modelContextWindow = 272000;
+    await openRunner({ remoteCliUrl: mcp.brokerUrl });
+    const largeSchema = { ...mcp.schema, $defs: { large: { enum: [padding] } } };
+    await mcp.restart(true, [
+      ...Array.from({ length: 12 }, (_, index) => ({
+        name: `observe_large_${index}`,
+        inputSchema: largeSchema,
+      })),
+      { name: "write_doc", inputSchema: mcp.schema },
+    ]);
+    let round = 0;
+    nativeModelResponder = (_payload, res) =>
+      round++ === 0
+        ? respond(res, { tool: "mcp_search", args: { server: "docs", limit: 20 } })
+        : respond(res, { text: "Full schemas received" });
+    await stream({ prompt: "large discovery", requestId: "large-discovery" });
+    const output = lastOutput(requests.at(-1) ?? {});
+    expect(Buffer.byteLength(output)).toBeGreaterThan(50 * 1024);
+    const page = z
+      .looseObject({
+        tools: z.array(z.looseObject({ name: z.string(), inputSchema: z.unknown() })),
+      })
+      .parse(JSON.parse(output));
+    expect(page.tools).toHaveLength(13);
+    expect(
+      page.tools
+        .filter((tool) => tool.name.startsWith("observe_"))
+        .every((tool) => JSON.stringify(tool.inputSchema) === JSON.stringify(largeSchema)),
+    ).toBe(true);
+    expect(mcp.effects).toHaveLength(0);
+  });
+
+  it("preserves schema business-map keys instead of silently erasing enum assertions at the native decoder", async () => {
+    const choice = JSON.parse('{"__proto__":{"marker":"business-key"},"allowed":true}');
+    const schema = {
+      ...mcp.schema,
+      properties: { ...mcp.schema.properties, choice: { enum: [choice] } },
+    };
+    await mcp.restart(true, [
+      { name: "observe_proto_map", inputSchema: schema },
+      { name: "write_doc", inputSchema: mcp.schema },
+    ]);
+    searchCall("observe_proto_map");
+    await stream({ prompt: "schema business map", requestId: "schema-business-map" });
+    const page = JSON.parse(lastOutput(requests[1] ?? {}));
+    expect(JSON.stringify(page.tools[0].inputSchema)).toBe(JSON.stringify(schema));
+    expect(mcp.effects).toEqual([{ name: "observe_proto_map", arguments: argumentsObject }]);
+  });
+  it("replays only safe discovery on SQLite recovery with the same native proof, then calls once", async () => {
+    mcp.holdSearch(true);
+    searchCall();
+    const body = { prompt: "safe discovery recovery", requestId: "safe-discovery-recovery" };
+    const accepted = await trigger(body);
+    expect(accepted.status).toBe(200);
+    await vi.waitFor(() =>
+      expect(mcp.privateBodies.some((item) => item.path === "/internal/mcp/search")).toBe(true),
+    );
+    await closeServer(runnerServer);
+    await runner.close();
+    mcp.holdSearch(false);
+    await openRunner({ remoteCliUrl: mcp.brokerUrl });
+    const recovered = await stream(body);
+    expect(recovered.at(-1)).toMatchObject({ status: "completed" });
+    const proofs = mcp.privateBodies
+      .filter((item) => item.path === "/internal/mcp/search")
+      .map((item) =>
+        McpNativeAuthoritySchema.parse(
+          z.looseObject({ context: z.unknown() }).parse(item.body).context,
+        ),
+      );
+    expect(proofs).toHaveLength(2);
+    expect(proofs[0]).toEqual(proofs[1]);
+    expect(mcp.effects).toHaveLength(1);
+  });
+
+  it.each([
+    ["schema", { text: "x", nested: { count: 1 } }, "Invalid arguments"],
+    ["array", [], "must be object"],
+    ["identity", { ...argumentsObject, requester: "U_ADMIN" }, "Invalid arguments"],
+  ])("rejects %s arguments before upstream effects", async (_name, args, expected) => {
+    searchCall("observe_0", args);
+    await stream({ prompt: "native invalid", requestId: "native-invalid" });
+    expect(mcp.effects).toHaveLength(0);
+    expect(JSON.stringify(requests.at(-1))).toContain(expected);
+    if (_name === "schema") expect(JSON.stringify(requests.at(-1))).toContain("minimum");
+  });
+
+  it.each(["requester", "directory", "repositoryDirectory", "taskId", "callId", "operation"])(
+    "denies tampered %s with zero upstream/approval effects",
+    async (field) => {
+      mcp.corruptProof((path, body) => {
+        if (path !== "/internal/mcp/call") return;
+        const context = z.record(z.string(), z.unknown()).parse(body.context);
+        if (field === "operation") {
+          const proof = McpNativeAuthoritySchema.parse(context);
+          appendSessionEvent(proof.sessionId, {
+            type: "tool_call",
+            tool: "mcp_search",
+            callId: proof.callId,
+            payload: { nativeMcp: proof, state: "started" },
+          });
+        } else {
+          context[field] =
+            field === "requester"
+              ? { source: "slack", id: "U_ADMIN" }
+              : field.includes("Directory") || field === "directory"
+                ? "/workspace/repos/other"
+                : "forged-native-id";
+          body.context = context;
+        }
+      });
+      searchCall("write_doc");
+      await stream({
+        prompt: "native denied",
+        requestId: "native-denied",
+        triggerSlackId: "U123",
+        correlationKey: "slack:thread:D123/1710000000.001",
+      });
+      expect(mcp.effects).toHaveLength(0);
+      expect(mcp.cards).toHaveLength(0);
+      expect(JSON.stringify(requests.at(-1))).toContain("denied");
+    },
+  );
+
+  it.each(["provider_error", "transport_error", "resource"])(
+    "preserves %s outcome without automatic retries or resource fetching",
+    async (scenario) => {
+      if (scenario === "provider_error")
+        mcp.setResult({
+          isError: true,
+          content: [{ type: "text", text: "Confirmed provider rejection" }],
+        });
+      if (scenario === "transport_error") mcp.failTransport(true);
+      if (scenario === "resource")
+        mcp.setResult({
+          content: [
+            {
+              type: "resource_link",
+              uri: "https://private.invalid/must-not-open",
+              name: "private-uri",
+              mimeType: "text/html",
+            },
+            {
+              type: "audio",
+              data: Buffer.from("private-base64").toString("base64"),
+              mimeType: "audio/wav",
+            },
+          ],
+        });
+      searchCall();
+      const frames = await stream({ prompt: "native outcome", requestId: "native-outcome" });
+      expect(mcp.effects).toHaveLength(1);
+      if (scenario !== "resource")
+        expect(frames.at(-1)?.toolCalls).toContainEqual({ tool: "mcp_call", state: "error" });
+      const visible = JSON.stringify(requests.at(-1));
+      expect(visible).toContain(
+        scenario === "provider_error"
+          ? "Confirmed provider rejection"
+          : scenario === "transport_error"
+            ? "uncertain"
+            : "Unsupported MCP",
+      );
+      expect(visible).not.toContain("private-base64");
+      expect(visible).not.toContain("must-not-open");
+    },
+  );
+
+  it.each(["png", "jpeg", "webp", "gif"] as const)(
+    "forwards only decoded still %s image bytes to the actual Responses model contract",
+    async (format) => {
+      const bytes = await sharp({ create: { width: 3, height: 2, channels: 3, background: "red" } })
+        .toFormat(format)
+        .toBuffer();
+      mcp.setResult({
+        content: [
+          {
+            type: "image",
+            mimeType: `image/${format}`,
+            data: bytes.toString("base64"),
+            _meta: { secret: "private-image-meta" },
+          },
+        ],
+      });
+      searchCall();
+      await stream({ prompt: "native image", requestId: "native-image" });
+      const visible = JSON.stringify(requests.at(-1));
+      expect(visible).toContain(`data:image/${format};base64,${bytes.toString("base64")}`);
+      expect(visible).not.toContain("private-image-meta");
+      const receipt = await (
+        await trigger({ prompt: "native image", requestId: "native-image" })
+      ).json();
+      const html = await (
+        await fetch(`${runnerUrl}/runner/v/${receipt.anchorId}/${receipt.triggerId}`)
+      ).text();
+      expect(html).toContain(`[Image attached: image/${format}]`);
+      expect(html).not.toContain(bytes.toString("base64"));
+      expect(JSON.stringify(readTriggerSlice(receipt.sessionId, receipt.triggerId))).not.toContain(
+        bytes.toString("base64"),
+      );
+    },
+  );
+
+  it.each(["corrupt", "svg", "mime", "bytes", "pixels", "animation", "text_model"])(
+    "rejects %s inline images without base64 prose or a second dispatch",
+    async (scenario) => {
+      let bytes = await sharp({ create: { width: 3, height: 2, channels: 3, background: "red" } })
+        .png()
+        .toBuffer();
+      let mimeType = "image/png";
+      if (scenario === "corrupt") bytes = bytes.subarray(0, -12);
+      if (scenario === "svg") bytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+      if (scenario === "mime") mimeType = "image/jpeg";
+      if (scenario === "bytes") bytes = Buffer.alloc(10 * 1024 * 1024 + 1);
+      if (scenario === "pixels")
+        bytes = await sharp({
+          create: { width: 4001, height: 4000, channels: 3, background: "red" },
+        })
+          .png()
+          .toBuffer();
+      if (scenario === "animation")
+        bytes = Buffer.from(
+          "R0lGODlhAQABAIAAAAAAAP///yH5BAAAAAAALAAAAAABAAEAAAICRAEAIfkEAAAAAAAsAAAAAAEAAQAAAgJEAQA7",
+          "base64",
+        );
+      if (scenario === "text_model") {
+        await closeServer(runnerServer);
+        await runner.close();
+        config.modelSupportsImages = false;
+        await openRunner({ remoteCliUrl: mcp.brokerUrl });
+      }
+      mcp.setResult({ content: [{ type: "image", data: bytes.toString("base64"), mimeType }] });
+      searchCall();
+      await stream({ prompt: "native bad image", requestId: "native-bad-image" });
+      const visible = JSON.stringify(requests.at(-1));
+      expect(visible).toContain("Unsupported MCP image");
+      expect(visible).not.toContain('"type":"input_image"');
+      expect(visible).not.toContain(bytes.toString("base64"));
+      expect(mcp.effects).toHaveLength(1);
+    },
+  );
+
+  it("keeps the two native registrations live across broker catalog replacement and rejects old refs", async () => {
+    const ref = searchCall();
+    await stream({ prompt: "old catalog", requestId: "old-catalog" });
+    const toolRef = ref();
+    await mcp.restart();
+    modelActions = [];
+    let round = 0;
+    nativeModelResponder = (_payload, res) =>
+      round++ === 0
+        ? respond(res, { tool: "mcp_call", args: { toolRef, arguments: argumentsObject } })
+        : respond(res, { text: "Stale denied" });
+    await stream({ prompt: "stale catalog", requestId: "stale-catalog" });
+    expect(mcp.effects).toHaveLength(1);
+    expect(JSON.stringify(requests.at(-1))).toContain("stale");
+    await mcp.restart(false);
+    nativeModelResponder = (_payload, res) =>
+      round++ === 2
+        ? respond(res, { tool: "mcp_search", args: {} })
+        : respond(res, { text: "Removed" });
+    await stream({ prompt: "removed catalog", requestId: "removed-catalog" });
+    expect(JSON.stringify(requests.at(-1))).not.toContain('"server":"docs"');
+    await mcp.restart(true);
+    searchCall();
+    await stream({ prompt: "new catalog", requestId: "new-catalog" });
+    expect(mcp.effects).toHaveLength(2);
+  });
+
+  it.each([
+    ...["approved", "rejected", "tool_error", "uncertain"].flatMap((decision) =>
+      ["host", "tool"].map((owner) => ({ decision, owner })),
+    ),
+  ])(
+    "holds native completion until an authenticated $decision private result continuation, inheriting original $owner policy/target/model",
+    async ({ decision, owner }) => {
+      searchCall("write_doc");
+      const originalChannel = "D123";
+      const body = {
+        prompt: "private native approval",
+        requestId: "private-native-approval",
+        triggerSlackId: "U123",
+        messageTs: "1710000000.002",
+        correlationKey: `slack:thread:${originalChannel}/1710000000.001`,
+        ...(owner !== "tool"
+          ? {
+              slackReplyAdmission: {
+                version: 1,
+                teamId: "T123",
+                channel: originalChannel,
+                threadTs: "1710000000.001",
+              },
+            }
+          : {}),
+        thinkingLevel: "high",
+      };
+      const frames = await stream(body);
+      expect(frames.at(-1)).toMatchObject({ status: "error", authWait: "approval" });
+      expect(mcp.effects).toHaveLength(0);
+      await vi.waitFor(() =>
+        expect(
+          mcp.slackDeliveries.some(
+            (entry) =>
+              entry.method === "agents.sessions.setStatus" && entry.body.status === "suspended",
+          ),
+        ).toBe(true),
+      );
+      expect(
+        mcp.slackDeliveries.some(
+          (entry) => entry.method === "reactions.add" && entry.body.name === "white_check_mark",
+        ),
+      ).toBe(false);
+      const proof = McpNativeAuthoritySchema.parse(
+        z
+          .looseObject({ context: z.unknown() })
+          .parse(mcp.privateBodies.find((item) => item.path === "/internal/mcp/call")?.body)
+          .context,
+      );
+      const reader = McpApprovalReaderSchema.parse({
+        requester: proof.requester,
+        teamId: proof.teamId,
+        repositoryDirectory: proof.repositoryDirectory,
+        sourceKey: proof.sourceKey,
+        requestId: proof.requestId,
+        sessionId: proof.sessionId,
+      });
+      const read = async () => {
+        const response = await fetch(`${mcp.brokerUrl}/internal/mcp/approvals/list`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-thor-internal-secret": config.internalSecret,
+          },
+          body: JSON.stringify(reader),
+        });
+        return McpApprovalProjectionSchema.parse(
+          z.looseObject({ value: z.array(z.unknown()) }).parse(await response.json()).value[0],
+        );
+      };
+      const pending = await read();
+      const originalReceipt = await (await trigger(body)).json();
+      const waitingHtml = await (
+        await fetch(
+          `${runnerUrl}/runner/v/${originalReceipt.anchorId}/${originalReceipt.triggerId}`,
+        )
+      ).text();
+      expect(waitingHtml).toContain("Waiting for MCP approval");
+      if (decision === "tool_error")
+        mcp.setResult({
+          isError: true,
+          content: [{ type: "text", text: "private-provider-error" }],
+        });
+      if (decision === "uncertain") mcp.failTransport(true);
+      const resolved = await fetch(`${mcp.brokerUrl}/internal/mcp/approvals/resolve`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-thor-internal-secret": config.internalSecret,
+        },
+        body: JSON.stringify({
+          actionId: pending.actionId,
+          decision: decision === "rejected" ? "rejected" : "approved",
+          userId: "U123",
+          teamId: "T123",
+          channel: "D123",
+          messageTs: pending.threadTs,
+        }),
+      });
+      expect(resolved.status).toBe(200);
+      const result = await read();
+      expect(result.disposition).toBe(
+        decision === "approved" ? "completed" : decision === "rejected" ? "rejected" : decision,
+      );
+      const continuation = {
+        prompt: "Report approved disposition only",
+        requestId: "native-continuation",
+        mcpApprovalSource: result,
+        triggerSlackId: "U123",
+        messageTs: result.threadTs,
+        correlationKey: `slack:thread:${result.channel}/${result.threadTs}`,
+        slackReplyAdmission: {
+          version: 1,
+          teamId: "T123",
+          channel: result.channel,
+          threadTs: result.threadTs,
+        },
+      };
+      const forged = await trigger({
+        ...continuation,
+        mcpApprovalSource: { ...result, disposition: "pending" },
+      });
+      expect(forged.status).toBe(403);
+      const { slackReplyAdmission: _proof, ...plainContinuation } = continuation;
+      for (const corruption of [
+        { triggerSlackId: "U_OTHER" },
+        { directory: "/workspace/repos/other" },
+        { correlationKey: "slack:thread:C_PUBLIC/1710000000.123" },
+        {
+          mcpApprovalSource: {
+            ...result,
+            reader: { ...result.reader, sourceKey: "slack:thread:C_PUBLIC/1710000000.123" },
+          },
+        },
+      ])
+        expect((await trigger({ ...plainContinuation, ...corruption })).status).toBe(403);
+      nativeModelResponder = (_payload, res) =>
+        respond(res, { text: "Approved result disposition" });
+      const resumed = await stream(continuation);
+      expect(resumed.at(-1)).toMatchObject({ status: "completed" });
+      expect(resumed[0]?.sessionId).toBe(originalReceipt.sessionId);
+      expect(JSON.stringify(requests.at(-1))).toContain("private native approval");
+      expect(requests.at(-1)).toMatchObject({ reasoning: { effort: "high" } });
+      expect(JSON.stringify(requests.at(-1))).toContain("Authorized MCP approval result:");
+      expect(JSON.stringify(requests.at(-1))).not.toContain("private-provider-error");
+      if (owner === "host")
+        await vi.waitFor(() =>
+          expect(
+            mcp.slackDeliveries.findLast(
+              (entry) =>
+                entry.method === "chat.postMessage" &&
+                entry.body.text === "Approved result disposition",
+            )?.body,
+          ).toMatchObject({ channel: "D123", thread_ts: "1710000000.001" }),
+        );
+      else {
+        expect(
+          mcp.slackDeliveries.some(
+            (entry) =>
+              entry.method === "chat.postMessage" &&
+              entry.body.text === "Approved result disposition",
+          ),
+        ).toBe(false);
+        expect(JSON.stringify(requests.at(-1))).toContain(
+          "Final assistant text stays in the conversation and is not automatically posted",
+        );
+      }
+      expect(mcp.effects).toHaveLength(decision === "rejected" ? 0 : 1);
+      await vi.waitFor(() =>
+        expect(
+          mcp.slackDeliveries.some(
+            (entry) =>
+              entry.method === "reactions.add" &&
+              entry.body.name === "white_check_mark" &&
+              entry.body.channel === "D123" &&
+              entry.body.timestamp === "1710000000.002",
+          ),
+        ).toBe(true),
+      );
+      const redelivered = await trigger(continuation);
+      expect(redelivered.status).toBe(200);
+      expect((await redelivered.json()).duplicate).toBe(true);
+    },
+  );
+
+  it.each(["C123", "G123", "D_OTHER"])(
+    "rejects unsupported frozen host audience %s before approval intent, card or mutation",
+    async (channel) => {
+      searchCall("write_doc", { ...argumentsObject, text: "private-review-argument-canary" });
+      await stream({
+        prompt: "unsupported audience",
+        requestId: "unsupported-audience",
+        triggerSlackId: "U123",
+        messageTs: "1710000000.002",
+        correlationKey: `slack:thread:${channel}/1710000000.001`,
+        slackReplyAdmission: { version: 1, teamId: "T123", channel, threadTs: "1710000000.001" },
+      });
+      expect(lastOutput(requests.at(-1) ?? {})).toContain("review_not_supported");
+      expect(lastOutput(requests.at(-1) ?? {})).toContain("fresh request in their private DM");
+      expect(mcp.effects).toHaveLength(0);
+      expect(mcp.cards).toHaveLength(0);
+      expect(
+        new ApprovalStore(join(directory, "private-approvals"), "genericMcp").listGeneric(),
+      ).toHaveLength(0);
+      expect(
+        mcp.slackDeliveries
+          .filter((entry) => entry.method === "chat.postMessage")
+          .every((entry) => !JSON.stringify(entry.body).includes("private-review-argument-canary")),
+      ).toBe(true);
+    },
+  );
+
+  it.each(["pending", "concurrent", "completed-before-continuation"])(
+    "admits one native review operation per request with %s distinct calls, without stranding a sibling",
+    async (mode) => {
+      let round = 0;
+      let firstAction = "";
+      const resolveFirst = async () => {
+        const response = await fetch(`${mcp.brokerUrl}/internal/mcp/approvals/resolve`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-thor-internal-secret": config.internalSecret,
+          },
+          body: JSON.stringify({
+            actionId: firstAction,
+            decision: "approved",
+            userId: "U123",
+            teamId: "T123",
+            channel: "D123",
+            messageTs: "1710000000.123",
+          }),
+        });
+        return McpApprovalProjectionSchema.parse(
+          z.looseObject({ value: z.unknown() }).parse(await response.json()).value,
+        );
+      };
+      nativeModelResponder = (payload, res) => {
+        if (round++ === 0)
+          respond(res, { tool: "mcp_search", args: { server: "docs", exactName: "write_doc" } });
+        else if (round === 2) {
+          const ref = JSON.parse(lastOutput(payload)).tools[0].toolRef;
+          const calls = ["first operation", "second operation"].map((text) => ({
+            tool: "mcp_call",
+            args: { toolRef: ref, arguments: { ...argumentsObject, text } },
+          }));
+          respond(res, mode === "concurrent" ? { tools: calls } : calls[0]);
+        } else if (round === 3 && mode !== "concurrent") {
+          const record = new ApprovalStore(
+            join(directory, "private-approvals"),
+            "genericMcp",
+          ).listGeneric()[0];
+          firstAction = record.id;
+          const call = {
+            tool: "mcp_call",
+            args: {
+              toolRef: record.toolRef,
+              arguments: { ...argumentsObject, text: "second operation" },
+            },
+          };
+          if (mode === "completed-before-continuation")
+            void resolveFirst().then(() => respond(res, call));
+          else respond(res, call);
+        } else respond(res, { text: "Review result required" });
+      };
+      const body = {
+        prompt: "two requested operations",
+        requestId: "two-operations",
+        triggerSlackId: "U123",
+        messageTs: "1710000000.002",
+        correlationKey: "slack:thread:D123/1710000000.001",
+        slackReplyAdmission: {
+          version: 1,
+          teamId: "T123",
+          channel: "D123",
+          threadTs: "1710000000.001",
+        },
+      };
+      mcp.holdCards(mode === "concurrent");
+      const pendingStream = stream(body);
+      if (mode === "concurrent") {
+        await vi.waitFor(() => {
+          expect(mcp.cards).toHaveLength(1);
+          expect(mcp.privateBodies.some((item) => item.path === "/internal/mcp/call")).toBe(true);
+        });
+        // Runner uses sequential native execution. Challenge the broker's lock while
+        // its first real native card receipt is held, with an independently host-proved sibling.
+        const firstBody = z
+          .looseObject({ context: McpNativeAuthoritySchema, input: z.unknown() })
+          .parse(mcp.privateBodies.find((item) => item.path === "/internal/mcp/call")?.body);
+        const sibling = McpNativeAuthoritySchema.parse({
+          ...firstBody.context,
+          taskId: "concurrent-sibling-task",
+          callId: "concurrent-sibling-call",
+        });
+        appendSessionEvent(sibling.sessionId, {
+          type: "tool_call",
+          tool: "mcp_call",
+          callId: sibling.callId,
+          payload: { nativeMcp: sibling, state: "started" },
+        });
+        const denied = await fetch(`${mcp.brokerUrl}/internal/mcp/call`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-thor-internal-secret": config.internalSecret,
+          },
+          body: JSON.stringify({ context: sibling, input: firstBody.input }),
+        });
+        expect(await denied.json()).toMatchObject({
+          status: "denied",
+          isError: true,
+          message: expect.stringContaining("preparation already in progress"),
+        });
+        mcp.holdCards(false);
+      }
+      await pendingStream;
+      expect(lastOutput(requests.at(-1) ?? {})).toContain("already has a review operation");
+      expect(lastOutput(requests.at(-1) ?? {})).toMatch(/fresh request or authorized continuation/);
+      const records = new ApprovalStore(
+        join(directory, "private-approvals"),
+        "genericMcp",
+      ).listGeneric();
+      expect(records).toHaveLength(1);
+      firstAction = records[0].id;
+      expect(mcp.cards).toHaveLength(1);
+      expect(mcp.effects).toHaveLength(mode === "completed-before-continuation" ? 1 : 0);
+      const calls = mcp.privateBodies
+        .filter((item) => item.path === "/internal/mcp/call")
+        .map((item) =>
+          McpNativeAuthoritySchema.parse(
+            z.looseObject({ context: z.unknown() }).parse(item.body).context,
+          ),
+        );
+      expect(calls).toHaveLength(mode === "concurrent" ? 3 : 2);
+      expect(new Set(calls.map((call) => call.callId)).size).toBe(calls.length);
+      const result = await resolveFirst();
+      expect(result.disposition).toBe("completed");
+      nativeModelResponder = (_payload, res) =>
+        respond(res, {
+          text: "First operation completed; request the additional operation separately",
+        });
+      const resumed = await stream({
+        prompt: "Report only the authorized first result",
+        requestId: "first-result-continuation",
+        triggerSlackId: "U123",
+        messageTs: result.threadTs,
+        correlationKey: `slack:thread:${result.channel}/${result.threadTs}`,
+        mcpApprovalSource: result,
+      });
+      expect(resumed.at(-1)).toMatchObject({ status: "completed" });
+      expect(mcp.effects).toHaveLength(1);
+      expect(mcp.cards).toHaveLength(1);
+    },
+  );
+
+  it("a newer human request revokes the original native approval and its continuation without effects", async () => {
+    searchCall("write_doc");
+    await stream({
+      prompt: "original approval",
+      requestId: "human-original",
+      triggerSlackId: "U123",
+      correlationKey: "slack:thread:D123/1710000000.001",
+    });
+    const record = new ApprovalStore(
+      join(directory, "private-approvals"),
+      "genericMcp",
+    ).listGeneric()[0];
+    nativeModelResponder = (_payload, res) => respond(res, { text: "Fresh human instruction" });
+    await stream({
+      prompt: "cancel that operation",
+      requestId: "human-superseding",
+      triggerSlackId: "U123",
+      correlationKey: "slack:thread:D123/1710000000.001",
+    });
+    const response = await fetch(`${mcp.brokerUrl}/internal/mcp/approvals/resolve`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-thor-internal-secret": config.internalSecret,
+      },
+      body: JSON.stringify({
+        actionId: record.id,
+        decision: "approved",
+        userId: "U123",
+        teamId: "T123",
+        channel: "D123",
+        messageTs: "1710000000.123",
+      }),
+    });
+    const result = McpApprovalProjectionSchema.parse(
+      z.looseObject({ value: z.unknown() }).parse(await response.json()).value,
+    );
+    expect(result.disposition).toBe("rejected");
+    expect(
+      (
+        await trigger({
+          prompt: "stale result",
+          requestId: "stale-continuation",
+          mcpApprovalSource: result,
+          triggerSlackId: "U123",
+          messageTs: result.threadTs,
+          correlationKey: `slack:thread:${result.channel}/${result.threadTs}`,
+        })
+      ).status,
+    ).toBe(403);
+    expect(mcp.effects).toHaveLength(0);
+    expect(mcp.cards).toHaveLength(1);
+  });
+
+  it("fails unavailable approval observation closed instead of publishing a paused native answer", async () => {
+    searchCall("write_doc");
+    mcp.failObservation(true);
+    const frames = await stream({
+      prompt: "unavailable native wait",
+      requestId: "unavailable-native-wait",
+      triggerSlackId: "U123",
+      correlationKey: "slack:thread:D123/1710000000.001",
+    });
+    expect(frames.at(-1)).toMatchObject({ status: "error", authWait: "unconfirmed" });
+    expect(mcp.effects).toHaveLength(0);
+  });
+
+  it.each(["shutdown", "interrupt", "SIGKILL"])(
+    "never repeats a dispatched readOnlyHint mutation after %s in the remote effect/result window",
+    async (mode) => {
+      await closeServer(runnerServer);
+      await runner.close();
+      let child: ReturnType<typeof spawn> | undefined;
+      let exited: Promise<void> | undefined;
+      let url: string;
+      if (mode === "SIGKILL") {
+        const moduleUrl = new URL("./pi-runner.ts", import.meta.url).href;
+        const loader = new URL("../node_modules/tsx/dist/loader.mjs", import.meta.url).href;
+        child = spawn(
+          process.execPath,
+          [
+            "--import",
+            loader,
+            "--input-type=module",
+            "-e",
+            `import {createPiRunnerApp} from ${JSON.stringify(moduleUrl)}; const opened = await createPiRunnerApp(${JSON.stringify(config)}, {remoteCliUrl:${JSON.stringify(mcp.brokerUrl)}}); if(!opened.ok) process.exit(2); const server=opened.app.listen(0,'127.0.0.1',()=>console.log('http://127.0.0.1:'+server.address().port));`,
+          ],
+          { stdio: ["ignore", "pipe", "inherit"] },
+        );
+        exited = new Promise<void>((resolve) => child?.once("close", () => resolve()));
+        url = await new Promise<string>((resolve, reject) => {
+          child?.stdout?.once("data", (chunk: Buffer) => resolve(chunk.toString().trim()));
+          child?.once("exit", () => reject(new Error("Native crash fixture startup failed")));
+        });
+      } else {
+        await openRunner({ remoteCliUrl: mcp.brokerUrl });
+        url = runnerUrl;
+      }
+      try {
+        mcp.holdCalls(true);
+        searchCall();
+        const body = {
+          directory: triggerDirectory,
+          prompt: "unsafe native dispatch",
+          requestId: "unsafe-native-dispatch",
+        };
+        const response = await fetch(`${url}/trigger`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-thor-internal-secret": config.internalSecret,
+          },
+          body: JSON.stringify(body),
+        });
+        expect(response.status).toBe(200);
+        await vi.waitFor(() => expect(mcp.effects).toHaveLength(1), { timeout: 8000 });
+        if (mode === "SIGKILL") {
+          child?.kill("SIGKILL");
+          await exited;
+          await openRunner({ remoteCliUrl: mcp.brokerUrl });
+        } else if (mode === "shutdown") {
+          await closeServer(runnerServer);
+          await runner.close();
+          await openRunner({ remoteCliUrl: mcp.brokerUrl });
+        } else {
+          const replacement = await stream({
+            prompt: "replacement native task",
+            requestId: "native-replacement",
+            interrupt: true,
+          });
+          expect(replacement.at(-1)).toMatchObject({ status: "completed" });
+        }
+        mcp.holdCalls(false);
+        if (mode !== "interrupt") {
+          const recovered = await stream(body);
+          expect(recovered.at(-1)?.toolCalls).toContainEqual({ tool: "mcp_call", state: "error" });
+          expect(lastOutput(requests.at(-1) ?? {})).toContain(
+            "was interrupted and may have partially run",
+          );
+        }
+        expect(mcp.effects).toHaveLength(1);
+      } finally {
+        child?.kill("SIGKILL");
+        await exited;
+        mcp.holdCalls(false);
+      }
+    },
+  );
 });

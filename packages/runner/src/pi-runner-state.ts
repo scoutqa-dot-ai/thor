@@ -9,6 +9,7 @@ import {
   PiModelProfileSchema,
   PiThinkingLevelSchema,
   SlackReplyAdmissionSchema,
+  McpApprovalProjectionSchema,
 } from "@thor/common";
 
 const triggerFieldsSchema = z.object({
@@ -25,6 +26,7 @@ const triggerFieldsSchema = z.object({
   triggerSlackId: z.string().trim().min(1).optional(),
   messageTs: SlackMessageTsSchema.optional(),
   slackReplyAdmission: SlackReplyAdmissionSchema.optional(),
+  mcpApprovalSource: McpApprovalProjectionSchema.optional(),
   triggerGithubLogin: z.string().trim().min(1).optional(),
   interrupt: z.boolean().default(false),
   directory: z.string().min(1),
@@ -83,7 +85,7 @@ const legacyReceiptSchema = z
     startedAt: z.number(),
     resumed: z.boolean(),
     request: triggerFieldsSchema
-      .omit({ slackReplyAdmission: true })
+      .omit({ slackReplyAdmission: true, mcpApprovalSource: true })
       .strict()
       .refine(hasExclusivePiModelOverride),
     slackTeamId: z.string().optional(),
@@ -125,7 +127,7 @@ const version2ReceiptSchema = legacyReceiptSchema
   })
   .safeExtend({
     request: triggerFieldsSchema
-      .omit({ prompt: true, routingTask: true, slackReplyAdmission: true })
+      .omit({ prompt: true, routingTask: true, slackReplyAdmission: true, mcpApprovalSource: true })
       .strict()
       .refine(hasExclusivePiModelOverride),
     admission: z.discriminatedUnion("state", [
@@ -140,7 +142,9 @@ const version2ReceiptSchema = legacyReceiptSchema
         historyEnd: z.number().int().positive().optional(),
       })
       .optional(),
-    authorization: z.enum(["waiting", "waiting_unconfirmed", "unavailable", "clear"]).optional(),
+    authorization: z
+      .enum(["waiting", "approval_waiting", "waiting_unconfirmed", "unavailable", "clear"])
+      .optional(),
   })
   .strict()
   .superRefine(refineEscalationEvidence);
@@ -176,6 +180,10 @@ const publicationSchema = z
   });
 const receiptSchema = version2ReceiptSchema
   .safeExtend({
+    request: triggerFieldsSchema
+      .omit({ prompt: true, routingTask: true, slackReplyAdmission: true })
+      .strict()
+      .refine(hasExclusivePiModelOverride),
     delivery: deliveryPolicySchema,
     publication: publicationSchema.optional(),
     slackFooterTs: z.string().min(1).optional(),

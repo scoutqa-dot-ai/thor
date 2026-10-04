@@ -1,13 +1,15 @@
 ---
 name: kali
-description: Use the Kali MCP tools for authorized security testing through the controlled mcp wrapper.
+description: Use the Kali MCP tools for authorized security testing against explicitly permitted targets.
 ---
 
 # Kali MCP
 
-Use `mcp kali` to run configured Kali tools against targets the user has explicitly authorized.
+Run Kali tools only against targets the user has explicitly authorized.
 
-## Commands
+## Discovery and calls
+
+With native MCP tools available, use `mcp_search` with server `kali`, select the exact tool and complete input schema, then call `mcp_call` with its `toolRef` and business arguments as a JSON object. With the legacy CLI, use:
 
 ```bash
 mcp kali
@@ -15,7 +17,7 @@ mcp kali <tool> --help
 mcp kali <tool> '{"arg":"value"}'
 ```
 
-Available tools include:
+Legacy bundled tools include (native availability comes from discovery):
 
 - `server_health`
 - `nmap_scan`

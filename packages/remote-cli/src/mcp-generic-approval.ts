@@ -51,6 +51,18 @@ function failure(
 ): McpServiceCallOutcome {
   return { status, isError: true, message };
 }
+function privateContinuationSupported(
+  delivery: NonNullable<ReturnType<typeof findLatestMcpApprovalProjection>>["delivery"],
+  destination: GenericMcpApproval["destination"],
+): boolean {
+  // Missing historical ownership is not evidence of tool-owned/private result authority.
+  return (
+    !!delivery &&
+    (delivery.owner === "tool" ||
+      (delivery.target.channel === destination.channel &&
+        delivery.target.teamId === destination.teamId))
+  );
+}
 function originalRequestCurrent(action: GenericMcpApproval): boolean {
   const latest = findLatestMcpApprovalProjection(action.authority.sessionId);
   const {
@@ -65,6 +77,7 @@ function originalRequestCurrent(action: GenericMcpApproval): boolean {
     !!latest &&
     latest.anchorId === anchorId &&
     latest.triggerId === triggerId &&
+    privateContinuationSupported(latest.delivery, action.destination) &&
     JSON.stringify(latest.nativeMcp) === JSON.stringify(projection)
   );
 }
@@ -205,16 +218,24 @@ export class GenericMcpApprovals {
     const window = this.store.withGenericLock(
       creationFence,
       async (): Promise<McpServiceCallOutcome> => {
-        // Same host tool call cannot resend a card after receipt loss or broker reconstruction.
+        // The owner + creation lock makes one review operation per original request durable,
+        // even after resolve but before continuation. This is not provider idempotency.
         const existing = this.store
           .listGeneric()
           .find(
             (action) =>
               action.authority.sessionId === authority.sessionId &&
-              action.authority.requestId === authority.requestId &&
-              action.authority.callId === authority.callId,
+              action.authority.requestId === authority.requestId,
           );
         if (existing) {
+          if (
+            existing.authority.callId !== authority.callId ||
+            existing.authority.taskId !== authority.taskId
+          )
+            return failure(
+              "denied",
+              "MCP approval request already has a review operation. Wait for its authorized result; request any additional operation in a fresh request or authorized continuation. Do not repeat an already dispatched mutation.",
+            );
           if (
             existing.activationId !== this.owner.activationId ||
             existing.toolRef !== call.toolRef ||
@@ -244,6 +265,12 @@ export class GenericMcpApprovals {
           return failure(
             "denied",
             "MCP private requester review unavailable or authority changed.",
+          );
+        const projection = findLatestMcpApprovalProjection(authority.sessionId);
+        if (!privateContinuationSupported(projection?.delivery, destination))
+          return failure(
+            "review_not_supported",
+            "MCP approval review_not_supported: the original reply audience cannot receive the private result. No review or operation was created. Ask the requester to send a fresh request in their private DM; do not retry this operation automatically.",
           );
         const now = new Date();
         const action = GenericMcpApprovalSchema.parse({
@@ -335,7 +362,10 @@ export class GenericMcpApprovals {
       const result = await window;
       return result.status === "ok"
         ? result.value
-        : failure("denied", "MCP approval preparation already in progress.");
+        : failure(
+            "denied",
+            "MCP approval preparation already in progress. Only one review operation per request is supported; wait for its result and request additional operations in a fresh request or authorized continuation. Do not repeat mutations automatically.",
+          );
     } catch {
       return failure(
         "uncertain",
