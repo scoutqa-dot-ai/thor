@@ -276,3 +276,22 @@ export type { McpOperatorCatalog, McpProxyCatalog, McpCatalogParseResult } from 
 
 export * from "./mcp-approval.js";
 export { findLatestMcpApprovalProjection } from "./event-log.js";
+
+export {
+  GOOGLE_DRIVE_DOWNLOAD_VERSION,
+  GOOGLE_DRIVE_DOWNLOAD_MAX_BYTES,
+  GOOGLE_DRIVE_DOWNLOAD_MAX_ENTRIES,
+  GOOGLE_DRIVE_DOWNLOAD_MAX_DEPTH,
+  GOOGLE_DRIVE_DOWNLOAD_MAX_NAME_BYTES,
+  GoogleDriveFileIdSchema,
+  GoogleDriveDownloadNameSchema,
+  foldGoogleDriveDownloadName,
+  GoogleDriveDownloadSchema,
+  GoogleDriveDownloadExecResultSchema,
+} from "./google-drive-download.js";
+export type {
+  GoogleDriveFileId,
+  GoogleDriveDownload,
+  GoogleDriveDownloadEntry,
+  GoogleDriveDownloadExecResult,
+} from "./google-drive-download.js";

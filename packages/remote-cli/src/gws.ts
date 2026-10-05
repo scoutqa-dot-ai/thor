@@ -1,10 +1,11 @@
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
-import type { ExecResult } from "@thor/common";
+import type { GoogleDriveDownloadExecResult } from "@thor/common";
 import { execCommand } from "./exec.js";
 import type { GwsAccessToken } from "./gws-oauth.js";
-import { isGwsPublicDiscoveryCommand } from "./gws-args.js";
+import { isGwsPublicDiscoveryCommand, parseGwsDriveDownloadCommand } from "./gws-args.js";
+import { GoogleDriveDownloader } from "./google-drive-download.js";
 
 const AbsolutePathSchema = z.string().trim().min(1).refine(isAbsolute);
 const ConfigSchema = z.object({
@@ -13,9 +14,12 @@ const ConfigSchema = z.object({
   path: z.string().optional(),
 });
 
-type GwsResponse = { readonly status: 200 | 503; readonly result: ExecResult };
+type GwsResponse = { readonly status: 200 | 503; readonly result: GoogleDriveDownloadExecResult };
 
+/** Broker-owned execution dependencies; no agent-controlled transport or credential override. */
 export interface GwsServiceDeps {
+  /** Trusted Drive HTTP fixture injection; production endpoints remain fixed and redirects denied. */
+  readonly driveFetch?: typeof fetch;
   /** Trusted fixture-only discovery cache copied into each isolated execution. */
   readonly discoveryCacheSeedDir?: string;
 }
@@ -28,13 +32,15 @@ export interface IGwsService {
   executePublicDiscovery?(args: string[]): Promise<GwsResponse>;
 }
 
-/** Owns the private cwd and reduced child environment for upstream execution. */
+/** Owns isolated upstream execution and delegates broker-only binary acquisition to the Drive downloader. */
 export class GwsService implements IGwsService {
   private readonly config: ReturnType<typeof ConfigSchema.safeParse>;
   private readonly discoveryCacheSeedDir: string | undefined;
+  private readonly driveDownloader: GoogleDriveDownloader;
 
   constructor(env: NodeJS.ProcessEnv, deps: GwsServiceDeps = {}) {
     this.discoveryCacheSeedDir = deps.discoveryCacheSeedDir;
+    this.driveDownloader = new GoogleDriveDownloader(deps.driveFetch);
     this.config = ConfigSchema.safeParse({
       configDir: env.GOOGLE_WORKSPACE_CLI_CONFIG_DIR?.trim() || "/var/lib/remote-cli/gws",
       projectId: env.GOOGLE_WORKSPACE_PROJECT_ID?.trim() || undefined,
@@ -44,7 +50,20 @@ export class GwsService implements IGwsService {
 
   /** Run one command with only its owner's refreshed and verified short-lived access token. */
   async execute(args: string[], accessToken: GwsAccessToken): Promise<GwsResponse> {
-    return this.#executeInPrivateDirectory(args, accessToken);
+    const fileId = parseGwsDriveDownloadCommand(args);
+    if (!fileId) return this.#executeInPrivateDirectory(args, accessToken);
+    if (!this.config.success) {
+      return unavailable(
+        "Google Workspace configuration is invalid; ask an operator to check the private execution path.",
+      );
+    }
+    const download = await this.driveDownloader.download(fileId, accessToken);
+    return {
+      status: 200,
+      result: download.ok
+        ? { stdout: "", stderr: "", exitCode: 0, driveDownload: download.value }
+        : { stdout: "", stderr: download.error.message, exitCode: 1 },
+    };
   }
 
   /** CLI help/schema only; no broker or ambient credential is provided. */
