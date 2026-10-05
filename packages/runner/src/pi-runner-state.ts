@@ -19,7 +19,7 @@ const triggerFieldsSchema = z.object({
     .string()
     .min(1)
     .max(512)
-    .refine((value) => !/[\x00-\x1f]/.test(value) && !value.startsWith("google-auth:"))
+    .refine((value) => !/[\x00-\x1f]/.test(value))
     .optional(),
   correlationKey: z.string().min(1).max(512).optional(),
   sessionId: z.string().min(1).optional(),
@@ -39,10 +39,16 @@ function hasExclusivePiModelOverride(
 }
 
 /** Validated trigger request; stream delivery is not part of durable work identity. */
-export const piTriggerRequestSchema = triggerFieldsSchema.refine(
-  hasExclusivePiModelOverride,
-  "Pi model routing overrides cannot combine modelProfile and modelId",
-);
+export const piTriggerRequestSchema = triggerFieldsSchema
+  .refine(
+    hasExclusivePiModelOverride,
+    "Pi model routing overrides cannot combine modelProfile and modelId",
+  )
+  .refine(
+    (value) =>
+      !value.requestId?.startsWith("google-auth:") && !value.requestId?.startsWith("mcp-approval:"),
+    "Pi continuation request identity is server-owned",
+  );
 /** Neo trigger input retained inside the conversation for admission recovery. */
 export type PiTriggerRequest = z.infer<typeof piTriggerRequestSchema>;
 

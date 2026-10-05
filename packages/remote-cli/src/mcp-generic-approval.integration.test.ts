@@ -850,7 +850,7 @@ describe("private generic MCP review and durable dispatch", { timeout: 30_000 },
     expect(effects).toHaveLength(0);
   });
 
-  it.each(["superseded", "expired", "inventory"])(
+  it.each(["superseded", "expired", "expired_previous_day", "inventory"])(
     "rechecks %s before dispatch and supports authorized historical inspection",
     async (mode) => {
       const id = await pending();
@@ -862,12 +862,24 @@ describe("private generic MCP review and durable dispatch", { timeout: 30_000 },
         });
         admit();
       }
-      if (mode === "expired") {
+      if (mode.startsWith("expired")) {
         const action = loadedRecord(id);
-        action.createdAt = new Date(Date.now() - 3600_000).toISOString();
+        const originalDate = action.dateSegment;
+        const age = mode === "expired_previous_day" ? 24 * 3600_000 : 3600_000;
+        action.createdAt = new Date(Date.now() - age).toISOString();
         action.dateSegment = action.createdAt.slice(0, 10);
         action.expiresAt = new Date(Date.now() - 1000).toISOString();
         store().updateGeneric(action);
+        // Backdating across UTC midnight must not leave a newer, still-live copy.
+        // The store updates immutable dated identities; fixture relocation is explicit.
+        if (action.dateSegment !== originalDate)
+          rmSync(join(root, "generic", originalDate, `${id}.json`));
+        expect(
+          store()
+            .listGeneric()
+            .filter((record) => record.id === id),
+        ).toHaveLength(1);
+        expect(loadedRecord(id).expiresAt).toBe(action.expiresAt);
       }
       if (mode === "inventory") {
         tools = [

@@ -2,13 +2,14 @@
 // inside the disposable remote-cli container and have no access to Google.
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, readdir, readFile, readlink, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { appendAlias, appendSessionEvent } from "/app/packages/common/src/index.ts";
 import {
   createRemoteCliApp,
   GwsOAuthService,
   GwsService,
+  enableBrokerCommandIsolation,
 } from "/app/packages/remote-cli/dist/index.js";
 
 const configDir = "/var/lib/remote-cli/gws";
@@ -30,6 +31,7 @@ process.env.SLACK_TEAM_ID = "T123FIXTURE";
 process.env.SLACK_BOT_TOKEN = "xoxb-fixture";
 process.env.THOR_INTERNAL_SECRET = "fixture-internal-secret";
 process.env.WORKLOG_DIR = "/tmp/thor-gws-worklogs";
+process.env.ATLASSIAN_AUTH = "dummy-parent-only-credential";
 Object.assign(process.env, {
   DRATA_OAUTH_TOKEN_URL: "http://127.0.0.1:3100/drata-token",
   DRATA_CLIENT_ID: "fixture-drata-id",
@@ -151,6 +153,57 @@ let authorizationTokenRequests = 0;
 let tokenRequests = 0;
 let drataTokenRequests = 0;
 const drataRequests = [];
+const executionDirectories = new Set();
+// Observe the actual installed CLI while its HTTP request is in flight, not a
+// replacement executable. The broker sees parent procfs; the child gets fresh procfs.
+async function observeGwsIsolation() {
+  const parentPidNamespace = await readlink("/proc/self/ns/pid");
+  const processes = await readdir("/proc");
+  let observed = false;
+  for (const pid of processes.filter((value) => /^\d+$/.test(value))) {
+    let executable;
+    try {
+      executable = await readlink(`/proc/${pid}/exe`);
+    } catch {
+      continue;
+    }
+    if (executable !== "/usr/local/bin/gws") continue;
+    const cwd = await readlink(`/proc/${pid}/cwd`);
+    assert.match(cwd, /^\/var\/lib\/remote-cli\/gws\/execution-[^/]+$/);
+    assert.equal((await stat(cwd)).mode & 0o777, 0o700);
+    assert.notEqual(await readlink(`/proc/${pid}/ns/pid`), parentPidNamespace);
+    const env = Object.fromEntries(
+      (await readFile(`/proc/${pid}/environ`, "utf8"))
+        .split("\0")
+        .filter(Boolean)
+        .map((entry) => [entry.slice(0, entry.indexOf("=")), entry.slice(entry.indexOf("=") + 1)]),
+    );
+    assert.equal(env.HOME, cwd);
+    assert.equal(env.GOOGLE_WORKSPACE_CLI_CONFIG_DIR, cwd);
+    assert.equal(env.GOOGLE_WORKSPACE_CLI_TOKEN, "fixture-access-token");
+    assert.equal(env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET, undefined);
+    assert.equal(env.ATLASSIAN_AUTH, undefined);
+    const childRoot = `/proc/${pid}/root`;
+    for (const path of [oauthStorageDir, `${configDir}/cache`])
+      await assert.rejects(stat(childRoot + path), { code: "ENOENT" });
+    assert.equal(
+      await readFile(`${childRoot}${cwd}/cache/drive_v3.json`, "utf8"),
+      await readFile(`${configDir}/cache/drive_v3.json`, "utf8"),
+    );
+    for (const childPid of (await readdir(`${childRoot}/proc`)).filter((value) =>
+      /^\d+$/.test(value),
+    )) {
+      let childEnv = "";
+      try {
+        childEnv = await readFile(`${childRoot}/proc/${childPid}/environ`, "utf8");
+      } catch {}
+      assert.ok(!childEnv.includes("dummy-parent-only-credential"));
+    }
+    executionDirectories.add(cwd);
+    observed = true;
+  }
+  assert.ok(observed, "fixture API must be called by the actual namespaced gws CLI");
+}
 const upstream = createServer(async (req, res) => {
   res.setHeader("content-type", "application/json");
   try {
@@ -225,6 +278,7 @@ const upstream = createServer(async (req, res) => {
       return;
     }
     assert.equal(req.headers.authorization, "Bearer fixture-access-token");
+    await observeGwsIsolation();
     requests.push({
       method: req.method,
       path: url.pathname,
@@ -366,6 +420,9 @@ const workspaceConfig = {
     },
   ],
 };
+// Use the exact production command launcher with the real installed gws binary.
+// No request/env can disable it; this fixture only replaces OAuth/discovery/API endpoints.
+enableBrokerCommandIsolation();
 const remoteCli = createRemoteCliApp({
   env: {
     port: 3004,
@@ -390,7 +447,14 @@ remoteCli.app.get("/fixture-state", (_req, res) =>
     tokenRequests,
     drataRequests,
     drataTokenRequests,
+    executionDirectories: [...executionDirectories],
   }),
 );
 // Connected Google commands execute directly; no fixture approval backdoor.
+// Short-lived commands clean their private directory even on upstream denial.
+remoteCli.app.get("/fixture-cleanup", async (_req, res) => {
+  const remaining = (await readdir(configDir)).filter((name) => name.startsWith("execution-"));
+  assert.deepEqual(remaining, []);
+  res.json({ ok: true });
+});
 createServer(remoteCli.app).listen(3004, "0.0.0.0");

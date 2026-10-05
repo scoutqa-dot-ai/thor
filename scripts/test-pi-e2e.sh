@@ -8,7 +8,14 @@ compose=(docker compose --env-file /dev/null -p "$project" -f "$root/docker/pi-t
 cleanup() {
   status=$?
   if (( status != 0 )); then "${compose[@]}" logs --no-color --tail 80 || true; fi
-  "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+  if ! "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1; then
+    echo "Pi fixture cleanup failed: $project" >&2; status=1
+  fi
+  for kind in container volume network; do
+    remaining=$(docker "$kind" ls -q --filter "label=com.docker.compose.project=$project") || { status=1; continue; }
+    if [[ -n "$remaining" ]]; then echo "Pi fixture $kind remains: $project" >&2; status=1; fi
+  done
+  if (( status == 0 )); then echo "PASS: cleanup $project, no fixture containers/volumes/networks"; fi
   exit "$status"
 }
 trap cleanup EXIT
@@ -187,11 +194,25 @@ assert(routingHtml.includes('Need more reasoning')&&routingHtml.includes('Need d
 const routingProbe=await (await fetch('http://model-fixture:8000/probe')).json();
 assert.deepEqual(routingProbe.modelSelections.slice(-3),[{model:'fixture-fast',effort:'low'},{model:'fixture-balanced',effort:'medium'},{model:'fixture-strong',effort:'high'}]);
 console.log('PASS: actual per-task Responses model/effort, explicit Slack override, new-human reroute, bounded native escalation and viewer attribution');
-const approvalBody={prompt:'fixture-native-mcp-approval',requestId:'container-native-approval',correlationKey:'slack:thread:DFIXTURE/1710000000.100',triggerSlackId:'U_FIXTURE',messageTs:'1710000000.101',thinkingLevel:'high',slackReplyAdmission:{version:1,teamId:'T_FIXTURE',channel:'DFIXTURE',threadTs:'1710000000.100'}};
+for(const channel of ['C_REVIEW_PUBLIC','D_OTHER']) {
+  const unsupported={prompt:'fixture-native-mcp-approval fixture-unsupported-review',requestId:'container-review-denied-'+channel,correlationKey:`slack:thread:${channel}/1710000000.100`,triggerSlackId:'U_FIXTURE',messageTs:'1710000000.101',slackReplyAdmission:{version:1,teamId:'T_FIXTURE',channel,threadTs:'1710000000.100'}};
+  const deniedFrames=(await (await trigger({...unsupported,stream:true})).text()).trim().split('\n').map(JSON.parse);
+  assert.equal(deniedFrames.at(-1).status,'completed',JSON.stringify(deniedFrames.at(-1)));
+  assert.equal(deniedFrames.at(-1).response,'fixture unsupported review denied');
+  assert(deniedFrames.some(frame=>frame.type==='tool'&&frame.tool==='mcp_call'&&frame.status==='error'));
+  const effects=await (await fetch('http://mcp-fixture:8000/health')).json();
+  assert.equal(effects.cards.length,0);assert.equal(effects.effects,3);
+}
+console.log('PASS: actual Pi public/different-DM host reviews deny before card/effect');
+const approvalBody={prompt:'fixture-native-mcp-approval fixture-sibling-review',requestId:'container-native-approval',correlationKey:'slack:thread:DFIXTURE/1710000000.100',triggerSlackId:'U_FIXTURE',messageTs:'1710000000.101',thinkingLevel:'high',slackReplyAdmission:{version:1,teamId:'T_FIXTURE',channel:'DFIXTURE',threadTs:'1710000000.100'}};
 const approvalFrames=(await (await trigger({...approvalBody,stream:true})).text()).trim().split('\n').map(JSON.parse);
 assert.equal(approvalFrames.at(-1).status,'error');assert.equal(approvalFrames.at(-1).authWait,'approval');
+assert(approvalFrames.some(frame=>frame.type==='tool'&&frame.tool==='mcp_call'&&frame.status==='error'),'Sibling review must deny while first review waits');
 const beforeApproval=await (await fetch('http://mcp-fixture:8000/health')).json();
 assert.equal(beforeApproval.effects,3);assert.equal(beforeApproval.cards.length,1);
+const pausedProbe=await (await fetch('http://model-fixture:8000/probe')).json();
+assert(!pausedProbe.slackDeliveries.some(d=>d.channel==='DFIXTURE'&&d.timestamp==='1710000000.101'&&d.name==='white_check_mark'));
+assert(pausedProbe.slackDeliveries.some(d=>d.channel==='DFIXTURE'&&d.status==='suspended'));
 const card=beforeApproval.cards[0];
 assert.equal(card.channel,'DFIXTURE');
 const value=card.blocks.flatMap(block=>block.elements??[]).find(element=>element.action_id==='approval_approve').value;
@@ -208,12 +229,38 @@ const afterApproval=await (await fetch('http://mcp-fixture:8000/health')).json()
 assert.equal(afterApproval.effects,4);assert.equal(afterApproval.calls.at(-1).name,'write_doc');
 assert.deepEqual(afterApproval.calls.at(-1).arguments,{text:'dummy-private-approved-native'});
 assert(!approvedDeliveries.some(d=>d.text==='fixture native approval pending'));
+await waitProgress(deliveries=>deliveries.some(d=>d.channel==='DFIXTURE'&&d.timestamp==='1710000000.101'&&d.name==='white_check_mark'));
+assert(!afterApproval.calls.some(call=>call.arguments.text==='must-not-dispatch-sibling'));
 console.log('PASS: native pending hold -> signed gateway click -> private broker dispatch -> authenticated queue continuation -> original host target/model, exactly one approved effect');
 const pending={prompt:'fixture-hold',requestId:'container-recovery',correlationKey:'cron:container-recovery'};
 const accepted=await (await trigger(pending)).json();assert.equal(accepted.accepted,true);
 await writeFile('/var/lib/runner/e2e-pending.json',JSON.stringify(accepted));
 console.log('PASS: tool round, credential/mount isolation, wrapper identity, Slack progress, deduplication and SSO viewers');
 JS
+
+# Onboard/disable/remove/re-add/rotate a TLS bearer alias by config and broker-only
+# restart. Keep the same runner container/process throughout: no registry rebuild.
+runner_id=$("${compose[@]}" ps --quiet runner)
+runner_started=$(docker inspect --format '{{.State.StartedAt}}' "$runner_id")
+"${compose[@]}" exec -T runner node /pi-mcp-lifecycle.mjs absent
+for operation in add disable remove readd rotate; do
+  "${compose[@]}" stop remote-cli
+  "${compose[@]}" run --rm --no-deps --pull never init node /mcp-init.mjs "$operation"
+  "${compose[@]}" run --rm --no-deps --pull never --entrypoint node remote-cli /app/packages/remote-cli/dist/index.js mcp-catalog validate
+  "${compose[@]}" up --no-build --no-deps --pull never -d --wait --wait-timeout 60 remote-cli
+  "${compose[@]}" exec -T runner node /pi-mcp-lifecycle.mjs "$operation"
+  if [[ "$operation" == add ]]; then
+    # Atomic same-file replacement alone cannot change the active credential snapshot.
+    "${compose[@]}" run --rm --no-deps --pull never init node /mcp-init.mjs replace-token
+    "${compose[@]}" exec -T runner node /pi-mcp-lifecycle.mjs replace-token
+    # Restore the first token for the identical remove/re-add/disable checks.
+    "${compose[@]}" run --rm --no-deps --pull never init node /mcp-init.mjs restore-token
+  fi
+  [[ $("${compose[@]}" ps --quiet runner) == "$runner_id" && $(docker inspect --format '{{.State.StartedAt}}' "$runner_id") == "$runner_started" ]] || { echo 'Catalog onboarding restarted runner' >&2; exit 1; }
+done
+for service in runner pi-executor gateway admin; do
+  "${compose[@]}" exec -T "$service" node -e 'const fs=require("fs");for(const path of ["/run/secrets/thor-mcp/dummy-token","/etc/thor/mcp-catalog/catalog.json","/var/lib/remote-cli/mcp-approvals/activation.json","/fixture-tls/key.pem"]){try{fs.readFileSync(path);throw Error("private fixture mount exposed")}catch(e){if(!["ENOENT","EACCES"].includes(e.code))throw e}}console.log("PASS: actual Pi service private mounts absent")'
+done
 
 "${compose[@]}" exec -T pi-executor node --input-type=module <<'JS'
 import assert from 'node:assert/strict';
@@ -229,12 +276,45 @@ for(const secret of [undefined,'forged']) {
 console.log('PASS: executor cannot access runner-private storage or credentials');
 JS
 
+"${compose[@]}" exec -T runner node --input-type=module <<'JS'
+import assert from 'node:assert/strict';
+import {writeFile} from 'node:fs/promises';
+const crashBody={directory:'/workspace/repos/pi-fixture',prompt:'fixture-native-mcp-crash',requestId:'container-mcp-crash',correlationKey:'slack:thread:DFIXTURE/1710000000.200',triggerSlackId:'U_FIXTURE',messageTs:'1710000000.201',modelProfile:'strong',thinkingLevel:'high',slackReplyAdmission:{version:1,teamId:'T_FIXTURE',channel:'DFIXTURE',threadTs:'1710000000.200'}};
+const accepted=await fetch('http://127.0.0.1:3000/trigger',{method:'POST',headers:{'content-type':'application/json','x-thor-internal-secret':process.env.THOR_INTERNAL_SECRET},body:JSON.stringify(crashBody)});
+assert.equal(accepted.status,200);assert.equal((await accepted.json()).accepted,true);
+await writeFile('/var/lib/runner/e2e-mcp-crash.json',JSON.stringify(crashBody));
+let dispatched=false;
+for(let attempt=0;attempt<100;attempt++){
+  const health=await (await fetch('http://mcp-fixture:8000/health')).json();
+  if(health.calls.some(call=>call.arguments.text==='native-crash')){dispatched=true;break;}
+  await new Promise(resolve=>setTimeout(resolve,50));
+}
+assert(dispatched,'MCP crash fixture never reached effect/result window');
+JS
+
 "${compose[@]}" kill -s SIGKILL runner
-"${compose[@]}" up -d --wait --wait-timeout 120 runner
+"${compose[@]}" up --no-build --no-deps --pull never -d --wait --wait-timeout 120 runner
 "${compose[@]}" exec -T runner node --input-type=module <<'JS'
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 const pending=JSON.parse(await readFile('/var/lib/runner/e2e-pending.json','utf8'));
+const crashBody=JSON.parse(await readFile('/var/lib/runner/e2e-mcp-crash.json','utf8'));
+const crashResponse=await fetch('http://127.0.0.1:3000/trigger',{method:'POST',headers:{'content-type':'application/json','x-thor-internal-secret':process.env.THOR_INTERNAL_SECRET},body:JSON.stringify({directory:'/workspace/repos/pi-fixture',...crashBody,stream:true})});
+assert.equal(crashResponse.status,200);
+const crashFrames=(await crashResponse.text()).trim().split('\n').map(JSON.parse);
+assert.equal(crashFrames.at(-1).status,'completed',JSON.stringify(crashFrames.at(-1)));
+assert.equal(crashFrames.at(-1).response,'fixture MCP recovered without replay');
+assert(crashFrames.at(-1).toolCalls.some(call=>call.tool==='mcp_call'&&call.state==='error'));
+const crashHealth=await (await fetch('http://mcp-fixture:8000/health')).json();
+assert.equal(crashHealth.calls.filter(call=>call.arguments.text==='native-crash').length,1);
+assert.equal(crashHealth.effects,9);assert.equal(crashHealth.cards.length,1);
+const recoveredProbe=await (await fetch('http://model-fixture:8000/probe')).json();
+assert.equal(recoveredProbe.recoveredMcpActor,true);
+assert.equal(recoveredProbe.lastHostReply.channel,'DFIXTURE');
+assert.equal(recoveredProbe.lastHostReply.threadTs,'1710000000.200');
+assert.equal(recoveredProbe.lastHostReply.text,'fixture MCP recovered without replay');
+assert(recoveredProbe.lastHostReply.blocks.at(-1).elements.some(element=>element.text==='Model: fixture-strong · Thinking: high'));
+console.log('PASS: actual container SIGKILL after readOnlyHint MCP effect, original Slack actor/strong model restored, potentially-partial native error, no unsafe replay');
 const body={directory:'/workspace/repos/pi-fixture',prompt:'fixture-hold',requestId:'container-recovery',correlationKey:'cron:container-recovery',stream:true};
 const response=await fetch('http://127.0.0.1:3000/trigger',{method:'POST',headers:{'content-type':'application/json','x-thor-internal-secret':process.env.THOR_INTERNAL_SECRET},body:JSON.stringify(body)});
 assert.equal(response.status,200);

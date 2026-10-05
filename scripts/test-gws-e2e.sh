@@ -31,12 +31,25 @@ cleanup() {
   if [[ $status -ne 0 ]]; then docker logs "$remote" >&2 || true; fi
   docker rm -f "$client" "$remote" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
+  for name in "$remote" "$client"; do
+    if docker container inspect "$name" >/dev/null 2>&1; then
+      echo "GWS fixture container cleanup failed: $name" >&2
+      status=1
+    fi
+  done
+  if docker network inspect "$network" >/dev/null 2>&1; then
+    echo "GWS fixture network cleanup failed: $network" >&2
+    status=1
+  fi
   exit "$status"
 }
 trap cleanup EXIT
 # No external network: a fixture/cache mistake must fail, not reach Google/Drata.
 docker network create --internal "$network" >/dev/null
 docker run -d --name "$remote" --network "$network" --network-alias remote-cli \
+  --security-opt "seccomp=$PWD/docker/remote-cli/seccomp-bwrap.json" \
+  --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
+  --security-opt no-new-privileges:true --cap-drop ALL \
   "${broker_artifacts[@]}" \
   -v "$PWD/scripts/fixtures/gws-server.mjs:/opt/gws-server.mjs:ro" \
   --entrypoint node "$remote_image" --import /app/packages/remote-cli/node_modules/tsx/dist/loader.mjs /opt/gws-server.mjs >/dev/null

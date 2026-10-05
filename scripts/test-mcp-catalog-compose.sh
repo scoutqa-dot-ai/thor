@@ -4,7 +4,19 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export COMPOSE_PROJECT_NAME="neo-mcp-catalog-test-${UID}-$$"
 compose=(docker compose --env-file /dev/null -f docker/mcp-test/compose.yml)
-cleanup() { local status=$?; if [[ $status != 0 ]]; then "${compose[@]}" logs --no-color remote-cli >&2 || true; fi; "${compose[@]}" down --volumes --remove-orphans --timeout 3 >/dev/null 2>&1 || true; }
+cleanup() {
+  local status=$? remaining kind
+  if [[ $status != 0 ]]; then "${compose[@]}" logs --no-color remote-cli >&2 || true; fi
+  if ! "${compose[@]}" down --volumes --remove-orphans --timeout 3 >/dev/null 2>&1; then
+    echo "MCP fixture cleanup failed: $COMPOSE_PROJECT_NAME" >&2; status=1
+  fi
+  for kind in container volume network; do
+    remaining=$(docker "$kind" ls -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME") || { status=1; continue; }
+    if [[ -n "$remaining" ]]; then echo "MCP fixture $kind remains: $COMPOSE_PROJECT_NAME" >&2; status=1; fi
+  done
+  if (( status == 0 )); then echo "PASS: cleanup $COMPOSE_PROJECT_NAME, no fixture containers/volumes/networks"; fi
+  exit "$status"
+}
 trap cleanup EXIT
 for image in "${MCP_TEST_BROKER_IMAGE:-thor-remote-cli:latest}" "${MCP_TEST_RUNNER_IMAGE:-thor-mcp-test-runner:latest}" "${MCP_TEST_EXECUTOR_IMAGE:-thor-mcp-test-executor:latest}" "${MCP_TEST_GATEWAY_IMAGE:-thor-mcp-test-gateway:latest}" "${MCP_TEST_ADMIN_IMAGE:-thor-mcp-test-admin:latest}" node:24-slim; do
   docker image inspect "$image" >/dev/null || { echo "Prepare the fixture image $image before running this offline check" >&2; exit 1; }

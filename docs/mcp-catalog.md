@@ -100,6 +100,20 @@ IPv4 and IPv6 loopback; public HTTP DNS/IP endpoints are rejected. It is not a
 network firewall or proof of DNS placement. Operators own endpoint/network review.
 The two existing managed Grafana/Falcon HTTP definitions remain unchanged.
 
+## Compatibility limits
+
+This is a reviewed **Streamable HTTP** subset, not automatic support for every
+MCP server. Generic auth is no-auth or operator/service bearer-file auth (not the
+Slack user's upstream identity). Stdio/command launch, legacy SSE endpoints,
+custom secret headers and generic per-user OAuth need separate managed adapters
+or approval; the catalog cannot install or launch them.
+
+Schema validation supports reviewed draft-07 and 2020-12 assertions with local
+JSON Pointer references/definitions. Remote/unresolved refs, dynamic refs/anchors,
+unsupported dialects/keywords or over-budget complete descriptors make that server
+unavailable; assertions are never dropped to claim compatibility. Check the actual
+provider inventory before activation, not just its MCP/version/annotation label.
+
 ## Validate, connect explicitly, activate
 
 These commands are operator-only (not new agent CLI verbs):
@@ -202,7 +216,7 @@ can review generic operations. GitHub/system/cron and forgeable CLI attributes a
 insufficient. The broker confirms its Slack workspace and the requester's private
 DM and independently reads frozen reply ownership from the trusted host projection.
 Host-owned requests must already target that same confirmed requester DM/workspace;
-public/different-DM targets or missing ownership proof return `review_not_supported`
+public, private/group-channel, different-DM targets or missing ownership proof return `review_not_supported`
 before any approval intent, card or mutation. Ask the requester for a fresh private-DM
 request; the broker does not silently change the original target. Explicit tool-owned
 requests keep their existing private review/result flow.
@@ -286,6 +300,15 @@ it never installs/builds/downloads. All four consumer image probes and managed
 children check that private records/fences are inaccessible. These are measurement
 processes, not a live Pi conversation. `scripts/test-pi-e2e.sh` additionally exercises
 actual Durable SQLite → real broker → installed SDK MCP search/object calls and
-structured/image/error results. Native approval/recovery tests use the same real
-boundaries locally; live provider/Slack/deployment acceptance remains separate.
-CI prepares images before validation. All fixture resources are removed on exit.
+structured/image/error results, private approved continuation through the signed
+gateway, unsupported-audience/sibling-review denial and container SIGKILL in the
+MCP effect/result window. Its local TLS bearer alias is added, disabled, removed,
+re-added and rotated via atomic catalog/token replacement plus **broker-only**
+restart. The same runner container/start time and two native registrations remain;
+stale refs deny with zero effects and token replacement alone keeps the old principal.
+Dummy TLS keys/tokens exist only on disposable fixture volumes, never deployment
+mounts. Both Compose acceptance scripts fail if project-owned resources remain
+after cleanup. Cached GWS checks likewise use current host-built broker artifacts.
+CI prepares images before validation; its results, live provider/Slack/OAuth,
+Ubuntu production AppArmor/storage/power-loss and deployment acceptance remain
+separate unrun gates. No push, cutover, retirement or package upgrade is implied.

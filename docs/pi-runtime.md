@@ -193,6 +193,13 @@ results remain scoped to the private review conversation. Caller-selected public
 destinations cannot receive the projection.
 No polling tool, native waiter, provider retry or mutation re-call is introduced.
 
+Repeated valid approval clicks reuse the same action-bound continuation admission,
+including busy delivery and restart, rather than starting another model turn or
+publishing another answer. Changed payload/source/requester and newer human work
+deny. Legacy receipts without routing metadata retain the original native model,
+thinking and full cwd; an unavailable original choice cannot be replaced by a new
+pool selection.
+
 Only one generic review operation is admitted per original request, not merely one
 outstanding card. Same task/call redelivery retains the pending action; distinct calls
 deny without additional intent/cards/effects even if the first already resolved before

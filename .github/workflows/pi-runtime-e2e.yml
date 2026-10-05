@@ -17,9 +17,11 @@ on:
       - docker/opencode/config/skills/**
       - packages/**
       - pnpm-lock.yaml
+      - package.json
       - scripts/test-pi-e2e.sh
       - scripts/fixtures/pi-responses.mjs
       - scripts/fixtures/pi-mcp-init.mjs
+      - scripts/fixtures/pi-mcp-lifecycle.mjs
       - scripts/fixtures/mcp-catalog-server.mjs
   workflow_dispatch:
 
@@ -58,5 +60,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Typecheck workspace
         run: pnpm typecheck
+      - name: Build current artifacts for the real broker fixture mount
+        run: pnpm build
       - name: Test Pi runtime with isolated containers
         run: pnpm test:pi-e2e

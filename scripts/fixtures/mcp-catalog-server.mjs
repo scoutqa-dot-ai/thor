@@ -1,4 +1,6 @@
 import express from "express";
+import { createServer } from "node:https";
+import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -10,6 +12,10 @@ let effects = 0;
 let connections = 0;
 const cards = [];
 const calls = [];
+const dummyPrincipals = new Map([
+  ["Bearer dummy-private-token-first", "first"],
+  ["Bearer dummy-private-token-replacement", "replacement"],
+]);
 const teamId = process.env.MCP_FIXTURE_TEAM ?? "TFIXTURE";
 const userId = process.env.MCP_FIXTURE_USER ?? "UFIXTURE";
 app.get("/health", (_req, res) => res.json({ effects, connections, cards, calls }));
@@ -28,6 +34,12 @@ app.post("/slack/:method", (req, res) => {
     default:
       return res.json({ ok: false });
   }
+});
+// TLS token rotation is opt-in for the Pi fixture; record only safe principal labels.
+app.use("/mcp", (req, res, next) => {
+  if (!req.socket.encrypted) return next();
+  if (!dummyPrincipals.has(req.get("authorization"))) return res.status(401).end();
+  next();
 });
 app.all("/mcp", async (req, res) => {
   const id = req.get("mcp-session-id");
@@ -56,9 +68,16 @@ app.all("/mcp", async (req, res) => {
       },
     })),
   }));
-  sdk.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
+  sdk.setRequestHandler(CallToolRequestSchema, async ({ params }, extra) => {
     effects++;
-    calls.push({ name: params.name, arguments: params.arguments });
+    calls.push({
+      name: params.name,
+      arguments: params.arguments,
+      // Installed SDK supplies the actual call request, not the initialization header.
+      principal: dummyPrincipals.get(extra.requestInfo?.headers.authorization) ?? "none",
+    });
+    // Deliberately hold AFTER the effect, to expose native unsafe recovery on runner SIGKILL.
+    if (params.arguments.text === "native-crash") await new Promise(() => {});
     if (params.arguments.text === "native-structured")
       return { content: [], structuredContent: { echoed: "native-structured" } };
     if (params.arguments.text === "native-error")
@@ -84,3 +103,11 @@ app.all("/mcp", async (req, res) => {
   await transport.handleRequest(req, res, req.body);
 });
 app.listen(8000, "0.0.0.0");
+if (process.env.MCP_FIXTURE_TLS === "1")
+  createServer(
+    {
+      key: readFileSync("/fixture-tls/key.pem"),
+      cert: readFileSync("/fixture-ca/cert.pem"),
+    },
+    app,
+  ).listen(8001, "0.0.0.0");

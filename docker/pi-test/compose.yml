@@ -2,7 +2,9 @@
 # Model/Slack/legacy wrapper fixtures are not real providers. Full mount gates also use docker/mcp-test.
 services:
   init:
-    image: node:24-slim
+    # Prepared broker image supplies openssl; no install/build during cached checks.
+    image: ${MCP_TEST_BROKER_IMAGE:-thor-pi-mcp-fixture:latest}
+    entrypoint: []
     user: "0:0"
     volumes:
       - repos:/workspace/repos
@@ -11,6 +13,9 @@ services:
       - worklog:/workspace/worklog
       - config:/workspace/config
       - catalog:/etc/thor/mcp-catalog
+      - secrets:/run/secrets/thor-mcp
+      - fixture-tls:/fixture-tls
+      - fixture-ca:/fixture-ca
       - mcp-approval-state:/var/lib/remote-cli/mcp-approvals
       - ../../scripts/fixtures/pi-mcp-init.mjs:/mcp-init.mjs:ro
     command: [node, /mcp-init.mjs]
@@ -35,8 +40,13 @@ services:
     environment:
       MCP_FIXTURE_TEAM: T_FIXTURE
       MCP_FIXTURE_USER: U_FIXTURE
+      MCP_FIXTURE_TLS: "1"
     volumes:
       - ../../scripts/fixtures/mcp-catalog-server.mjs:/app/packages/remote-cli/mcp-fixture.mjs:ro
+      - fixture-tls:/fixture-tls:ro
+      - fixture-ca:/fixture-ca:ro
+    depends_on:
+      init: { condition: service_completed_successfully }
     healthcheck:
       test: [CMD, node, -e, "fetch('http://127.0.0.1:8000/health').then(r=>{if(!r.ok)throw 1})"]
       interval: 1s
@@ -63,6 +73,7 @@ services:
       GOOGLE_WORKSPACE_OAUTH_ENCRYPTION_KEY: ERERERERERERERERERERERERERERERERERERERERERE=
       SLACK_BOT_TOKEN: dummy-slack-token
       SLACK_API_BASE_URL: http://mcp-fixture:8000/slack
+      NODE_EXTRA_CA_CERTS: /fixture-ca/cert.pem
       SLACK_TEAM_ID: T_FIXTURE
       THOR_INTERNAL_SECRET: runner-internal-sentinel
       RUNNER_BASE_URL: http://runner:3000
@@ -74,6 +85,8 @@ services:
     cap_drop: [ALL]
     volumes:
       - catalog:/etc/thor/mcp-catalog:ro
+      - secrets:/run/secrets/thor-mcp:ro
+      - fixture-ca:/fixture-ca:ro
       - mcp-approval-state:/var/lib/remote-cli/mcp-approvals
       - worklog:/workspace/worklog
       - config:/workspace/config:ro
@@ -135,6 +148,7 @@ services:
       SLACK_TEAM_ID: T_FIXTURE
     volumes:
       - state:/var/lib/runner
+      - ../../scripts/fixtures/pi-mcp-lifecycle.mjs:/pi-mcp-lifecycle.mjs:ro
       - repos:/workspace/repos:ro
       - worktrees:/workspace/worktrees:ro
       - memory:/workspace/memory:ro
@@ -233,6 +247,9 @@ volumes:
   config:
   state:
   catalog:
+  secrets:
+  fixture-tls:
+  fixture-ca:
   mcp-approval-state:
 
 networks:

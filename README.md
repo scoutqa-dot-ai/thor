@@ -119,13 +119,23 @@ Optional HTTP MCP additions live in `docker-volumes/mcp-catalog/catalog.json`,
 with private bearer files in `docker-volumes/mcp-secrets/`. Both fixed read-only
 directory mounts belong only to `remote-cli`; no new runtime env variables or
 workspace config fields are needed. Missing/empty catalog uses the six bundled
-defaults; malformed present config fails before listen. Add/remove/rotate,
-validate locally, then restart the broker. Custom `approve` requires trusted Slack
-requester-private review through Pi's native `mcp_search` / `mcp_call` tools, with
-host replies already targeting the confirmed requester DM. Unsupported audiences
-deny before review/effects; only one generic review operation per request is supported;
-CLI attribution cannot request generic review. Discovery uses the live broker
-catalog, so later supported changes require no runner rebuild/restart. New generic
+defaults; malformed present config fails before listen. Add/remove/disable/rotate,
+validate locally, then restart the broker. Discovery uses the live broker catalog:
+supported changes require no runner rebuild/restart after the two native tools deploy.
+
+Custom `approve` uses trusted Slack requester-private review through Pi's native
+`mcp_search` / `mcp_call`:
+
+- Host-owned replies must already target that confirmed requester DM. Public,
+  private/group-channel and different-DM audiences deny **before** review/effects;
+  request fresh private-DM work instead. Explicit tool-owned requests retain their
+  private review/result flow. GitHub/cron/system and CLI attribution cannot review.
+- Only **one generic review operation per original request**, including completed,
+  rejected or uncertain operations, not just one outstanding card. Additional work
+  needs a fresh admitted request or authorized continuation; never replay a mutation.
+
+Only the documented Streamable HTTP/auth/schema subset is supported, not arbitrary
+MCP servers/dialects, stdio, per-user OAuth or custom secret headers. New generic
 records/fences use broker-only `mcp-approval-state` at
 `/var/lib/remote-cli/mcp-approvals` (0700/0600), not historical shared approvals.
 Every restart revokes pending generic authority, including identical catalogs and
@@ -349,10 +359,13 @@ See [`docs/feat/security-model.md`](docs/feat/security-model.md) for the full la
 
 ```bash
 pnpm test
+# Explicit running-stack MCP smoke (may contact configured providers):
 pnpm test:mcp
 # Prebuilt dummy fixture images required; compile fixture before offline validation:
 pnpm build:mcp-fixture
 pnpm test:mcp-catalog-e2e
+# Real Pi + broker, dummy TLS catalog lifecycle/private approvals/unsafe recovery:
+pnpm test:pi-e2e
 REMOTE_CLI_GIT_REPO_URL=https://github.com/owner/repo \
 REMOTE_CLI_GITHUB_REPO=owner/repo \
   pnpm test:e2e

@@ -713,3 +713,35 @@ Four independent source reviews covered native capabilities, runner ownership, a
 - Admission/security: `packages/gateway/src/{app,service,queue,batch-request,slack,slack-channel-gate}.ts`; `packages/runner/src/google-auth-continuation-poller.ts`; `packages/remote-cli/src/{gws-oauth,gws-slack-identity,gws,index,slack-post-message}.ts`; `packages/common/src/google-auth-continuation.ts`.
 - [Official chat reference](https://github.com/earendil-works/pi-chat/tree/9adbd29b40ee27ff1decf0fc87cbe180b40924f5): actual README/source/package contracts, not the broad Slack/chat label in Pi's root README.
 - Before touching historical event/viewer code, follow [the OpenCode schema/viewer drift plan](2026051601_opencode-event-view-schema.md).
+
+## Final cross-phase local acceptance correction — 2026-10-05
+
+The companion MCP Phase 5 final acceptance commit is amended after independent
+review; core phase commits remain intact. See its **Final acceptance corrections
+after `ef307bd`** section for exact decisions, commands/selectors and evidence.
+
+- Approval action consumption now reconstructs across **all conversations**, not
+  just the original latest receipt. Repeated valid signed clicks while busy or
+  after restart reuse the same native admission; changed source/payload/requester
+  and human supersession deny. Pre-submit intent recovery rereads current source.
+- Legacy v1/v3 receipts without routing metadata retain their validated native
+  model/high thinking/full cwd on same/private-new conversation continuations;
+  retired/unavailable original resources fail closed rather than guessing a pool.
+- The existing grant-bound Google coordinator can continue an MCP-result task;
+  inherited MCP result context is not another direct action consumption. Repeated
+  ready records do not add model inputs or MCP effects; original native high stays.
+- The earlier GWS functional fixture did **not** enable production child isolation.
+  The corrected committed gate now uses the real gws CLI through the exact enabled
+  production launcher, proving 11 private per-command executions / 23 API requests
+  / 2 writes (one denied), reduced token/env, fresh procfs/PID namespace, private
+  cwd/cache bind, hidden parent OAuth storage and cleanup. Fixture-only unconfined
+  AppArmor is not loaded Ubuntu profile acceptance; no kernel/CLI regression found.
+
+Final serial suite: **76 files / 1,337 tests pass**, zero skipped (15 new behavior
+cases). All workspace typechecks/builds, compiled MCP fixture, cached Pi/MCP
+container acceptance, GWS dummy launcher/Drata, both fresh-Chromium checks,
+dummy-only Compose graphs, format/syntax and cleanup gates pass. Logs:
+`/tmp/mcp5-corrections-{tests,types,build,fixture-build,pi,catalog,gws,cookie,browser}.log`.
+No push/CI/PR/deploy, optional upgrade or private-data changes. Slack Phase 4 and MCP
+Phase 5 remain **locally verified only**; all external gates listed above are still
+pending and are not implied by these corrected local results.

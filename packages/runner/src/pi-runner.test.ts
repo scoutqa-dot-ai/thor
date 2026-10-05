@@ -1,5 +1,6 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createHash, createHmac } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -37,7 +38,8 @@ import {
 import { createModels, createProvider } from "@earendil-works/pi-ai/models";
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { piConversationMetadataDoc } from "./pi-runner-state.js";
+import { piConversationMetadataDoc, piTriggerRequestSchema } from "./pi-runner-state.js";
+import { createGatewayApp } from "../../gateway/src/app.js";
 import { executeBatchDispatchPlan, planBatchDispatch } from "../../gateway/src/service.js";
 import { persistBatchRunnerRequest } from "../../gateway/src/batch-request.js";
 import { createConfigLoader } from "@thor/common";
@@ -4755,6 +4757,583 @@ describe("native Durable SQLite through the real MCP broker", { timeout: 20_000 
       const redelivered = await trigger(continuation);
       expect(redelivered.status).toBe(200);
       expect((await redelivered.json()).duplicate).toBe(true);
+      const modelCount = requests.length;
+      const repeat = await trigger({ ...continuation, requestId: "another-signed-click-id" });
+      expect(await repeat.json()).toMatchObject({ duplicate: true });
+      expect(requests).toHaveLength(modelCount);
+    },
+  );
+
+  const replacementPool = {
+    pi: {
+      modelRouting: {
+        profiles: {
+          fast: { modelId: "replacement-fast" },
+          balanced: { modelId: "replacement-balanced" },
+          strong: { modelId: "replacement-strong" },
+        },
+      },
+    },
+  };
+
+  async function legacyApproval(version: 1 | 3, channel: string) {
+    await closeServer(runnerServer);
+    await runner.close();
+    const harness = await Harness.open(
+      await openNodeSqliteStorage(config.storagePath),
+      { models: createModels(), registry: createRegistry() },
+      BACKGROUND_CONTEXT,
+    );
+    const anchorId = mintAnchor();
+    const request = piTriggerRequestSchema.parse({
+      prompt: "Read a Google document after this legacy review",
+      requestId: "legacy-review",
+      directory: `${triggerDirectory}/packages/core`,
+      triggerSlackId: "U123",
+      correlationKey: `slack:thread:${channel}/1710000000.001`,
+      messageTs: "1710000000.002",
+      modelId: config.modelId,
+      thinkingLevel: "high",
+    });
+    const { prompt, ...authority } = request;
+    const binding = {
+      requestId: request.requestId ?? "legacy-review",
+      fingerprint: "legacy-unused",
+      triggerId: mintTriggerId(),
+      startedAt: Date.now(),
+      resumed: false,
+      slackTeamId: "T123",
+    };
+    const legacyDoc = defineDoc<JsonObject>({
+      kind: "thor.pi.conversation",
+      version: 1,
+      scope: "conversation",
+      history: "latest",
+      fork: "initial",
+      initial: () => ({}),
+    });
+    try {
+      await harness.createConversation(
+        {
+          ownership: { kind: "ownerless" },
+          agent: {
+            model: { provider: "codex-lb", modelId: config.modelId },
+            thinkingLevel: "high",
+            cwd: request.directory,
+          },
+          init: async (tx, id) => {
+            const metadata = {
+              anchorId,
+              directory: request.directory,
+              correlationKey: request.correlationKey,
+              activeRequestId: binding.requestId,
+            };
+            if (version === 1)
+              Object.assign(await tx.doc(legacyDoc, id), {
+                ...metadata,
+                receipts: [{ ...binding, request, status: "accepted" }],
+              });
+            else
+              Object.assign(await tx.doc(piConversationMetadataDoc, id), {
+                ...metadata,
+                version: 3,
+                receipts: [
+                  {
+                    ...binding,
+                    request: authority,
+                    delivery: { owner: "tool" },
+                    admission: { state: "intent", prompt },
+                  },
+                ],
+              });
+          },
+        },
+        BACKGROUND_CONTEXT,
+      );
+    } finally {
+      await harness.close(BACKGROUND_CONTEXT);
+    }
+    searchCall("write_doc");
+    const events: ProgressEvent[] = [];
+    await openRunner({
+      remoteCliUrl: mcp.brokerUrl,
+      configLoader: () => replacementPool,
+      progressEventSink: (event) => events.push(event),
+    });
+    await vi.waitFor(() => expect(events.some((event) => event.type === "done")).toBe(true));
+    expect(requests[0]).toMatchObject({ model: "fixture-model", reasoning: { effort: "high" } });
+    const action = new ApprovalStore(
+      join(directory, "private-approvals"),
+      "genericMcp",
+    ).listGeneric()[0];
+    if (!action) throw new Error("Legacy native fixture missing review");
+    const result = await fetch(`${mcp.brokerUrl}/internal/mcp/approvals/resolve`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-thor-internal-secret": config.internalSecret,
+      },
+      body: JSON.stringify({
+        actionId: action.id,
+        decision: "approved",
+        userId: "U123",
+        teamId: "T123",
+        channel: "D123",
+        messageTs: "1710000000.123",
+      }),
+    });
+    const source = McpApprovalProjectionSchema.parse(
+      z.looseObject({ value: z.unknown() }).parse(await result.json()).value,
+    );
+    expect(source.disposition).toBe("completed");
+    return { source, anchorId, request };
+  }
+
+  it.each(
+    ([1, 3] as const).flatMap((version) =>
+      ["C123", "D123"].map((channel) => ({ version, channel })),
+    ),
+  )(
+    "preserves migrated v$version legacy native explicit model/high/full cwd from $channel in approval continuations",
+    async ({ version, channel }) => {
+      const { source, anchorId, request } = await legacyApproval(version, channel);
+      const body = {
+        prompt: "Read a Google document",
+        requestId: "legacy-click",
+        directory: triggerDirectory,
+        triggerSlackId: "U123",
+        correlationKey: `slack:thread:${source.channel}/${source.threadTs}`,
+        messageTs: source.threadTs,
+        mcpApprovalSource: source,
+      };
+      let round = 0;
+      nativeModelResponder = (_payload, res) =>
+        round++ === 0
+          ? respond(res, { tool: "bash", args: { command: "pwd" } })
+          : respond(res, { text: "Legacy private result" });
+      const frames = await stream(body);
+      expect(frames.at(-1)).toMatchObject({ status: "completed" });
+      expect(frames[0]?.sessionId === `pi-${anchorId}`).toBe(channel === "D123");
+      expect(requests.at(-1)).toMatchObject({
+        model: "fixture-model",
+        reasoning: { effort: "high" },
+      });
+      expect(executorRequests.at(-1)?.cwd).toBe(request.directory);
+      expect(mcp.effects).toHaveLength(1);
+      await editPiNativeDocuments(async (tx, id) => {
+        const metadata = await tx.doc(piConversationMetadataDoc, id);
+        expect(metadata.receipts.every((receipt) => receipt.modelSelection === undefined)).toBe(
+          true,
+        );
+        expect(await tx.doc(AgentDoc, id)).toMatchObject({
+          model: { provider: "codex-lb", modelId: "fixture-model" },
+          thinkingLevel: "high",
+          cwd: request.directory,
+        });
+      });
+      const count = requests.length;
+      await openRunner({ remoteCliUrl: mcp.brokerUrl, configLoader: () => replacementPool });
+      expect(
+        await (await trigger({ ...body, requestId: "new-legacy-click-timestamp" })).json(),
+      ).toMatchObject({ duplicate: true });
+      expect(requests).toHaveLength(count);
+      expect(mcp.effects).toHaveLength(1);
+      await closeServer(runnerServer);
+      await runner.close();
+      config.modelId = "replacement-only";
+      await openRunner({ remoteCliUrl: mcp.brokerUrl, configLoader: () => replacementPool });
+      expect(
+        await (await trigger({ ...body, requestId: "completed-click-after-retirement" })).json(),
+      ).toMatchObject({ duplicate: true });
+      expect(requests).toHaveLength(count); // Completed redelivery needs no executable model resource.
+      expect(mcp.effects).toHaveLength(1);
+    },
+  );
+
+  it.each(["retired", "unavailable-provider", "cwd-drift"])(
+    "fails legacy approval continuation closed for %s original native choice without guessing from the new pool",
+    async (mode) => {
+      const { source } = await legacyApproval(3, "C123");
+      await editPiNativeDocuments(async (tx, id) => {
+        if (mode === "unavailable-provider")
+          await configure(tx, id, { model: { provider: "unavailable", modelId: "fixture-model" } });
+        if (mode === "cwd-drift") await configure(tx, id, { cwd: "/workspace/repos/other" });
+      });
+      if (mode === "retired") config.modelId = "replacement-only";
+      await openRunner({ remoteCliUrl: mcp.brokerUrl, configLoader: () => replacementPool });
+      const count = requests.length;
+      const result = await trigger({
+        prompt: "Read a Google document",
+        requestId: "unsupported-legacy-click",
+        triggerSlackId: "U123",
+        messageTs: source.threadTs,
+        mcpApprovalSource: source,
+        correlationKey: `slack:thread:${source.channel}/${source.threadTs}`,
+      });
+      expect(result.status).toBe(409);
+      expect(await result.json()).toEqual({ error: "pi_saved_model_unavailable" });
+      expect(requests).toHaveLength(count);
+      expect(mcp.effects).toHaveLength(1);
+    },
+  );
+
+  it.each(["current", "historical-click-id", "superseded", "changed-result", "changed-requester"])(
+    "reconstructs cross-conversation approval consumption in the committed intent/before-submit crash window (%s)",
+    async (mode) => {
+      const { source, request } = await legacyApproval(3, "C123");
+      const body = {
+        prompt: "Report approved disposition only",
+        requestId: "fresh-click-after-crash",
+        directory: request.directory,
+        triggerSlackId: "U123",
+        messageTs: source.threadTs,
+        correlationKey: `slack:thread:${source.channel}/${source.threadTs}`,
+        mcpApprovalSource: source,
+        interrupt: false,
+        stream: false,
+      };
+      nativeModelResponder = (_payload, res) => respond(res, { text: "Recovered private result" });
+      if (mode === "superseded")
+        await stream({
+          ...request,
+          requestId: "new-human-before-recovery",
+          prompt: "cancel that work",
+          modelId: undefined,
+          thinkingLevel: undefined,
+        });
+      await closeServer(runnerServer);
+      await runner.close();
+      const harness = await Harness.open(
+        await openNodeSqliteStorage(config.storagePath),
+        { models: createModels(), registry: createRegistry() },
+        BACKGROUND_CONTEXT,
+      );
+      const requestId =
+        mode === "historical-click-id"
+          ? "approval-click-old-timestamp"
+          : `mcp-approval:${source.actionId}`;
+      const savedSource =
+        mode === "changed-result" ? { ...source, disposition: "rejected" as const } : source;
+      // Persist exactly the production intent representation at the public native submit gap.
+      // There is deliberately no native input; recovery must reuse this binding, not create another.
+      const fingerprint = createHash("sha256")
+        .update(
+          JSON.stringify({
+            prompt: body.prompt,
+            directory: body.directory,
+            correlationKey: body.correlationKey,
+            sessionId: undefined,
+            triggerSlackId: body.triggerSlackId,
+            messageTs: body.messageTs,
+            slackReplyAdmission: undefined,
+            mcpApprovalSource: savedSource,
+            triggerGithubLogin: undefined,
+            interrupt: false,
+            modelProfile: undefined,
+            modelId: undefined,
+            thinkingLevel: undefined,
+            routingTask: undefined,
+          }),
+        )
+        .digest("hex");
+      const triggerId = mintTriggerId();
+      try {
+        await harness.createConversation(
+          {
+            ownership: { kind: "ownerless" },
+            agent: {
+              model: { provider: "codex-lb", modelId: "fixture-model" },
+              thinkingLevel: "high",
+              cwd: request.directory,
+            },
+            init: async (tx, id) =>
+              Object.assign(await tx.doc(piConversationMetadataDoc, id), {
+                version: 3,
+                anchorId: mintAnchor(),
+                directory: request.directory,
+                correlationKey: body.correlationKey,
+                activeRequestId: requestId,
+                receipts: [
+                  {
+                    requestId,
+                    fingerprint,
+                    triggerId,
+                    startedAt: Date.now(),
+                    resumed: false,
+                    slackTeamId: "T123",
+                    delivery: { owner: "tool" },
+                    admission: { state: "intent", prompt: body.prompt },
+                    request: {
+                      directory: body.directory,
+                      correlationKey: body.correlationKey,
+                      messageTs: body.messageTs,
+                      requestId,
+                      triggerSlackId: mode === "changed-requester" ? "UOTHER" : "U123",
+                      mcpApprovalSource: savedSource,
+                      interrupt: false,
+                      stream: false,
+                    },
+                  },
+                ],
+              }),
+          },
+          BACKGROUND_CONTEXT,
+        );
+      } finally {
+        await harness.close(BACKGROUND_CONTEXT);
+      }
+      const count = requests.length;
+      await openRunner({ remoteCliUrl: mcp.brokerUrl, configLoader: () => replacementPool });
+      if (mode === "current" || mode === "historical-click-id") {
+        expect((await stream(body)).at(-1)).toMatchObject({ status: "completed" });
+        const admitted = await (await trigger(body)).json();
+        expect(admitted).toMatchObject({ requestId, triggerId, duplicate: true });
+        expect(requests).toHaveLength(count + 1);
+        expect(requests.at(-1)).toMatchObject({
+          model: "fixture-model",
+          reasoning: { effort: "high" },
+        });
+        await closeServer(runnerServer);
+        await runner.close();
+        await openRunner({ remoteCliUrl: mcp.brokerUrl, configLoader: () => replacementPool });
+        expect(
+          await (await trigger({ ...body, requestId: "another-click-after-restart" })).json(),
+        ).toMatchObject({ requestId, triggerId, duplicate: true });
+        expect(requests).toHaveLength(count + 1);
+      } else {
+        expect(requests).toHaveLength(count); // The saved intent is not scheduling authority.
+        expect((await trigger(body)).status).toBe(403);
+      }
+      expect(mcp.effects).toHaveLength(1);
+      expect(
+        mcp.slackDeliveries.some((entry) => entry.body.text === "Recovered private result"),
+      ).toBe(false);
+    },
+  );
+
+  it("preserves grant-bound automatic Google continuation after an MCP approval result without consuming the action twice", async () => {
+    const { source } = await legacyApproval(3, "C123");
+    const google = await continuationBroker();
+    google.setReady(false);
+    const proxy = createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      const target = req.url?.startsWith("/internal/google-workspace") ? google.url : mcp.brokerUrl;
+      const response = await fetch(target + req.url, {
+        method: req.method,
+        headers: {
+          "content-type": "application/json",
+          "x-thor-internal-secret": config.internalSecret,
+        },
+        ...(chunks.length ? { body: Buffer.concat(chunks) } : {}),
+      });
+      res.writeHead(response.status, { "content-type": "application/json" });
+      res.end(await response.text());
+    });
+    const url = await listen(proxy);
+    try {
+      await closeServer(runnerServer);
+      await runner.close();
+      await openRunner({ remoteCliUrl: url, configLoader: () => replacementPool });
+      const body = {
+        prompt: "Read Google after approved disposition",
+        requestId: "mcp-then-google",
+        triggerSlackId: "U123",
+        messageTs: source.threadTs,
+        mcpApprovalSource: source,
+        correlationKey: `slack:thread:${source.channel}/${source.threadTs}`,
+      };
+      nativeModelResponder = (_payload, res) => {
+        hold = res;
+      };
+      const accepted = await (await trigger(body)).json();
+      await vi.waitFor(() => expect(hold).toBeDefined());
+      google.publish(accepted, { slackUserId: "U123" });
+      if (!hold) throw new Error("MCP/Google fixture missing held response");
+      respond(hold, { text: "Waiting for Google account" });
+      expect((await stream(body)).at(-1)).toMatchObject({ authWait: "google" });
+      const count = requests.length;
+      nativeModelResponder = (_payload, res) => respond(res, { text: "Google grant-bound result" });
+      google.setReady(true);
+      // This fixture keeps returning its ready record, so repeated bound ACKs are valid.
+      await vi.waitFor(() => expect(google.acks.length).toBeGreaterThan(0), { timeout: 4000 });
+      await vi.waitFor(() => expect(requests).toHaveLength(count + 1));
+      expect(requests.at(-1)).toMatchObject({
+        model: "fixture-model",
+        reasoning: { effort: "high" },
+      });
+      expect(JSON.stringify(requests.at(-1))).toContain("Google authorization continuation:");
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      expect(requests).toHaveLength(count + 1); // Ready-record redelivery never generates another input.
+      expect(mcp.effects).toHaveLength(1);
+    } finally {
+      await closeServer(runnerServer);
+      await runner.close();
+      await google.close();
+      await closeServer(proxy);
+      await openRunner({ remoteCliUrl: mcp.brokerUrl });
+    }
+  });
+
+  it.each(["C123", "D123"])(
+    "consumes signed approval clicks across all conversations (%s tool-owned source), including busy and restarted redelivery",
+    async (originalChannel) => {
+      searchCall("write_doc");
+      const original = {
+        prompt: "legacy tool-owned review",
+        requestId: "signed-original",
+        triggerSlackId: "U123",
+        messageTs: "1710000000.002",
+        correlationKey: `slack:thread:${originalChannel}/1710000000.001`,
+        thinkingLevel: "high",
+      };
+      await stream(original);
+      const originalBinding = await (await trigger(original)).json();
+      const card = z
+        .looseObject({
+          blocks: z.array(
+            z.looseObject({
+              elements: z.array(z.looseObject({ value: z.string() })).optional(),
+            }),
+          ),
+        })
+        .parse(mcp.cards[0]);
+      const value = card.blocks.flatMap((block) => block.elements ?? [])[0]?.value;
+      if (!value) throw new Error("Signed native fixture missing approval button");
+      const forwarded: ReturnType<typeof piTriggerRequestSchema.parse>[] = [];
+      const admissions: Record<string, unknown>[] = [];
+      const queueDir = join(directory, "signed-queue");
+      const gateway = createGatewayApp({
+        signingSecret: "dummy-signing-secret",
+        slackBotToken: "dummy-slack-token",
+        slackBotUserId: "UBOT",
+        slackTeamId: "T123",
+        slackApiBaseUrl: mcp.slackUrl,
+        runnerUrl,
+        internalSecret: config.internalSecret,
+        queueDir,
+        disableQueueInterval: true,
+        remoteCliHost: "127.0.0.1",
+        remoteCliPort: Number(new URL(mcp.brokerUrl).port),
+        workspaceConfigLoader: () => ({ owners: {}, users: [] }),
+        fetchImpl: async (input, init) => {
+          const isTrigger = String(input).endsWith("/trigger");
+          if (isTrigger)
+            forwarded.push(piTriggerRequestSchema.parse(JSON.parse(String(init?.body))));
+          const response = await fetch(isTrigger ? `${runnerUrl}/trigger` : input, init);
+          if (isTrigger)
+            admissions.push(z.record(z.string(), z.unknown()).parse(await response.clone().json()));
+          return response;
+        },
+      });
+      const server = createServer(gateway.app);
+      const url = await listen(server);
+      let clickNumber = 0;
+      const click = async () => {
+        const body = new URLSearchParams({
+          payload: JSON.stringify({
+            type: "block_actions",
+            team: { id: "T123" },
+            user: { id: "U123" },
+            channel: { id: "D123" },
+            message: { ts: "1710000000.123" },
+            actions: [
+              { action_id: "approval_approve", value, action_ts: `1710000001.${++clickNumber}` },
+            ],
+          }),
+        }).toString();
+        const timestamp = String(Math.floor(Date.now() / 1000) + clickNumber);
+        const signature =
+          "v0=" +
+          createHmac("sha256", "dummy-signing-secret")
+            .update(`v0:${timestamp}:${body}`)
+            .digest("hex");
+        expect(
+          (
+            await fetch(`${url}/slack/interactivity`, {
+              method: "POST",
+              body,
+              headers: {
+                "content-type": "application/x-www-form-urlencoded",
+                "x-slack-request-timestamp": timestamp,
+                "x-slack-signature": signature,
+              },
+            })
+          ).status,
+        ).toBe(200);
+        await vi.waitFor(async () =>
+          expect(
+            (await readdir(queueDir)).some(
+              (file) => file.endsWith(".json") && !file.startsWith("."),
+            ),
+          ).toBe(true),
+        );
+        await gateway.queue.flush();
+      };
+      try {
+        nativeModelResponder = (_payload, res) => {
+          hold = res;
+        };
+        const before = requests.length;
+        await click();
+        await vi.waitFor(() => expect(hold).toBeDefined());
+        expect(requests).toHaveLength(before + 1);
+        expect(admissions[0]).toMatchObject({ accepted: true });
+        expect(admissions[0]?.sessionId === originalBinding.sessionId).toBe(
+          originalChannel === "D123",
+        );
+        expect(requests.at(-1)).toMatchObject({ reasoning: { effort: "high" } });
+        await click(); // New signed click timestamp and gateway batch ID while the model is busy.
+        expect(forwarded[0]?.requestId).not.toBe(forwarded[1]?.requestId);
+        expect(admissions[1]).toMatchObject({
+          duplicate: true,
+          requestId: admissions[0]?.requestId,
+          triggerId: admissions[0]?.triggerId,
+          sessionId: admissions[0]?.sessionId,
+        });
+        expect(requests).toHaveLength(before + 1);
+        if (!hold) throw new Error("Signed native fixture missing model response");
+        respond(hold, { text: "Approved private disposition only" });
+        await stream(forwarded[0] ?? {});
+        expect(mcp.effects).toHaveLength(1);
+        const first = forwarded[0];
+        if (!first) throw new Error("Signed native fixture missing forwarded request");
+        for (const patch of [
+          { prompt: "changed continuation payload" },
+          { triggerSlackId: "UOTHER" },
+          { mcpApprovalSource: { ...first.mcpApprovalSource, disposition: "pending" } },
+        ])
+          expect((await trigger({ ...first, ...patch })).status).not.toBe(200);
+        await closeServer(runnerServer);
+        await runner.close();
+        await openRunner({ remoteCliUrl: mcp.brokerUrl });
+        await click();
+        expect(admissions[2]).toMatchObject({
+          duplicate: true,
+          requestId: admissions[0]?.requestId,
+          triggerId: admissions[0]?.triggerId,
+          sessionId: admissions[0]?.sessionId,
+        });
+        expect(requests).toHaveLength(before + 1);
+        expect(mcp.effects).toHaveLength(1);
+        expect(
+          mcp.slackDeliveries.some(
+            (delivery) => delivery.body.text === "Approved private disposition only",
+          ),
+        ).toBe(false);
+        nativeModelResponder = (_payload, res) => respond(res, { text: "New human instruction" });
+        await stream({
+          ...original,
+          requestId: "true-human-supersession",
+          prompt: "cancel old work",
+        });
+        expect((await trigger(first)).status).toBe(403);
+        expect(requests).toHaveLength(before + 2);
+        expect(mcp.effects).toHaveLength(1);
+      } finally {
+        gateway.queue.close();
+        await closeServer(server);
+      }
     },
   );
 

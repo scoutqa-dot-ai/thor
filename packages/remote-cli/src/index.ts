@@ -85,7 +85,7 @@ import {
 import { attributionFields, resolveTriggerUser } from "./attribution.js";
 import { GwsSlackIdentityService, type GwsSlackRequester } from "./gws-slack-identity.js";
 
-export { GwsOAuthService, GwsService };
+export { GwsOAuthService, GwsService, enableBrokerCommandIsolation };
 
 const log = createLogger("remote-cli");
 

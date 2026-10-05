@@ -7,6 +7,7 @@ import {
   Harness,
   LiveDoc,
   AgentDoc,
+  configure,
   createRegistry,
   watchEvents,
   type Conversation,
@@ -16,6 +17,7 @@ import {
   type Cursor,
   type SubmissionRecord,
   type EntryId,
+  type AgentState,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import {
@@ -36,6 +38,7 @@ import {
   type ProgressEvent,
   type ProgressModel,
   type ConfigLoader,
+  type McpApprovalProjection,
 } from "@thor/common";
 import { PiExecutionEnv } from "./pi-execution-env.js";
 import { loadPiModelRoutingPool, PiModelRoutingRuntime } from "./pi-model-routing-runtime.js";
@@ -281,6 +284,76 @@ export async function createPiRunnerApp(
       if (!record && receipt.admission.state === "submitted")
         throw new Error("Pi submitted binding missing native record");
       return "accepted" as const;
+    };
+    const currentMcpContinuation = async (source: McpApprovalProjection) => {
+      const originalOwner = requests.get(source.reader.requestId);
+      if (!originalOwner) return;
+      await reload(originalOwner);
+      const original = originalOwner.metadata.receipts.find(
+        (item) => item.requestId === source.reader.requestId,
+      );
+      if (!original) return;
+      const reader = McpApprovalReaderSchema.safeParse({
+        requester: { source: "slack", id: original.request.triggerSlackId },
+        teamId: original.slackTeamId,
+        repositoryDirectory: resolveMcpRepositoryDirectory(originalOwner.metadata.directory),
+        sourceKey: original.request.correlationKey ?? null,
+        requestId: original.requestId,
+        sessionId: sessionId(originalOwner),
+      });
+      const result = reader.success
+        ? await mcpClient.readApproval(source.actionId, reader.data)
+        : undefined;
+      // Approval action identity, not Slack click time, consumes the continuation. Rebuild
+      // from existing admissions across all conversations (including old timestamp IDs).
+      const consumed = [...new Set(requests.values())].flatMap((owner) =>
+        owner.metadata.receipts
+          .filter(
+            (item) =>
+              !item.googleAuthSource &&
+              item.request.mcpApprovalSource?.actionId === source.actionId,
+          )
+          .map((receipt) => ({ owner, receipt })),
+      );
+      const prior = consumed[0];
+      if (prior) await reload(prior.owner);
+      const latest = originalOwner.metadata.receipts.at(-1);
+      if (
+        consumed.length > 1 ||
+        (latest?.requestId !== original.requestId &&
+          !(prior?.owner === originalOwner && latest?.requestId === prior.receipt.requestId)) ||
+        (prior && prior.owner.metadata.receipts.at(-1)?.requestId !== prior.receipt.requestId) ||
+        (prior &&
+          JSON.stringify(prior.receipt.request.mcpApprovalSource) !== JSON.stringify(source)) ||
+        !result ||
+        result.disposition === "pending" ||
+        JSON.stringify(result) !== JSON.stringify(source) ||
+        config.slackTeamId !== original.slackTeamId ||
+        (original.delivery.owner === "host" &&
+          (!original.delivery.target.channel.startsWith("D") ||
+            original.delivery.target.channel !== result.channel))
+      )
+        return;
+      const reuseOriginal =
+        original.delivery.owner === "host" ||
+        resolveSlackProgressTarget(original.request.correlationKey)?.transportTarget.channel ===
+          result.channel;
+      if (
+        prior &&
+        (prior.receipt.request.triggerSlackId !== original.request.triggerSlackId ||
+          prior.receipt.request.triggerGithubLogin ||
+          prior.receipt.slackTeamId !== original.slackTeamId ||
+          prior.receipt.request.directory !== original.request.directory ||
+          JSON.stringify(prior.receipt.delivery) !== JSON.stringify(original.delivery) ||
+          prior.receipt.request.correlationKey !==
+            (reuseOriginal
+              ? original.request.correlationKey
+              : `slack:thread:${result.channel}/${result.threadTs}`) ||
+          prior.receipt.request.messageTs !==
+            (reuseOriginal ? original.request.messageTs : result.threadTs))
+      )
+        return;
+      return { originalOwner, original, result, prior, reuseOriginal };
     };
     const reconcileLogs = async (owner: ConversationOwner) => {
       const id = sessionId(owner);
@@ -975,6 +1048,18 @@ export async function createPiRunnerApp(
         return "started";
       }
       if (receipt.admission.state === "withdrawn") return "retired";
+      // A committed continuation intent is not native admission yet. Re-read its source
+      // before scheduling after a crash; outages or supersession cannot grant execution.
+      // Google derives a new grant-bound admission from the MCP continuation; its inherited
+      // MCP result is prompt context, not a second direct approval-action consumption.
+      if (receipt.request.mcpApprovalSource && !receipt.googleAuthSource && !existing) {
+        const authority = await currentMcpContinuation(receipt.request.mcpApprovalSource);
+        if (
+          authority?.prior?.owner !== owner ||
+          authority.prior.receipt.requestId !== receipt.requestId
+        )
+          return "deferred";
+      }
       // Validate frozen support and exact native admission choice before ack, scheduling or tool execution.
       const agent = await runtime.snapshot(AgentDoc, owner.conversation.id, context);
       if (!routing.nativeMatches(receipt, agent))
@@ -1186,55 +1271,32 @@ export async function createPiRunnerApp(
           if (closing) return { kind: "error", status: 503, error: "runner_closing" } as const;
           const source = request.mcpApprovalSource;
           let original: PiAdmissionReceipt | undefined;
+          let frozenAgent: Readonly<AgentState> | undefined;
           if (source) {
-            const originalOwner = requests.get(source.reader.requestId);
-            if (originalOwner) await reload(originalOwner);
-            original = originalOwner?.metadata.receipts.find(
-              (item) => item.requestId === source.reader.requestId,
-            );
-            const expectedReader =
-              original && originalOwner
-                ? McpApprovalReaderSchema.safeParse({
-                    requester: { source: "slack", id: original.request.triggerSlackId },
-                    teamId: original.slackTeamId,
-                    repositoryDirectory: resolveMcpRepositoryDirectory(
-                      originalOwner.metadata.directory,
-                    ),
-                    sourceKey: original.request.correlationKey ?? null,
-                    requestId: original.requestId,
-                    sessionId: sessionId(originalOwner),
-                  })
-                : undefined;
-            const result = expectedReader?.success
-              ? await mcpClient.readApproval(source.actionId, expectedReader.data)
-              : undefined;
-            const latest = originalOwner?.metadata.receipts.at(-1);
-            const redelivery =
-              latest?.requestId === request.requestId &&
-              latest?.request.mcpApprovalSource?.actionId === source.actionId;
+            const authority = await currentMcpContinuation(source);
             if (
-              !original ||
-              !originalOwner ||
-              (latest?.requestId !== original.requestId && !redelivery) ||
-              !result ||
-              result.disposition === "pending" ||
-              JSON.stringify(result) !== JSON.stringify(source) ||
-              request.triggerSlackId !== original.request.triggerSlackId ||
+              !authority ||
+              request.triggerSlackId !== authority.original.request.triggerSlackId ||
               request.triggerGithubLogin ||
-              config.slackTeamId !== original.slackTeamId ||
-              request.correlationKey !== `slack:thread:${result.channel}/${result.threadTs}` ||
-              request.messageTs !== result.threadTs ||
-              resolveMcpRepositoryDirectory(request.directory) !== result.repositoryDirectory ||
-              (request.sessionId !== undefined && request.sessionId !== sessionId(originalOwner)) ||
-              (original.delivery.owner === "host" &&
-                (!original.delivery.target.channel.startsWith("D") ||
-                  original.delivery.target.channel !== result.channel))
+              request.correlationKey !==
+                `slack:thread:${authority.result.channel}/${authority.result.threadTs}` ||
+              request.messageTs !== authority.result.threadTs ||
+              resolveMcpRepositoryDirectory(request.directory) !==
+                authority.result.repositoryDirectory ||
+              (request.sessionId !== undefined &&
+                request.sessionId !== sessionId(authority.originalOwner))
             )
               return {
                 kind: "error",
                 status: 403,
                 error: "mcp_approval_continuation_denied",
               } as const;
+            const { originalOwner, prior, reuseOriginal } = authority;
+            original = authority.original;
+            const redelivery = prior !== undefined;
+            // Persist the server-derived identity in the existing intent before native submit.
+            // A crash, busy redelivery or a new signed click reuses that same binding/submission.
+            request.requestId = prior?.receipt.requestId ?? `mcp-approval:${source.actionId}`;
             if (
               (!redelivery && originalOwner.metadata.activeRequestId) ||
               (await executionStatus(originalOwner, original)) === "accepted"
@@ -1244,12 +1306,17 @@ export async function createPiRunnerApp(
             // audience must remain the broker-confirmed private DM; no public fallback.
             request.directory = original.request.directory;
             request.interrupt = false;
-            const originalPrivateTarget = resolveSlackProgressTarget(
-              original.request.correlationKey,
-            );
-            const reuseOriginal =
-              original.delivery.owner === "host" ||
-              originalPrivateTarget?.transportTarget.channel === result.channel;
+            if (!original.modelSelection) {
+              frozenAgent = await runtime.snapshot(
+                AgentDoc,
+                originalOwner.conversation.id,
+                context,
+              );
+            }
+            if (original.delivery.owner === "tool") {
+              delete request.slackReplyAdmission;
+              replyProof = undefined;
+            }
             if (reuseOriginal) {
               if (original.delivery.owner === "host") {
                 request.slackReplyAdmission = original.delivery.target;
@@ -1307,17 +1374,28 @@ export async function createPiRunnerApp(
             }
             return { kind: "accepted", owner: duplicate, receipt, duplicate: true } as const;
           }
-          const selection = selectPiTaskModel({
-            pool: routing.pool,
-            routingTask: request.routingTask ?? request.prompt,
-            overrides: {
-              modelProfile: request.modelProfile,
-              modelId: request.modelId,
-              thinkingLevel: request.thinkingLevel,
-              routingTask: request.routingTask,
-            },
-          });
-          if (!selection.ok)
+          // Completed duplicate admissions remain readable even after model retirement.
+          // Only a new continuation can require inheritance of executable native resources.
+          if (
+            original &&
+            (original.modelSelection
+              ? !routing.supported(original.modelSelection).ok
+              : !routing.nativeMatches(original, frozenAgent))
+          )
+            return { kind: "error", status: 409, error: "pi_saved_model_unavailable" } as const;
+          const selection = original
+            ? undefined
+            : selectPiTaskModel({
+                pool: routing.pool,
+                routingTask: request.routingTask ?? request.prompt,
+                overrides: {
+                  modelProfile: request.modelProfile,
+                  modelId: request.modelId,
+                  thinkingLevel: request.thinkingLevel,
+                  routingTask: request.routingTask,
+                },
+              });
+          if (selection && !selection.ok)
             return { kind: "error", status: 400, error: selection.error.code } as const;
           let owner = request.sessionId ? owners.get(request.sessionId) : undefined;
           if (request.sessionId && !owner)
@@ -1409,11 +1487,12 @@ export async function createPiRunnerApp(
             slackReplyAdmission,
             ...authority
           } = request;
+          const selected =
+            original?.modelSelection ?? (selection?.ok ? selection.value : undefined);
           const receipt: PiAdmissionReceipt = {
-            modelSelection: original?.modelSelection ?? {
-              ...selection.value,
-              history: [...selection.value.history],
-            },
+            ...(selected
+              ? { modelSelection: { ...selected, history: [...selected.history] } }
+              : {}),
             ...(original?.escalationCalls ? { escalationCalls: original.escalationCalls } : {}),
             requestId,
             fingerprint,
@@ -1447,12 +1526,10 @@ export async function createPiRunnerApp(
               {
                 ownership: { kind: "ownerless" },
                 agent: {
-                  model: {
-                    provider: "codex-lb",
-                    modelId: receipt.modelSelection?.modelId ?? selection.value.modelId,
-                  },
-                  thinkingLevel:
-                    receipt.modelSelection?.thinkingLevel ?? selection.value.thinkingLevel,
+                  model: selected
+                    ? { provider: "codex-lb", modelId: selected.modelId }
+                    : frozenAgent?.model,
+                  thinkingLevel: selected?.thinkingLevel ?? frozenAgent?.thinkingLevel,
                   cwd: request.directory,
                 },
                 init: async (tx, id) => {
@@ -1471,6 +1548,12 @@ export async function createPiRunnerApp(
               );
               metadata.receipts.push(receipt);
               metadata.activeRequestId = requestId;
+              if (frozenAgent)
+                await configure(tx, existingOwner.conversation.id, {
+                  model: frozenAgent.model,
+                  thinkingLevel: frozenAgent.thinkingLevel,
+                  cwd: frozenAgent.cwd,
+                });
               if (!(await routing.configureReceipt(tx, existingOwner.conversation.id, receipt)))
                 throw new Error("Pi model admission unavailable");
             }, context);

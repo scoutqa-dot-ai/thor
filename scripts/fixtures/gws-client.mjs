@@ -143,6 +143,12 @@ await assert.rejects(
 const final = await state();
 assert.equal(final.authorizationTokenRequests, 1, "one OAuth connection exchange must run");
 assert.ok(final.tokenRequests > 0, "per-command OAuth refresh must run");
+assert.equal(
+  final.executionDirectories.length,
+  final.tokenRequests,
+  "each account command must use a distinct private cwd through the production launcher",
+);
+assert.equal((await fetch(`${baseUrl}/fixture-cleanup`)).status, 200);
 assert.ok(final.requests.some((request) => request.query.includeTabsContent === "true"));
 assert.ok(final.requests.some((request) => request.query.q === "name contains 'report'"));
 assert.equal(
@@ -169,5 +175,6 @@ assert.match(
   /includeTabsContent/,
 );
 console.log(
-  "PASS: per-user GWS OAuth/direct execution, reads/writes, caller formatting/pagination, upstream denials, and private mounts",
+  `PASS: ${final.executionDirectories.length} isolated account commands, ${final.requests.length} API requests, 2 writes (including denied write)`,
+  "PASS: real gws through production kernel launcher, per-command private cwd/token/env/proc isolation and cleanup, dummy OAuth reads/writes, formatting/pagination, upstream denials and private mounts",
 );

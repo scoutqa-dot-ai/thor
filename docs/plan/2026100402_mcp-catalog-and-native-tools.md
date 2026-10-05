@@ -1,6 +1,6 @@
 # Neo — Configurable MCP catalog and native Durable tools
 
-**Status:** MCP phases 1–4 implemented and isolated locally validated after companion Slack phases 1–3 (`cc6c2b9`), including the Phase 3 incomplete-authority-evidence correction. Phase 4 follows `9f086c6`; Phase 5, live acceptance and deployment remain pending, separately approval-gated. Pi now installs two native tools; the default OpenCode runtime and pinned Durable 1.0.0 are unchanged.
+**Status:** MCP Phases 1–4 implemented (`dfaa3ad`, including required corrections); Phase 5's feasible **local acceptance** completed after Slack local acceptance `e9139c0`. Phase 5 is **not fully accepted**: CI and live provider/Slack/OAuth/Ubuntu deployment gates remain unrun and require separate authorization. Two stable native tools are installed; default OpenCode, Durable 1.0.0, deployment and rollback remain unchanged.
 **Reviewed:** 2026-10-04, Neo `33ada49`; released Pi Durable/MCP `v1.0.2` (`cd32f7725fdbddbaecdff5b1e68491563394e0ca`).
 **Companion:** [Pi Durable Slack simplification](2026100401_pi-durable-slack-simplification.md). This plan adds operator MCP onboarding and agent discovery; it does not change the single-owner admission/security architecture.
 
@@ -823,3 +823,247 @@ prepared repository/dependency image**. Explicitly delegated checks therefore us
 installed host Node 24.21.0/dependencies and cached Docker images, dummy/local fixtures
 only; no installation, download or preparation. Phase 5 CI/push/PR, live accounts/Slack,
 production AppArmor/storage/power-loss and deployment/final acceptance remain **unrun**.
+
+## Phase 5 — feasible local integration acceptance — 2026-10-05
+
+Completed local acceptance after `dfaa3ad` and companion Slack local acceptance
+`e9139c0`, without push/PR/deploy/live accounts or private mounted-data changes.
+This is the **local portion**, not acceptance of live deployment or the full phase.
+Core implementation remains complete; no optional 1.0.2 alignment, typed Google
+redesign, default cutover or rollback retirement was included.
+
+### Integration repairs and decisions
+
+| Decision / repair                                                          | Actual boundary and evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Extend the existing real-broker Pi Compose, not the legacy wrapper fixture | A dummy TLS bearer alias is added/disabled/removed/re-added/rotated by atomic config/token replacement and broker-only activation. The actual running Harness performs discovery/object calls; container ID **and process start time** stay identical through all seven rounds. Every provider round offers exactly the stable `mcp_search`/`mcp_call`, not per-alias registrations. No new client/service/registry.                                                                                      |
+| Generate TLS only on disposable fixture volumes                            | Existing prepared broker image supplies openssl; init creates a one-day local test certificate/key. Only the fixture gets its private key, broker gets the test CA and broker-only token mount. TLS verification stays enabled; no credential-over-HTTP or production mount/env change.                                                                                                                                                                                                                   |
+| Record safe principal labels, not headers                                  | Installed SDK TLS dispatch proves first versus replacement account snapshots. Atomic token replacement without restart still uses first principal and same ref; rotation of the unchanged enabled alias uses replacement principal and invalidates old ref. Stale calls after disable/remove/re-add/rotation produce no effects.                                                                                                                                                                          |
+| Exercise audience/one-review policy in the actual Compose chain            | Public and different-DM host requests get actionable denial before cards/effects. Two distinct native review calls in one request create only one card; the second denies. The first remains a static hold with no paused final answer or source check, then signed gateway click → broker claim/SDK effect → disk queue/reread → private original host target/model/human-source completion, without mutation replay. Broader audience/race/outcome matrices remain in real native/broker unit fixtures. |
+| SIGKILL in the actual native MCP effect/result window                      | The fixture records a readOnlyHint call's effect then withholds the result. Killing/reopening only runner restores original Slack actor and strong/high model before generation; Harness reports potentially-partial tool error, never a repeated call. Host final text/metadata remains on the original private target. Recovery uses `--no-deps` so init cannot reset catalog/config/TLS underneath the test.                                                                                           |
+| Repair the UTC-midnight expiry fixture, not production expiry policy       | The first serial run exposed backdating `createdAt/dateSegment` into yesterday while leaving today's still-live action file. The test wrote a second identity path, so lookup correctly found the newer copy. Fixture relocation now removes the old path and asserts one canonical record plus the exact expired timestamp. A permanent previous-day case makes this boundary deterministic. No production approval/store behavior changed, no timeout/assertion relaxed.                                |
+| Build host artifacts before Pi workflow's broker mount                     | Image build alone does not create host `dist`, which the fixture mounts read-only. Pi Runtime workflow now runs `pnpm build` before the container check and triggers on the new lifecycle fixture/package changes. Local YAML/filter/order checks pass; GitHub execution remains unrun.                                                                                                                                                                                                                   |
+| Fail acceptance on incomplete cleanup                                      | Both existing Compose scripts now check project-label containers, volumes and networks after teardown and return failure if any remain. Only uniquely owned fixture resources are removed; no deployment/image cleanup.                                                                                                                                                                                                                                                                                   |
+
+The new `scripts/fixtures/pi-mcp-lifecycle.mjs` is a cohesive native HTTP acceptance
+client, not a production abstraction: it centralizes per-round NDJSON, complete
+discovery/stale/native result and independent upstream effect/principal assertions.
+Deleting it would duplicate that test protocol across seven shell steps. Existing
+init/Responses/SDK fixtures remain their owners. Finite activation/audience/expiry/
+crash transitions were selected over a property-test dependency; no module mocks,
+new exports, provider retry or universal invocation ledger were added.
+
+### Final local gates
+
+Host Node **24.21.0**, pnpm **10.33.4**, installed pinned dependencies and existing
+cached Docker images only. Cached Pi processes report Node **24.15.0**. Sandbox
+preflight confirmed `sbx v0.46.0` and approved `node:24-bookworm` but no prepared
+repository/dependency image; explicitly authorized host/dummy Docker checks were
+available and used. No install/download/image rebuild/sandbox preparation during
+these checks; no private `.env` resolution or live API access.
+
+Ten passing workload commands (plus graph, format/syntax and cleanup checks):
+
+1. `pnpm exec vitest run --no-file-parallelism`: **76 files / 1,322 tests pass**,
+   no skipped tests. Includes native migration/publication/source/Google/model,
+   real SDK/Jira/built-in browser/Chromium, catalog/private reader/fence/crash,
+   sandbox fail-closed/pinned-file and legacy behavior. Final duration 142.96s.
+2. `pnpm typecheck`: all **eight** workspace packages pass.
+3. `pnpm build`: all workspace builds pass.
+4. `pnpm build:mcp-fixture`: separate current authority fixture compiles before
+   offline validation; no dependencies rebuilt in acceptance scripts.
+5. Cached `./scripts/test-pi-e2e.sh`: **exit 0**, actual broker/native SDK chain,
+   seven lifecycle rounds (`absent`, `add`, `replace-token`, `disable`, `remove`,
+   `readd`, `rotate`), complete schemas, unchanged runner ID/start time, stale
+   zero-effect denials, TLS principal rotation, two stable tools/no shell roundtrip,
+   unsupported review and sibling denial, signed approved continuation, structured/
+   image/isError, original actor/model/host target and unsafe SIGKILL recovery.
+   Final upstream effects **9**, private cards **1**, crash-window call exactly **1**.
+   Actual runner/executor/gateway/admin cannot read private token/catalog/approval/
+   key mounts. Existing signed intake/SSO/viewer/executor raster/wrapper paths pass.
+6. Cached `./scripts/test-mcp-catalog-compose.sh`: **exit 0**, real current broker,
+   catalog/default/startup validation, full private review/dispatch/result, second
+   owner refusal, incomplete-authority denial and actual production managed-browser/
+   command kernel proc/env/file/mount isolation, plus all four consumer probes.
+7. `./scripts/test-gws-e2e.sh thor-gws-remote-cli:e2e thor-gws-opencode:e2e`:
+   pass using current host-built broker artifacts, dummy per-user OAuth/GWS direct
+   reads/writes, formatting/pagination, upstream denials, Drata and private mounts.
+8. `node --import ./packages/runner/node_modules/tsx/dist/loader.mjs
+scripts/test-gws-browser-cookie.mjs /usr/bin/chromium`: pass, actual Chromium
+   withheld/preserved scoped cookie and safe recovery; no real account/profile.
+9. Same Node command for `scripts/test-gws-ingress-browser.mjs`: pass, shipped
+   Nginx/fake SSO/Google, genuine browser chooser/owner callback against dummy
+   providers, public exact GIF/PNG bytes/MIME/decoding in both themes.
+10. `pnpm exec vitest run packages/remote-cli/src/mcp-generic-approval.integration.test.ts
+-t 'rechecks.*before dispatch'`: **4 pass / 44 intentionally unselected**,
+    including permanent previous-day expiry and unchanged supersession/inventory.
+
+Exact cached selectors for command 5:
+
+```bash
+PI_TEST_USE_CACHED_IMAGES=1 MCP_TEST_BROKER_IMAGE=thor-gws-remote-cli:e2e \
+PI_TEST_RUNNER_IMAGE=thor-pi-e2e-1000-3364098-runner:latest \
+PI_TEST_EXECUTOR_IMAGE=thor-pi-e2e-1000-3364098-pi-executor:latest \
+PI_TEST_GATEWAY_IMAGE=thor-pi-e2e-1000-3364098-gateway:latest \
+PI_TEST_ADMIN_IMAGE=thor-pi-e2e-1000-3364098-admin:latest \
+PI_TEST_INGRESS_IMAGE=thor-pi-e2e-1000-3364098-ingress:latest \
+./scripts/test-pi-e2e.sh
+```
+
+Command 6 selects the same cached broker/runner/executor/gateway/admin under
+`MCP_TEST_{BROKER,RUNNER,EXECUTOR,GATEWAY,ADMIN}_IMAGE`. Current compiled artifacts
+come from the host build, not historical image source. Logs:
+`/tmp/mcp5-{tests,types,build,fixture-build,pi-final,catalog,gws,cookie,browser,expiry-regressions}.log`.
+
+Base/Pi/CI/no-AppArmor graphs rendered with empty inherited environment, explicit
+dummy values and `--env-file /dev/null --no-env-resolution --format json`; assertions
+confirm exactly one broker-private approval mount and broker-only read-only catalog/
+token mounts. Both fixture graphs additionally prove real broker entrypoint,
+internal-only network, no host ports and consumer private mount absence. Local
+workflow preparation/filter coherence, changed-file Prettier, `bash -n` for all
+three acceptance scripts, `node --check` for all changed fixtures and
+`git diff --check` pass. JSON: `/tmp/mcp5-compose-{base,pi,ci,no-apparmor,pi-fixture,mcp-fixture}.json`.
+These are local workflow checks, **not** GitHub runner results.
+
+Cleanup is asserted by the scripts and independently queried afterward; final
+Pi `thor-pi-e2e-1000-280006` and catalog `neo-mcp-catalog-test-1000-303093`
+project labels have no containers/volumes/networks. Earlier failed
+and passing Pi probes (`180476`/`188511`) likewise leave no resources. GWS/browser
+containers/networks and `thor-gws-*` temporary private directories are absent;
+fresh browser contexts/servers close in `finally`. Initial Pi failure was a fixture
+assertion spelling (`private-DM` vs actual actionable `private DM`), corrected
+without changing product policy. The initial serial expiry failure is retained
+at `/tmp/mcp5-tests-initial-date-boundary.log`, followed by the focused and full
+passing runs above.
+
+### Remaining external gates / next
+
+**Next:** obtain explicit authorization for required Unit/Pi Runtime/MCP Catalog
+and relevant Core/Sandbox GitHub checks, then live acceptance on the **existing**
+Ubuntu Compose project/keys/volumes. No push, dispatch, PR or deployment here.
+Full acceptance remains pending:
+
+- Actual served provider/model behavior; Slack workspace status-feature/permissions,
+  native lifecycle/client rendering, GIF/accessibility/reduced-motion and artwork
+  rights; genuine provider OAuth/account identity and requester continuation.
+- Live Slack/Jira/Core/OpenCode smoke and `pnpm test:mcp` against configured real
+  providers. Their scripts can contact live accounts and were not launched.
+- Daytona sandbox lifecycle requires cloud credentials/snapshot/external repo,
+  so `test-sandbox-e2e.sh` was not launched. The feasible local sandbox/file/kernel
+  denial subset passed above; it is not cloud acceptance.
+- Loaded Ubuntu `thor-remote-cli` AppArmor and filesystem `flock`/rename/directory
+  fsync/backup/power-loss support. This host's AppArmor kernel reports `N`; fixture
+  unconfined-AppArmor and process SIGKILL do not establish Ubuntu/power-loss safety.
+- Runtime-default/ingress cutover, retirement, optional Pi upgrade or Google
+  redesign require their own explicit approval and are outside this local work.
+
+Operator README/catalog guidance now makes supported HTTP/auth/schema scope,
+unsupported review audiences and **one operation per original request** explicit;
+completed/rejected/uncertain records still count. No all-MCP/dialect promise,
+provider exactly-once guarantee, automatic uncertainty retry or private-result
+publication to an unsupported audience. No `.pi`/private deployment files staged.
+
+## Final acceptance corrections after `ef307bd` — 2026-10-05
+
+Independent cross-phase review reproduced two runner defects and identified a
+missing local production-launcher gate. Corrections belong to the final MCP Phase
+5 acceptance commit, amended as requested; core phase commits are retained. No
+separate correction commit, push, CI dispatch, PR, live account, optional upgrade
+or deployment is authorized here. **Phase 5 remains locally verified only**, not
+fully accepted.
+
+### Repairs and decision log
+
+| Decision / repair                                                          | Boundary and evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Consume continuation admission by approval action across all conversations | Existing runner-wide reconstructed request bindings find any prior receipt for the action, including historical timestamp-based IDs. New admissions use server-derived `mcp-approval:<actionId>` identity in the existing intent/submission; no ledger, scheduler or schema version added. HTTP callers cannot choose the reserved identity. Still reread the broker using original stored requester/team/repo/source/session, compare the exact projection and fingerprint the normalized payload. Equal valid clicks reuse the same admission even when the original public tool-owned conversation stays latest forever; changed payload/source/requester and real human supersession deny. |
+| Recheck source at the intent/native-submit crash gap                       | The same local authority owner serves HTTP admission and pre-submit recovery. Existing native input remains the native admission authority; an unsubmitted intent alone cannot schedule after source supersession, changed result or unavailable observation. It defers without effects; no new retry coordinator. Reconstructed historical and deterministic identities reuse the original receipt/trigger rather than minting another.                                                                                                                                                                                                                                                       |
+| Preserve legacy native model evidence, not classify continuation text      | A receipt without `modelSelection` inherits the original validated native AgentDoc model/thinking/full cwd. Missing metadata is not permission to choose from the new pool. New-conversation initialization and existing-conversation configuration retain this choice; unregistered/retired models, unavailable provider and cwd drift fail closed before admission/generation. Existing saved selections and escalation evidence keep their original support checks. Tool-owned historical work never acquires incoming host publication proof.                                                                                                                                              |
+| Enable the exact production GWS launcher in the dummy fixture              | The old GWS fixture used `createRemoteCliApp` without the startup isolation switch; its earlier functional pass was **not** evidence of production GWS kernel execution. Export/reuse the existing one-way enable operation, with fixed production launcher/binary and fixture-only custom seccomp, capability drop, no-new-privileges, system-path and unconfined-AppArmor settings. No production config/env/mount change or unsandboxed fallback.                                                                                                                                                                                                                                           |
+| Measure the actual real CLI process during API requests                    | The installed gws 0.22.5, not an executable replacement, performs dummy Google reads/writes. Broker-side proc observations prove fresh PID namespace/procfs, 0700 distinct per-command cwd, private cache bind, only that requester's token/reduced env, and absent parent cache/OAuth storage/credential env. Hostile workspace dotenv cannot replace the token. API denials and successful commands both remove private execution directories; container/network cleanup is a failing gate. No kernel/CLI regression was uncovered with the enabled production launcher.                                                                                                                     |
+
+`currentMcpContinuation` remains a private cohesive owner inside admission: deleting
+it would duplicate the same original/source/consumption checks at ingress and crash
+recovery. It extends existing binding/native-submit ownership, not a new service or
+operation ledger. Tests use real SQLite/Harness, signed gateway/disk queue, broker,
+SDK and recording HTTP effects. Finite current/legacy/busy/intent/supersession/result/
+resource cases were selected over a generator dependency; no module mocks added.
+
+### Final local evidence (supersedes earlier local counts/GWS launcher claim)
+
+Same Node 24.21.0/pnpm 10.33.4, pinned installed dependencies and cached images.
+Preflight again confirms SBX v0.46.0 and approved `node:24-bookworm`, **no prepared
+repository/dependency image**. Authorized host builds and internal-network dummy
+fixtures were used; no installs/downloads/image builds/preparation, live OAuth,
+private `.env` or Ubuntu deployment data.
+
+- `pnpm exec vitest run --no-file-parallelism`: **76 files / 1,337 tests pass**,
+  zero skipped, 151.54s. **15 new behavior cases** cover repeated genuinely signed
+  clicks with different timestamps/gateway IDs (public tool-owned into DM and same
+  DM), busy duplicate and runner restart, immutable payload/requester/source,
+  supersession, reconstructed pre-submit intents with stable/historical IDs,
+  superseded/changed-result/changed-requester intent recovery, v1/v3 legacy migration into both same
+  and private-new conversations, explicit original model/high/full cwd and
+  retired/provider/cwd failures. The existing eight host/tool disposition cases
+  additionally assert new-click-ID redelivery with zero extra generation. Legacy
+  completed redeliveries remain readable after model retirement without execution;
+  only new/pending admissions require executable inherited resources. Focused final
+  command `pnpm exec vitest run packages/runner/src/pi-runner.test.ts -t
+'grant-bound automatic Google|committed intent|legacy.*approval|consumes signed|holds native completion'
+--no-file-parallelism` passes **23 / 173 intentionally unselected**. A grant-bound
+  automatic Google resume after MCP approval is also proven: inherited MCP result
+  context is not a second direct action consumption and cannot block the existing
+  Google coordinator. Ready-record redelivery adds no model input/MCP effect.
+- `pnpm typecheck`, `pnpm build`, `pnpm build:mcp-fixture`: **pass**, all eight
+  workspace packages and current compiled authority fixture.
+- Cached `./scripts/test-pi-e2e.sh`: **exit 0**; all seven native catalog lifecycle
+  rounds, signed private approval/queue/native completion, unchanged runner
+  identity/start time, TLS principal rotation, image/structured/error handling,
+  unsupported audience/sibling denial, private mounts and actual unsafe-effect
+  SIGKILL recovery pass. No replay or live-provider assertion. Cleanup project:
+  `thor-pi-e2e-1000-472639`.
+- Cached `./scripts/test-mcp-catalog-compose.sh`: **exit 0**, real broker generic
+  review/effect/result/reader/owner/fence, malformed/incomplete-authority zero-effect
+  denials, production browser/command kernel probes, validation/defaults and
+  before-listen failures. Cleanup project: `neo-mcp-catalog-test-1000-491670`.
+- `./scripts/test-gws-e2e.sh thor-gws-remote-cli:e2e thor-gws-opencode:e2e`:
+  **exit 0**, now through the **enabled production GWS kernel launcher** with real
+  CLI: **11 isolated account commands / 23 API requests / 2 writes (one denied)**,
+  dummy encrypted per-user OAuth, direct reads/writes, formatting/pagination,
+  denials, Drata, live child custody observations and private-dir/container/network
+  cleanup. Real Google/Ubuntu AppArmor remain unverified.
+- `node --import ./packages/runner/node_modules/tsx/dist/loader.mjs
+scripts/test-gws-browser-cookie.mjs /usr/bin/chromium` and the same command for
+  `scripts/test-gws-ingress-browser.mjs`: **pass**, fresh Chromium and shipped
+  Nginx/dummy SSO/Google flow; cookie/verified-owner and exact artwork gates retained.
+
+Pi and catalog use the exact cached selectors documented above, with current
+host-built artifacts, not image-era source. Logs:
+`/tmp/mcp5-corrections-{tests,types,build,fixture-build,pi,catalog,gws,cookie,browser}.log`.
+The intent-gap tests reconstruct the exact committed/pre-submit state in real
+SQLite; they are not a claim of killing a process at that boundary. The separate
+existing process/container SIGKILL gates cover native unsafe effect/result recovery.
+
+One intermediate serial rerun had an unchanged legacy OpenCode entrypoint child
+exit after its startup log. Its cause was not established; the unchanged focused
+entrypoint test and the complete final serial rerun both pass, with no relaxed
+timeout/assertion or unrelated repair. Evidence is retained at
+`/tmp/mcp5-corrections-tests-entrypoint-failure.log` and
+`/tmp/mcp5-corrections-entrypoint-recheck.log`.
+
+Dummy-only Base/Pi/CI/no-AppArmor and both fixture Compose graphs, changed-file
+Prettier, shell/JS syntax, `git diff --check` and independent resource checks pass.
+Graphs and graph command/assertions:
+`/tmp/mcp5-corrections-compose-*.json`, `/tmp/mcp5-corrections-graphs.sh` and
+`/tmp/mcp5-corrections-graphs.log`. Exactly one broker approval mount, broker-only
+read-only catalog/tokens, required namespace settings and internal-only/no-host-port
+fixture networks remain. Both named projects and GWS/browser fixture containers/
+networks have no resources after cleanup. Initial local probes exposed reserved
+host request-ID parsing and fixture override/graph spelling mistakes; these were
+corrected without weakening assertions or security and followed by passing gates.
+
+Operator Pi docs now describe action-bound redelivery and fail-closed legacy
+native inheritance. No new required env/config/deployment surface. All external
+gates in the preceding section remain pending: GitHub, actual served models/Slack/
+OAuth, Daytona, existing Ubuntu AppArmor/storage/power-loss/deploy and default
+cutover/retirement. `.pi` remains untracked and excluded from the amend.

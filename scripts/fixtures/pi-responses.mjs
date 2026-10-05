@@ -1,5 +1,6 @@
 // Deterministic Responses, policy-wrapper and SSO fixtures; no provider credentials or external I/O.
 import { createServer } from "node:http";
+import assert from "node:assert/strict";
 
 let heldOnce = false;
 let calls = 0;
@@ -14,6 +15,9 @@ let lastHostReply;
 let imageInputs = 0;
 const modelSelections = [];
 const slackDeliveries = [];
+const catalogRounds = [];
+let catalogRef;
+let recoveredMcpActor = false;
 const imageFixtureBase64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVR4nGP4z8AAQVDqPwMDAEHSBfsl0XwmAAAAAElFTkSuQmCC";
 
@@ -101,6 +105,8 @@ async function handle(req, res) {
       imageInputs,
       modelSelections,
       slackDeliveries,
+      catalogRounds,
+      recoveredMcpActor,
     });
     return;
   }
@@ -259,6 +265,114 @@ async function handle(req, res) {
     } else respond(res, "fixture signed completed");
     return;
   }
+  if (input.includes("fixture-catalog-lifecycle")) {
+    const operation = input.match(
+      /fixture-catalog-lifecycle (absent|add|remove|disable|readd|replace-token|rotate)/,
+    )?.[1];
+    assert(operation, "Catalog lifecycle operation missing");
+    assert.deepEqual(
+      payload.tools
+        .filter((tool) => tool.name.startsWith("mcp_"))
+        .map((tool) => tool.name)
+        .sort(),
+      ["mcp_call", "mcp_search"],
+    );
+    const output = (suffix) =>
+      payload.input.findLast(
+        (item) =>
+          item.type === "function_call_output" &&
+          item.call_id === `call_lifecycle_${operation}_${suffix}`,
+      );
+    const stale = output("stale"),
+      search = output("search"),
+      invoked = output("invoke");
+    if (catalogRef && !["add", "replace-token", "absent"].includes(operation) && !stale) {
+      respond(
+        res,
+        { toolRef: catalogRef, arguments: { text: `must-not-dispatch-${operation}` } },
+        "mcp_call",
+        `call_lifecycle_${operation}_stale`,
+      );
+      return;
+    }
+    if (stale)
+      assert.notEqual(
+        stale.output,
+        `must-not-dispatch-${operation}`,
+        "Stale catalog authority executed",
+      );
+    const visible = !["absent", "remove", "disable"].includes(operation);
+    if (!search) {
+      respond(
+        res,
+        visible ? { server: "rotatingdocs", exactName: "echo" } : { query: "" },
+        "mcp_search",
+        `call_lifecycle_${operation}_search`,
+      );
+      return;
+    }
+    const page = JSON.parse(search.output);
+    const descriptor = page.tools.find((tool) => tool.server === "rotatingdocs");
+    if (visible) {
+      assert(descriptor, "Activated alias absent from native discovery");
+      assert.deepEqual(descriptor.inputSchema.required, ["text"]);
+      assert.equal(descriptor.inputSchema.additionalProperties, false);
+      assert(!JSON.stringify(page).includes("dummy-private"));
+      if (catalogRef)
+        assert.equal(
+          descriptor.toolRef === catalogRef,
+          operation === "replace-token",
+          "Catalog revision did not match activation",
+        );
+      if (!invoked) {
+        respond(
+          res,
+          { toolRef: descriptor.toolRef, arguments: { text: `lifecycle-${operation}` } },
+          "mcp_call",
+          `call_lifecycle_${operation}_invoke`,
+        );
+        return;
+      }
+      assert.equal(invoked.output, `lifecycle-${operation}`);
+      catalogRef = descriptor.toolRef;
+    } else
+      assert(
+        !page.servers.some((server) => server.server === "rotatingdocs"),
+        "Removed/disabled alias still visible",
+      );
+    catalogRounds.push({ operation, visible, nativeTools: ["mcp_call", "mcp_search"] });
+    respond(res, `fixture lifecycle verified ${operation}`);
+    return;
+  }
+  if (input.includes("fixture-native-mcp-crash")) {
+    const search = payload.input.findLast(
+      (item) => item.type === "function_call_output" && item.call_id === "call_crash_search",
+    );
+    const invoked = payload.input.findLast(
+      (item) => item.type === "function_call_output" && item.call_id === "call_crash_invoke",
+    );
+    if (!search)
+      respond(res, { server: "localdocs", exactName: "echo" }, "mcp_search", "call_crash_search");
+    else if (!invoked)
+      respond(
+        res,
+        {
+          toolRef: JSON.parse(search.output).tools[0].toolRef,
+          arguments: { text: "native-crash" },
+        },
+        "mcp_call",
+        "call_crash_invoke",
+      );
+    else {
+      assert(String(invoked.output).includes("was interrupted and may have partially run"));
+      assert(input.includes("Run triggered by slack: U_FIXTURE"));
+      assert.equal(payload.model, "fixture-strong");
+      assert.equal(effort, "high");
+      recoveredMcpActor = true;
+      respond(res, "fixture MCP recovered without replay");
+    }
+    return;
+  }
   if (input.includes("Authorized MCP approval result: completed")) {
     respond(res, "fixture approved disposition");
     return;
@@ -287,7 +401,25 @@ async function handle(req, res) {
         "mcp_call",
         "call_native_invoke",
       );
-    else respond(res, "fixture native approval pending");
+    else if (
+      input.includes("fixture-sibling-review") &&
+      !payload.input.some(
+        (item) => item.type === "function_call_output" && item.call_id === "call_native_sibling",
+      )
+    )
+      respond(
+        res,
+        {
+          toolRef: JSON.parse(search.output).tools[0].toolRef,
+          arguments: { text: "must-not-dispatch-sibling" },
+        },
+        "mcp_call",
+        "call_native_sibling",
+      );
+    else if (input.includes("fixture-unsupported-review")) {
+      assert(String(invoked.output).includes("private DM"));
+      respond(res, "fixture unsupported review denied");
+    } else respond(res, "fixture native approval pending");
     return;
   }
   if (input.includes("fixture-native-mcp")) {
