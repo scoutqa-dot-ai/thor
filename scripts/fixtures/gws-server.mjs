@@ -149,6 +149,39 @@ for (const [name, description] of Object.entries(descriptions)) {
 }
 
 const requests = [];
+const downloadRequests = [];
+let downloadExecutions = 0;
+const downloadBinary = Buffer.from([0, 255, 128, 10]);
+const downloadNestedBinary = Buffer.from([0, 42, 255, 7, 9]);
+const downloadDocumentText = "Fixture exported text\n";
+const folderMime = "application/vnd.google-apps.folder";
+const downloadMetadata = {
+  "download-file": {
+    id: "download-file",
+    name: "blob.bin",
+    mimeType: "application/octet-stream",
+    size: String(downloadBinary.length),
+  },
+  "download-folder": { id: "download-folder", name: "Fixture tree", mimeType: folderMime },
+  "download-empty": { id: "download-empty", name: "empty", mimeType: folderMime },
+  "download-nested": { id: "download-nested", name: "nested", mimeType: folderMime },
+  "download-nested-file": {
+    id: "download-nested-file",
+    name: "nested.bin",
+    mimeType: "application/octet-stream",
+    size: String(downloadNestedBinary.length),
+  },
+  "download-document": {
+    id: "download-document",
+    name: "Notes",
+    mimeType: "application/vnd.google-apps.document",
+  },
+  "download-shortcut": {
+    id: "download-shortcut",
+    name: "Elsewhere",
+    mimeType: "application/vnd.google-apps.shortcut",
+  },
+};
 let authorizationTokenRequests = 0;
 let tokenRequests = 0;
 let drataTokenRequests = 0;
@@ -278,6 +311,55 @@ const upstream = createServer(async (req, res) => {
       return;
     }
     assert.equal(req.headers.authorization, "Bearer fixture-access-token");
+    if (url.pathname.startsWith("/download-fixture/")) {
+      assert.equal(req.method, "GET");
+      const path = url.pathname.slice("/download-fixture".length);
+      downloadRequests.push({ path, query: Object.fromEntries(url.searchParams) });
+      if (path === "/drive/v3/files") {
+        assert.equal(url.searchParams.get("supportsAllDrives"), "true");
+        assert.equal(url.searchParams.get("includeItemsFromAllDrives"), "true");
+        const parent = /^'([^']+)' in parents and trashed = false$/.exec(
+          url.searchParams.get("q"),
+        )?.[1];
+        assert.ok(parent, "download listing must constrain its parent");
+        let files;
+        let nextPageToken;
+        if (parent === "download-folder") {
+          if (!url.searchParams.has("pageToken")) {
+            files = [downloadMetadata["download-file"], downloadMetadata["download-empty"]];
+            nextPageToken = "fixture-page-2";
+          } else {
+            assert.equal(url.searchParams.get("pageToken"), "fixture-page-2");
+            files = [
+              downloadMetadata["download-nested"],
+              downloadMetadata["download-document"],
+              downloadMetadata["download-shortcut"],
+            ];
+          }
+        } else if (parent === "download-empty") files = [];
+        else if (parent === "download-nested") files = [downloadMetadata["download-nested-file"]];
+        else throw new Error("Unexpected Drive fixture parent");
+        res.end(JSON.stringify({ files, ...(nextPageToken && { nextPageToken }) }));
+      } else if (path === "/drive/v3/files/download-document/export") {
+        assert.equal(url.searchParams.get("mimeType"), "text/plain");
+        res.setHeader("content-type", "text/plain");
+        res.end(downloadDocumentText);
+      } else {
+        const id = path.slice("/drive/v3/files/".length);
+        assert.ok(downloadMetadata[id], "Drive fixture ID must be fixed");
+        if (url.searchParams.get("alt") === "media") {
+          assert.ok(["download-file", "download-nested-file"].includes(id));
+          res.setHeader("content-type", "application/octet-stream");
+          res.end(id === "download-file" ? downloadBinary : downloadNestedBinary);
+        } else {
+          assert.equal(url.searchParams.get("supportsAllDrives"), "true");
+          if (["download-file", "download-folder", "download-empty"].includes(id))
+            downloadExecutions++;
+          res.end(JSON.stringify(downloadMetadata[id]));
+        }
+      }
+      return;
+    }
     await observeGwsIsolation();
     requests.push({
       method: req.method,
@@ -423,6 +505,17 @@ const workspaceConfig = {
 // Use the exact production command launcher with the real installed gws binary.
 // No request/env can disable it; this fixture only replaces OAuth/discovery/API endpoints.
 enableBrokerCommandIsolation();
+// Fixture-only trusted injection: production always uses the fixed Google origin.
+// Neither agent argv nor environment can choose a transfer destination.
+const driveFetch = (input, init) => {
+  const url = new URL(String(input));
+  assert.equal(url.origin, "https://www.googleapis.com");
+  assert.equal(url.username, "");
+  assert.equal(url.password, "");
+  assert.match(url.pathname, /^\/drive\/v3\/files(?:\/[A-Za-z0-9_-]+(?:\/export)?)?$/);
+  assert.equal(init?.redirect, "manual");
+  return fetch(`http://127.0.0.1:3100/download-fixture${url.pathname}${url.search}`, init);
+};
 const remoteCli = createRemoteCliApp({
   env: {
     port: 3004,
@@ -432,7 +525,7 @@ const remoteCli = createRemoteCliApp({
     thorInternalSecret: "fixture-internal-secret",
   },
   configLoader: () => workspaceConfig,
-  gws: new GwsService(process.env, { discoveryCacheSeedDir: `${configDir}/cache` }),
+  gws: new GwsService(process.env, { discoveryCacheSeedDir: `${configDir}/cache`, driveFetch }),
   gwsOAuth,
   mcp: {
     approvalsDir: "/tmp/thor-gws-approvals",
@@ -443,6 +536,8 @@ const remoteCli = createRemoteCliApp({
 remoteCli.app.get("/fixture-state", (_req, res) =>
   res.json({
     requests,
+    downloadRequests,
+    downloadExecutions,
     authorizationTokenRequests,
     tokenRequests,
     drataRequests,

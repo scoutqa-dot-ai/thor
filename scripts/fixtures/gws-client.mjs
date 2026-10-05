@@ -1,7 +1,8 @@
-// Runs inside the disposable OpenCode image against the real wrapper + gws.
+// Runs inside a disposable Pi/OpenCode agent image against the real wrapper + gws.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
@@ -140,15 +141,72 @@ await assert.rejects(
   (error) => error.code === 1 && /Fixture file not found/.test(error.stdout + error.stderr),
 );
 
+// The installed agent shim must produce actual agent-local bytes, not broker paths.
+const downloadBinary = Buffer.from([0, 255, 128, 10]);
+const nestedBinary = Buffer.from([0, 42, 255, 7, 9]);
+const exportedText = "Fixture exported text\n";
+const downloadRoots = [];
+try {
+  const singleOutput = await gws(["drive", "+download", "--file-id", "download-file"]);
+  const single = JSON.parse(singleOutput);
+  downloadRoots.push(dirname(single.path));
+  assert.deepEqual(single, {
+    path: single.path,
+    files: 1,
+    directories: 0,
+    bytes: downloadBinary.length,
+    skipped: 0,
+  });
+  assert.match(single.path, /^\/tmp\/neo-drive-[^/]+\/blob\.bin$/);
+  assert.deepEqual(await readFile(single.path), downloadBinary);
+  assert.equal((await stat(single.path)).mode & 0o777, 0o600);
+  assert.equal((await stat(dirname(single.path))).mode & 0o777, 0o700);
+  assert.ok(!singleOutput.includes(downloadBinary.toString("base64")));
+  const folderOutput = await exec("gws", ["drive", "+download", "--file-id", "download-folder"]);
+  const folder = JSON.parse(folderOutput.stdout);
+  downloadRoots.push(dirname(folder.path));
+  assert.deepEqual(folder, {
+    path: folder.path,
+    files: 3,
+    directories: 3,
+    bytes: downloadBinary.length + nestedBinary.length + Buffer.byteLength(exportedText),
+    skipped: 1,
+  });
+  assert.match(folderOutput.stderr, /1 shortcut\(s\) skipped/);
+  assert.deepEqual(await readFile(join(folder.path, "blob.bin")), downloadBinary);
+  assert.deepEqual(await readFile(join(folder.path, "nested", "nested.bin")), nestedBinary);
+  assert.equal(await readFile(join(folder.path, "Notes.txt"), "utf8"), exportedText);
+  assert.deepEqual(await readdir(join(folder.path, "empty")), []);
+  for (const directory of [folder.path, join(folder.path, "nested"), join(folder.path, "empty")])
+    assert.equal((await stat(directory)).mode & 0o777, 0o700);
+  assert.ok(!folderOutput.stdout.includes("dataBase64"));
+  assert.ok(!folderOutput.stdout.includes(exportedText));
+  assert.ok(!folderOutput.stdout.includes("sha256"));
+  const empty = JSON.parse(await gws(["drive", "+download", "--file-id", "download-empty"]));
+  downloadRoots.push(dirname(empty.path));
+  assert.deepEqual(empty, { path: empty.path, files: 0, directories: 1, bytes: 0, skipped: 0 });
+  assert.deepEqual(await readdir(empty.path), []);
+} finally {
+  for (const root of downloadRoots) await rm(root, { recursive: true, force: true });
+}
+
 const final = await state();
 assert.equal(final.authorizationTokenRequests, 1, "one OAuth connection exchange must run");
 assert.ok(final.tokenRequests > 0, "per-command OAuth refresh must run");
 assert.equal(
   final.executionDirectories.length,
-  final.tokenRequests,
-  "each account command must use a distinct private cwd through the production launcher",
+  final.tokenRequests - final.downloadExecutions,
+  "each CLI account command uses a distinct private cwd; direct downloads refresh without a child",
 );
 assert.equal((await fetch(`${baseUrl}/fixture-cleanup`)).status, 200);
+assert.equal(final.downloadExecutions, 3, "one separate OAuth refresh per direct download");
+assert.equal(
+  final.downloadRequests.length,
+  12,
+  "file, paginated folder, exports and empty-folder transfers",
+);
+assert.ok(final.downloadRequests.some((request) => request.query.pageToken === "fixture-page-2"));
+assert.ok(final.downloadRequests.some((request) => request.path.endsWith("/export")));
 assert.ok(final.requests.some((request) => request.query.includeTabsContent === "true"));
 assert.ok(final.requests.some((request) => request.query.q === "name contains 'report'"));
 assert.equal(
@@ -170,11 +228,12 @@ for (const path of [
 }
 assert.equal(process.env.GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE, undefined);
 assert.equal(process.env.DRATA_CLIENT_SECRET, undefined);
-assert.match(
-  await readFile("/home/thor/.config/opencode/skills/gws/SKILL.md", "utf8"),
-  /includeTabsContent/,
-);
+const skillPath = await access("/etc/thor/skills/gws/SKILL.md")
+  .then(() => "/etc/thor/skills/gws/SKILL.md")
+  .catch(() => "/home/thor/.config/opencode/skills/gws/SKILL.md");
+assert.match(await readFile(skillPath, "utf8"), /includeTabsContent/);
+assert.match(await readFile(skillPath, "utf8"), /gws drive \+download --file-id FILE_ID/);
 console.log(
-  `PASS: ${final.executionDirectories.length} isolated account commands, ${final.requests.length} API requests, 2 writes (including denied write)`,
-  "PASS: real gws through production kernel launcher, per-command private cwd/token/env/proc isolation and cleanup, dummy OAuth reads/writes, formatting/pagination, upstream denials and private mounts",
+  `PASS: ${final.executionDirectories.length} isolated account commands, ${final.requests.length} CLI API requests, ${final.downloadExecutions} direct downloads (${final.downloadRequests.length} Drive requests), 2 writes (including denied write)`,
+  "PASS: real gws shim, local binary/folder/empty-directory/export fidelity, shortcut warning, production CLI kernel isolation and cleanup, dummy OAuth reads/writes, formatting/pagination, upstream denials and private mounts",
 );

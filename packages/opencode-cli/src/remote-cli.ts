@@ -7,9 +7,66 @@
  *   THOR_REMOTE_CLI_URL — base URL of the remote-cli service
  */
 
-import { ExecResultSchema, ExecStreamEventSchema, type ExecStreamEvent } from "@thor/common";
+import {
+  ExecResultSchema,
+  ExecStreamEventSchema,
+  GOOGLE_DRIVE_DOWNLOAD_MAX_WIRE_BYTES,
+  GoogleDriveDownloadExecResultSchema,
+  GoogleDriveFileIdSchema,
+  type ExecStreamEvent,
+} from "@thor/common";
+import { materializeGoogleDriveDownload } from "./google-drive-materializer.js";
 
 const [endpoint, ...args] = process.argv.slice(2);
+
+const isDriveDownload = endpoint === "gws" && args[0] === "drive" && args[1] === "+download";
+if (
+  isDriveDownload &&
+  (args.length !== 4 ||
+    args[2] !== "--file-id" ||
+    !GoogleDriveFileIdSchema.safeParse(args[3]).success)
+) {
+  process.stderr.write("Drive download requires exactly: gws drive +download --file-id FILE_ID\n");
+  process.exit(1);
+}
+
+class DriveDownloadResponseError extends Error {
+  readonly _tag = "DriveDownloadResponseError" as const;
+  constructor() {
+    super("Drive download response failed; no local files were created.");
+  }
+}
+
+async function readDriveDownloadResponse(
+  res: Response,
+): Promise<
+  | { readonly ok: true; readonly text: string }
+  | { readonly ok: false; readonly error: DriveDownloadResponseError }
+> {
+  if (!res.body) return { ok: false, error: new DriveDownloadResponseError() };
+  try {
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let bytes = 0;
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        bytes += chunk.value.byteLength;
+        if (bytes > GOOGLE_DRIVE_DOWNLOAD_MAX_WIRE_BYTES) {
+          return { ok: false, error: new DriveDownloadResponseError() };
+        }
+        chunks.push(chunk.value);
+      }
+      return { ok: true, text: Buffer.concat(chunks).toString("utf8") };
+    } finally {
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+  } catch {
+    return { ok: false, error: new DriveDownloadResponseError() };
+  }
+}
 
 if (!endpoint) {
   process.stderr.write("Usage: remote-cli.mjs <endpoint> [args...]\n");
@@ -49,6 +106,44 @@ try {
   });
 
   const contentType = res.headers.get("content-type") || "";
+
+  if (isDriveDownload) {
+    // Never route a download through generic JSON/NDJSON rendering or Zod error diagnostics.
+    const wire = await readDriveDownloadResponse(res);
+    if (!wire.ok) {
+      process.stderr.write(`${wire.error.message}\n`);
+      process.exit(1);
+    }
+    const result = GoogleDriveDownloadExecResultSchema.safeParse(JSON.parse(wire.text));
+    if (!result.success || (result.data.driveDownload && (!res.ok || result.data.exitCode !== 0))) {
+      process.stderr.write("Drive download response rejected; no local files were created.\n");
+      process.exit(1);
+    }
+    if (!res.ok || result.data.exitCode !== 0) {
+      // Ordinary broker failures, including 428 auth waits, keep their established output.
+      if (result.data.stdout) process.stdout.write(result.data.stdout);
+      if (result.data.stderr) process.stderr.write(result.data.stderr);
+      process.exit(result.data.exitCode || 1);
+    }
+    if (!result.data.driveDownload) {
+      process.stderr.write(
+        "Drive download artifact missing; rebuild the broker and agent wrappers together.\n",
+      );
+      process.exit(1);
+    }
+    const download = await materializeGoogleDriveDownload(result.data.driveDownload);
+    if (!download.ok) {
+      process.stderr.write(`${download.error.message}\n`);
+      process.exit(1);
+    }
+    process.stdout.write(`${JSON.stringify(download.value)}\n`);
+    if (download.value.skipped > 0) {
+      process.stderr.write(
+        `Drive download warning: ${download.value.skipped} shortcut(s) skipped.\n`,
+      );
+    }
+    process.exit(0);
+  }
 
   // NDJSON streaming response (scoutqa)
   if (contentType.includes("application/x-ndjson")) {
@@ -107,6 +202,10 @@ try {
 
   process.exit(result.exitCode ?? 0);
 } catch (err) {
-  process.stderr.write(`Failed to reach remote-cli: ${(err as Error).message}\n`);
+  process.stderr.write(
+    isDriveDownload
+      ? `${new DriveDownloadResponseError().message}\n`
+      : `Failed to reach remote-cli: ${(err as Error).message}\n`,
+  );
   process.exit(1);
 }

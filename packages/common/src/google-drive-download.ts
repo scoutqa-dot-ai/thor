@@ -5,6 +5,9 @@ import { ExecResultSchema } from "./exec-result.js";
 export const GOOGLE_DRIVE_DOWNLOAD_VERSION = 1;
 /** Google Drive download ceiling in decoded bytes, across every file (50 MiB). */
 export const GOOGLE_DRIVE_DOWNLOAD_MAX_BYTES = 50 * 1024 * 1024;
+/** Buffered download HTTP ceiling: base64 expansion plus 16 MiB for bounded manifest metadata. */
+export const GOOGLE_DRIVE_DOWNLOAD_MAX_WIRE_BYTES =
+  4 * Math.ceil(GOOGLE_DRIVE_DOWNLOAD_MAX_BYTES / 3) + 16 * 1024 * 1024;
 /** Google Drive download ceiling includes the root, directories, files and skipped shortcuts. */
 export const GOOGLE_DRIVE_DOWNLOAD_MAX_ENTRIES = 1000;
 /** Google Drive download depth counts path components, including the root. */

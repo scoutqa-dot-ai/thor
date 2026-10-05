@@ -15,9 +15,9 @@ report success only after the command returns a successful result.
   to discover the installed CLI's command and request shapes.
 - Output and pagination follow upstream options/defaults. Add `--format json` when
   parsing output; choose an appropriate `--page-limit` when using `--page-all`.
-- Local file input/output, upload/download/import/export helpers, and credential/config
-  flags are blocked at this boundary. Use API JSON arguments and normal command output;
-  the wrapper does not provide an interactive terminal or stdin.
+- Use API JSON arguments for reads/writes and the Drive download command below for
+  local content. Other local-file helpers and credential/config flags are subject
+  to server-side policy; the wrapper has no interactive terminal or stdin.
 - Report the connection status returned by `gws`. When it says no OAuth DM was
   sent or delivery is unconfirmed, explain the reported blocker. Give instructions
   to open the DM and wait for automatic continuation only after confirmed private-link delivery. Never ask
@@ -40,6 +40,26 @@ gws drive files get --params '{"fileId":"FILE_ID","supportsAllDrives":true}' --f
 For shared-drive searches, use `corpora: "drive"`, `driveId`,
 `includeItemsFromAllDrives: true`, and `supportsAllDrives: true`. The file's MIME
 type tells you whether to use Docs or Sheets for structured content.
+
+## Drive: download local content
+
+Use exactly `gws drive +download --file-id FILE_ID` for a file or folder ID
+(not a URL or the whole-drive `root` alias). Folders recurse automatically and
+preserve empty directories. The result is JSON with `path`, `files`, `directories`,
+`bytes`, and `skipped`; `path` is a readable local file or folder in a fresh private
+temporary directory. Use that path with normal local tools, or move it yourself:
+
+```bash
+download=$(gws drive +download --file-id FILE_ID) &&
+  mv -- "$(printf '%s' "$download" | jq -r .path)" ./report.txt
+```
+
+The command accepts no output path or extra flags. Transfers are all-or-nothing,
+limited to 50 MiB decoded content, 1,000 entries (including directories and skipped
+shortcuts), and depth 32. Request a smaller subfolder if a limit is reported.
+Docs export to text, Sheets to xlsx, Slides to pptx, and Drawings to pdf.
+Shortcuts are skipped with a warning; a shortcut root or unsupported native type
+fails. Check the summary/warning before describing a tree as complete.
 
 ## Docs: read tabs or create a document
 

@@ -21,11 +21,48 @@ Each command is owned by the human who started the **currently active Slack turn
 4. Neo loads only that Slack user's encrypted Google grant. There is no global account or service-account fallback.
 5. Connected commands execute directly, without per-command approval cards. Missing or definitively revoked credentials create an encrypted continuation containing only the exact parsed, unexecuted Google argv and the requesting workspace/user/session/anchor/trigger.
 6. A confirmed private OAuth DM is required before a wait is resumable. Identical requests in the same turn reuse the current invitation. An uncertain provider execution is reported, never automatically retried as an auth failure.
-7. `remote-cli` refreshes one short-lived access token, revalidates its Google email and subject, and injects only `GOOGLE_WORKSPACE_CLI_TOKEN` into a fresh private `gws` cwd. The cwd is deleted after execution.
+7. `remote-cli` refreshes one short-lived access token and revalidates its Google email and subject. Ordinary API commands receive only `GOOGLE_WORKSPACE_CLI_TOKEN` in a fresh private `gws` cwd, deleted after execution. Drive downloads use trusted direct Drive API requests with that same requester-owned token, without a credential-bearing child or broker filesystem output.
 
-`gws auth`, including login, logout, and credential export, is blocked at the agent-facing boundary. Local file input/output flags, absolute/file-URI/response-file arguments, and upload/download/import/export/send helpers are also blocked so the credential-bearing child cannot be used to read or export other `remote-cli` files. OAuth client credentials, refresh tokens, authorization codes, PKCE verifiers, state, cookies, raw argv, and OAuth response bodies are not returned to OpenCode or Slack and are not written to normal worklogs.
+`gws auth`, including login, logout, and credential export, is blocked at the agent-facing boundary. Local file input/output flags, absolute/file-URI/response-file arguments, and upload/import/export/send helpers remain blocked so the credential-bearing child cannot read or export other `remote-cli` files. The sole download exception is the exact `gws drive +download --file-id FILE_ID` command described below, with no local path input. OAuth client credentials, refresh tokens, authorization codes, PKCE verifiers, state, cookies, raw argv, and OAuth response bodies are not returned to Pi, OpenCode or Slack and are not written to normal worklogs.
 
 Outside those credential and local-filesystem exclusions, Neo does not reinterpret upstream Google API commands. The active Slack requester, Google OAuth scopes, Google resource permissions and Workspace policy define authority. Command output still reaches the requesting session and can contain sensitive Workspace data.
+
+## Drive downloads
+
+```bash
+gws drive +download --file-id FILE_ID
+```
+
+The ID can identify a normal file or folder, not a URL or the whole-drive `root`
+alias. Folders recurse automatically, preserving empty directories. Shared-drive
+access uses the same requester's permissions. Native Docs export to `.txt`, Sheets
+to `.xlsx`, Slides to `.pptx`, and Drawings to `.pdf`; unsupported native types and
+shortcut roots fail. Child shortcuts are reported/skipped, never followed.
+
+Downloads are bounded to **50 MiB decoded total**, **1,000 entries** (root,
+directories, files and skipped shortcuts), and **depth 32**. Names are made portable
+and collisions disambiguated. Any provider, inconsistent-tree, or resource-limit
+failure returns no artifact; narrow the request
+to a smaller subfolder rather than relying on truncation. Drive HTTP requests use
+fixed Google endpoints without followed redirects and a 60-second per-request
+deadline. No new environment variable or endpoint override is provided.
+
+The broker returns a dedicated versioned binary manifest, not stdout. The shared
+Pi/OpenCode wrapper bounds the buffered HTTP body, validates the whole manifest
+and verifies every SHA-256 before creating a fresh mode-0700 `neo-drive-` temporary
+directory **inside the agent's filesystem**. Directories are mode 0700, files 0600
+and writes exclusive. A write failure removes the entire unique directory.
+Success prints only `{path, files, directories, bytes, skipped}` JSON, plus a
+shortcut warning when needed; no base64, content or digest is printed. Use the
+reported local path with normal file tools or `mv`/`cp`. Successful downloads
+remain until the agent removes them or its temporary filesystem is discarded.
+
+**Upgrade both sides:** rebuild/redeploy `remote-cli` and the active agent image:
+`pi-executor` for Pi or `opencode` for OpenCode. They both bundle the shared
+wrapper; rebuilding the broker alone does not add local downloads to an old
+wrapper. Conversely a new wrapper rejects a successful old-broker response
+without the artifact with an explicit rebuild message. Preserve existing OAuth
+storage/key and deployment configuration; no new env var is required.
 
 ## Configure Google OAuth
 
@@ -123,7 +160,7 @@ An operator responding to compromise should revoke the OAuth client or user gran
 
 - Encrypted requests, OAuth state, grants, auth continuations and historic pending commands live in the remote-cli-only `google-workspace-oauth-data` volume. Files are mode 0600 under mode 0700 directories and use AES-256-GCM with path-bound additional authenticated data.
 - The named volume and encryption key are both required to decrypt a grant. Neither is mounted into OpenCode.
-- Refresh tokens stay encrypted at rest and are revealed only inside the broker during refresh. Only the resulting short-lived access token enters the isolated `gws` child environment.
+- Refresh tokens stay encrypted at rest and are revealed only inside the broker during refresh. The resulting short-lived access token is used only by trusted broker Drive requests or the isolated `gws` child environment; neither runtime receives it.
 - Request cwd is ignored. `gws` receives a fresh empty HOME/config directory, selected PATH, optional project ID, and the access token—no Slack token, OAuth client secret, credential file, inherited cached auth, or shared `.env`.
 - Direct execution audit records contain requester Slack ID, connection ID, argument count, status/exit code and Neo correlation IDs. Historic approval records additionally retain reviewer/action IDs and keyed command fingerprints. Logs omit raw argv, tokens, OAuth parameters/responses and document contents.
 - OAuth requests/state expire after 10 minutes; successful auth readiness lasts up to 24 hours. Encrypted dispatch tombstones retain only identity/grant/lease bindings, without argv, to reject late resumed operations after expiry or account replacement. Historic private commands/results expire after 30 minutes; their result retrieval remains single-use and same-owner-bound.

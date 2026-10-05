@@ -224,9 +224,16 @@ First use sends the trusted requesting Slack user a private OAuth DM. No Google 
 Every GWS call requires the latest active Slack actor and that user's connected
 Google identity. Connected commands execute directly without a command approval.
 Missing or definitively revoked credentials pause the task through a confirmed
-private OAuth DM and encrypted continuation. It blocks `gws auth` and local-file
-command surfaces, has no global credential fallback, and injects
+private OAuth DM and encrypted continuation. It blocks `gws auth` and generic
+local-file command surfaces, has no global credential fallback, and injects
 only a refreshed `GOOGLE_WORKSPACE_CLI_TOKEN` into a fresh isolated child cwd.
+The exact `gws drive +download --file-id FILE_ID` exception downloads a file or
+recursive folder through trusted Drive requests and writes it in the agent's
+private temporary filesystem, returning only a local path/summary. Transfers are
+all-or-nothing (50 MiB, 1,000 entries, depth 32), with native document exports and
+skipped-shortcut warnings. Rebuild both `remote-cli` and the active `pi-executor`
+or `opencode` image to deploy the broker and shared wrapper together; no new env
+var is needed.
 See [Google Workspace OAuth](docs/google-workspace.md).
 
 ### Runtime upgrades

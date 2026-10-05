@@ -1,6 +1,6 @@
 # Google Drive file and folder downloads
 
-**Status:** Phase 1 implemented and locally verified; Phase 2 pending. No live deployment changes performed.
+**Status:** Phases 1–2 implemented and locally verified. GitHub verification and live deployment/provider acceptance remain pending. No live deployment changes performed.
 
 ## Objective
 
@@ -42,3 +42,28 @@ Uploads, Drive mutations, shared/global credentials, arbitrary authenticated URL
 Phase 1: delegated implementation ran focused common/remote-cli Google suites: **126 tests passed**. Common and remote-cli typechecks, changed-file formatting and `git diff --check` passed. Tests include the real OAuth/HTTP route, confirmed private wait/exact argv, denial without an active requester, byte ceilings/chunked media, folder pagination/empty directories, exports, collisions, redirects and provider failures. Production Google acceptance remains unrun. No dependency installation or live secrets used. Sandbox preflight: SBX available, approved base `node:24-bookworm`, no prepared repository/dependency image; isolated host tests use already installed dependencies and dummy fixtures.
 
 Parent Phase 1 recheck: `pnpm exec vitest run packages/common/src/google-drive-download.test.ts packages/remote-cli/src/google-drive-download.test.ts packages/remote-cli/src/gws-args.test.ts packages/remote-cli/src/gws.test.ts packages/remote-cli/src/gws-continuation.test.ts` — **93 tests passed / 5 files**, log `/tmp/neo-drive-phase1-tests.log`. `git diff --check` passed. Node 24.11.1 selected explicitly.
+
+## Phase 2 implementation and acceptance
+
+- The shared Pi/OpenCode wrapper consumes the dedicated manifest only for the exact Drive download command, bounds HTTP bytes, parses the complete rooted tree, verifies all file digests before I/O, writes exclusive private files/directories under a generated local temporary root, and reports only a usable path/count summary. A failed write rolls back the tree; cleanup failure remains a distinct error. No Google credential reaches either agent runtime.
+- Native Docs/Sheets/Slides/Drawings exports, binary files, recursive paginated/shared-drive trees, empty directories, portable-name collision disambiguation and shortcut warnings are documented. No arbitrary output destination or new env/config value is accepted.
+- Real wrapper subprocess tests cover ordinary responses/auth waits, readable binary files, unsorted folders, empty folders, malformed/inconsistent/traversing manifests, digest corruption, old-broker missing artifacts, wire ceilings, safe errors, exclusive write rollback and private modes.
+- Extended real Pi Durable/HTTP-executor/remote-cli/OAuth/local-Drive integration proves a confirmed OAuth wait resumes only the exact blocked folder download, produces an actual local `Work/README.md`, and exposes no manifest/base64/token/content in the model's tool output. The earlier compound-shell marker remains single-effect.
+- Existing `GwsService`/exec route remain authority owners. New `GoogleDriveDownloader` owns fixed-origin REST recursion, schemas and bounds; `materializeGoogleDriveDownload` owns digest/atomic local-write policy. Reuse of generic subprocess exec or upstream output files would conflate these responsibilities or lose files at broker cwd cleanup. No generic transfer framework or new dependency was added.
+- Independent read-only verification found **no new blockers**. It identified remaining live/fresh-image acceptance and the unexercised real 60-second stalled-provider deadline. Ordinary provider abort/rejection/stream errors are covered; no claim is made that a timed live stall was tested.
+
+### Exact local verification
+
+All commands selected installed Node 24.11.1. No dependency install, live credentials, production `.env`, OAuth storage or deployment data was used.
+
+- Phase 2 focused wrapper/common/GWS/Pi tests: **157 tests / 11 files passed** before the additional Pi download case. `/tmp/neo-drive-phase2-tests.log`.
+- `pnpm exec vitest run packages/runner/src/pi-gws.integration.test.ts`: **3 tests passed**, including the new real transfer/auth continuation case. `/tmp/neo-drive-pi-integration.log`.
+- `pnpm test`: **1,427 tests / 79 files passed**, no skips. `/tmp/neo-drive-all-tests.log`.
+- `pnpm typecheck`: all workspace packages passed. `/tmp/neo-drive-all-types.log`.
+- `pnpm build`: all workspace packages passed. `/tmp/neo-drive-all-build.log`.
+- `./scripts/test-gws-e2e.sh thor-gws-remote-cli:e2e thor-gws-opencode:e2e`: **pass**, real installed OpenCode shim, 3 direct file/folder/empty-folder downloads and 12 Drive requests, binary/export fidelity and production upstream CLI kernel isolation. `/tmp/neo-drive-opencode-e2e-final.log`.
+- `./scripts/test-gws-e2e.sh thor-gws-remote-cli:e2e thor-pi-e2e-1000-3364098-pi-executor:latest`: **pass**, same fixture through the real Pi executor image/shim. `/tmp/neo-drive-executor-e2e-final.log`.
+- Container checks reused existing dependency images with **current compiled broker and wrapper mounted read-only**, current agent skill, dummy local Google endpoints and internal-only Docker networking. They do not establish freshly rebuilt production-image or live Google/Slack acceptance. Cleanup gates removed each test's containers/networks and downloaded temporary files.
+- Changed-file formatting, fixture syntax, `bash -n` and `git diff --check` passed before the phase commit.
+
+Deployment requires rebuilding/redeploying **both** `remote-cli` and the active `pi-executor` or `opencode` wrapper image; preserve existing requester grants, encryption key, Compose identity and configuration. GitHub push/workflow/PR verification and live provider acceptance are separate remaining gates, not implied by local green fixtures.

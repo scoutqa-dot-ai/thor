@@ -1,5 +1,5 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,7 @@ import {
 import { createPiRunnerApp } from "./pi-runner.js";
 import { createRemoteCliApp } from "../../remote-cli/src/index.js";
 import { GWS_OAUTH_BROWSER_COOKIE, GwsOAuthService } from "../../remote-cli/src/gws-oauth.js";
+import { GwsService } from "../../remote-cli/src/gws.js";
 
 const owner = "UOWNER";
 const other = "UOTHER";
@@ -115,9 +116,13 @@ function command(endpoint: string, args: string[]): string {
   return [process.execPath, "--import", tsxLoader, wrapper, endpoint, ...args].map(quote).join(" ");
 }
 
-it.each([true, false])(
-  "automatically continues after private OAuth only with confirmed DM delivery (%s)",
-  async (dmConfirmed) => {
+it.each([
+  { dmConfirmed: true, download: false },
+  { dmConfirmed: false, download: false },
+  { dmConfirmed: true, download: true },
+])(
+  "automatically continues after private OAuth (confirmed DM: $dmConfirmed, Drive download: $download)",
+  async ({ dmConfirmed, download }) => {
     const root = await mkdtemp(join(tmpdir(), "thor-pi-gws-"));
     cleanup.push(() => rm(root, { recursive: true, force: true }));
     vi.stubEnv("WORKLOG_DIR", join(root, "worklog"));
@@ -185,6 +190,58 @@ it.each([true, false])(
         userInfoEndpoint: `${providerUrl}/userinfo`,
       },
     );
+    const driveText = "# README\nLocal Drive content ready for work.\n";
+    const driveRequests: string[] = [];
+    const driveUrl = await listen(
+      createServer((req, res) => {
+        expect(req.headers.authorization).toBe("Bearer dummy-command-token");
+        const url = new URL(req.url ?? "/", "http://fixture.test");
+        driveRequests.push(url.pathname + url.search);
+        res.setHeader("content-type", "application/json");
+        if (url.pathname === "/drive/v3/files/download-root") {
+          res.end(
+            JSON.stringify({
+              id: "download-root",
+              name: "Work",
+              mimeType: "application/vnd.google-apps.folder",
+            }),
+          );
+        } else if (url.pathname === "/drive/v3/files") {
+          res.end(
+            JSON.stringify({
+              files: [
+                {
+                  id: "readme-id",
+                  name: "README.md",
+                  mimeType: "text/markdown",
+                  size: String(Buffer.byteLength(driveText)),
+                },
+              ],
+            }),
+          );
+        } else if (
+          url.pathname === "/drive/v3/files/readme-id" &&
+          url.searchParams.get("alt") === "media"
+        ) {
+          res.setHeader("content-type", "text/markdown");
+          res.end(driveText);
+        } else {
+          res.statusCode = 404;
+          res.end("{}");
+        }
+      }),
+    );
+    const driveService = new GwsService(
+      { GOOGLE_WORKSPACE_CLI_CONFIG_DIR: join(root, "unused-drive-cwd") },
+      {
+        driveFetch: (input, init) => {
+          const url = new URL(String(input));
+          expect(url.origin).toBe("https://www.googleapis.com");
+          expect(init?.redirect).toBe("manual");
+          return fetch(`${driveUrl}${url.pathname}${url.search}`, init);
+        },
+      },
+    );
     const executions: Array<{ args: string[]; token: string }> = [];
     const remote = createRemoteCliApp({
       env: {
@@ -215,6 +272,7 @@ it.each([true, false])(
       gws: {
         execute: async (args, token) => {
           executions.push({ args: [...args], token: token.reveal() });
+          if (download) return driveService.execute(args, token);
           return { status: 200, result: { stdout: "private-gws-output", stderr: "", exitCode: 0 } };
         },
       },
@@ -248,6 +306,7 @@ it.each([true, false])(
         PATH: process.env.PATH,
         HOME: root,
         THOR_REMOTE_CLI_URL: remoteUrl,
+        TMPDIR: root,
       },
     });
     cleanup.push(executor.dispose);
@@ -290,7 +349,9 @@ it.each([true, false])(
     const modelRequests: Array<Record<string, unknown>> = [];
     let nextCommand: string | undefined;
     let resumedOperation = false;
-    const blockedArgs = ["drive", "files", "list"];
+    const blockedArgs = download
+      ? ["drive", "+download", "--file-id", "download-root"]
+      : ["drive", "files", "list"];
     const modelUrl = await listen(
       createServer(async (req, res) => {
         const chunks: Buffer[] = [];
@@ -388,7 +449,7 @@ it.each([true, false])(
       return frames;
     };
     // A real Pi GWS tool call with no Google pin must initiate private OAuth onboarding.
-    nextCommand = `printf 'once\\n' >> compound-marker; ${command("gws", ["drive", "files", "list"])}`;
+    nextCommand = `printf 'once\\n' >> compound-marker; ${command("gws", blockedArgs)}`;
     const initialFrames = await stream({
       prompt: "warmup",
       routingTask: "Create a Google document",
@@ -493,7 +554,9 @@ it.each([true, false])(
       { timeout: 5000 },
     );
     await vi.waitFor(() =>
-      expect(JSON.stringify(modelRequests.at(-1))).toContain("private-gws-output"),
+      expect(JSON.stringify(modelRequests.at(-1))).toContain(
+        download ? "neo-drive-" : "private-gws-output",
+      ),
     );
     await vi.waitFor(() =>
       expect(progressEvents.filter((event) => event.type === "done")).toHaveLength(2),
@@ -514,6 +577,19 @@ it.each([true, false])(
     expect(resumeInput).toContain("never replay the compound bash command");
     expect(resumeInput).not.toContain(internalSecret);
     expect(JSON.stringify(modelRequests)).not.toContain("dummy-command-token");
+    if (download) {
+      expect(driveRequests).toHaveLength(3);
+      const artifactRoots = (await readdir(root)).filter((name) => name.startsWith("neo-drive-"));
+      expect(artifactRoots).toHaveLength(1);
+      expect(await readFile(join(root, artifactRoots[0], "Work", "README.md"), "utf8")).toBe(
+        driveText,
+      );
+      expect(JSON.stringify(modelRequests)).not.toContain("dataBase64");
+      expect(JSON.stringify(modelRequests)).not.toContain(
+        Buffer.from(driveText).toString("base64"),
+      );
+      expect(JSON.stringify(modelRequests)).not.toContain(driveText);
+    }
     expect(slackRequests.join("\n")).not.toContain("approval_required");
     expect(findTriggerActor(receipt.sessionId)).toEqual({ slack: owner });
     expect(progressEvents.filter((event) => event.type === "start").at(-1)).toMatchObject({

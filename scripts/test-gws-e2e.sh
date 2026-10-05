@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Credential-free GWS/Drata container contract test. Optional args reuse already-built
-# remote-cli and opencode images, in that order, with current host-built broker
+# remote-cli and agent images, in that order, with current host-built broker/wrapper
 # artifacts (run pnpm build first). No production stack is touched.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -11,15 +11,22 @@ if [[ $# -eq 0 ]]; then
   docker build --target remote-cli -t "$remote_image" .
   docker build --target opencode -t "$opencode_image" .
 elif [[ $# -ne 2 ]]; then
-  echo "Usage: $0 [remote-cli-image opencode-image]" >&2
+  echo "Usage: $0 [remote-cli-image agent-image]" >&2
   exit 2
 fi
 
-# Cached images supply dependencies, not evidence for the current broker source.
+# Cached images supply dependencies, not evidence for the current broker/wrapper source.
 broker_artifacts=()
+wrapper_artifacts=()
 if [[ $# -eq 2 ]]; then
   [[ -f packages/remote-cli/dist/index.js ]] || { echo 'Run pnpm build before cached GWS validation' >&2; exit 2; }
   broker_artifacts=(-v "$PWD/packages/remote-cli/dist:/app/packages/remote-cli/dist:ro")
+  [[ -f packages/opencode-cli/dist/remote-cli.mjs ]] || { echo 'Build opencode-cli before cached GWS validation' >&2; exit 2; }
+  wrapper_artifacts=(
+    -v "$PWD/packages/opencode-cli/dist/remote-cli.mjs:/usr/local/bin/remote-cli.mjs:ro"
+    -v "$PWD/docker/opencode/config/skills/gws/SKILL.md:/home/thor/.config/opencode/skills/gws/SKILL.md:ro"
+    -v "$PWD/docker/opencode/config/skills/gws/SKILL.md:/etc/thor/skills/gws/SKILL.md:ro"
+  )
 fi
 
 suffix="$$-$RANDOM"
@@ -65,5 +72,6 @@ done
 docker run --rm --name "$client" --network "$network" \
   -e THOR_REMOTE_CLI_URL=http://remote-cli:3004 \
   -e THOR_OPENCODE_SESSION_ID=fixture-session \
+  "${wrapper_artifacts[@]}" \
   -v "$PWD/scripts/fixtures/gws-client.mjs:/opt/gws-client.mjs:ro" \
   --workdir /workspace --entrypoint node "$opencode_image" /opt/gws-client.mjs

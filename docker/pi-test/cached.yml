@@ -16,6 +16,7 @@ services:
     image: ${PI_TEST_EXECUTOR_IMAGE:?prebuilt executor image required}
     volumes:
       - ../../packages/pi-executor/dist:/app/packages/pi-executor/dist:ro
+      - ../../packages/opencode-cli/dist/remote-cli.mjs:/usr/local/bin/remote-cli.mjs:ro
       - ../opencode/config/skills:/etc/thor/skills:ro
   ingress:
     image: ${PI_TEST_INGRESS_IMAGE:?prebuilt ingress image required}
